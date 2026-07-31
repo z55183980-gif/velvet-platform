@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640" role="img" aria-label="DramaVN - Open Source Short Drama Platform">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0F172A"/>
+      <stop offset="1" stop-color="#1E1B4B"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#F472B6"/>
+      <stop offset="0.5" stop-color="#A855F7"/>
+      <stop offset="1" stop-color="#22D3EE"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.7" cy="0.3" r="0.7">
+      <stop offset="0" stop-color="#A855F7" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#0F172A" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="card1" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#F472B6"/>
+      <stop offset="1" stop-color="#9333EA"/>
+    </linearGradient>
+    <linearGradient id="card2" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#22D3EE"/>
+      <stop offset="1" stop-color="#0EA5E9"/>
+    </linearGradient>
+    <linearGradient id="card3" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FACC15"/>
+      <stop offset="1" stop-color="#F97316"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1280" height="640" fill="url(#bg)"/>
+  <rect width="1280" height="640" fill="url(#glow)"/>
+
+  <circle cx="1100" cy="120" r="180" fill="#A855F7" opacity="0.18"/>
+  <circle cx="200" cy="540" r="160" fill="#22D3EE" opacity="0.15"/>
+
+  <g transform="translate(80,80)">
+    <rect width="220" height="36" rx="18" fill="#1F2937" stroke="#334155"/>
+    <circle cx="22" cy="18" r="5" fill="#22D3EE"/>
+    <text x="40" y="23" font-family="ui-sans-serif, -apple-system, Segoe UI" font-size="14" fill="#E2E8F0" font-weight="600">OPENSOURCE / v0.1</text>
+  </g>
+
+  <text x="80" y="200" font-family="ui-sans-serif, -apple-system, Segoe UI" font-size="92" font-weight="800" fill="#FFFFFF" letter-spacing="-2">DramaVN</text>
+  <text x="80" y="252" font-family="ui-sans-serif, -apple-system, Segoe UI" font-size="30" font-weight="600" fill="url(#accent)">Vietnam Short-Drama Platform / Open Source</text>
+  <text x="80" y="294" font-family="ui-sans-serif, -apple-system, Segoe UI" font-size="20" fill="#CBD5E1">Web-first short-drama site / vi + zh day-1</text>
+
+  <g transform="translate(80,360)">
+    <rect width="360" height="200" rx="20" fill="#111827" stroke="#1F2937"/>
+    <rect x="24" y="24" width="48" height="48" rx="12" fill="url(#card1)"/>
+    <path d="M40 48 L56 60 L40 72 Z" fill="#FFFFFF"/>
+    <text x="92" y="46" font-family="ui-sans-serif, -apple-system, Segoe UI" font-size="20" font-weight="700" fill="#FFFFFF">Audience</text>
+    <text x="92" y="68" font-family="ui-sans-serif, -apple-system, Segoe UI" font-size="14" fill="#94A3B8">Free first N episodes + per-episode unlock</text>
+    <text x="24" y="116" font-family="ui-sans-serif, -apple-system, Segoe UI" font-size="14" fill="#CBD5E1">- HLS streaming with short-lived signed URLs</text>
+    <text x="24" y="142" font-family="ui-sans-serif, -apple-system, Segoe UI" font-size="14" fill="#CBD5E1">- Wallet credits and viewing history</text>
+    <text x="24" y="168" font-family="ui-sans-serif, -apple-system, Segoe UI" font-size="14" fill="#CBD5E1">- vi / zh switchable UI</text>
+
+    <g transform="translate(380,0)">
+      <rect width="360" height="200" rx="20" fill="#111827" stroke="#1F2937"/>
+      <rect x="24" y="24" width="48" height="48" rx="12" fill="url(#card2)"/>
+      <path d="M44 56 L52 40 L60 56 Z M40 64 H64" stroke="#FFFFFF" stroke-width="3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+      <text x="92" y="46" font-family="ui-sans-serif, -apple-system, Segoe UI" font-size="20" font-weight="700" fill="#FFFFFF">Creator</text>
+      <text x="92" y="68" font-family="ui-sans-serif, -apple-system, Segoe UI" font-size="14" fill="#94A3B8">Upload, Review, Earn 70%</text>
+      <text x="24" y="116" font-family="ui-sans-serif, -apple-system, Segoe UI" font-size="14" fill="#CBD5E1">- TUS resumable upload + FFmpeg</text>
+      <text x="24" y="142" font-family="ui-sans-serif, -apple-system, Segoe UI" font-size="14" fill="#CBD5E1">- Earnings dashboard</text>
+      <text x="24" y="168" font-family="ui-sans-serif, -apple-system, Segoe UI" font-size="14" fill="#CBD5E1">- T+7 withdrawal with review</text>
+    </g>
+
+    <g transform="translate(760,0)">
+      <rect width="360" height="200" rx="20" fill="#111827" stroke="#1F2937"/>
+      <rect x="24" y="24" width="48" height="48" rx="12" fill="url(#card3)"/>
+      <rect x="38" y="40" width="20" height="16" rx="3" fill="#FFFFFF"/>
+      <rect x="38" y="46" width="20" height="3" fill="#F59E0B"/>
+      <text x="92" y="46" font-family="ui-sans-serif, -apple-system, Segoe UI" font-size="20" font-weight="700" fill="#FFFFFF">Platform</text>
+      <text x="92" y="68" font-family="ui-sans-serif, -apple-system, Segoe UI" font-size="14" fill="#94A3B8">Moderation, Reconciliation, Settings</text>
+      <text x="24" y="116" font-family="ui-sans-serif, -apple-system, Segoe UI" font-size="14" fill="#CBD5E1">- Idempotent webhooks + daily reconcile</text>
+      <text x="24" y="142" font-family="ui-sans-serif, -apple-system, Segoe UI" font-size="14" fill="#CBD5E1">- Pluggable PaymentProvider</text>
+      <text x="24" y="168" font-family="ui-sans-serif, -apple-system, Segoe UI" font-size="14" fill="#CBD5E1">- Banner / settings / audit log</text>
+    </g>
+  </g>
+
+  <g transform="translate(80,584)">
+    <text x="0" y="0" font-family="ui-sans-serif, -apple-system, Segoe UI" font-size="14" fill="#94A3B8" font-weight="600">STACK</text>
+    <g transform="translate(70,-14)">
+      <rect width="96" height="28" rx="14" fill="#1F2937" stroke="#334155"/>
+      <text x="48" y="18" text-anchor="middle" font-family="ui-sans-serif, -apple-system, Segoe UI" font-size="13" fill="#E2E8F0">Next.js 16</text>
+    </g>
+    <g transform="translate(178,-14)">
+      <rect width="96" height="28" rx="14" fill="#1F2937" stroke="#334155"/>
+      <text x="48" y="18" text-anchor="middle" font-family="ui-sans-serif, -apple-system, Segoe UI" font-size="13" fill="#E2E8F0">NestJS 11</text>
+    </g>
+    <g transform="translate(286,-14)">
+      <rect width="96" height="28" rx="14" fill="#1F2937" stroke="#334155"/>
+      <text x="48" y="18" text-anchor="middle" font-family="ui-sans-serif, -apple-system, Segoe UI" font-size="13" fill="#E2E8F0">Prisma 6</text>
+    </g>
+    <g transform="translate(394,-14)">
+      <rect width="108" height="28" rx="14" fill="#1F2937" stroke="#334155"/>
+      <text x="54" y="18" text-anchor="middle" font-family="ui-sans-serif, -apple-system, Segoe UI" font-size="13" fill="#E2E8F0">Postgres 16</text>
+    </g>
+    <g transform="translate(514,-14)">
+      <rect width="80" height="28" rx="14" fill="#1F2937" stroke="#334155"/>
+      <text x="40" y="18" text-anchor="middle" font-family="ui-sans-serif, -apple-system, Segoe UI" font-size="13" fill="#E2E8F0">FFmpeg</text>
+    </g>
+    <g transform="translate(606,-14)">
+      <rect width="80" height="28" rx="14" fill="#1F2937" stroke="#334155"/>
+      <text x="40" y="18" text-anchor="middle" font-family="ui-sans-serif, -apple-system, Segoe UI" font-size="13" fill="#E2E8F0">HLS.js</text>
+    </g>
+  </g>
+
+  <g transform="translate(1100,584)">
+    <text x="0" y="0" text-anchor="end" font-family="ui-sans-serif, -apple-system, Segoe UI" font-size="14" fill="#64748B">github.com/opc007/dramavn-platform</text>
+  </g>
+</svg>

@@ -1,0 +1,34 @@
+import { NestFactory } from '@nestjs/core';
+import { ValidationPipe } from '@nestjs/common';
+import { json, urlencoded } from 'express';
+import { AppModule } from './app.module';
+import { BigIntInterceptor } from './common/bigint.interceptor';
+import { AllExceptionsFilter } from './common/all-exceptions.filter';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  app.setGlobalPrefix('api'); // → /api/auth/*, /api/v1/*
+
+  // 支付宝回调为 form-urlencoded；上传走 multipart（multer）
+  app.use(json({ limit: '2mb' }));
+  app.use(urlencoded({ extended: true, limit: '2mb' }));
+
+  app.useGlobalPipes(
+    new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: false }),
+  );
+  app.useGlobalInterceptors(new BigIntInterceptor());
+  app.useGlobalFilters(new AllExceptionsFilter());
+
+  const origins = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000')
+    .split(',')
+    .map((s) => s.trim());
+  app.enableCors({ origin: origins, credentials: true });
+
+  const port = parseInt(process.env.PORT || '4000', 10);
+  await app.listen(port);
+  // eslint-disable-next-line no-console
+  console.log(`🚀 DramaVN API listening on http://localhost:${port} (prefix /api)`);
+}
+
+bootstrap();

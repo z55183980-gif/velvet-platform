@@ -1,0 +1,107 @@
+# DramaVN · 越南短剧独立站开源版
+
+> 一个面向越南市场的**短剧独立站**开源脚手架：观众可看、创作者可上传分成、平台可抽佣。  
+> 双语（vi + zh）Day 1，签名播放、幂等 Webhook、对账骨架均已内置。
+>
+> **本仓库不包含真实支付渠道实现**——支付仅保留抽象接口（`PaymentProvider`），由部署方按需接入 alipay / wechat / stripe / momo / zalopay / vietqr 等。
+
+![cover](assets/cover.png)
+
+---
+
+## ✨ 特性一览
+
+- 🎬 **三端一体**：单域名路径分区 `/` 观众 · `/creator` 创作者 · `/admin` 管理后台
+- 🌐 **双语 Day 1**：vi（默认）+ zh，i18n key + slug 双绑
+- 🔐 **签名播放**：HLS 短时签名 URL，片源不外泄
+- 💰 **账本只认 VND**：订单保留实付币种 + 汇率快照，可审计
+- ♻️ **幂等 + 对账骨架**：Webhook 重复推送不重复加款，日对账 Job 已留接口
+- 🧾 **钱包乐观锁 + 事务**：写钱走 `version` 自旋，避免丢更新
+- 🎥 **上传 → 转码 → 播放**：TUS 断点续传 + FFmpeg → 480p / 720p HLS
+- 🧱 **创作者分账**：默认 70% / 30%（官方自制可记为 100% 平台）
+- 🧰 **统一抽象**：支付、媒体、转码、鉴权均为可替换接口
+
+---
+
+## 🧱 技术栈
+
+| 层 | 技术 |
+|---|---|
+| Web 前端 | **Next.js 16** + React 19 + Tailwind v4 + hls.js |
+| API 服务 | **NestJS 11** + Prisma 6 + PostgreSQL 16 |
+| 媒体处理 | TUS 断点续传 + FFmpeg（480p / 720p HLS） |
+| 鉴权 | JWT + 邮箱 / 手机号 OTP（可关可开） |
+
+---
+
+## 📂 仓库结构
+
+```
+.
+├── apps/
+│   └── web/          # Next.js 前端（观众 / 创作者 / 管理后台 共站）
+├── services/
+│   └── api/          # NestJS 后端 API（Prisma / Webhook / 钱包 / 创作者）
+├── docs/             # 需求、架构、Schema、验收等中文设计文档
+├── assets/           # 封面图等宣传物料
+└── README.md
+```
+
+---
+
+## 🚀 快速开始（本地开发）
+
+> 前置：Node ≥ 20、PostgreSQL 16、FFmpeg（用于本地上传转码）。
+
+```bash
+# 1. 启动数据库（任选其一）
+#    例如 docker run -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:16
+
+# 2. 启动后端
+cd services/api
+cp .env.example .env       # 编辑 DATABASE_URL 等
+npm install
+npx prisma migrate deploy
+npm run prisma:seed         # 种子数据（可选）
+npm run start:dev           # 默认 http://localhost:4000
+
+# 3. 启动前端
+cd ../../apps/web
+cp .env.example .env.local  # 编辑 NEXT_PUBLIC_API_BASE
+npm install
+npm run dev                 # 默认 http://localhost:3000
+```
+
+打开浏览器访问 `http://localhost:3000`，即可看到观众端首页。  
+后台入口：`http://localhost:3000/admin`（默认账号见 `.env` 中的 `ADMIN_BOOTSTRAP_*`）。
+
+---
+
+## 💳 关于支付（重要）
+
+本仓库遵循 **「抽象保留，实现脱敏」** 原则：
+
+- ✅ 保留：`PaymentProvider` 接口、Webhook 幂等框架、对账骨架、模拟支付接口
+- ❌ 不包含：alipay / wechat / stripe 等任何渠道的私钥、签名逻辑、SDK 调用代码
+- 🔧 接入方式：在你自己的 `providers/` 里实现 `PaymentProvider`，再注册到 `PaymentsService` 即可
+
+详见 `services/api/src/payments/provider.interface.ts`。
+
+---
+
+## 🧭 设计文档
+
+`docs/` 下保留了完整的中文设计文档（地基原则、产品规则、Schema、API、UI 系统、验收清单等），可直接作为二次开发或团队对齐的参考。
+
+---
+
+## 📜 License
+
+MIT（详见 [LICENSE](LICENSE)）。
+
+---
+
+## 🙏 Credits
+
+- 项目所有者：[opc007](https://github.com/opc007)
+- 灵感与最佳实践：[NestJS](https://nestjs.com) · [Next.js](https://nextjs.org) · [Prisma](https://www.prisma.io) · [hls.js](https://github.com/video-dev/hls.js)

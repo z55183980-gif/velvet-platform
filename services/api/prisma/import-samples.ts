@@ -1,0 +1,248 @@
+import { PrismaClient } from '@prisma/client';
+import * as fs from 'fs';
+import * as path from 'path';
+
+const prisma = new PrismaClient();
+
+const SAMPLE_ROOT =
+  process.env.SAMPLE_ROOT || '/Users/ahs/Downloads/aidym宣传视频/历史成品';
+
+const VIDEO_EXT = new Set(['.mp4', '.mov', '.webm', '.mkv', '.m4v']);
+const IMG_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
+
+function norm(s: string) {
+  return s.replace(
+    /[\s;:；：，,、.。！!?？'""''()（）\[\]【】`~@#$%^&*\-_=+]/g,
+    '',
+  );
+}
+
+interface Def {
+  slug: string;
+  titleVi: string;
+  titleZh: string;
+  descVi: string;
+  descZh: string;
+  category: string;
+  freeCount: number;
+  priceCredits: bigint;
+  priceVnd: bigint;
+  isOfficial?: boolean;
+  isFeatured?: boolean;
+}
+
+const PAID_CREDITS = 10n;
+const PAID_VND = 10000n;
+
+// 按“归一化名”匹配文件夹；value 为元数据
+const DEFS: Record<string, Def> = {
+  末世之约: {
+    slug: 'mo-shi-zhi-yue',
+    titleVi: 'Cuối thế giới chi ước',
+    titleZh: '末世之约',
+    descVi: 'Thế giới sụp đổ, những người sống sót tìm kiếm hy vọng cuối cùng.',
+    descZh: '末世降临，幸存者在废墟中追寻最后的希望。',
+    category: 'tam_ly',
+    freeCount: 2,
+    priceCredits: PAID_CREDITS,
+    priceVnd: PAID_VND,
+    isOfficial: true,
+    isFeatured: true,
+  },
+  穿越修仙界我靠手机忽悠全宗门: {
+    slug: 'chuan-yue-xiu-xian',
+    titleVi: 'Xuyên việt tu tiên',
+    titleZh: '穿越修仙界，我靠手机忽悠全宗门',
+    descVi: 'Chàng trai hiện đại xuyên không vào thế giới tu tiên với chiếc điện thoại.',
+    descZh: '现代青年带着手机穿越修仙界，凭科技忽悠整个宗门。',
+    category: 'co_trang',
+    freeCount: 2,
+    priceCredits: PAID_CREDITS,
+    priceVnd: PAID_VND,
+    isFeatured: true,
+  },
+  青灯引僵成片: {
+    slug: 'qing-deng-yin-jiang',
+    titleVi: 'Đèn xanh dẫn xác ướp',
+    titleZh: '青灯引僵',
+    descVi: 'Ngọn đèn xanh dẫn lối những xác ướp trở về.',
+    descZh: '一盏青灯，引动沉睡的僵尸归来。',
+    category: 'co_trang',
+    freeCount: 1,
+    priceCredits: PAID_CREDITS,
+    priceVnd: PAID_VND,
+  },
+  魔兽争霸霜狼之子荣耀觉醒: {
+    slug: 'mo-shou-shuang-lang',
+    titleVi: 'Warcraft: Đứa con sói băng',
+    titleZh: '魔兽争霸：霜狼之子',
+    descVi: 'Huyền thoại sói băng trỗi dậy giữa các đấu trường.',
+    descZh: '霜狼之子在战场中觉醒，书写魔兽传奇。',
+    category: 'hanh_dong',
+    freeCount: 1,
+    priceCredits: PAID_CREDITS,
+    priceVnd: PAID_VND,
+  },
+  星际赘婿地球男儿太抢手: {
+    slug: 'xing-ji-zhui-xu',
+    titleVi: 'Tể phu ngôi sao',
+    titleZh: '星际赘婿：地球男儿太抢手',
+    descVi: 'Chàng rể ngoại tộc từ Trái Đất gây chấn động thiên hà.',
+    descZh: '来自地球的赘婿，意外成为星际焦点。',
+    category: 'hanh_dong',
+    freeCount: 1,
+    priceCredits: PAID_CREDITS,
+    priceVnd: PAID_VND,
+  },
+  江西赶尸人: {
+    slug: 'jiang-xi-gan-shi',
+    titleVi: 'Giang Tây thôi thi',
+    titleZh: '江西赶尸人',
+    descVi: 'Người dẫn xác từ Giang Tây đi qua những ngôi làng u tối.',
+    descZh: '江西赶尸人，夜行于幽暗山村之间。',
+    category: 'co_trang',
+    freeCount: 2,
+    priceCredits: PAID_CREDITS,
+    priceVnd: PAID_VND,
+  },
+};
+
+const CATEGORIES = [
+  { slug: 'do_thi', nameVi: 'Đô thị', nameZh: '都市' },
+  { slug: 'ngon_tinh', nameVi: 'Ngôn tình', nameZh: '言情' },
+  { slug: 'hanh_dong', nameVi: 'Hành động', nameZh: '动作' },
+  { slug: 'hai_huoc', nameVi: 'Hài hước', nameZh: '喜剧' },
+  { slug: 'tam_ly', nameVi: 'Tâm lý', nameZh: '心理' },
+  { slug: 'co_trang', nameVi: 'Cổ trang', nameZh: '古装' },
+];
+
+function numCmp(a: string, b: string) {
+  const na = parseInt((a.match(/\d+/g) || ['0']).join(''), 10) || 0;
+  const nb = parseInt((b.match(/\d+/g) || ['0']).join(''), 10) || 0;
+  return na - nb;
+}
+
+async function main() {
+  if (!fs.existsSync(SAMPLE_ROOT)) {
+    console.error('[import-samples] SAMPLE_ROOT 不存在:', SAMPLE_ROOT);
+    process.exit(1);
+  }
+
+  // 保证分类存在
+  for (const c of CATEGORIES) {
+    await prisma.category.upsert({ where: { slug: c.slug }, create: c, update: c });
+  }
+
+  // 取/建默认创作者
+  let creator = await prisma.creator.findFirst();
+  if (!creator) {
+    const u = await prisma.user.upsert({
+      where: { email: 'sample@dramavn.dev' },
+      create: { email: 'sample@dramavn.dev', nickname: 'Sample Studio' },
+      update: {},
+    });
+    creator = await prisma.creator.create({
+      data: {
+        userId: u.id,
+        creatorType: 'INDIVIDUAL',
+        displayName: 'Sample Studio',
+        revenueShare: 0.7,
+        kycStatus: 'APPROVED',
+      },
+    });
+  }
+
+  const dirs = fs
+    .readdirSync(SAMPLE_ROOT, { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .map((d) => d.name);
+
+  for (const dir of dirs) {
+    const def = DEFS[norm(dir)];
+    if (!def) {
+      console.log('[import-samples] 跳过未配置文件夹:', dir);
+      continue;
+    }
+    const existing = await prisma.drama.findUnique({ where: { slug: def.slug } });
+    if (existing) {
+      console.log('[import-samples] 已存在，跳过:', def.slug);
+      continue;
+    }
+
+    const folder = path.join(SAMPLE_ROOT, dir);
+    const files = fs.readdirSync(folder);
+
+    // 视频（排除 素材 子目录）
+    const videos = files
+      .filter((f) => VIDEO_EXT.has(path.extname(f).toLowerCase()))
+      .sort((a, b) => numCmp(a, b));
+
+    if (videos.length === 0) {
+      console.log('[import-samples] 无视频，跳过:', dir);
+      continue;
+    }
+
+    // 封面（顶层图片，优先 封面/cover）
+    const topImgs = files.filter((f) => IMG_EXT.has(path.extname(f).toLowerCase()));
+    const coverFile = topImgs.find((f) => /cover|封面/i.test(f)) || topImgs[0];
+    const coverUrl = coverFile
+      ? `/api/v1/media/${encodeURIComponent(dir)}/${encodeURIComponent(coverFile)}`
+      : '';
+
+    const drama = await prisma.drama.create({
+      data: {
+        creatorId: creator.id,
+        slug: def.slug,
+        titleVi: def.titleVi,
+        titleZh: def.titleZh,
+        descriptionVi: def.descVi,
+        descriptionZh: def.descZh,
+        categorySlug: def.category,
+        coverUrl,
+        freeEpisodeCount: def.freeCount,
+        isOfficial: !!def.isOfficial,
+        isFeatured: !!def.isFeatured,
+        status: 'LIVE',
+        publishedAt: new Date(),
+        totalEpisodes: videos.length,
+        viewCount: BigInt(Math.floor(Math.random() * 5000) + 500),
+        unlockCount: BigInt(Math.floor(Math.random() * 500) + 50),
+      },
+    });
+
+    for (let i = 0; i < videos.length; i++) {
+      const f = videos[i];
+      const ep = i + 1;
+      const isFree = ep <= def.freeCount;
+      const rel = `${dir}/${f}`; // 相对路径，play 接口会拼 /api/v1/media/
+      await prisma.episode.create({
+        data: {
+          dramaId: drama.id,
+          episodeNumber: ep,
+          title: `Tập ${ep}`,
+          isFree,
+          priceVnd: isFree ? 0n : def.priceVnd,
+          priceCredits: isFree ? 0n : def.priceCredits,
+          durationSec: 120,
+          hlsUrl: rel,
+          thumbnailUrl: coverUrl,
+          uploadStatus: 'COMPLETED',
+          transcodeStatus: 'COMPLETED',
+        },
+      });
+    }
+    console.log(
+      `[import-samples] ${def.titleZh} → ${videos.length} tập (free ${def.freeCount}), cover=${coverFile || '无'}`,
+    );
+  }
+  console.log('[import-samples] done');
+}
+
+main()
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });

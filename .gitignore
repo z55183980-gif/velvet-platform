@@ -1,0 +1,74 @@
+# ===== Node / 包管理器 =====
+node_modules/
+.pnp/
+.pnp.js
+.yarn/cache
+.yarn/install-state.gz
+.pnpm-store/
+
+# ===== Next.js =====
+.next/
+out/
+build/
+dist/
+
+# ===== NestJS =====
+dist/
+
+# ===== 测试 / 缓存 =====
+.nyc_output/
+coverage/
+.cache/
+.turbo/
+.turbo-cache/
+.parcel-cache/
+
+# ===== 日志 =====
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+logs/
+
+# ===== 运行时 / 上传 / 媒体 =====
+storage/
+uploads/
+*.tsbuildinfo
+
+# ===== 浏览器自动化缓存 =====
+.playwright-mcp/
+playwright-report/
+test-results/
+
+# ===== 环境与密钥（绝不要提交真实值）=====
+.env
+.env.local
+.env.*.local
+.env.production
+*.pem
+*.key
+*.crt
+*.p12
+
+# ===== 文档截图（仅本地用）=====
+home-check.png
+
+# ===== 系统 / 编辑器 =====
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+.history/
+
+# ===== 工作记忆（不进入仓库）=====
+.workbuddy/
+
+# ===== Prisma 本地库 / 临时 SQL =====
+*.db
+*.db-journal
+*.sqlite
+*.sqlite-journal

@@ -1,0 +1,617 @@
+// DramaVN 数据库 Schema（v7.0）
+// 严格对应 docs/03-数据库Schema与API文档.md §三（17 张表）。
+// 注意：Better Auth 自带 user/session/account/verification 表，本版鉴权采用自研会话
+// （见 src/auth），User.id 为 BigInt；若后续切换到 Better Auth 需迁移主键类型，已在 05 文档标注。
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  // 越南语 + 中文 ICU 排序（数据库已 CREATE COLLATION vi_vn / zh_cn）
+}
+
+// ========== 用户 ==========
+model User {
+  id            BigInt      @id @default(autoincrement())
+  uuid          String      @unique @default(uuid())
+  phone         String?     @unique
+  email         String?     @unique
+  /// 登录账号（内测：可与邮箱二选一登录）
+  username      String?     @unique
+  zaloId        String?     @unique
+  googleId      String?     @unique
+  nickname      String?
+  /// scrypt 哈希；OTP-only 用户可为空
+  passwordHash  String?
+  avatarUrl     String?
+  locale        String      @default("vi")     // vi | zh
+  status        UserStatus  @default(ACTIVE)
+  createdAt     DateTime    @default(now()) @db.Timestamptz
+  updatedAt     DateTime    @updatedAt
+  deletedAt     DateTime?
+
+  wallet        Wallet?
+  creator       Creator?
+  orders        Order[]
+  unlocks       UserUnlock[]
+  favorites     Favorite[]
+  watchHistory  WatchHistory[]
+  notifications Notification[]
+  sessions      Session[]
+
+  @@index([phone])
+  @@index([zaloId])
+  @@index([createdAt])
+  @@map("users")
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  BANNED
+}
+
+// ========== 创作者（含官方）==========
+model Creator {
+  id              BigInt      @id @default(autoincrement())
+  userId          BigInt      @unique
+  creatorType     CreatorType @default(INDIVIDUAL)
+  displayName     String
+
+  kycStatus       KycStatus   @default(PENDING)
+  cccdNumber      String?
+  cccdFrontUrl    String?
+  cccdBackUrl     String?
+  faceVerified    Boolean     @default(false)
+  taxCode         String?
+  kycRejectReason String?
+
+  bankAccount     Json?
+  bankVerified    Boolean     @default(false)
+
+  revenueShare    Decimal     @default(0.70) @db.Decimal(5, 4)
+
+  status          CreatorStatus @default(ACTIVE)
+  createdAt       DateTime    @default(now()) @db.Timestamptz
+  updatedAt       DateTime    @updatedAt
+
+  user            User        @relation(fields: [userId], references: [id])
+  dramas          Drama[]
+  orders          Order[]
+  earnings        CreatorEarning?
+  withdraws       WithdrawRequest[]
+
+  @@index([creatorType])
+  @@index([kycStatus])
+  @@map("creators")
+}
+
+enum CreatorType {
+  OFFICIAL
+  INDIVIDUAL
+}
+
+enum KycStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum CreatorStatus {
+  ACTIVE
+  SUSPENDED
+  BANNED
+}
+
+// ========== Session ==========
+model Session {
+  id            String      @id
+  userId        BigInt
+  expiresAt     DateTime
+  ipAddress     String?
+  userAgent     String?
+  createdAt     DateTime    @default(now())
+
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+// ========== 分类（主数据，F9：slug + 双语名）==========
+model Category {
+  slug        String   @id
+  nameVi      String
+  nameZh      String
+  sortOrder   Int      @default(0)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now()) @db.Timestamptz
+
+  dramas      Drama[]
+  @@index([isActive, sortOrder])
+  @@map("categories")
+}
+
+// ========== 短剧 ==========
+model Drama {
+  id              BigInt      @id @default(autoincrement())
+  uuid            String      @unique @default(uuid())
+  slug            String      @unique
+  creatorId       BigInt
+
+  titleVi         String
+  titleZh         String?
+  descriptionVi   String?
+  descriptionZh   String?
+
+  categorySlug    String
+  category        Category  @relation(fields: [categorySlug], references: [slug])
+  tags            String[]
+
+  coverUrl        String?
+
+  totalEpisodes   Int         @default(0)
+  freeEpisodeCount Int        @default(3)
+  // 免费判定优先级（播放/解锁前校验，见 00 F6）：
+  //   1) episode.isFree == true            → 免费
+  //   2) episodeNumber <= freeEpisodeCount → 免费
+  //   否则为付费集
+
+  viewCount       BigInt      @default(0)
+  unlockCount     BigInt      @default(0)
+  favoriteCount   BigInt      @default(0)
+
+  status          DramaStatus @default(DRAFT)
+  isOfficial      Boolean     @default(false)
+  isFeatured      Boolean     @default(false)
+  /// 排序权重（越大越靠前；与 isFeatured/官方/上架时间配合决定展示顺序）
+  sortWeight      Int         @default(0)
+
+  createdAt       DateTime    @default(now()) @db.Timestamptz
+  updatedAt       DateTime    @updatedAt
+  publishedAt     DateTime?
+
+  creator         Creator     @relation(fields: [creatorId], references: [id])
+  episodes        Episode[]
+  favorites       Favorite[]
+
+  @@index([status, publishedAt(sort: Desc)])
+  @@index([categorySlug, status])
+  @@index([creatorId])
+  @@index([isOfficial, isFeatured, status])
+  @@map("dramas")
+}
+
+enum DramaStatus {
+  DRAFT
+  PENDING_REVIEW
+  LIVE
+  OFFLINE
+  REJECTED
+}
+
+// ========== 剧集 ==========
+model Episode {
+  id              BigInt      @id @default(autoincrement())
+  uuid            String      @unique @default(uuid())
+  dramaId         BigInt
+  episodeNumber   Int
+
+  title           String?
+
+  hlsUrl          String?
+  thumbnailUrl    String?
+  durationSec     Int         @default(0)
+
+  isFree          Boolean     @default(false)
+  priceVnd        BigInt      @default(0)           // 法币参考价（创作者分润 / 展示回退用）
+  priceCredits    BigInt      @default(0)           // 平台原子定价（积分），解锁按此扣款
+
+  uploadStatus    UploadStatus @default(PENDING)
+  transcodeStatus TranscodeStatus @default(PENDING)
+  originalUrl     String?
+
+  viewCount       BigInt      @default(0)
+  unlockCount     BigInt      @default(0)
+
+  createdAt       DateTime    @default(now()) @db.Timestamptz
+  updatedAt       DateTime    @updatedAt
+
+  drama           Drama       @relation(fields: [dramaId], references: [id], onDelete: Cascade)
+  unlocks         UserUnlock[]
+
+  @@unique([dramaId, episodeNumber])
+  @@index([dramaId, episodeNumber])
+  @@index([transcodeStatus])
+  @@map("episodes")
+}
+
+enum UploadStatus {
+  PENDING
+  UPLOADING
+  COMPLETED
+  FAILED
+}
+
+enum TranscodeStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+// ========== 用户解锁记录 ==========
+model UserUnlock {
+  id            BigInt      @id @default(autoincrement())
+  userId        BigInt
+  episodeId     BigInt
+  orderId       BigInt?     // 付费解锁关联订单；免费集为 null
+  unlockedAt    DateTime    @default(now()) @db.Timestamptz
+
+  user          User        @relation(fields: [userId], references: [id])
+  episode       Episode     @relation(fields: [episodeId], references: [id])
+  order         Order?      @relation(fields: [orderId], references: [id])
+
+  @@unique([userId, episodeId])
+  @@index([userId, unlockedAt(sort: Desc)])
+  @@map("user_unlocks")
+}
+
+// ========== 收藏 ==========
+model Favorite {
+  id            BigInt      @id @default(autoincrement())
+  userId        BigInt
+  dramaId       BigInt
+  group         String?      // 分组名（默认空 = 默认组）
+  note          String?      // 备注（最多 500 字符）
+  createdAt     DateTime    @default(now()) @db.Timestamptz
+
+  user          User        @relation(fields: [userId], references: [id])
+  drama         Drama       @relation(fields: [dramaId], references: [id])
+
+  @@unique([userId, dramaId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([userId, group])
+  @@map("favorites")
+}
+
+// ========== 观看历史 ==========
+model WatchHistory {
+  id            BigInt      @id @default(autoincrement())
+  userId        BigInt
+  episodeId     BigInt
+  dramaId       BigInt
+  progressSec   Int         @default(0)
+  watchedAt     DateTime    @default(now()) @db.Timestamptz
+
+  user          User        @relation(fields: [userId], references: [id])
+
+  @@unique([userId, episodeId])
+  @@index([userId, watchedAt(sort: Desc)])
+  @@map("watch_history")
+}
+
+// ========== 用户钱包（原子单位：积分 credits）==========
+model Wallet {
+  userId          BigInt      @id
+  balanceCredits  BigInt      @default(0)           // 原子单位：积分
+  totalRechargedCredits BigInt @default(0)          // 累计充值积分
+  totalSpentCredits BigInt    @default(0)           // 累计消费积分
+  version         Int         @default(0)           // 乐观锁
+  updatedAt       DateTime    @updatedAt
+
+  user            User        @relation(fields: [userId], references: [id])
+  transactions    WalletTransaction[]
+
+  @@map("wallets")
+}
+
+// ========== 钱包流水（观众消费钱包，复式记账，单位：积分）==========
+model WalletTransaction {
+  id              BigInt      @id @default(autoincrement())
+  walletUserId    BigInt
+  type            TxType
+  amountCredits   BigInt      @default(0)             // 正负数（积分）
+  orderId         BigInt                              // 关联订单（必填，用于幂等）
+  balanceAfter    BigInt                              // 记账后积分余额
+  remark          String?
+  createdAt       DateTime    @default(now()) @db.Timestamptz
+
+  wallet          Wallet      @relation(fields: [walletUserId], references: [userId])
+
+  @@unique([orderId, type])                         // 防重复入账
+  @@index([walletUserId, createdAt(sort: Desc)])
+  @@map("wallet_transactions")
+}
+
+enum TxType {
+  TOPUP
+  UNLOCK
+  REFUND
+}
+
+// ========== 订单 ==========
+model Order {
+  id              BigInt      @id @default(autoincrement())
+  orderNo         String      @unique
+  idempotencyKey  String      @unique
+  userId          BigInt
+  creatorId       BigInt?
+
+  orderType       OrderType
+  episodeId       BigInt?
+  dramaId         BigInt?
+  /// 充值套餐（历史单可空）
+  packageId       BigInt?
+
+  amountVnd         BigInt
+  amountCredits     BigInt      @default(0)          // 本单移动的积分（充值=购入积分 / 解锁=扣减积分）
+  creatorIncomeVnd  BigInt
+  platformFeeVnd    BigInt
+
+  payCurrency       String
+  payAmount         Decimal?  @db.Decimal(18, 2)
+  fxRate            Decimal?  @db.Decimal(18, 8)
+  fxSource          String?
+
+  paymentMethod    PaymentMethod
+  paymentStatus    PaymentStatus @default(PENDING)
+  externalRef      String?
+  paidAt           DateTime?
+  refundedAt       DateTime?
+  /// 管理员后台退款理由（自助退款时为 'user-self'）；review 状态用
+  refundReason     String?
+  /// 退款工单状态：null | REQUESTED | APPROVED | REFUSED
+  refundStatus     String?
+  /// 申请退款的观众留言（用户侧）
+  refundNote       String?
+  /** 创作者收益是否已从 pending 解冻到 available（T+7） */
+  earningSettled   Boolean       @default(false)
+
+  createdAt       DateTime    @default(now()) @db.Timestamptz
+  updatedAt       DateTime    @updatedAt
+
+  user            User        @relation(fields: [userId], references: [id])
+  creator         Creator?    @relation(fields: [creatorId], references: [id])
+  package         TopupPackage? @relation(fields: [packageId], references: [id])
+  unlocks         UserUnlock[]
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([creatorId, createdAt(sort: Desc)])
+  @@index([paymentStatus, createdAt])
+  @@index([packageId])
+  @@map("orders")
+}
+
+enum OrderType {
+  TOPUP
+  EPISODE_UNLOCK
+}
+
+enum PaymentMethod {
+  WALLET
+  STRIPE
+  WECHAT
+  ALIPAY
+  MOMO
+  ZALOPAY
+  VIETQR
+  BANK_TRANSFER
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+  CANCELLED
+}
+
+// ========== 创作者收益余额 ==========
+model CreatorEarning {
+  creatorId        BigInt      @id
+  availableVnd     BigInt      @default(0)
+  pendingVnd       BigInt      @default(0)
+  withdrawnVnd     BigInt      @default(0)
+  totalEarnedVnd   BigInt      @default(0)
+  updatedAt        DateTime    @updatedAt
+
+  creator          Creator     @relation(fields: [creatorId], references: [id])
+
+  @@map("creator_earnings")
+}
+
+// ========== 提现申请 ==========
+model WithdrawRequest {
+  id              BigInt      @id @default(autoincrement())
+  requestNo       String      @unique
+  creatorId       BigInt
+  amountVnd       BigInt
+  bankInfo        Json
+  status          WithdrawStatus @default(PENDING)
+  rejectReason    String?
+  paidAt          DateTime?
+  // 提现税务（PIT 代扣，W5 要求预留）
+  pitRate         Decimal?   @db.Decimal(5, 4)
+  pitVnd          BigInt?     @default(0)
+  netVnd          BigInt?     @default(0)
+  createdAt       DateTime    @default(now()) @db.Timestamptz
+  updatedAt       DateTime    @updatedAt
+
+  creator         Creator     @relation(fields: [creatorId], references: [id])
+
+  @@index([creatorId, createdAt(sort: Desc)])
+  @@index([status, createdAt])
+  @@map("withdraw_requests")
+}
+
+enum WithdrawStatus {
+  PENDING
+  APPROVED
+  PAID
+  REJECTED
+  CANCELLED
+}
+
+// ========== 配置 / Banner / 对账 ==========
+
+/// 充值积分套餐：积分固定，基准价为人民币；其它法币按汇率折算
+model TopupPackage {
+  id            BigInt    @id @default(autoincrement())
+  name          String?
+  credits       BigInt                              // 到账积分
+  baseCurrency  String    @default("CNY")           // 基准币，固定 CNY
+  basePrice     Decimal   @db.Decimal(18, 2)        // 人民币价格
+  sortOrder     Int       @default(0)
+  active        Boolean   @default(true)
+  createdAt     DateTime  @default(now()) @db.Timestamptz
+  updatedAt     DateTime  @updatedAt
+
+  orders        Order[]
+
+  @@index([active, sortOrder])
+  @@map("topup_packages")
+}
+
+/// 法币相对人民币汇率。
+/// buyRate 语义（套餐定价）：cnyToFiat = 1 CNY 等于多少该币种（CNY 自身为 1）。
+/// sellRate 预留（退款等），默认可与 buyRate 相同。
+model CreditExchangeRate {
+  id        BigInt    @id @default(autoincrement())
+  currency  String    @unique                         // VND | CNY | USD ...
+  buyRate   Decimal   @db.Decimal(18, 8)              // cnyToFiat：1 CNY = N 该币
+  sellRate  Decimal   @db.Decimal(18, 8)              // 预留
+  updatedAt DateTime  @updatedAt
+
+  @@map("credit_exchange_rates")
+}
+
+/// 汇率变更历史（合规审计；admin 修改即写一行）
+model ExchangeRateHistory {
+  id           BigInt    @id @default(autoincrement())
+  currency     String
+  prevBuyRate  Decimal?  @db.Decimal(18, 8)
+  prevSellRate Decimal?  @db.Decimal(18, 8)
+  newBuyRate   Decimal   @db.Decimal(18, 8)
+  newSellRate  Decimal   @db.Decimal(18, 8)
+  actorId      BigInt?
+  reason       String?
+  createdAt    DateTime  @default(now()) @db.Timestamptz
+
+  @@index([currency, createdAt(sort: Desc)])
+  @@index([actorId, createdAt(sort: Desc)])
+  @@map("exchange_rate_histories")
+}
+
+model SystemSetting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+  @@map("system_settings")
+}
+
+model Banner {
+  id        BigInt   @id @default(autoincrement())
+  titleVi   String
+  titleZh   String?
+  imageUrl  String
+  linkUrl   String?
+  dramaId   BigInt?
+  startAt   DateTime
+  endAt     DateTime
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  @@index([isActive, startAt, endAt])
+  @@map("banners")
+}
+
+model PaymentReconciliation {
+  id            BigInt   @id @default(autoincrement())
+  date          DateTime @db.Date
+  provider      String
+  localPaidCnt  Int
+  remotePaidCnt Int
+  diffJson      Json?
+  status        String   // matched | mismatch
+  createdAt     DateTime @default(now())
+  @@unique([date, provider])
+  @@map("payment_reconciliations")
+}
+
+/// 管理后台账号（与观众 User 分离）
+model AdminUser {
+  id           BigInt    @id @default(autoincrement())
+  email        String    @unique
+  username     String    @unique
+  passwordHash String
+  displayName  String?
+  status       String    @default("ACTIVE") // ACTIVE | DISABLED
+  /// SUPER_ADMIN（全部权限）| OPS（不可改 finance/设置）| 默认 SUPER_ADMIN
+  role         String    @default("SUPER_ADMIN")
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now()) @db.Timestamptz
+  updatedAt    DateTime  @updatedAt
+
+  @@index([status])
+  @@map("admin_users")
+}
+
+/// 审计日志（合规闭环；admin 关键操作可追溯）
+model AuditLog {
+  id          BigInt   @id @default(autoincrement())
+  actorId     BigInt?                          // adminId；系统任务为 null
+  actorType   String   @default("admin")        // admin | system
+  action      String                            // drama.approve / kyc.reject / withdraw.paid ...
+  targetType  String?                           // drama | creator | order | withdraw | exchangeRate | banner
+  targetId    String?
+  payload     Json?
+  ip          String?
+  userAgent   String?
+  result      String   @default("ok")           // ok | fail
+  message     String?
+  createdAt   DateTime @default(now()) @db.Timestamptz
+
+  @@index([actorId, createdAt(sort: Desc)])
+  @@index([action, createdAt(sort: Desc)])
+  @@index([targetType, targetId])
+  @@map("audit_logs")
+}
+
+/// 站内信（系统 → 用户）
+model Notification {
+  id         BigInt    @id @default(autoincrement())
+  userId     BigInt
+  type       String    // kyc.approved | kyc.rejected | withdraw.paid | drama.live | drama.rejected
+  titleVi    String
+  titleZh    String?
+  bodyVi     String?
+  bodyZh     String?
+  payload    Json?
+  readAt     DateTime?
+  createdAt  DateTime  @default(now()) @db.Timestamptz
+
+  user       User      @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([userId, readAt])
+  @@map("notifications")
+}
+
+/// Webhook 事件去重（按 provider + eventId）
+model WebhookEvent {
+  id        BigInt   @id @default(autoincrement())
+  provider  String
+  eventId   String
+  orderNo   String?
+  payload   Json?
+  createdAt DateTime @default(now()) @db.Timestamptz
+
+  @@unique([provider, eventId])
+  @@index([createdAt(sort: Desc)])
+  @@map("webhook_events")
+}
