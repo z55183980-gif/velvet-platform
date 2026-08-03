@@ -9,6 +9,14 @@ import { AppShell } from "@/components/app-shell";
 export const metadata: Metadata = {
   title: "Velvet — Spicy Short Dramas",
   description: "Forbidden romance. Private affairs. Unlock every episode.",
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/favicon-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/logo.png", sizes: "256x256", type: "image/png" },
+    ],
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

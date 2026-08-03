@@ -12,18 +12,29 @@ function isImg(s: string) {
   return /^https?:\/\//.test(s) || s.startsWith("/");
 }
 
-export function DramaCard({ drama, compact }: { drama: Drama; compact?: boolean }) {
+export function DramaCard({
+  drama,
+  compact,
+  variant = "default",
+}: {
+  drama: Drama;
+  compact?: boolean;
+  /** Hongguo-style home grid: episode badge on poster, tags under title */
+  variant?: "default" | "grid";
+}) {
   const { locale, t } = useLocale();
   const title = pickContentText(locale, drama.titleVi, drama.titleZh);
   const cat = categoryName(drama.categorySlug, locale);
   const isFree = drama.freeCount > 0;
+  const isGrid = variant === "grid";
 
   return (
     <Link href={`/drama/${drama.id}`} className="group block">
       <div
         className={cn(
-          "relative aspect-[2/3] overflow-hidden rounded-md bg-surface-2",
-          "transition-transform duration-[var(--dur-slow)] ease-[var(--ease-out)] group-hover:scale-[1.04]",
+          "relative aspect-[2/3] overflow-hidden bg-surface-2",
+          isGrid ? "rounded-lg" : "rounded-md",
+          "transition-transform duration-[var(--dur-slow)] ease-[var(--ease-out)] group-hover:scale-[1.03]",
         )}
       >
         {isImg(drama.cover[0]) ? (
@@ -39,46 +50,62 @@ export function DramaCard({ drama, compact }: { drama: Drama; compact?: boolean 
             style={{ background: `linear-gradient(150deg, ${drama.cover[0]}, ${drama.cover[1]})` }}
           />
         )}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-transparent opacity-80" />
+        <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-transparent to-transparent opacity-90" />
 
-        {drama.isVip && (
-          <div className="absolute left-2.5 top-2.5">
-            <Badge variant="vip">{t("card.vip")}</Badge>
+        {isGrid ? (
+          <div className="absolute left-2 top-2 rounded bg-black/55 px-1.5 py-0.5 text-[11px] font-medium text-white/95 backdrop-blur-sm">
+            {t("card.episodesAll", { n: drama.episodesCount })}
           </div>
+        ) : (
+          <>
+            {drama.isVip && (
+              <div className="absolute left-2.5 top-2.5">
+                <Badge variant="vip">{t("card.vip")}</Badge>
+              </div>
+            )}
+            {!compact && drama.rating > 0 && (
+              <div className="absolute right-2.5 top-2.5 inline-flex items-center gap-1 rounded-full bg-black/45 px-2 py-0.5 text-caption text-white backdrop-blur-sm">
+                <Star className="h-3 w-3 fill-gold text-gold" />
+                {drama.rating.toFixed(1)}
+              </div>
+            )}
+            <div className="absolute bottom-2.5 left-2.5">
+              {isFree ? (
+                <Badge variant="free">{t("card.free")}</Badge>
+              ) : drama.pricePerEp > 0 ? (
+                <span className="text-caption font-medium text-white/90">
+                  {formatCredits(drama.pricePerEp, t("card.credits"))}
+                </span>
+              ) : null}
+            </div>
+          </>
         )}
-
-        {!compact && drama.rating > 0 && (
-          <div className="absolute right-2.5 top-2.5 inline-flex items-center gap-1 rounded-full bg-black/45 px-2 py-0.5 text-caption text-white backdrop-blur-sm">
-            <Star className="h-3 w-3 fill-gold text-gold" />
-            {drama.rating.toFixed(1)}
-          </div>
-        )}
-
-        <div className="absolute bottom-2.5 left-2.5">
-          {isFree ? (
-            <Badge variant="free">{t("card.free")}</Badge>
-          ) : drama.pricePerEp > 0 ? (
-            <span className="text-caption font-medium text-white/90">
-              {formatCredits(drama.pricePerEp, t("card.credits"))}
-            </span>
-          ) : null}
-        </div>
       </div>
 
-      <div className={cn(compact ? "pt-3" : "pt-4")}>
+      <div className={cn(compact || isGrid ? "pt-2.5" : "pt-4")}>
         <h3
           className={cn(
             "font-semibold text-ink transition-colors group-hover:text-brand",
-            compact ? "line-clamp-2 text-body-sm" : "line-clamp-2 text-h4",
+            isGrid
+              ? "line-clamp-1 text-[14px] leading-snug"
+              : compact
+                ? "line-clamp-2 text-body-sm"
+                : "line-clamp-2 text-h4",
           )}
         >
           {title}
         </h3>
-        {!compact && (
+        {isGrid ? (
+          <p className="mt-1.5 flex flex-wrap gap-1.5 text-[12px] text-ink-subtle">
+            <span>{cat}</span>
+            {drama.isVip ? <span>· {t("card.vip")}</span> : null}
+            {isFree ? <span>· {t("card.free")}</span> : null}
+          </p>
+        ) : !compact ? (
           <p className="mt-1.5 text-caption text-ink-muted">
             {cat} · {drama.episodesCount} {t("card.episodes")}
           </p>
-        )}
+        ) : null}
       </div>
     </Link>
   );

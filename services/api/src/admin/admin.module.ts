@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
 import { AdminService } from './admin.service';
-import { AdminController } from './admin.controller';
 import { AdminAuthController } from './admin-auth.controller';
 import { AdminAuthService } from './admin-auth.service';
 import { AdminGuard } from './admin.guard';
@@ -25,10 +24,29 @@ import { AdminsService } from './admins.service';
 import { AdminExportService } from './export.service';
 import { RedeemModule } from '../redeem/redeem.module';
 import { AdminOpsService } from './ops.service';
+import { DashboardController } from './dashboard.controller';
+import { ContentController } from './content.controller';
+import { UsersController } from './users.controller';
+import { OrdersController } from './orders.controller';
+import { FinanceController } from './finance.controller';
+import { CreatorsController } from './creators.controller';
+import { OpsController } from './ops.controller';
+import { SettingsController } from './settings.controller';
 
 @Module({
   imports: [WalletModule, ExchangeModule, ReconcileModule, AuthModule, RedeemModule],
-  controllers: [AdminAuthController, AdminController, AdminAuditController],
+  controllers: [
+    AdminAuthController,
+    AdminAuditController,
+    DashboardController,
+    ContentController,
+    UsersController,
+    OrdersController,
+    FinanceController,
+    CreatorsController,
+    OpsController,
+    SettingsController,
+  ],
   providers: [
     AdminService,
     AdminAuthService,

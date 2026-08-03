@@ -13,7 +13,13 @@ import { updateMe } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 /** StarNexus-style language dropdown: Globe + short code + checklist. */
-export function LanguageSwitcher({ className }: { className?: string }) {
+export function LanguageSwitcher({
+  className,
+  tone = "default",
+}: {
+  className?: string;
+  tone?: "default" | "onDark";
+}) {
   const { locale, setLocale, t } = useLocale();
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
@@ -21,6 +27,7 @@ export function LanguageSwitcher({ className }: { className?: string }) {
   const short = getInterfaceLanguageShortLabel(locale);
   const currentLabel =
     INTERFACE_LANGUAGE_OPTIONS.find((l) => l.code === locale)?.label ?? short;
+  const onDark = tone === "onDark";
 
   useEffect(() => {
     if (!open) return;
@@ -54,8 +61,10 @@ export function LanguageSwitcher({ className }: { className?: string }) {
         type="button"
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          "group/lang inline-flex h-9 items-center gap-1 rounded-full px-2 text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink sm:px-2.5",
-          open && "bg-surface-2 text-ink",
+          "group/lang inline-flex h-9 items-center gap-1 rounded-full px-2 transition-colors sm:px-2.5",
+          onDark
+            ? cn("text-white/70 hover:bg-white/10 hover:text-white", open && "bg-white/10 text-white")
+            : cn("text-ink-muted hover:bg-surface-2 hover:text-ink", open && "bg-surface-2 text-ink"),
         )}
         aria-label={`${t("langSwitchHint")}, ${currentLabel}`}
         aria-expanded={open}
@@ -71,7 +80,10 @@ export function LanguageSwitcher({ className }: { className?: string }) {
         />
         <span
           key={short}
-          className="min-w-[1.375rem] text-center text-[11px] font-semibold tracking-wide tabular-nums text-ink"
+          className={cn(
+            "min-w-[1.375rem] text-center text-[11px] font-semibold tracking-wide tabular-nums",
+            onDark ? "text-white" : "text-ink",
+          )}
           aria-hidden
         >
           {short}

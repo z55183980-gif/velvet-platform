@@ -1,0 +1,69 @@
+import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Type } from 'class-transformer';
+import { IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { ok } from '../common/response';
+import { AdminRoleGuard, AdminRoles } from './admin-role.guard';
+import { AdminGuard } from './admin.guard';
+import { AdminUsersService } from './users.service';
+
+function getActor(req: any): bigint | undefined {
+  return req?.adminId as bigint | undefined;
+}
+
+class UserStatusDto {
+  @IsNotEmpty() @IsString() status!: 'ACTIVE' | 'SUSPENDED' | 'BANNED';
+  @IsNotEmpty() @IsString() reason!: string;
+}
+
+class SetUserVipDto {
+  @IsOptional() vipExpireAt?: string | null;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) extendDays?: number;
+}
+
+@Controller('v1/admin')
+@UseGuards(AdminGuard, AdminRoleGuard)
+export class UsersController {
+  constructor(private readonly users: AdminUsersService) {}
+
+  @Get('users')
+  async listUsers(
+    @Query('q') q?: string,
+    @Query('status') status?: string,
+    @Query('locale') locale?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    return ok(await this.users.list({
+      q,
+      status: (status as any) || 'ALL',
+      locale: locale as any,
+      page: page ? Number(page) : 1,
+      pageSize: pageSize ? Number(pageSize) : 20,
+    }));
+  }
+
+  @Get('users/:id')
+  async userDetail(@Param('id') id: string) {
+    return ok(await this.users.detail(id));
+  }
+
+  @Post('users/:id/status')
+  async setUserStatus(
+    @Param('id') id: string,
+    @Body() dto: UserStatusDto,
+    @Req() req: any,
+  ) {
+    return ok(await this.users.setStatus(id, dto.status, dto.reason, getActor(req)));
+  }
+
+  @Post('users/:id/force-logout')
+  async forceLogout(@Param('id') id: string, @Req() req: any) {
+    return ok(await this.users.forceLogout(id, getActor(req)));
+  }
+
+  @Post('users/:id/vip')
+  @AdminRoles('SUPER_ADMIN')
+  async setUserVip(@Param('id') id: string, @Body() dto: SetUserVipDto, @Req() req: any) {
+    return ok(await this.users.setVip(id, dto, getActor(req)));
+  }
+}

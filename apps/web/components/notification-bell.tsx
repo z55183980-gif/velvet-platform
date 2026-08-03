@@ -6,6 +6,7 @@ import { Bell } from "lucide-react";
 import { useAuth } from "@/components/auth-context";
 import { useLocale } from "@/lib/i18n";
 import { API_BASE, ApiError } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 interface NotifItem {
   id: string;
@@ -37,13 +38,18 @@ async function fetchNotifs<T>(path: string, init?: RequestInit): Promise<T> {
   return json.data as T;
 }
 
-export function NotificationBell() {
+export function NotificationBell({
+  tone = "default",
+}: {
+  tone?: "default" | "onDark";
+}) {
   const { user } = useAuth();
   const { locale, t } = useLocale();
   const [unread, setUnread] = useState(0);
   const [items, setItems] = useState<NotifItem[]>([]);
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const onDark = tone === "onDark";
 
   const reload = useCallback(async () => {
     if (!user) return;
@@ -95,7 +101,12 @@ export function NotificationBell() {
         type="button"
         aria-label={t("notifications.title")}
         onClick={() => setOpen((o) => !o)}
-        className="relative grid h-9 w-9 place-items-center rounded-md text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+        className={cn(
+          "relative grid h-9 w-9 place-items-center rounded-full transition-colors",
+          onDark
+            ? "text-white/70 hover:bg-white/10 hover:text-white"
+            : "text-ink-muted hover:bg-surface-2 hover:text-ink",
+        )}
       >
         <Bell className="h-4 w-4" />
         {unread > 0 && (

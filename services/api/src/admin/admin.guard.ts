@@ -4,7 +4,6 @@ import {
   HttpStatus,
   Injectable,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
 import { BizException, BizCode } from '../common/biz.exception';
 import { AdminAuthService } from './admin-auth.service';
@@ -12,26 +11,21 @@ import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
 export class AdminGuard implements CanActivate {
-  private readonly legacyToken: string;
-
   constructor(
-    config: ConfigService,
     private readonly adminAuth: AdminAuthService,
     private readonly prisma: PrismaService,
-  ) {
-    this.legacyToken = config.get<string>('ADMIN_TOKEN') || 'dev-admin';
-  }
+  ) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
     const req = ctx.switchToHttp().getRequest<
       Request & {
         adminId?: bigint;
-        adminAuthMode?: 'jwt' | 'legacy';
+        adminAuthMode?: 'jwt';
         adminRole?: string;
       }
     >();
 
-    // 1) 正式管理员 JWT（Authorization Bearer 或 cookie 或 x-admin-token 若为 JWT）
+    // 管理员 JWT（Authorization Bearer、cookie，或 JWT 格式的 x-admin-token）
     const jwtToken = this.extractJwt(req);
     if (jwtToken) {
       const payload = this.adminAuth.verifyAdminToken(jwtToken);
@@ -54,20 +48,6 @@ export class AdminGuard implements CanActivate {
           return true;
         }
       }
-    }
-
-    // 2) 兼容旧开发态 x-admin-token（静态口令，如 dev-admin）
-    const headerToken = req.headers['x-admin-token'];
-    const legacy =
-      typeof headerToken === 'string'
-        ? headerToken
-        : Array.isArray(headerToken)
-          ? headerToken[0]
-          : undefined;
-    if (legacy && legacy === this.legacyToken) {
-      req.adminAuthMode = 'legacy';
-      req.adminRole = 'SUPER_ADMIN';
-      return true;
     }
 
     throw new BizException(

@@ -15,8 +15,7 @@ export const AdminRoles = (...roles: ('SUPER_ADMIN' | 'OPS')[]) =>
 
 /**
  * 角色守卫：在 AdminGuard 之后运行。
- * 旧开发态（x-admin-token 静态口令）默认视为 SUPER_ADMIN（兼容历史用法）。
- * JWT 登录则按 AdminUser.role 校验。
+ * 按 AdminGuard 从 JWT 对应的 AdminUser 加载出的 role 校验。
  */
 @Injectable()
 export class AdminRoleGuard implements CanActivate {
@@ -32,14 +31,10 @@ export class AdminRoleGuard implements CanActivate {
     const req = ctx.switchToHttp().getRequest<
       Request & {
         adminId?: bigint;
-        adminAuthMode?: 'jwt' | 'legacy';
+        adminAuthMode?: 'jwt';
         adminRole?: string;
       }
     >();
-    // 旧开发态（静态 token）默认 SUPER_ADMIN
-    if (req.adminAuthMode === 'legacy' && !req.adminRole) {
-      req.adminRole = 'SUPER_ADMIN';
-    }
     const role = (req.adminRole as string | undefined) || 'SUPER_ADMIN';
     if (required.includes(role)) return true;
 

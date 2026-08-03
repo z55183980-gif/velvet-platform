@@ -220,7 +220,7 @@ export function categoryName(slug: string, locale: Locale): string {
 }
 
 // ---- 兜底数据（API 不可达时使用，保持预览可见）----
-export const featuredDramas: Drama[] = dramas.slice(0, 4);
+export const featuredDramas: Drama[] = dramas.slice(0, 5);
 
 export function mockHome(
   page = 1,
