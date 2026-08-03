@@ -24,17 +24,24 @@ export class EpisodesService {
     const free = episode.isFree || episode.episodeNumber <= episode.drama.freeEpisodeCount;
     let unlocked = free;
     if (!free) {
-      const u = await this.prisma.userUnlock.findUnique({
-        where: { userId_episodeId: { userId, episodeId } },
-      });
-      unlocked = !!u;
+      const [u, user, dramaUnlock] = await Promise.all([
+        this.prisma.userUnlock.findUnique({
+          where: { userId_episodeId: { userId, episodeId } },
+        }),
+        this.prisma.user.findUnique({ where: { id: userId }, select: { vipExpireAt: true } }),
+        this.prisma.userDramaUnlock.findUnique({
+          where: { userId_dramaId: { userId, dramaId: episode.dramaId } },
+        }),
+      ]);
+      const vipActive = !!(user?.vipExpireAt && user.vipExpireAt.getTime() > Date.now());
+      unlocked = !!u || vipActive || !!dramaUnlock;
     }
     if (!unlocked) {
       throw new BizException(BizCode.FORBIDDEN, 'Tập này cần mở khóa để xem', 402 as any);
     }
 
     const key = this.config.get('CDN_SIGN_KEY') || 'dev';
-    const base = this.config.get<string>('CDN_BASE_URL') || 'https://cdn.dramavn.example.com';
+    const base = this.config.get<string>('CDN_BASE_URL') || 'https://cdn.velvet.example.com';
     const raw = episode.hlsUrl || `${base}/v/${episodeId}/index.m3u8`;
     const exp = Math.floor(Date.now() / 1000) + 3600; // 1h
 

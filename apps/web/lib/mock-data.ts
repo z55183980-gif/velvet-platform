@@ -1,4 +1,5 @@
-export type Locale = "vi" | "zh";
+export type { Locale } from "./languages";
+import type { Locale } from "./languages";
 
 export interface Category {
   slug: string;
@@ -32,6 +33,8 @@ export interface Drama {
   episodesCount: number;
   freeCount: number;
   pricePerEp: number;
+  /** 整剧买断积分价；null/undefined = 不支持 */
+  buyoutCredits?: string | null;
   creator?: { displayName: string; avatarUrl?: string | null };
   episodes: Episode[];
 }
@@ -211,7 +214,9 @@ export function getDrama(id: string): Drama | undefined {
 }
 
 export function categoryName(slug: string, locale: Locale): string {
-  return categories.find((c) => c.slug === slug)?.[locale === "vi" ? "nameVi" : "nameZh"] ?? slug;
+  const cat = categories.find((c) => c.slug === slug);
+  if (!cat) return slug;
+  return locale === "vi" ? cat.nameVi : cat.nameZh;
 }
 
 // ---- 兜底数据（API 不可达时使用，保持预览可见）----

@@ -3,6 +3,7 @@
 import { Lock, Play } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import type { Episode } from "@/lib/mock-data";
+import { pickContentText } from "@/lib/languages";
 import { formatCredits } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 
@@ -24,7 +25,7 @@ export function EpisodeList({
   layout?: "list" | "rail";
 }) {
   const { locale, t } = useLocale();
-  const epTitle = (ep: Episode) => (locale === "vi" ? ep.titleVi : ep.titleZh);
+  const epTitle = (ep: Episode) => pickContentText(locale, ep.titleVi, ep.titleZh);
   const unlocked = (ep: Episode) =>
     isUnlocked?.(ep) ?? !!(ep.isFree || ep.unlocked);
 

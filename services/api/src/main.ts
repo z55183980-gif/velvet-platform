@@ -28,7 +28,7 @@ async function bootstrap() {
   const port = parseInt(process.env.PORT || '4000', 10);
   await app.listen(port);
   // eslint-disable-next-line no-console
-  console.log(`🚀 DramaVN API listening on http://localhost:${port} (prefix /api)`);
+  console.log(`🚀 Velvet API listening on http://localhost:${port} (prefix /api)`);
 }
 
 bootstrap();

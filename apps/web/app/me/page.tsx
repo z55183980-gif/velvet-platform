@@ -16,13 +16,14 @@ import {
   removeFavorite,
   updateFavorite,
   uploadAvatar,
+  redeemCode,
 } from "@/lib/api";
 import { mediaUrl } from "@/lib/utils";
 
 type Tab = "favorites" | "history" | "transactions" | "orders";
 
 export default function AccountPage() {
-  const { user, balance, ready, openLogin, openRecharge, logout, applySession } = useAuth();
+  const { user, balance, ready, openLogin, openRecharge, openVip, logout, applySession } = useAuth();
   const { t, locale } = useLocale();
   const zh = locale === "zh";
 
@@ -42,6 +43,9 @@ export default function AccountPage() {
   const [editGroup, setEditGroup] = useState("");
   const [editNote, setEditNote] = useState("");
   const [refundBusy, setRefundBusy] = useState<string | null>(null);
+  const [code, setCode] = useState("");
+  const [redeemBusy, setRedeemBusy] = useState(false);
+  const [redeemMsg, setRedeemMsg] = useState<string | null>(null);
 
   useEffect(() => {
     if (user?.nickname) setNickname(user.nickname);
@@ -196,6 +200,83 @@ export default function AccountPage() {
                   {t("account.logout")}
                 </button>
               </div>
+            </div>
+          </div>
+
+          <div className="mt-8 grid gap-3 sm:grid-cols-2">
+            <div
+              className="rounded-2xl border border-line/80 p-4"
+              style={{
+                background:
+                  "radial-gradient(280px 120px at 0% 0%, oklch(0.82 0.11 85 / 0.18), transparent 60%), var(--color-surface)",
+              }}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-overline uppercase tracking-widest text-gold">{t("vip.member")}</p>
+                  <p className="mt-1 text-body font-medium text-ink">
+                    {user.isVip && user.vipExpireAt
+                      ? t("vip.activeUntil", {
+                          date: new Date(user.vipExpireAt).toLocaleDateString(locale),
+                        })
+                      : t("vip.inactive")}
+                  </p>
+                  <p className="mt-1 text-caption text-ink-muted">{t("vip.inactiveHint")}</p>
+                </div>
+                <button
+                  onClick={openVip}
+                  className="shrink-0 rounded-full bg-gold px-4 py-2 text-body-sm font-semibold text-ink hover:opacity-90"
+                >
+                  {user.isVip ? t("vip.renew") : t("vip.open")}
+                </button>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-line/80 bg-surface p-4">
+              <p className="text-overline uppercase tracking-widest text-ink-subtle">
+                {t("vip.redeemSection")}
+              </p>
+              <p className="mt-1 text-caption text-ink-muted">{t("redeem.hint")}</p>
+              <div className="mt-3 flex gap-2">
+                <input
+                  value={code}
+                  onChange={(e) => {
+                    setCode(e.target.value);
+                    setRedeemMsg(null);
+                  }}
+                  placeholder={t("redeem.placeholder")}
+                  className="min-w-0 flex-1 rounded-lg bg-surface-2 px-3 py-2.5 text-body-sm text-ink outline-none"
+                />
+                <button
+                  disabled={redeemBusy || !code.trim()}
+                  onClick={async () => {
+                    setRedeemBusy(true);
+                    setRedeemMsg(null);
+                    try {
+                      await redeemCode(code.trim());
+                      setCode("");
+                      setRedeemMsg(t("redeem.success"));
+                      await applySession();
+                    } catch (e: any) {
+                      setRedeemMsg(e?.message || t("redeem.fail"));
+                    } finally {
+                      setRedeemBusy(false);
+                    }
+                  }}
+                  className="shrink-0 rounded-full bg-surface-2 px-4 py-2.5 text-body-sm font-medium text-ink disabled:opacity-50 hover:bg-surface-3"
+                >
+                  {t("redeem.submit")}
+                </button>
+              </div>
+              {redeemMsg ? (
+                <p
+                  className={`mt-2 text-caption ${
+                    redeemMsg === t("redeem.success") ? "text-success" : "text-danger"
+                  }`}
+                >
+                  {redeemMsg}
+                </p>
+              ) : null}
             </div>
           </div>
 

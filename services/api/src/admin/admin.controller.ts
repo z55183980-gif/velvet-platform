@@ -41,6 +41,9 @@ import { SettingsService } from './settings.service';
 import { AdminEpisodesService } from './episodes.service';
 import { AdminsService } from './admins.service';
 import { AdminExportService } from './export.service';
+import { VipPlansService } from '../vip/vip-plans.service';
+import { RedeemService } from '../redeem/redeem.service';
+import { AdminOpsService } from './ops.service';
 
 function getActor(req: any): bigint | undefined {
   return req?.adminId as bigint | undefined;
@@ -230,10 +233,142 @@ class DramaUpdateDto {
   @IsOptional() @IsString() coverUrl?: string;
   @IsOptional() @Type(() => Number) @IsNumber() freeEpisodeCount?: number;
   @IsOptional() @Type(() => Number) @IsNumber() sortWeight?: number;
+  @IsOptional() buyoutCredits?: number | string | null;
   @IsOptional() @Transform(({ value }) => value === true || value === 'true' || value === 1)
   @IsBoolean() isFeatured?: boolean;
   @IsOptional() @Transform(({ value }) => value === true || value === 'true' || value === 1)
   @IsBoolean() isOfficial?: boolean;
+}
+
+class UpsertVipPlanDto {
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsNotEmpty()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  durationDays!: number;
+
+  @IsNotEmpty()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.01)
+  basePrice!: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  sortOrder?: number;
+
+  @IsOptional()
+  @IsString()
+  badge?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true' || value === 1)
+  @IsBoolean()
+  active?: boolean;
+}
+
+class PatchVipPlanDto {
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  durationDays?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.01)
+  basePrice?: number;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  sortOrder?: number;
+
+  @IsOptional()
+  @IsString()
+  badge?: string;
+
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true' || value === 1)
+  @IsBoolean()
+  active?: boolean;
+}
+
+class CreateRedeemBatchDto {
+  @IsOptional()
+  @IsString()
+  name?: string;
+
+  @IsNotEmpty()
+  @IsString()
+  type!: 'VIP' | 'CREDITS';
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  vipDays?: number;
+
+  @IsOptional()
+  creditsAmount?: number | string;
+
+  @IsNotEmpty()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  quantity!: number;
+
+  @IsOptional()
+  @IsString()
+  expiresAt?: string;
+
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
+
+class VoidCodesDto {
+  @IsNotEmpty()
+  ids!: string[];
+}
+
+class SetUserVipDto {
+  /** ISO date string；传 null 清空 */
+  @IsOptional()
+  vipExpireAt?: string | null;
+
+  /** 在现有基础上延长天数（与 vipExpireAt 二选一优先 extendDays） */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  extendDays?: number;
+}
+
+class BatchDramasDto {
+  @IsNotEmpty()
+  ids!: (string | number)[];
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  freeEpisodeCount?: number;
+
+  @IsOptional()
+  priceCredits?: number | string;
+
+  @IsOptional()
+  buyoutCredits?: number | string | null;
 }
 
 class AdjustDto {
@@ -320,6 +455,9 @@ export class AdminController {
     private readonly episodes: AdminEpisodesService,
     private readonly admins: AdminsService,
     private readonly exportSvc: AdminExportService,
+    private readonly vipPlans: VipPlansService,
+    private readonly redeemSvc: RedeemService,
+    private readonly ops: AdminOpsService,
   ) {}
 
   // ============ Dashboard ============
@@ -367,6 +505,12 @@ export class AdminController {
   @Get('dramas/ranking')
   async ranking() {
     return ok(await this.content.ranking());
+  }
+
+  @Patch('dramas/batch')
+  @AdminRoles('SUPER_ADMIN')
+  async batchDramas(@Body() dto: BatchDramasDto, @Req() req: any) {
+    return ok(await this.ops.batchUpdateDramas(dto, getActor(req)));
   }
 
   @Get('dramas/:id')
@@ -714,6 +858,116 @@ export class AdminController {
     return ok(await this.packages.update(BigInt(id), dto, getActor(req)));
   }
 
+  // ============ VIP Plans ============
+  @Get('vip-plans')
+  async listVipPlans() {
+    return ok(await this.vipPlans.listAdmin());
+  }
+
+  @Post('vip-plans')
+  @AdminRoles('SUPER_ADMIN')
+  async createVipPlan(@Body() dto: UpsertVipPlanDto, @Req() req: any) {
+    return ok(await this.vipPlans.create(dto, getActor(req)));
+  }
+
+  @Patch('vip-plans/:id')
+  @AdminRoles('SUPER_ADMIN')
+  async updateVipPlan(
+    @Param('id') id: string,
+    @Body() dto: PatchVipPlanDto,
+    @Req() req: any,
+  ) {
+    return ok(await this.vipPlans.update(BigInt(id), dto, getActor(req)));
+  }
+
+  // ============ Redeem codes ============
+  @Get('redeem/batches')
+  @AdminRoles('SUPER_ADMIN')
+  async listRedeemBatches(@Query('page') page?: string, @Query('pageSize') pageSize?: string) {
+    return ok(
+      await this.redeemSvc.listBatches(
+        page ? Number(page) : 1,
+        pageSize ? Number(pageSize) : 20,
+      ),
+    );
+  }
+
+  @Post('redeem/batches')
+  @AdminRoles('SUPER_ADMIN')
+  async createRedeemBatch(@Body() dto: CreateRedeemBatchDto, @Req() req: any) {
+    return ok(await this.redeemSvc.createBatch(dto, getActor(req)));
+  }
+
+  @Post('redeem/batches/:id/void')
+  @AdminRoles('SUPER_ADMIN')
+  async voidRedeemBatch(@Param('id') id: string, @Req() req: any) {
+    return ok(await this.redeemSvc.voidBatch(id, getActor(req)));
+  }
+
+  @Get('redeem/batches/:id/export.csv')
+  @AdminRoles('SUPER_ADMIN')
+  @Header('Content-Type', 'text/csv; charset=utf-8')
+  async exportRedeemBatch(
+    @Param('id') id: string,
+    @Res({ passthrough: true }) res?: Response,
+  ) {
+    const csv = await this.redeemSvc.exportCsv(id);
+    res?.setHeader('Content-Disposition', `attachment; filename="redeem-batch-${id}.csv"`);
+    return csv;
+  }
+
+  @Get('redeem/codes')
+  @AdminRoles('SUPER_ADMIN')
+  async listRedeemCodes(
+    @Query('batchId') batchId?: string,
+    @Query('status') status?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    return ok(
+      await this.redeemSvc.listCodes({
+        batchId,
+        status: (status as any) || 'ALL',
+        page: page ? Number(page) : 1,
+        pageSize: pageSize ? Number(pageSize) : 50,
+      }),
+    );
+  }
+
+  @Post('redeem/codes/void')
+  @AdminRoles('SUPER_ADMIN')
+  async voidRedeemCodes(@Body() dto: VoidCodesDto, @Req() req: any) {
+    return ok(await this.redeemSvc.voidCodes(dto.ids || [], getActor(req)));
+  }
+
+  @Get('redeem/redemptions')
+  @AdminRoles('SUPER_ADMIN')
+  async listRedeemptions(@Query('page') page?: string, @Query('pageSize') pageSize?: string) {
+    return ok(
+      await this.redeemSvc.listRedemptions(
+        page ? Number(page) : 1,
+        pageSize ? Number(pageSize) : 20,
+      ),
+    );
+  }
+
+  // ============ Ops ============
+  @Get('ops/summary')
+  @AdminRoles('SUPER_ADMIN')
+  async opsSummary(@Query('from') from?: string, @Query('to') to?: string) {
+    return ok(await this.ops.summary(from, to));
+  }
+
+  @Get('ops/drama-sales')
+  @AdminRoles('SUPER_ADMIN')
+  async opsDramaSales(
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return ok(await this.ops.dramaSales(from, to, limit ? Number(limit) : 50));
+  }
+
   // ============ Users CRM ============
   @Get('users')
   async listUsers(
@@ -751,6 +1005,12 @@ export class AdminController {
   @Post('users/:id/force-logout')
   async forceLogout(@Param('id') id: string, @Req() req: any) {
     return ok(await this.users.forceLogout(id, getActor(req)));
+  }
+
+  @Post('users/:id/vip')
+  @AdminRoles('SUPER_ADMIN')
+  async setUserVip(@Param('id') id: string, @Body() dto: SetUserVipDto, @Req() req: any) {
+    return ok(await this.users.setVip(id, dto, getActor(req)));
   }
 
   // ============ Wallet / Ledger ============

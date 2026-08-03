@@ -6,7 +6,7 @@ export class AdminOrdersService {
   constructor(private readonly prisma: PrismaService) {}
 
   async list(filter: {
-    type?: 'TOPUP' | 'EPISODE_UNLOCK' | 'ALL';
+    type?: 'TOPUP' | 'EPISODE_UNLOCK' | 'VIP_SUB' | 'DRAMA_BUYOUT' | 'ALL';
     status?: 'PENDING' | 'PAID' | 'FAILED' | 'REFUNDED' | 'CANCELLED' | 'ALL';
     method?: string;
     userId?: string;

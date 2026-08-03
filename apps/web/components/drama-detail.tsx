@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Star, Play } from "lucide-react";
+import Link from "next/link";
+import { Star, Play, ChevronLeft, ListVideo } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { useAuth } from "@/components/auth-context";
 import { Badge } from "@/components/ui/badge";
@@ -9,6 +10,9 @@ import { buttonVariants } from "@/components/ui/button";
 import { EpisodeList } from "@/components/episode-list";
 import { UnlockSheet } from "@/components/unlock-sheet";
 import { VideoPlayer } from "@/components/video-player";
+import { VerticalPlayer } from "@/components/mobile/vertical-player";
+import { EpisodeDrawer } from "@/components/mobile/episode-drawer";
+import { useIsMobile } from "@/hooks/use-is-mobile";
 import {
   loadDramaDetail,
   getPlayUrl,
@@ -16,8 +20,10 @@ import {
   removeFavorite,
   getFavorites,
   getWatchHistory,
+  unlockDrama,
 } from "@/lib/api";
 import { categoryName, type Drama, type Episode } from "@/lib/mock-data";
+import { pickContentText } from "@/lib/languages";
 import { formatCredits, mediaUrl } from "@/lib/utils";
 
 function isUrl(s: string) {
@@ -31,7 +37,14 @@ function isHls(url: string) {
 export function DramaDetail({ id }: { id: string }) {
   const { locale, t } = useLocale();
   const { user, unlock, openLogin, ready: authReady } = useAuth();
-  const [data, setData] = useState<{ drama: Drama; episodes: Episode[] } | null>(null);
+  const isMobile = useIsMobile();
+  const [data, setData] = useState<{
+    drama: Drama;
+    episodes: Episode[];
+    buyoutCredits?: string | null;
+    vipActive?: boolean;
+    dramaUnlocked?: boolean;
+  } | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [loading, setLoading] = useState(true);
   const [unlockedNos, setUnlockedNos] = useState<Set<number>>(new Set());
@@ -44,6 +57,8 @@ export function DramaDetail({ id }: { id: string }) {
   const [favBusy, setFavBusy] = useState(false);
   const [resumeHint, setResumeHint] = useState<{ epNo: number; progressSec: number } | null>(null);
   const [seekTo, setSeekTo] = useState<number | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [muted, setMuted] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const resumeApplied = useRef(false);
 
@@ -141,8 +156,16 @@ export function DramaDetail({ id }: { id: string }) {
     }
   };
 
-  const isUnlocked = (ep: Episode) => ep.isFree || !!ep.unlocked || unlockedNos.has(ep.no);
+  const isUnlocked = (ep: Episode) =>
+    ep.isFree || !!ep.unlocked || unlockedNos.has(ep.no) || !!data?.vipActive || !!data?.dramaUnlocked || !!user?.isVip;
   const playerReady = !!(selected && isUnlocked(selected));
+  const vipPass = !!(data?.vipActive || user?.isVip);
+  const lockActionLabel =
+    selected && !selected.isFree && !isUnlocked(selected)
+      ? vipPass
+        ? t("vip.freeWatch")
+        : `${t("detail.unlockEpisode")} · ${formatCredits(selected.price, t("card.credits"))}`
+      : undefined;
 
   useEffect(() => {
     if (!playerReady || !selected?.id) {
@@ -167,8 +190,8 @@ export function DramaDetail({ id }: { id: string }) {
       .then((r) => alive && setPlayUrl(r.playUrl))
       .catch((e) => {
         if (!alive) return;
-        if (e?.status === 401) setPlayErr(locale === "zh" ? "请先登录" : "Vui lòng đăng nhập");
-        else setPlayErr(e?.message || (locale === "zh" ? "播放失败" : "Lỗi phát video"));
+        if (e?.status === 401) setPlayErr(t("errors.loginRequired"));
+        else setPlayErr(e?.message || t("player.error"));
       });
     return () => {
       alive = false;
@@ -227,21 +250,21 @@ export function DramaDetail({ id }: { id: string }) {
   if (loading) {
     return (
       <div className="mx-auto max-w-[1200px] px-4 py-24 text-center text-ink-subtle md:px-6">
-        Đang tải…
+        {t("common.loading")}
       </div>
     );
   }
   if (notFound || !data) {
     return (
       <div className="mx-auto max-w-[1200px] px-4 py-24 text-center text-h3 text-ink-muted md:px-6">
-        Không tìm thấy phim.
+        {t("errors.notFoundDrama")}
       </div>
     );
   }
 
   const { drama } = data;
-  const title = locale === "vi" ? drama.titleVi : drama.titleZh;
-  const desc = locale === "vi" ? drama.descVi : drama.descZh;
+  const title = pickContentText(locale, drama.titleVi, drama.titleZh);
+  const desc = pickContentText(locale, drama.descVi, drama.descZh);
   const cat = categoryName(drama.categorySlug, locale);
   const coverIsImg = isUrl(drama.cover[0]);
 
@@ -271,6 +294,31 @@ export function DramaDetail({ id }: { id: string }) {
       setSelected(ep);
     }
     return r;
+  }
+
+  async function onBuyDrama() {
+    const nid = data?.drama.numericId;
+    if (!nid) return { ok: false, error: "no drama" };
+    try {
+      await unlockDrama(nid);
+      setUnlockedNos(new Set(data!.episodes.map((e) => e.no)));
+      setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              dramaUnlocked: true,
+              episodes: prev.episodes.map((e) => ({ ...e, unlocked: true })),
+            }
+          : prev,
+      );
+      return { ok: true };
+    } catch (e: any) {
+      return {
+        ok: false,
+        error: e?.message || "fail",
+        code: typeof e?.status === "number" ? e.status : undefined,
+      };
+    }
   }
 
   function onWatchFree() {
@@ -306,6 +354,94 @@ export function DramaDetail({ id }: { id: string }) {
   const locked = !playerReady;
   const playLoading = !authReady || (playerReady && !!user && !playUrl && !playErr);
 
+  const selectEpisode = (ep: Episode) => {
+    if (isUnlocked(ep)) {
+      if (!user) openLogin();
+      else {
+        setSelected(ep);
+        setDrawerOpen(false);
+      }
+    } else openUnlock(ep);
+  };
+
+  if (isMobile) {
+    return (
+      <div className="relative h-dvh overflow-hidden bg-black">
+        <div className="absolute left-0 right-0 top-0 z-30 flex items-center justify-between px-3 pb-2 pt-[max(0.5rem,env(safe-area-inset-top))]">
+          <Link
+            href="/"
+            className="grid h-10 w-10 place-items-center rounded-full bg-black/40 text-white backdrop-blur"
+            aria-label="back"
+          >
+            <ChevronLeft className="h-6 w-6" />
+          </Link>
+          <button
+            type="button"
+            onClick={() => setDrawerOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-full bg-black/40 px-3 py-2 text-body-sm text-white backdrop-blur"
+          >
+            <ListVideo className="h-4 w-4" />
+            {selected ? `${selected.no}/${drama.episodesCount}` : t("detail.episodeList")}
+          </button>
+        </div>
+
+        <VerticalPlayer
+          videoRef={videoRef}
+          active
+          src={playerReady && user && playUrl ? playUrl : null}
+          poster={coverIsImg ? drama.cover[0] : undefined}
+          autoPlay
+          muted={muted}
+          onMutedChange={setMuted}
+          seekTo={resumeApplied.current ? null : seekTo}
+          loginRequired={needsLogin}
+          onLogin={() => openLogin()}
+          locked={locked}
+          lockLabel={
+            selected
+              ? `${t("detail.episodeList")} ${selected.no}`
+              : t("player.empty")
+          }
+          lockActionLabel={lockActionLabel}
+          onUnlock={selected && !isUnlocked(selected) ? () => openUnlock(selected) : undefined}
+          error={playErr}
+          loading={playLoading}
+          title={title}
+          subtitle={selected ? `${t("detail.episodeList")} ${selected.no}` : cat}
+          onOpenEpisodes={() => setDrawerOpen(true)}
+          onEnded={playNext}
+        />
+
+        <EpisodeDrawer
+          open={drawerOpen}
+          onClose={() => setDrawerOpen(false)}
+          episodes={data.episodes}
+          episodesCount={drama.episodesCount}
+          selectedNo={selected?.no}
+          isUnlocked={isUnlocked}
+          onUnlock={openUnlock}
+          onSelect={selectEpisode}
+        />
+
+        <UnlockSheet
+          open={sheetOpen}
+          episode={sheetEp}
+          onClose={() => setSheetOpen(false)}
+          onConfirmed={onConfirmed}
+          buyoutCredits={
+            data?.dramaUnlocked
+              ? null
+              : data?.buyoutCredits
+                ? Number(data.buyoutCredits)
+                : null
+          }
+          onBuyDrama={onBuyDrama}
+          vipActive={!!data?.vipActive || !!user?.isVip}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="pb-16 md:pb-24">
       {/* Player-first billboard */}
@@ -325,12 +461,8 @@ export function DramaDetail({ id }: { id: string }) {
                 ? `${t("detail.episodeList")} ${selected.no}`
                 : t("player.empty")
             }
-            lockActionLabel={
-              selected && !selected.isFree
-                ? `${t("detail.unlockEpisode")} · ${formatCredits(selected.price, t("card.credits"))}`
-                : undefined
-            }
-            onUnlock={selected && !selected.isFree ? () => openUnlock(selected) : undefined}
+            lockActionLabel={lockActionLabel}
+            onUnlock={selected && !isUnlocked(selected) ? () => openUnlock(selected) : undefined}
             error={playErr}
             loading={playLoading}
             hasNext={hasNext}
@@ -359,9 +491,10 @@ export function DramaDetail({ id }: { id: string }) {
             <h1 className="mt-3 text-h2 font-bold text-ink md:text-h1">{title}</h1>
             {resumeHint && resumeHint.progressSec > 5 && (
               <p className="mt-2 text-caption text-ink-subtle">
-                {locale === "zh"
-                  ? `上次看到第 ${resumeHint.epNo} 集 · ${Math.floor(resumeHint.progressSec / 60)}:${String(resumeHint.progressSec % 60).padStart(2, "0")}`
-                  : `Lần trước: tập ${resumeHint.epNo} · ${Math.floor(resumeHint.progressSec / 60)}:${String(resumeHint.progressSec % 60).padStart(2, "0")}`}
+                {t("detail.resumeHint", {
+                  n: resumeHint.epNo,
+                  time: `${Math.floor(resumeHint.progressSec / 60)}:${String(resumeHint.progressSec % 60).padStart(2, "0")}`,
+                })}
               </p>
             )}
             <div className="mt-5 flex flex-wrap gap-3">
@@ -377,13 +510,7 @@ export function DramaDetail({ id }: { id: string }) {
                 disabled={favBusy}
               >
                 <Star className={`h-4 w-4 ${favorited ? "fill-gold text-gold" : ""}`} />
-                {favorited
-                  ? locale === "zh"
-                    ? "已收藏"
-                    : "Đã thích"
-                  : locale === "zh"
-                    ? "收藏"
-                    : "Yêu thích"}
+                {favorited ? t("detail.favorited") : t("detail.favorite")}
               </button>
             </div>
           </div>
@@ -417,12 +544,7 @@ export function DramaDetail({ id }: { id: string }) {
             layout="rail"
             isUnlocked={isUnlocked}
             onUnlock={openUnlock}
-            onSelect={(ep) => {
-              if (isUnlocked(ep)) {
-                if (!user) openLogin();
-                else setSelected(ep);
-              } else openUnlock(ep);
-            }}
+            onSelect={selectEpisode}
           />
         </div>
       </div>
@@ -432,6 +554,15 @@ export function DramaDetail({ id }: { id: string }) {
         episode={sheetEp}
         onClose={() => setSheetOpen(false)}
         onConfirmed={onConfirmed}
+        buyoutCredits={
+          data?.dramaUnlocked
+            ? null
+            : data?.buyoutCredits
+              ? Number(data.buyoutCredits)
+              : null
+        }
+        onBuyDrama={onBuyDrama}
+        vipActive={!!data?.vipActive || !!user?.isVip}
       />
     </div>
   );

@@ -12,6 +12,8 @@ export class UsersService {
       include: { creator: true, wallet: true },
     });
     if (!user) throw new BizException(BizCode.UNAUTHORIZED, 'Người dùng không tồn tại');
+    const vipExpireAt = user.vipExpireAt;
+    const isVip = !!(vipExpireAt && vipExpireAt.getTime() > Date.now());
     return {
       id: user.id.toString(),
       phone: user.phone,
@@ -19,6 +21,8 @@ export class UsersService {
       nickname: user.nickname,
       avatarUrl: user.avatarUrl,
       locale: user.locale,
+      vipExpireAt: vipExpireAt?.toISOString() ?? null,
+      isVip,
       isCreator: !!user.creator,
       hasPassword: !!user.passwordHash,
       wallet: user.wallet

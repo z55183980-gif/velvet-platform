@@ -78,6 +78,7 @@ function mapDrama(d: any): Drama {
     episodesCount: d.totalEpisodes || (d.episodes ? d.episodes.length : 0),
     freeCount: d.freeEpisodeCount || 0,
     pricePerEp: 0,
+    buyoutCredits: d.buyoutCredits != null ? String(d.buyoutCredits) : null,
     creator: d.creator
       ? {
           displayName: d.creator.displayName || "",
@@ -140,18 +141,37 @@ export async function loadFeatured(): Promise<Drama[]> {
   }
 }
 
-export async function loadDramaDetail(slug: string): Promise<{ drama: Drama; episodes: Episode[] } | null> {
+export async function loadDramaDetail(slug: string): Promise<{
+  drama: Drama;
+  episodes: Episode[];
+  buyoutCredits?: string | null;
+  vipActive?: boolean;
+  dramaUnlocked?: boolean;
+} | null> {
   try {
     const d = await request<any>(`/dramas/${slug}`);
     // 详情里的 episodes 不含 unlocked；再拉一次带用户态的剧集列表
     let episodes = (d.episodes || []).map(mapEpisode);
+    let buyoutCredits: string | null = d.buyoutCredits != null ? String(d.buyoutCredits) : null;
+    let vipActive = false;
+    let dramaUnlocked = false;
     try {
-      const eps = await request<{ rows: any[] }>(`/dramas/${slug}/episodes`);
+      const eps = await request<{
+        rows: any[];
+        buyoutCredits?: string | null;
+        vipActive?: boolean;
+        dramaUnlocked?: boolean;
+      }>(`/dramas/${slug}/episodes`);
       if (eps?.rows?.length) episodes = eps.rows.map(mapEpisode);
+      if (eps?.buyoutCredits != null) buyoutCredits = String(eps.buyoutCredits);
+      vipActive = !!eps?.vipActive;
+      dramaUnlocked = !!eps?.dramaUnlocked;
     } catch {
       /* 未登录时仍用详情集列表 */
     }
-    return { drama: mapDrama(d), episodes };
+    const drama = mapDrama(d);
+    drama.buyoutCredits = buyoutCredits;
+    return { drama, episodes, buyoutCredits, vipActive, dramaUnlocked };
   } catch {
     const { mockDramaDetail } = await import("./mock-data");
     return mockDramaDetail(slug);
@@ -375,6 +395,51 @@ export async function topupOrder(
   return request<any>("/orders/topup", {
     method: "POST",
     body: JSON.stringify({ packageId, currency, paymentMethod }),
+  });
+}
+
+export async function vipSubOrder(
+  vipPlanId: string | number,
+  currency: string,
+  paymentMethod = "STRIPE",
+) {
+  return request<any>("/orders/vip-sub", {
+    method: "POST",
+    body: JSON.stringify({ vipPlanId, currency, paymentMethod }),
+  });
+}
+
+export type VipPlanQuote = {
+  id: string;
+  name: string | null;
+  durationDays: number;
+  baseCurrency: string;
+  basePrice: string;
+  badge?: string | null;
+  payCurrency?: string;
+  payAmount?: string;
+  cnyToFiat?: string;
+};
+
+export async function getVipPlans(currency = "CNY"): Promise<VipPlanQuote[]> {
+  try {
+    return await request(`/vip-plans?currency=${encodeURIComponent(currency)}`);
+  } catch {
+    return [];
+  }
+}
+
+export async function redeemCode(code: string) {
+  return request<any>("/redeem", {
+    method: "POST",
+    body: JSON.stringify({ code }),
+  });
+}
+
+export async function unlockDrama(dramaId: string | number) {
+  return request<any>("/orders/unlock-drama", {
+    method: "POST",
+    body: JSON.stringify({ dramaId }),
   });
 }
 
@@ -925,6 +990,131 @@ export async function adminUpdatePackage(
 ) {
   return adminRequest<any>(`/admin/topup-packages/${id}`, {
     method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function adminListVipPlans() {
+  return adminRequest<any>("/admin/vip-plans");
+}
+export async function adminCreateVipPlan(body: {
+  name?: string;
+  durationDays: number;
+  basePrice: number;
+  sortOrder?: number;
+  badge?: string;
+  active?: boolean;
+}) {
+  return adminRequest<any>("/admin/vip-plans", { method: "POST", body: JSON.stringify(body) });
+}
+export async function adminUpdateVipPlan(
+  id: string,
+  body: Partial<{
+    name: string;
+    durationDays: number;
+    basePrice: number;
+    sortOrder: number;
+    badge: string;
+    active: boolean;
+  }>,
+) {
+  return adminRequest<any>(`/admin/vip-plans/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function adminListRedeemBatches(page = 1, pageSize = 20) {
+  return adminRequest<any>(`/admin/redeem/batches?page=${page}&pageSize=${pageSize}`);
+}
+export async function adminCreateRedeemBatch(body: {
+  name?: string;
+  type: "VIP" | "CREDITS";
+  vipDays?: number;
+  creditsAmount?: number;
+  quantity: number;
+  expiresAt?: string;
+  note?: string;
+}) {
+  return adminRequest<any>("/admin/redeem/batches", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+export async function adminVoidRedeemBatch(id: string) {
+  return adminRequest<any>(`/admin/redeem/batches/${id}/void`, { method: "POST", body: "{}" });
+}
+export async function adminListRedeemCodes(params: {
+  batchId?: string;
+  status?: string;
+  page?: number;
+  pageSize?: number;
+} = {}) {
+  const qs = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v != null && v !== "") qs.set(k, String(v));
+  });
+  return adminRequest<any>(`/admin/redeem/codes?${qs}`);
+}
+export async function adminVoidRedeemCodes(ids: string[]) {
+  return adminRequest<any>("/admin/redeem/codes/void", {
+    method: "POST",
+    body: JSON.stringify({ ids }),
+  });
+}
+export async function adminListRedemptions(page = 1, pageSize = 20) {
+  return adminRequest<any>(`/admin/redeem/redemptions?page=${page}&pageSize=${pageSize}`);
+}
+export async function adminExportRedeemBatchCsv(batchId: string) {
+  const token = getAdminToken();
+  const res = await fetch(
+    `${API_BASE}/admin/redeem/batches/${batchId}/export.csv`,
+    {
+      credentials: "include",
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    },
+  );
+  if (!res.ok) throw new ApiError(res.status, "export failed");
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `redeem-batch-${batchId}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function adminOpsSummary(from?: string, to?: string) {
+  const qs = new URLSearchParams();
+  if (from) qs.set("from", from);
+  if (to) qs.set("to", to);
+  const q = qs.toString();
+  return adminRequest<any>(`/admin/ops/summary${q ? `?${q}` : ""}`);
+}
+export async function adminOpsDramaSales(from?: string, to?: string, limit = 50) {
+  const qs = new URLSearchParams();
+  if (from) qs.set("from", from);
+  if (to) qs.set("to", to);
+  qs.set("limit", String(limit));
+  return adminRequest<any>(`/admin/ops/drama-sales?${qs}`);
+}
+export async function adminBatchDramas(body: {
+  ids: (string | number)[];
+  freeEpisodeCount?: number;
+  priceCredits?: number;
+  buyoutCredits?: number | null;
+}) {
+  return adminRequest<any>("/admin/dramas/batch", {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+export async function adminSetUserVip(
+  id: string,
+  body: { vipExpireAt?: string | null; extendDays?: number },
+) {
+  return adminRequest<any>(`/admin/users/${id}/vip`, {
+    method: "POST",
     body: JSON.stringify(body),
   });
 }

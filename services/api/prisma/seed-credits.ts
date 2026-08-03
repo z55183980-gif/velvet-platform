@@ -42,7 +42,22 @@ async function main() {
     console.log('[packages] skip, already have', count);
   }
 
-  // 3) 统一剧集积分：免费区内免费；付费集固定 10 积分（勿再 1:1 拷贝 priceVnd）
+  // 3) VIP 套餐
+  const vipCount = await prisma.vipPlan.count();
+  if (vipCount === 0) {
+    await prisma.vipPlan.createMany({
+      data: [
+        { name: '月卡', durationDays: 30, baseCurrency: 'CNY', basePrice: 28 as any, sortOrder: 10, badge: '热门' },
+        { name: '季卡', durationDays: 90, baseCurrency: 'CNY', basePrice: 68 as any, sortOrder: 20 },
+        { name: '年卡', durationDays: 365, baseCurrency: 'CNY', basePrice: 198 as any, sortOrder: 30, badge: '超值' },
+      ],
+    });
+    console.log('[vip] seeded 3 plans');
+  } else {
+    console.log('[vip] skip, already have', vipCount);
+  }
+
+  // 4) 统一剧集积分：免费区内免费；付费集固定 10 积分（勿再 1:1 拷贝 priceVnd）
   // eslint-disable-next-line @typescript-eslint/no-var-requires
   const { normalizeEpisodeCredits } = require('./normalize-episode-credits');
   const norm = await normalizeEpisodeCredits(prisma);
@@ -50,10 +65,15 @@ async function main() {
 
   const rates = await prisma.creditExchangeRate.findMany();
   const pkgs = await prisma.topupPackage.findMany({ orderBy: { sortOrder: 'asc' } });
+  const vips = await prisma.vipPlan.findMany({ orderBy: { sortOrder: 'asc' } });
   console.log('[done] rates:', rates);
   console.log(
     '[done] packages:',
     pkgs.map((p) => `${p.name}:${p.credits}c/¥${p.basePrice}`),
+  );
+  console.log(
+    '[done] vip:',
+    vips.map((p) => `${p.name}:${p.durationDays}d/¥${p.basePrice}`),
   );
 }
 

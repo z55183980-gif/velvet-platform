@@ -137,8 +137,8 @@ async function main() {
   let creator = await prisma.creator.findFirst();
   if (!creator) {
     const u = await prisma.user.upsert({
-      where: { email: 'sample@dramavn.dev' },
-      create: { email: 'sample@dramavn.dev', nickname: 'Sample Studio' },
+      where: { email: 'sample@velvet.dev' },
+      create: { email: 'sample@velvet.dev', nickname: 'Sample Studio' },
       update: {},
     });
     creator = await prisma.creator.create({

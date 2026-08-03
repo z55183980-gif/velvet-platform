@@ -453,6 +453,8 @@ export class AuthService {
   }
 
   private toProfile(user: any) {
+    const vipExpireAt = user.vipExpireAt ? new Date(user.vipExpireAt) : null;
+    const isVip = !!(vipExpireAt && vipExpireAt.getTime() > Date.now());
     return {
       id: user.id.toString(),
       phone: user.phone,
@@ -463,6 +465,8 @@ export class AuthService {
       locale: user.locale,
       isCreator: !!user.creator,
       hasPassword: !!user.passwordHash,
+      vipExpireAt: vipExpireAt?.toISOString() ?? null,
+      isVip,
     };
   }
 }

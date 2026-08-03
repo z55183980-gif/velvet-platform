@@ -30,6 +30,23 @@ export class TopupOrderDto {
   idempotencyKey?: string;
 }
 
+export class VipSubOrderDto {
+  @IsNotEmpty()
+  vipPlanId!: number | string;
+
+  @IsNotEmpty()
+  @IsString()
+  currency!: string;
+
+  @IsOptional()
+  @IsIn(PAYMENT_METHODS)
+  paymentMethod?: string = 'STRIPE';
+
+  @IsOptional()
+  @IsString()
+  idempotencyKey?: string;
+}
+
 export class UnlockEpisodeDto {
   @IsNotEmpty()
   episodeId!: number | string;
@@ -37,6 +54,21 @@ export class UnlockEpisodeDto {
   @IsOptional()
   @IsString()
   idempotencyKey?: string;
+}
+
+export class UnlockDramaDto {
+  @IsNotEmpty()
+  dramaId!: number | string;
+
+  @IsOptional()
+  @IsString()
+  idempotencyKey?: string;
+}
+
+export class RedeemCodeDto {
+  @IsNotEmpty()
+  @IsString()
+  code!: string;
 }
 
 export class RefundDto {

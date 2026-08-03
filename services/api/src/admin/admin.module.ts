@@ -23,9 +23,11 @@ import { SettingsService } from './settings.service';
 import { AdminEpisodesService } from './episodes.service';
 import { AdminsService } from './admins.service';
 import { AdminExportService } from './export.service';
+import { RedeemModule } from '../redeem/redeem.module';
+import { AdminOpsService } from './ops.service';
 
 @Module({
-  imports: [WalletModule, ExchangeModule, ReconcileModule, AuthModule],
+  imports: [WalletModule, ExchangeModule, ReconcileModule, AuthModule, RedeemModule],
   controllers: [AdminAuthController, AdminController, AdminAuditController],
   providers: [
     AdminService,
@@ -45,6 +47,7 @@ import { AdminExportService } from './export.service';
     AdminEpisodesService,
     AdminsService,
     AdminExportService,
+    AdminOpsService,
   ],
   exports: [
     AdminService,

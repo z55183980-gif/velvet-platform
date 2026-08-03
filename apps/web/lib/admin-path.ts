@@ -2,6 +2,9 @@
  * 后台前端入口路径。默认 /admin（与产品约定一致）。
  * 可用 NEXT_PUBLIC_ADMIN_BASE_PATH 改为私有口令路径，例如 /ops 或 /x7k2m。
  * 页面文件仍在 app/admin/*，非 /admin 入口由 middleware 重写进来。
+ *
+ * 生产分域：用户端 velvet.slc8.com；管理端 velvetadmin.slc8.com
+ * （见 lib/site.ts / middleware host 分流）。本地仍用同域 /admin。
  */
 const raw = (process.env.NEXT_PUBLIC_ADMIN_BASE_PATH || "/admin").trim();
 

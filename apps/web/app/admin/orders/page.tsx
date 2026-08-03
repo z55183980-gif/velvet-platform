@@ -102,7 +102,7 @@ export default function AdminOrdersPage() {
               value={type}
               onChange={(e) => setType(e.target.value)}
             >
-              {["ALL", "TOPUP", "EPISODE_UNLOCK"].map((s) => (
+              {["ALL", "TOPUP", "EPISODE_UNLOCK", "VIP_SUB", "DRAMA_BUYOUT"].map((s) => (
                 <option key={s} value={s}>
                   {s}
                 </option>

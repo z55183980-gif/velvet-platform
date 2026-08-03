@@ -6,11 +6,14 @@ import { useLocale } from "@/lib/i18n";
 import { Hero } from "@/components/hero";
 import { DramaCard } from "@/components/drama-card";
 import { ContentRail } from "@/components/content-rail";
+import { VerticalFeed } from "@/components/mobile/vertical-feed";
+import { useIsMobile } from "@/hooks/use-is-mobile";
 import { loadFeatured, loadHome } from "@/lib/api";
 import type { Drama } from "@/lib/mock-data";
 
 function HomeInner() {
   const { t } = useLocale();
+  const isMobile = useIsMobile();
   const params = useSearchParams();
   const category = params.get("cat") || undefined;
   const q = params.get("q") || undefined;
@@ -64,7 +67,6 @@ function HomeInner() {
         setRows([]);
         setTotal(0);
       } finally {
-        // 即使本次 effect 已取消也清掉 loading，避免 HMR/StrictMode 连取消导致骨架永久卡住
         setLoading(false);
       }
     };
@@ -83,12 +85,26 @@ function HomeInner() {
     return t("sections.trending");
   }, [q, category, sort, t]);
 
+  const feedDramas = hot.length > 0 ? hot : rows;
+
+  // Mobile home: Hongguo-style vertical feed (unfiltered)
+  if (isMobile && !filtered) {
+    if (loading && feedDramas.length === 0) {
+      return (
+        <div className="flex h-[calc(100dvh-3rem-3.5rem)] items-center justify-center bg-black text-white/60">
+          …
+        </div>
+      );
+    }
+    return <VerticalFeed dramas={feedDramas} />;
+  }
+
   return (
     <>
       {!filtered && featured && <Hero featured={featured} />}
 
       {filtered ? (
-        <div className="mx-auto max-w-[1200px] px-4 py-16 md:px-6 md:py-24">
+        <div className="mx-auto max-w-[1200px] px-4 py-10 md:px-6 md:py-24">
           <section>
             <div className="mb-8 flex items-baseline justify-between gap-4">
               <h2 className="text-h2 font-bold text-ink">{filterTitle}</h2>
@@ -101,7 +117,7 @@ function HomeInner() {
                 ))}
               </div>
             ) : rows.length === 0 ? (
-              <p className="py-16 text-center text-ink-muted">Không tìm thấy phim phù hợp.</p>
+              <p className="py-16 text-center text-ink-muted">{t("theater.empty")}</p>
             ) : (
               <div className="grid grid-cols-2 gap-x-4 gap-y-8 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
                 {rows.map((d) => (
@@ -127,7 +143,7 @@ export default function HomePage() {
     <Suspense
       fallback={
         <div className="mx-auto max-w-[1200px] px-4 py-24 text-center text-ink-subtle md:px-6">
-          Đang tải…
+          …
         </div>
       }
     >

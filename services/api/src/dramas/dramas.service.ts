@@ -108,7 +108,7 @@ export class DramasService {
   async getEpisodes(dramaId: string, userId?: bigint) {
     const drama = await this.prisma.drama.findUnique({
       where: this.resolveDramaWhere(dramaId),
-      select: { id: true, freeEpisodeCount: true, creatorId: true },
+      select: { id: true, freeEpisodeCount: true, creatorId: true, buyoutCredits: true },
     });
     if (!drama) return null;
     const episodes = await this.prisma.episode.findMany({
@@ -116,12 +116,22 @@ export class DramasService {
       orderBy: { episodeNumber: 'asc' },
     });
     let unlockedSet = new Set<string>();
+    let vipActive = false;
+    let dramaUnlocked = false;
     if (userId) {
-      const unlocks = await this.prisma.userUnlock.findMany({
-        where: { userId, episodeId: { in: episodes.map((e) => e.id) } },
-        select: { episodeId: true },
-      });
+      const [unlocks, user, dUnlock] = await Promise.all([
+        this.prisma.userUnlock.findMany({
+          where: { userId, episodeId: { in: episodes.map((e) => e.id) } },
+          select: { episodeId: true },
+        }),
+        this.prisma.user.findUnique({ where: { id: userId }, select: { vipExpireAt: true } }),
+        this.prisma.userDramaUnlock.findUnique({
+          where: { userId_dramaId: { userId, dramaId: drama.id } },
+        }),
+      ]);
       unlockedSet = new Set(unlocks.map((u) => u.episodeId.toString()));
+      vipActive = !!(user?.vipExpireAt && user.vipExpireAt.getTime() > Date.now());
+      dramaUnlocked = !!dUnlock;
     }
     const rows = episodes.map((ep) => {
       const free = ep.isFree || ep.episodeNumber <= drama.freeEpisodeCount;
@@ -134,11 +144,18 @@ export class DramasService {
         priceCredits: ep.priceCredits.toString(),
         durationSec: ep.durationSec,
         thumbnailUrl: ep.thumbnailUrl,
-        unlocked: free || unlockedSet.has(ep.id.toString()),
+        unlocked: free || vipActive || dramaUnlocked || unlockedSet.has(ep.id.toString()),
         // 禁止返回永久片源；播放走 /episodes/:id/play 短时签名
       };
     });
-    return { dramaId, freeEpisodeCount: drama.freeEpisodeCount, rows };
+    return {
+      dramaId,
+      freeEpisodeCount: drama.freeEpisodeCount,
+      buyoutCredits: drama.buyoutCredits?.toString() ?? null,
+      vipActive,
+      dramaUnlocked,
+      rows,
+    };
   }
 
   async getFeatured(limit = 12) {

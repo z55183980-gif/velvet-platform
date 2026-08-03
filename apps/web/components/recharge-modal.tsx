@@ -142,7 +142,7 @@ export function RechargeModal({ open, onClose }: { open: boolean; onClose: () =>
           <button
             onClick={onClose}
             className="absolute right-4 top-4 text-ink-muted transition-colors hover:text-ink"
-            aria-label="Đóng"
+            aria-label={t("common.close")}
           >
             <X className="h-5 w-5" />
           </button>

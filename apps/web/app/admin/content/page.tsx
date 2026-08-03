@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useLocale } from "@/lib/i18n";
-import { adminListCategories, adminListDramas } from "@/lib/api";
+import { adminBatchDramas, adminListCategories, adminListDramas } from "@/lib/api";
 import { AdminLayout, fmtNum } from "@/components/admin/AdminLayout";
 import { buttonVariants } from "@/components/ui/button";
 import { adminPath } from "@/lib/admin-path";
@@ -23,6 +23,10 @@ export default function AdminContentPage() {
   const [cats, setCats] = useState<any[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [page, setPage] = useState(1);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [batchFree, setBatchFree] = useState(3);
+  const [batchPrice, setBatchPrice] = useState(10);
+  const [batchBuyout, setBatchBuyout] = useState(0);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -143,10 +147,77 @@ export default function AdminContentPage() {
         </button>
       </div>
 
+      <div className="rounded-lg border border-line bg-surface p-3 mb-4 flex flex-wrap gap-2 items-end">
+        <span className="text-caption text-ink-muted">
+          {zh ? `已选 ${selected.size}` : `Chọn ${selected.size}`}
+        </span>
+        <label className="text-caption text-ink-muted">
+          freeEpisodeCount
+          <input
+            type="number"
+            className="block mt-1 rounded-md bg-surface-2 border border-line px-2 py-1.5 text-body-sm w-20"
+            value={batchFree}
+            onChange={(e) => setBatchFree(Number(e.target.value))}
+          />
+        </label>
+        <label className="text-caption text-ink-muted">
+          priceCredits
+          <input
+            type="number"
+            className="block mt-1 rounded-md bg-surface-2 border border-line px-2 py-1.5 text-body-sm w-20"
+            value={batchPrice}
+            onChange={(e) => setBatchPrice(Number(e.target.value))}
+          />
+        </label>
+        <label className="text-caption text-ink-muted">
+          buyoutCredits (0=off)
+          <input
+            type="number"
+            className="block mt-1 rounded-md bg-surface-2 border border-line px-2 py-1.5 text-body-sm w-24"
+            value={batchBuyout}
+            onChange={(e) => setBatchBuyout(Number(e.target.value))}
+          />
+        </label>
+        <button
+          type="button"
+          disabled={!selected.size}
+          className={buttonVariants({ size: "sm" })}
+          onClick={async () => {
+            try {
+              await adminBatchDramas({
+                ids: Array.from(selected),
+                freeEpisodeCount: batchFree,
+                priceCredits: batchPrice,
+                buyoutCredits: batchBuyout > 0 ? batchBuyout : null,
+              });
+              setSelected(new Set());
+              await load();
+            } catch (e: any) {
+              setErr(e?.message || "batch failed");
+            }
+          }}
+        >
+          {zh ? "批量应用" : "Áp dụng hàng loạt"}
+        </button>
+      </div>
+
       <div className="overflow-x-auto rounded-lg border border-line">
         <table className="w-full text-body-sm">
           <thead className="bg-surface-2 text-ink-muted text-left">
             <tr>
+              <th className="px-3 py-2">
+                <input
+                  type="checkbox"
+                  checked={rows.length > 0 && rows.every((r) => selected.has(String(r.id)))}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      setSelected(new Set(rows.map((r) => String(r.id))));
+                    } else {
+                      setSelected(new Set());
+                    }
+                  }}
+                />
+              </th>
               <th className="px-3 py-2">ID</th>
               <th className="px-3 py-2">{zh ? "标题" : "Tiêu đề"}</th>
               <th className="px-3 py-2">Status</th>
@@ -159,6 +230,20 @@ export default function AdminContentPage() {
           <tbody>
             {rows.map((r) => (
               <tr key={String(r.id)} className="border-t border-line hover:bg-surface-2/50">
+                <td className="px-3 py-2">
+                  <input
+                    type="checkbox"
+                    checked={selected.has(String(r.id))}
+                    onChange={(e) => {
+                      setSelected((prev) => {
+                        const next = new Set(prev);
+                        if (e.target.checked) next.add(String(r.id));
+                        else next.delete(String(r.id));
+                        return next;
+                      });
+                    }}
+                  />
+                </td>
                 <td className="px-3 py-2 tabular-nums">{String(r.id)}</td>
                 <td className="px-3 py-2">
                   <div className="font-medium">{zh ? r.titleZh || r.titleVi : r.titleVi}</div>

@@ -24,6 +24,7 @@ import {
   type EmailOtpPurpose,
 } from "@/lib/api";
 import { RechargeModal } from "@/components/recharge-modal";
+import { VipModal } from "@/components/vip-modal";
 import { useLocale } from "@/lib/i18n";
 import { track } from "@/lib/track";
 
@@ -41,6 +42,8 @@ export type AuthUser = {
   locale: string;
   label: string;
   hasPassword?: boolean;
+  isVip?: boolean;
+  vipExpireAt?: string | null;
 };
 
 type AuthMode = "login" | "register" | "forgot";
@@ -56,6 +59,9 @@ interface AuthValue {
   rechargeOpen: boolean;
   openRecharge: () => void;
   closeRecharge: () => void;
+  vipOpen: boolean;
+  openVip: () => void;
+  closeVip: () => void;
   /** 公测预留：手机 OTP */
   sendOtp: (phone: string) => Promise<{ expiresInSec: number; devCode?: string }>;
   verify: (phone: string, code: string) => Promise<void>;
@@ -77,7 +83,7 @@ interface AuthValue {
   reset: (opts: { email: string; code: string; password: string }) => Promise<void>;
   logout: () => Promise<void>;
   refreshWallet: () => Promise<void>;
-  applySession: (s?: any, fallback?: string) => Promise<void>;
+  applySession: (s?: any, fallback?: string) => Promise<boolean>;
   unlock: (episodeId: string | number) => Promise<{
     ok: boolean;
     alreadyUnlocked: boolean;
@@ -102,6 +108,8 @@ function toUser(s: any, fallback?: string): AuthUser {
     locale: s?.locale || "vi",
     label,
     hasPassword: !!s?.hasPassword,
+    isVip: !!s?.isVip,
+    vipExpireAt: s?.vipExpireAt ?? null,
   };
 }
 
@@ -119,6 +127,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loginOpen, setLoginOpen] = useState(false);
   const [loginInitialMode, setLoginInitialMode] = useState<AuthMode>("login");
   const [rechargeOpen, setRechargeOpen] = useState(false);
+  const [vipOpen, setVipOpen] = useState(false);
 
   const refreshWallet = useCallback(async () => {
     const w = await getWallet();
@@ -186,6 +195,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const closeLogin = useCallback(() => setLoginOpen(false), []);
   const openRecharge = useCallback(() => setRechargeOpen(true), []);
   const closeRecharge = useCallback(() => setRechargeOpen(false), []);
+  const openVip = useCallback(() => setVipOpen(true), []);
+  const closeVip = useCallback(() => setVipOpen(false), []);
 
   const sendOtp = useCallback((phone: string) => apiSendOtp(phone), []);
   const verify = useCallback(
@@ -300,6 +311,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         rechargeOpen,
         openRecharge,
         closeRecharge,
+        vipOpen,
+        openVip,
+        closeVip,
         sendOtp,
         verify,
         sendEmailOtp,
@@ -317,6 +331,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       {children}
       {loginOpen && <LoginModal initialMode={loginInitialMode} />}
       <RechargeModal open={rechargeOpen} onClose={closeRecharge} />
+      <VipModal open={vipOpen} onClose={closeVip} />
     </AuthContext.Provider>
   );
 }

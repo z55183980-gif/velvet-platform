@@ -63,7 +63,7 @@ export function VideoPlayer({
   seekTo?: number | null;
   videoRef?: React.RefObject<HTMLVideoElement | null>;
 }) {
-  const { t, locale } = useLocale();
+  const { t } = useLocale();
   const innerRef = useRef<HTMLVideoElement>(null);
   const videoRef = externalRef ?? innerRef;
   const shellRef = useRef<HTMLDivElement>(null);
@@ -173,7 +173,7 @@ export function VideoPlayer({
     overlay = (
       <Overlay>
         <p className="text-h4 font-semibold text-white">
-          {locale === "zh" ? "登录后观看" : "Đăng nhập để xem"}
+          {t("player.loginToWatch")}
         </p>
         <button className={buttonVariants({ variant: "primary", size: "lg" })} onClick={onLogin}>
           {t("nav.login")}

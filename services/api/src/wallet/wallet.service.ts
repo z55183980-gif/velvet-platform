@@ -5,6 +5,7 @@ import { BizException, BizCode } from '../common/biz.exception';
 import { toBigInt, genOrderNo, toDecimal } from '../common/money.util';
 import { ExchangeService } from '../exchange/exchange.service';
 import { PackagesService } from '../packages/packages.service';
+import { VipPlansService } from '../vip/vip-plans.service';
 import { StructuredLogger } from '../common/structured-logger.service';
 
 const WALLET_RETRY = 3;
@@ -15,6 +16,7 @@ export class WalletService {
     private readonly prisma: PrismaService,
     private readonly exchange: ExchangeService,
     private readonly packages: PackagesService,
+    private readonly vipPlans: VipPlansService,
     private readonly log: StructuredLogger,
   ) {}
 
@@ -135,6 +137,217 @@ export class WalletService {
     return base;
   }
 
+  // ============ VIP 订阅下单（法币支付，成功后延长 vipExpireAt）============
+  async createVipSubOrder(
+    dto: {
+      vipPlanId: number | string;
+      currency: string;
+      paymentMethod?: string;
+      idempotencyKey?: string;
+    },
+    userId: bigint,
+  ) {
+    const currency = (dto.currency || 'CNY').toUpperCase();
+    const plan = await this.vipPlans.getActive(toBigInt(dto.vipPlanId));
+    const quote = await this.exchange.quoteBasePrice(plan.basePrice, currency);
+    const payAmount = new Prisma.Decimal(quote.payAmount);
+
+    const idem =
+      dto.idempotencyKey ||
+      `vip:${userId}:plan${plan.id}:${currency}:${Date.now()}:${Math.random().toString(36).slice(2, 7)}`;
+    const existing = await this.prisma.order.findUnique({ where: { idempotencyKey: idem } });
+    if (existing) return this.orderView(existing);
+
+    const amountVnd = await this.exchange.fiatToVnd(currency, payAmount);
+    const method = (dto.paymentMethod || 'STRIPE') as any;
+
+    if (method === 'ALIPAY' && currency !== 'CNY') {
+      throw new BizException(
+        BizCode.BAD_REQUEST,
+        'Alipay chỉ hỗ trợ thanh toán CNY; vui lòng chọn CNY hoặc phương thức khác',
+      );
+    }
+
+    const order = await this.prisma.order.create({
+      data: {
+        orderNo: genOrderNo('VP'),
+        idempotencyKey: idem,
+        userId,
+        orderType: 'VIP_SUB',
+        vipPlanId: plan.id,
+        amountVnd,
+        amountCredits: 0n,
+        creatorIncomeVnd: 0n,
+        platformFeeVnd: 0n,
+        payCurrency: currency,
+        payAmount,
+        fxRate: new Prisma.Decimal(quote.cnyToFiat),
+        fxSource: 'cnyToFiat',
+        paymentMethod: method,
+        paymentStatus: 'PENDING',
+        meta: { durationDays: plan.durationDays, planName: plan.name } as any,
+      },
+    });
+
+    const base: any = {
+      ...this.orderView(order),
+      vipPlanId: plan.id.toString(),
+      planName: plan.name,
+      durationDays: plan.durationDays,
+      basePriceCny: plan.basePrice.toString(),
+    };
+
+    if (method === 'ALIPAY') {
+      return {
+        ...base,
+        amountYuan: payAmount.toFixed(2),
+        notice: '开源版未集成支付渠道 SDK，请接入真实渠道后返回 payUrl/payForm',
+      };
+    }
+
+    if (process.env.NODE_ENV !== 'production') {
+      base.devPayUrl = `/api/v1/payments/simulate?orderNo=${order.orderNo}`;
+      base.simulate = true;
+    }
+    return base;
+  }
+
+  // ============ 整剧买断（扣积分）============
+  async unlockDrama(dto: { dramaId: number | string; idempotencyKey?: string }, userId: bigint) {
+    const dramaId = toBigInt(dto.dramaId);
+    const idem = dto.idempotencyKey || `drama-buyout:${userId}:${dramaId}`;
+
+    const existing = await this.prisma.userDramaUnlock.findUnique({
+      where: { userId_dramaId: { userId, dramaId } },
+    });
+    if (existing) {
+      return {
+        unlocked: true,
+        alreadyUnlocked: true,
+        dramaId: dramaId.toString(),
+        unlockId: existing.id.toString(),
+        orderId: existing.orderId?.toString() ?? null,
+      };
+    }
+
+    const drama = await this.prisma.drama.findUnique({ where: { id: dramaId } });
+    if (!drama) throw new BizException(BizCode.NOT_FOUND, 'Phim không tồn tại');
+    const buyout = drama.buyoutCredits ?? 0n;
+    if (buyout <= 0n) {
+      throw new BizException(BizCode.BAD_REQUEST, 'Phim này không hỗ trợ mua cả bộ');
+    }
+
+    await this.ensureWallet(userId);
+
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const again = await tx.userDramaUnlock.findUnique({
+          where: { userId_dramaId: { userId, dramaId } },
+        });
+        if (again) {
+          return {
+            unlocked: true,
+            alreadyUnlocked: true,
+            dramaId: dramaId.toString(),
+            unlockId: again.id.toString(),
+            orderId: again.orderId?.toString() ?? null,
+          };
+        }
+
+        let order = await tx.order.findUnique({ where: { idempotencyKey: idem } });
+        if (!order) {
+          const creator = await tx.creator.findUnique({ where: { id: drama.creatorId } });
+          const share = creator?.revenueShare ?? new Prisma.Decimal(0.7);
+          // 用积分×参考：amountVnd 存 0（积分计价）；创作者分润按 0 或后续扩展
+          order = await tx.order.create({
+            data: {
+              orderNo: genOrderNo('DB'),
+              idempotencyKey: idem,
+              userId,
+              creatorId: drama.creatorId,
+              orderType: 'DRAMA_BUYOUT',
+              dramaId,
+              amountVnd: 0n,
+              amountCredits: buyout,
+              creatorIncomeVnd: 0n,
+              platformFeeVnd: 0n,
+              payCurrency: 'CREDITS',
+              payAmount: new Prisma.Decimal(buyout.toString()),
+              fxRate: new Prisma.Decimal(1),
+              fxSource: 'wallet',
+              paymentMethod: 'WALLET',
+              paymentStatus: 'PENDING',
+              meta: { revenueShare: share.toString() } as any,
+            },
+          });
+        }
+
+        if (order.paymentStatus === 'PAID') {
+          const unlock = await tx.userDramaUnlock.findUnique({
+            where: { userId_dramaId: { userId, dramaId } },
+          });
+          return {
+            unlocked: true,
+            alreadyUnlocked: true,
+            dramaId: dramaId.toString(),
+            unlockId: unlock?.id.toString() ?? null,
+            orderId: order.id.toString(),
+          };
+        }
+
+        const okCharge = await this.chargeWalletTx(
+          tx,
+          userId,
+          buyout,
+          order.id,
+          'UNLOCK',
+          `Mua cả bộ #${dramaId}`,
+        );
+        if (!okCharge) {
+          throw new BizException(BizCode.INSUFFICIENT_BALANCE, 'Số dư credits không đủ để mua cả bộ');
+        }
+
+        await tx.order.update({
+          where: { id: order.id },
+          data: { paymentStatus: 'PAID', paidAt: new Date() },
+        });
+
+        const unlock = await tx.userDramaUnlock.create({
+          data: { userId, dramaId, orderId: order.id },
+        });
+        await tx.drama.update({
+          where: { id: dramaId },
+          data: { unlockCount: { increment: 1 } },
+        });
+
+        return {
+          unlocked: true,
+          alreadyUnlocked: false,
+          dramaId: dramaId.toString(),
+          unlockId: unlock.id.toString(),
+          orderId: order.id.toString(),
+          creditsSpent: buyout.toString(),
+        };
+      });
+    } catch (e: any) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        const unlock = await this.prisma.userDramaUnlock.findUnique({
+          where: { userId_dramaId: { userId, dramaId } },
+        });
+        if (unlock) {
+          return {
+            unlocked: true,
+            alreadyUnlocked: true,
+            dramaId: dramaId.toString(),
+            unlockId: unlock.id.toString(),
+            orderId: unlock.orderId?.toString() ?? null,
+          };
+        }
+      }
+      throw e;
+    }
+  }
+
   // ============ 单集解锁（事务：扣积分 + PAID + 解锁 + 分账 + 幂等）============
   async unlockEpisode(dto: { episodeId: number | string; idempotencyKey?: string }, userId: bigint) {
     const episodeId = toBigInt(dto.episodeId);
@@ -161,6 +374,54 @@ export class WalletService {
     if (!episode) throw new BizException(BizCode.NOT_FOUND, 'Tập phim không tồn tại');
 
     const isFree = episode.isFree || episode.episodeNumber <= episode.drama.freeEpisodeCount;
+
+    // VIP / 整剧买断：软解锁（不扣积分）
+    if (!isFree) {
+      const [user, dramaUnlock] = await Promise.all([
+        this.prisma.user.findUnique({ where: { id: userId }, select: { vipExpireAt: true } }),
+        this.prisma.userDramaUnlock.findUnique({
+          where: { userId_dramaId: { userId, dramaId: episode.dramaId } },
+        }),
+      ]);
+      const vipActive = !!(user?.vipExpireAt && user.vipExpireAt.getTime() > Date.now());
+      if (vipActive || dramaUnlock) {
+        try {
+          const rec = await this.prisma.userUnlock.create({ data: { userId, episodeId } });
+          await this.prisma.episode.update({
+            where: { id: episodeId },
+            data: { unlockCount: { increment: 1 } },
+          });
+          return {
+            unlocked: true,
+            alreadyUnlocked: false,
+            isFree: false,
+            viaVip: vipActive,
+            viaDramaBuyout: !!dramaUnlock,
+            episodeId: episodeId.toString(),
+            unlockId: rec.id.toString(),
+            orderId: null,
+          };
+        } catch (e: any) {
+          if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+            const again = await this.prisma.userUnlock.findUnique({
+              where: { userId_episodeId: { userId, episodeId } },
+            });
+            return {
+              unlocked: true,
+              alreadyUnlocked: true,
+              isFree: false,
+              viaVip: vipActive,
+              viaDramaBuyout: !!dramaUnlock,
+              episodeId: episodeId.toString(),
+              unlockId: again?.id.toString() ?? null,
+              orderId: null,
+            };
+          }
+          throw e;
+        }
+      }
+    }
+
     if (isFree) {
       try {
         const rec = await this.prisma.userUnlock.create({ data: { userId, episodeId } });
@@ -313,6 +574,8 @@ export class WalletService {
 
         if (order.orderType === 'TOPUP') {
           await this.creditTopup(tx, order);
+        } else if (order.orderType === 'VIP_SUB') {
+          await this.activateVip(tx, order);
         }
         this.log.log({
           event: 'wallet.creditOnPaid',
@@ -597,6 +860,50 @@ export class WalletService {
       }
     }
     return false;
+  }
+
+  private async activateVip(tx: Prisma.TransactionClient, order: any) {
+    let durationDays = 0;
+    if (order.vipPlanId) {
+      const plan = await tx.vipPlan.findUnique({ where: { id: order.vipPlanId } });
+      durationDays = plan?.durationDays ?? 0;
+    }
+    if (!durationDays && order.meta && typeof order.meta === 'object') {
+      durationDays = Number((order.meta as any).durationDays) || 0;
+    }
+    if (durationDays < 1) {
+      throw new BizException(BizCode.BAD_REQUEST, 'VIP plan duration không hợp lệ');
+    }
+
+    const user = await tx.user.findUnique({
+      where: { id: order.userId },
+      select: { vipExpireAt: true },
+    });
+    const vipExpireAt = VipPlansService.computeExpireAt(user?.vipExpireAt, durationDays);
+    await tx.user.update({
+      where: { id: order.userId },
+      data: { vipExpireAt },
+    });
+
+    try {
+      await tx.notification.create({
+        data: {
+          userId: order.userId,
+          type: 'VIP_SUCCESS',
+          titleVi: 'Kích hoạt VIP thành công',
+          titleZh: 'VIP 开通成功',
+          bodyVi: `VIP còn hiệu lực đến ${vipExpireAt.toISOString()}.`,
+          bodyZh: `VIP 有效期至 ${vipExpireAt.toISOString()}。`,
+          payload: {
+            orderNo: order.orderNo,
+            vipExpireAt: vipExpireAt.toISOString(),
+            durationDays,
+          } as any,
+        },
+      });
+    } catch {
+      /* best-effort */
+    }
   }
 
   private async creditTopup(tx: Prisma.TransactionClient, order: any) {

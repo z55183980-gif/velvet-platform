@@ -55,7 +55,7 @@ export class AdminAuthService implements OnModuleInit {
   /** 启动时：若配置了 bootstrap 邮箱且库中不存在，则创建 */
   async ensureBootstrapAdmin() {
     const email = this.normalizeEmail(
-      this.config.get<string>('ADMIN_BOOTSTRAP_EMAIL') || 'admin@dramavn.local',
+      this.config.get<string>('ADMIN_BOOTSTRAP_EMAIL') || 'admin@velvet.local',
     );
     const password =
       this.config.get<string>('ADMIN_BOOTSTRAP_PASSWORD') || 'admin';

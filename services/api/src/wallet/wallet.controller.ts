@@ -11,9 +11,10 @@ import { AuthGuard } from '../auth/auth.guard';
 import { CurrentUser, AuthUser } from '../common/current-user.decorator';
 import { ok } from '../common/response';
 import { WalletService } from './wallet.service';
-import { TopupOrderDto, UnlockEpisodeDto, RefundDto } from './wallet.dto';
+import { TopupOrderDto, UnlockEpisodeDto, UnlockDramaDto, VipSubOrderDto, RedeemCodeDto, RefundDto } from './wallet.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { BizException, BizCode } from '../common/biz.exception';
+import { RedeemService } from '../redeem/redeem.service';
 
 @Controller('v1')
 @UseGuards(AuthGuard)
@@ -21,6 +22,7 @@ export class WalletController {
   constructor(
     private readonly wallet: WalletService,
     private readonly prisma: PrismaService,
+    private readonly redeem: RedeemService,
   ) {}
 
   @Get('wallet')
@@ -42,9 +44,24 @@ export class WalletController {
     return ok(await this.wallet.createTopupOrder(dto, user.userId));
   }
 
+  @Post('orders/vip-sub')
+  async vipSub(@Body() dto: VipSubOrderDto, @CurrentUser() user: AuthUser) {
+    return ok(await this.wallet.createVipSubOrder(dto, user.userId));
+  }
+
   @Post('orders/unlock-episode')
   async unlock(@Body() dto: UnlockEpisodeDto, @CurrentUser() user: AuthUser) {
     return ok(await this.wallet.unlockEpisode(dto, user.userId));
+  }
+
+  @Post('orders/unlock-drama')
+  async unlockDrama(@Body() dto: UnlockDramaDto, @CurrentUser() user: AuthUser) {
+    return ok(await this.wallet.unlockDrama(dto, user.userId));
+  }
+
+  @Post('redeem')
+  async redeemCode(@Body() dto: RedeemCodeDto, @CurrentUser() user: AuthUser) {
+    return ok(await this.redeem.redeem(user.userId, dto.code));
   }
 
   @Post('orders/:orderNo/refund')

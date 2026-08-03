@@ -5,6 +5,7 @@ import { Play, Star } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { buttonVariants } from "./ui/button";
 import { categoryName, type Drama } from "@/lib/mock-data";
+import { pickContentText } from "@/lib/languages";
 import { cn } from "@/lib/utils";
 
 function isImg(s: string) {
@@ -13,7 +14,7 @@ function isImg(s: string) {
 
 export function Hero({ featured }: { featured: Drama }) {
   const { locale, t } = useLocale();
-  const title = locale === "vi" ? featured.titleVi : featured.titleZh;
+  const title = pickContentText(locale, featured.titleVi, featured.titleZh);
   const cat = categoryName(featured.categorySlug, locale);
   const cover = featured.cover[0];
 
@@ -45,7 +46,7 @@ export function Hero({ featured }: { featured: Drama }) {
 
       <div className="relative mx-auto flex min-h-[78vh] w-full max-w-[1200px] flex-col justify-end px-4 pb-16 pt-28 md:min-h-[88vh] md:px-6 md:pb-24 md:pt-32">
         <div className="w-full max-w-[36rem] animate-[rise-in_0.7s_var(--ease-out)_both]">
-          <p className="text-display font-bold tracking-tight text-ink md:text-[4.5rem]">DramaVN</p>
+          <p className="text-display font-bold tracking-tight text-ink md:text-[4.5rem]">Velvet</p>
           <p className="mt-3 text-overline uppercase text-brand">{t("hero.overline")}</p>
           <h1 className="mt-4 text-h2 font-bold text-ink md:text-h1">{title}</h1>
           <p className="mt-3 flex flex-wrap items-center gap-3 text-body-sm text-ink-muted">

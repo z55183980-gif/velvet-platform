@@ -40,8 +40,7 @@ async function notifApi<T>(path: string, init?: RequestInit): Promise<T> {
 
 export default function NotificationsPage() {
   const { user, ready, openLogin } = useAuth();
-  const { locale } = useLocale();
-  const zh = locale === "zh";
+  const { locale, t } = useLocale();
   const [items, setItems] = useState<NotifItem[]>([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
@@ -84,20 +83,23 @@ export default function NotificationsPage() {
   }
 
   if (!ready) {
-    return <div className="mx-auto max-w-[800px] px-4 py-24 text-center text-ink-subtle">…</div>;
+    return (
+      <div className="mx-auto max-w-[800px] px-4 py-24 text-center text-ink-subtle">
+        {t("common.loading")}
+      </div>
+    );
   }
 
   if (!user) {
     return (
       <div className="mx-auto max-w-[800px] px-4 py-24 text-center md:px-6">
-        <h1 className="text-h2 font-bold text-ink">
-          {zh ? "通知中心" : "Trung tâm thông báo"}
-        </h1>
-        <p className="mt-3 text-ink-muted">
-          {zh ? "请先登录查看通知" : "Vui lòng đăng nhập để xem thông báo"}
-        </p>
-        <button className={buttonVariants({ variant: "primary", size: "lg" }) + " mt-6"} onClick={() => openLogin()}>
-          {zh ? "登录" : "Đăng nhập"}
+        <h1 className="text-h2 font-bold text-ink">{t("notifications.title")}</h1>
+        <p className="mt-3 text-ink-muted">{t("notifications.loginHint")}</p>
+        <button
+          className={buttonVariants({ variant: "primary", size: "lg" }) + " mt-6"}
+          onClick={() => openLogin()}
+        >
+          {t("nav.login")}
         </button>
       </div>
     );
@@ -109,11 +111,9 @@ export default function NotificationsPage() {
     <div className="mx-auto max-w-[800px] px-4 py-10 md:px-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-h2 font-bold text-ink">
-            {zh ? "通知中心" : "Trung tâm thông báo"}
-          </h1>
+          <h1 className="text-h2 font-bold text-ink">{t("notifications.title")}</h1>
           <p className="mt-1 text-body-sm text-ink-muted">
-            {zh ? `共 ${total} 条` : `Tổng ${total} thông báo`}
+            {t("notifications.total", { n: total })}
           </p>
         </div>
         <div className="flex gap-2">
@@ -121,10 +121,10 @@ export default function NotificationsPage() {
             onClick={markAllRead}
             className={buttonVariants({ variant: "secondary", size: "sm" })}
           >
-            {zh ? "全部已读" : "Đánh dấu đã đọc"}
+            {t("notifications.markAllRead")}
           </button>
           <Link href="/me" className={buttonVariants({ variant: "ghost", size: "sm" })}>
-            {zh ? "返回" : "Về /me"}
+            {t("notifications.back")}
           </Link>
         </div>
       </div>
@@ -138,12 +138,14 @@ export default function NotificationsPage() {
       <ul className="mt-6 divide-y divide-line rounded-xl border border-line bg-surface-2">
         {items.length === 0 && (
           <li className="px-4 py-12 text-center text-body-sm text-ink-subtle">
-            {zh ? "暂无通知" : "Chưa có thông báo"}
+            {t("notifications.empty")}
           </li>
         )}
         {items.map((n) => {
-          const title = zh ? n.titleZh || n.titleVi : n.titleVi || n.titleZh;
-          const body = zh ? n.bodyZh || n.bodyVi : n.bodyVi || n.bodyZh;
+          const title =
+            locale === "vi" ? n.titleVi || n.titleZh : n.titleZh || n.titleVi;
+          const body =
+            locale === "vi" ? n.bodyVi || n.bodyZh : n.bodyZh || n.bodyVi;
           return (
             <li
               key={n.id}
@@ -162,7 +164,7 @@ export default function NotificationsPage() {
                   </div>
                   {body && <p className="mt-1 text-body-sm text-ink-muted">{body}</p>}
                   <p className="mt-2 text-[11px] text-ink-subtle">
-                    {new Date(n.createdAt).toLocaleString()}
+                    {new Date(n.createdAt).toLocaleString(locale)}
                   </p>
                 </div>
                 {!n.readAt && (
@@ -170,7 +172,7 @@ export default function NotificationsPage() {
                     onClick={() => markRead(n.id)}
                     className="text-caption text-brand hover:underline"
                   >
-                    {zh ? "标记已读" : "Đã đọc"}
+                    {t("notifications.markRead")}
                   </button>
                 )}
               </div>
@@ -186,7 +188,7 @@ export default function NotificationsPage() {
             onClick={() => setPage((p) => Math.max(1, p - 1))}
             className="rounded-md border border-line px-3 py-2 hover:bg-surface-2 disabled:opacity-50"
           >
-            ← {zh ? "上一页" : "Trước"}
+            ← {t("notifications.prev")}
           </button>
           <span>
             {page} / {totalPages}
@@ -196,7 +198,7 @@ export default function NotificationsPage() {
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
             className="rounded-md border border-line px-3 py-2 hover:bg-surface-2 disabled:opacity-50"
           >
-            {zh ? "下一页" : "Sau"} →
+            {t("notifications.next")} →
           </button>
         </div>
       )}

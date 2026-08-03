@@ -1,7 +1,7 @@
-# DramaVN · 越南短剧独立站开源版
+# Velvet · Spicy Short Drama Platform
 
-> 一个面向越南市场的**短剧独立站**开源脚手架：观众可看、创作者可上传分成、平台可抽佣。  
-> 双语（vi + zh）Day 1，签名播放、幂等 Webhook、对账骨架均已内置。
+> **Velvet** 短剧独立站开源脚手架：观众可看、创作者可上传分成、平台可抽佣。  
+> 面向欧美成人言情 / 禁忌恋题材；双语（vi + zh）Day 1，签名播放、幂等 Webhook、对账骨架均已内置。
 >
 > **本仓库不包含真实支付渠道实现**——支付仅保留抽象接口（`PaymentProvider`），由部署方按需接入 alipay / wechat / stripe / momo / zalopay / vietqr 等。
 
@@ -11,7 +11,7 @@
 
 ## ✨ 特性一览
 
-- 🎬 **三端一体**：单域名路径分区 `/` 观众 · `/creator` 创作者 · `/admin` 管理后台
+- 🎬 **三端一体**：观众/创作者同站路径分区；管理端可独立域名（生产：`velvet.slc8.com` / `velvetadmin.slc8.com`）
 - 🌐 **双语 Day 1**：vi（默认）+ zh，i18n key + slug 双绑
 - 🔐 **签名播放**：HLS 短时签名 URL，片源不外泄
 - 💰 **账本只认 VND**：订单保留实付币种 + 汇率快照，可审计
@@ -74,6 +74,15 @@ npm run dev                 # 默认 http://localhost:3000
 
 打开浏览器访问 `http://localhost:3000`，即可看到观众端首页。  
 后台入口：`http://localhost:3000/admin`（默认账号见 `.env` 中的 `ADMIN_BOOTSTRAP_*`）。
+
+### 生产域名
+
+| 端 | 域名 |
+|---|---|
+| 用户端（观众 / 创作者） | https://velvet.slc8.com |
+| 管理端 | https://velvetadmin.slc8.com |
+
+前端通过 `NEXT_PUBLIC_WEB_HOST` / `NEXT_PUBLIC_ADMIN_HOST`（及对应 `*_URL`）配置；API 的 `ALLOWED_ORIGINS` 需同时放行两个源。本地 `localhost` 不受域名分流影响。
 
 ---
 

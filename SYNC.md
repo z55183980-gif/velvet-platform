@@ -1,6 +1,6 @@
 # 同步到 GitHub 的标准流程
 
-> 本文档是 `opc007/dramavn-platform` 的专用同步手册。  
+> 本文档是 `opc007/velvet-platform` 的专用同步手册。  
 > 目标：**任何人/任何机器凭这一份文档就能把本地代码推到 GitHub**，不依赖记忆。
 
 ---
@@ -9,7 +9,7 @@
 
 | 项 | 值 |
 |---|---|
-| 远程仓库 | `https://github.com/opc007/dramavn-platform` |
+| 远程仓库 | `https://github.com/opc007/velvet-platform` |
 | 默认分支 | `main` |
 | 远程名 | `origin` |
 | 协议 | HTTPS（用 GitHub CLI 登录态） |
@@ -20,8 +20,8 @@
 仓库地址（任选其一）：
 
 ```
-https://github.com/opc007/dramavn-platform.git
-git@github.com:opc007/dramavn-platform.git
+https://github.com/opc007/velvet-platform.git
+git@github.com:opc007/velvet-platform.git
 ```
 
 ---
@@ -47,7 +47,7 @@ gh auth login -h github.com --web --scopes repo
 **方式 B：手动 PAT（无浏览器时）**
 
 1. 打开 https://github.com/settings/tokens/new
-2. Note 随便填，比如 `dramavn-sync`
+2. Note 随便填，比如 `velvet-sync`
 3. 勾选 `repo`（其它不勾）
 4. 生成后复制 `ghp_xxx...`
 5. 回到终端：
@@ -79,14 +79,14 @@ git config user.email "opc007@users.noreply.github.com"
 ```bash
 git remote -v
 # 应该看到
-# origin  https://github.com/opc007/dramavn-platform.git (fetch)
-# origin  https://github.com/opc007/dramavn-platform.git (push)
+# origin  https://github.com/opc007/velvet-platform.git (fetch)
+# origin  https://github.com/opc007/velvet-platform.git (push)
 ```
 
 如果 remote 不存在，重新加上：
 
 ```bash
-git remote add origin https://github.com/opc007/dramavn-platform.git
+git remote add origin https://github.com/opc007/velvet-platform.git
 git branch --set-upstream-to=origin/main main
 ```
 
@@ -135,7 +135,7 @@ git diff --cached --stat | head -20
 ```bash
 cd /path/to/短剧独立站平台
 git init -b main
-git remote add origin https://github.com/opc007/dramavn-platform.git
+git remote add origin https://github.com/opc007/velvet-platform.git
 git add -A
 git commit -m "Initial open-source release"
 git push -u origin main
@@ -147,7 +147,7 @@ git push -u origin main
 
 ```bash
 cd /path/to/短剧独立站平台
-gh repo create dramavn-platform \
+gh repo create velvet-platform \
   --public \
   --description "Vietnam short-drama platform: web-first, vi+zh day-1, signature playback, idempotent webhooks, pluggable PaymentProvider. MIT." \
   --source=. \
@@ -193,7 +193,7 @@ git push --force origin main
 
 ## 6. 不要同步的黑名单（人工把关）
 
-以下内容**绝对不能**进 `opc007/dramavn-platform`：
+以下内容**绝对不能**进 `opc007/velvet-platform`：
 
 - 🔒 任何支付渠道的私钥、AppID、商户号、API Key、证书（`*.pem`/`*.key`/`*.crt`/`*.p12`）
 - 🔒 真实 `.env` / `.env.production` / `.env.local`

@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { BizException, BizCode } from '../common/biz.exception';
 import { AuditService } from '../common/audit.service';
+import { VipPlansService } from '../vip/vip-plans.service';
 
 @Injectable()
 export class AdminUsersService {
@@ -161,5 +162,51 @@ export class AdminUsersService {
       payload: { cleared: cnt.count },
     });
     return { cleared: cnt.count };
+  }
+
+  async setVip(
+    id: string,
+    dto: { vipExpireAt?: string | null; extendDays?: number },
+    actorId?: bigint,
+  ) {
+    const userId = BigInt(id);
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new BizException(BizCode.NOT_FOUND, 'Không tìm thấy người dùng');
+
+    let vipExpireAt: Date | null = user.vipExpireAt;
+    if (dto.extendDays != null) {
+      const days = Math.floor(Number(dto.extendDays));
+      if (!Number.isFinite(days) || days < 1) {
+        throw new BizException(BizCode.BAD_REQUEST, 'extendDays không hợp lệ');
+      }
+      vipExpireAt = VipPlansService.computeExpireAt(user.vipExpireAt, days);
+    } else if (dto.vipExpireAt === null || dto.vipExpireAt === '') {
+      vipExpireAt = null;
+    } else if (dto.vipExpireAt != null) {
+      const d = new Date(dto.vipExpireAt);
+      if (Number.isNaN(d.getTime())) {
+        throw new BizException(BizCode.BAD_REQUEST, 'vipExpireAt không hợp lệ');
+      }
+      vipExpireAt = d;
+    } else {
+      throw new BizException(BizCode.BAD_REQUEST, 'Cần vipExpireAt hoặc extendDays');
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id: userId },
+      data: { vipExpireAt },
+    });
+    await this.audit.write({
+      actorId,
+      action: 'user.vip',
+      targetType: 'user',
+      targetId: id,
+      payload: { vipExpireAt: vipExpireAt?.toISOString() ?? null, extendDays: dto.extendDays },
+    });
+    return {
+      id: updated.id.toString(),
+      vipExpireAt: updated.vipExpireAt?.toISOString() ?? null,
+      isVip: !!(updated.vipExpireAt && updated.vipExpireAt.getTime() > Date.now()),
+    };
   }
 }

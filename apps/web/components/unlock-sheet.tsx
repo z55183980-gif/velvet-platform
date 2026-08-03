@@ -16,6 +16,9 @@ export function UnlockSheet({
   episode,
   onClose,
   onConfirmed,
+  buyoutCredits,
+  onBuyDrama,
+  vipActive,
 }: {
   open: boolean;
   episode: Episode | null;
@@ -23,23 +26,29 @@ export function UnlockSheet({
   onConfirmed?: (
     ep: Episode,
   ) => Promise<{ ok: boolean; alreadyUnlocked?: boolean; error?: string; code?: number } | void>;
+  buyoutCredits?: number | null;
+  onBuyDrama?: () => Promise<{ ok: boolean; error?: string; code?: number } | void>;
+  vipActive?: boolean;
 }) {
   const { t } = useLocale();
-  const { balance, openRecharge, refreshWallet } = useAuth();
+  const { balance, openRecharge, openVip, refreshWallet } = useAuth();
   const [status, setStatus] = useState<Status>("idle");
   const [errMsg, setErrMsg] = useState<string | null>(null);
+  const [mode, setMode] = useState<"episode" | "drama">("episode");
   const panelRef = useRef<HTMLDivElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const price = episode?.price ?? 0;
+  const price = mode === "drama" ? Number(buyoutCredits || 0) : episode?.price ?? 0;
   const bal = balance ?? 0;
   const balanceKnown = balance != null;
   const insufficient = balanceKnown && bal < price;
+  const showBuyout = !!(buyoutCredits && buyoutCredits > 0 && onBuyDrama);
 
   useEffect(() => {
     if (!open) return;
     setStatus("idle");
     setErrMsg(null);
+    setMode("episode");
     void refreshWallet();
     document.body.style.overflow = "hidden";
     const onKey = (e: KeyboardEvent) => {
@@ -63,7 +72,30 @@ export function UnlockSheet({
     openRecharge();
   }
 
+  function goVip() {
+    onClose();
+    openVip();
+  }
+
   async function confirm() {
+    if (vipActive && mode === "episode") {
+      setStatus("processing");
+      try {
+        const r = await onConfirmed?.(episode!);
+        const ok = !r || r.ok || r.alreadyUnlocked || r.error === "mock";
+        if (ok) {
+          setStatus("success");
+          timer.current = setTimeout(() => onClose(), 1500);
+          return;
+        }
+        setStatus("error");
+        if (r?.error) setErrMsg(r.error);
+      } catch (e: any) {
+        setStatus("error");
+        setErrMsg(e?.message || null);
+      }
+      return;
+    }
     if (insufficient) {
       setStatus("insufficient");
       return;
@@ -71,14 +103,16 @@ export function UnlockSheet({
     setStatus("processing");
     setErrMsg(null);
     try {
-      const r = await onConfirmed?.(episode!);
-      const ok = !r || r.ok || r.alreadyUnlocked || r.error === "mock";
+      const r =
+        mode === "drama"
+          ? await onBuyDrama?.()
+          : await onConfirmed?.(episode!);
+      const ok = !r || r.ok || (r as any).alreadyUnlocked || (r as any).error === "mock";
       if (ok) {
         setStatus("success");
         timer.current = setTimeout(() => onClose(), 1500);
         return;
       }
-      // 4100 = INSUFFICIENT_BALANCE（后端钱包）
       if (r?.code === 4100) {
         setStatus("insufficient");
         setErrMsg(r.error || null);
@@ -92,7 +126,7 @@ export function UnlockSheet({
     }
   }
 
-  const showInsufficient = status === "insufficient" || (status === "idle" && insufficient);
+  const showInsufficient = status === "insufficient" || (status === "idle" && insufficient && !vipActive);
 
   return (
     <div
@@ -161,11 +195,47 @@ export function UnlockSheet({
           </div>
         ) : (
           <>
+            {vipActive ? (
+              <p className="mb-3 rounded-lg bg-brand/10 px-3 py-2 text-center text-body-sm text-brand">
+                {t("vip.freeWatch")}
+              </p>
+            ) : null}
+            {showBuyout ? (
+              <div className="mb-3 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setMode("episode")}
+                  className={cn(
+                    "flex-1 rounded-full px-3 py-2 text-body-sm",
+                    mode === "episode" ? "bg-brand text-white" : "bg-surface-2 text-ink-muted",
+                  )}
+                >
+                  {t("unlock.confirm")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode("drama")}
+                  className={cn(
+                    "flex-1 rounded-full px-3 py-2 text-body-sm",
+                    mode === "drama" ? "bg-brand text-white" : "bg-surface-2 text-ink-muted",
+                  )}
+                >
+                  {t("unlock.buyDrama")}
+                </button>
+              </div>
+            ) : null}
+            {mode === "drama" ? (
+              <p className="mb-3 text-center text-caption text-ink-muted">
+                {t("unlock.buyDramaHint", { n: String(buyoutCredits) })}
+              </p>
+            ) : null}
             <div className="rounded-xl bg-surface-2 px-5 py-6">
               <div className="text-center">
-                <p className="text-caption uppercase text-ink-subtle">{t("unlock.priceLabel")}</p>
+                <p className="text-caption uppercase text-ink-subtle">
+                  {vipActive && mode === "episode" ? t("vip.freeWatch") : t("unlock.priceLabel")}
+                </p>
                 <p className="mt-2 text-display font-bold tabular-nums text-ink md:text-h1">
-                  {price.toLocaleString()}
+                  {vipActive && mode === "episode" ? 0 : price.toLocaleString()}
                 </p>
                 <p className="mt-1 text-body-sm text-ink-muted">{t("card.credits")}</p>
               </div>
@@ -214,11 +284,24 @@ export function UnlockSheet({
                   ) : (
                     <>
                       <Lock className="h-4 w-4" />
-                      {t("unlock.confirm")}
+                      {vipActive && mode === "episode"
+                        ? t("vip.freeWatch")
+                        : mode === "drama"
+                          ? t("unlock.buyDrama")
+                          : t("unlock.confirm")}
                     </>
                   )}
                 </button>
               )}
+              {!vipActive ? (
+                <button
+                  onClick={goVip}
+                  disabled={status === "processing"}
+                  className={cn(buttonVariants({ variant: "secondary", size: "lg" }), "w-full")}
+                >
+                  {t("vip.goVip")}
+                </button>
+              ) : null}
               <button
                 onClick={onClose}
                 disabled={status === "processing"}

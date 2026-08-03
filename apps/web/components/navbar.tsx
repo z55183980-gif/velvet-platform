@@ -2,81 +2,118 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Menu, X, Globe, Sun, Moon, Monitor } from "lucide-react";
+import { Menu, X, Sun, Moon, Monitor, Crown } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { useAuth } from "@/components/auth-context";
 import { useTheme } from "@/components/theme-provider";
 import { NotificationBell } from "@/components/notification-bell";
+import { LanguageSwitcher } from "@/components/language-switcher";
 import { cn } from "@/lib/utils";
 
-export function Navbar() {
-  const { locale, setLocale, t } = useLocale();
-  const { user, balance, ready: authReady, openLogin, openRecharge } = useAuth();
+export function Navbar({
+  variant = "desktop",
+}: {
+  variant?: "desktop" | "mobile";
+}) {
+  const { t } = useLocale();
+  const { user, balance, ready: authReady, openLogin, openRecharge, openVip } = useAuth();
   const { theme, cycleTheme } = useTheme();
   const [open, setOpen] = useState(false);
+  const isMobileShell = variant === "mobile";
 
   const ThemeIcon = theme === "light" ? Sun : theme === "dark" ? Moon : Monitor;
 
   const links = [
     { href: "/", label: t("nav.home") },
+    { href: "/theater", label: t("nav.theater") },
     { href: "/?sort=latest", label: t("nav.new") },
     { href: "/?sort=hot", label: t("nav.hot") },
-    { href: "/?cat=ngon_tinh", label: t("nav.categories") },
-    { href: "/creator/", label: locale === "vi" ? "Sáng tạo" : "创作者" },
+    { href: "/creator/", label: t("nav.creator") },
   ];
 
   return (
-    <header className="sticky top-0 z-50 border-b border-transparent bg-base/70 backdrop-blur-xl transition-[border-color] data-[scrolled]:border-line">
-      <div className="mx-auto flex h-14 max-w-[1200px] items-center gap-5 px-4 md:h-16 md:px-6">
+    <header
+      className={cn(
+        "sticky top-0 z-50 border-b border-transparent bg-base/70 backdrop-blur-xl transition-[border-color] data-[scrolled]:border-line",
+        isMobileShell && "border-b border-line/60",
+      )}
+    >
+      <div
+        className={cn(
+          "mx-auto flex items-center gap-5 px-4",
+          isMobileShell ? "h-12 max-w-lg" : "h-14 max-w-[1200px] md:h-16 md:px-6",
+        )}
+      >
         <Link href="/" className="group flex items-baseline gap-0.5">
           <span className="text-h3 font-bold tracking-tight text-ink transition-colors group-hover:text-brand md:text-h4">
-            Drama
+            Velvet
           </span>
-          <span className="text-h3 font-bold tracking-tight text-brand md:text-h4">VN</span>
         </Link>
 
-        <nav className="hidden items-center gap-0.5 md:flex">
-          {links.map((l) => (
-            <Link
-              key={l.href}
-              href={l.href}
-              className="rounded-md px-3 py-2 text-body-sm text-ink-muted transition-colors hover:text-ink"
-            >
-              {l.label}
-            </Link>
-          ))}
-        </nav>
+        {!isMobileShell && (
+          <nav className="hidden items-center gap-0.5 md:flex">
+            {links.map((l) => (
+              <Link
+                key={l.href}
+                href={l.href}
+                className="rounded-md px-3 py-2 text-body-sm text-ink-muted transition-colors hover:text-ink"
+              >
+                {l.label}
+              </Link>
+            ))}
+          </nav>
+        )}
 
         <div className="ml-auto flex items-center gap-2">
           <button
             onClick={cycleTheme}
-            className="hidden h-9 w-9 place-items-center rounded-full text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink sm:grid"
+            className={cn(
+              "h-9 w-9 place-items-center rounded-full text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink",
+              isMobileShell ? "grid" : "hidden sm:grid",
+            )}
             aria-label="theme"
             title={theme}
           >
             <ThemeIcon className="h-4 w-4" />
           </button>
 
-          <button
-            onClick={() => setLocale(locale === "vi" ? "zh" : "vi")}
-            className="hidden h-9 items-center gap-1.5 rounded-full px-2.5 text-body-sm text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink sm:inline-flex"
-            aria-label={t("langSwitchHint")}
-            title={t("langSwitchHint")}
-          >
-            <Globe className="h-4 w-4" />
-            <span className="font-medium text-ink">{t("langToggle")}</span>
-            <span className="text-caption text-ink-subtle">→ {locale === "vi" ? "中文" : "VI"}</span>
-          </button>
+          <LanguageSwitcher
+            className={cn(isMobileShell ? "" : "hidden sm:block")}
+          />
 
           <NotificationBell />
 
           <button
             type="button"
+            onClick={() => (user ? openVip() : openLogin())}
+            className={cn(
+              "items-center gap-1.5 rounded-full px-3 py-1.5 transition-colors",
+              user?.isVip
+                ? "bg-gold/15 text-gold hover:bg-gold/25"
+                : "bg-surface-2/80 text-ink-muted hover:bg-surface-3 hover:text-ink",
+              isMobileShell ? "inline-flex" : "hidden sm:inline-flex",
+            )}
+            title={t("nav.vip")}
+            aria-label={t("nav.vip")}
+          >
+            <Crown className="h-3.5 w-3.5" />
+            <span className="text-body-sm font-medium">
+              {user?.isVip ? t("vip.member") : t("nav.vip")}
+            </span>
+          </button>
+
+          <button
+            type="button"
             onClick={openRecharge}
-            className="hidden items-center gap-2 rounded-full bg-surface-2/80 px-3 py-1.5 transition-colors hover:bg-surface-3 sm:inline-flex"
+            className={cn(
+              "items-center gap-2 rounded-full bg-surface-2/80 px-3 py-1.5 transition-colors hover:bg-surface-3",
+              isMobileShell ? "inline-flex" : "hidden sm:inline-flex",
+            )}
             title={t("recharge.title")}
           >
-            <span className="text-caption text-ink-subtle">{t("nav.balance")}</span>
+            {!isMobileShell && (
+              <span className="text-caption text-ink-subtle">{t("nav.balance")}</span>
+            )}
             <span className="text-body-sm font-medium tabular-nums text-ink">
               {!authReady ? "…" : balance != null ? balance.toLocaleString("vi-VN") : "—"}
             </span>
@@ -113,18 +150,20 @@ export function Navbar() {
             </button>
           )}
 
-          <button
-            className="grid h-9 w-9 place-items-center rounded-full text-ink-muted hover:bg-surface-2 hover:text-ink md:hidden"
-            onClick={() => setOpen((o) => !o)}
-            aria-label="menu"
-            aria-expanded={open}
-          >
-            {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-          </button>
+          {!isMobileShell && (
+            <button
+              className="grid h-9 w-9 place-items-center rounded-full text-ink-muted hover:bg-surface-2 hover:text-ink md:hidden"
+              onClick={() => setOpen((o) => !o)}
+              aria-label="menu"
+              aria-expanded={open}
+            >
+              {open ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            </button>
+          )}
         </div>
       </div>
 
-      {open && (
+      {!isMobileShell && open && (
         <div className="border-t border-line bg-base/95 backdrop-blur-xl md:hidden">
           <nav className="mx-auto flex max-w-[1200px] flex-col px-4 py-3">
             {links.map((l) => (
@@ -147,15 +186,28 @@ export function Navbar() {
                 <ThemeIcon className="h-4 w-4" />
                 {theme}
               </button>
-              <button
-                onClick={() => setLocale(locale === "vi" ? "zh" : "vi")}
-                className="inline-flex flex-1 items-center justify-center gap-2 rounded-full bg-surface-2 px-3 py-2.5 text-body-sm text-ink-muted"
-                title={t("langSwitchHint")}
-              >
-                <Globe className="h-4 w-4" />
-                {t("langToggle")} → {locale === "vi" ? "中文" : "VI"}
-              </button>
+              <div className="flex flex-1 items-center justify-center rounded-full bg-surface-2 px-2 py-1">
+                <LanguageSwitcher />
+              </div>
             </div>
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                if (user) openVip();
+                else openLogin();
+              }}
+              className={cn(
+                "mt-2 flex items-center justify-between rounded-full px-4 py-2.5 text-body-sm",
+                user?.isVip ? "bg-gold/15 text-gold" : "bg-surface-2 text-ink",
+              )}
+            >
+              <span className="inline-flex items-center gap-2">
+                <Crown className="h-4 w-4" />
+                {user?.isVip ? t("vip.member") : t("nav.vip")}
+              </span>
+              <span className="text-caption opacity-80">{t("vip.open")}</span>
+            </button>
             <button
               type="button"
               onClick={() => {

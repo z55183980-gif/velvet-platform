@@ -12,7 +12,7 @@ export function Footer() {
             <span className="grid h-8 w-8 place-items-center rounded-md bg-brand font-bold text-white">
               D
             </span>
-            <span className="text-h4 font-semibold tracking-tight">DramaVN</span>
+            <span className="text-h4 font-semibold tracking-tight">Velvet</span>
           </div>
           <p className="text-body-sm text-ink-muted">{t("footer.tagline")}</p>
         </div>

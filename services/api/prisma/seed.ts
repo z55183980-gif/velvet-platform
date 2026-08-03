@@ -57,10 +57,10 @@ async function main() {
   }
 
   const officialCreator = await prisma.creator.create({
-    data: { userId: (await ensureSystemUser('official@dramavn.dev')).id, creatorType: 'OFFICIAL', displayName: 'DramaVN Studio', revenueShare: 1.0, kycStatus: 'APPROVED' },
+    data: { userId: (await ensureSystemUser('official@velvet.dev')).id, creatorType: 'OFFICIAL', displayName: 'Velvet Studio', revenueShare: 1.0, kycStatus: 'APPROVED' },
   });
   const indieCreator = await prisma.creator.create({
-    data: { userId: (await ensureSystemUser('indie@dramavn.dev')).id, creatorType: 'INDIVIDUAL', displayName: 'Độc lập Films', revenueShare: 0.7, kycStatus: 'APPROVED' },
+    data: { userId: (await ensureSystemUser('indie@velvet.dev')).id, creatorType: 'INDIVIDUAL', displayName: 'Độc lập Films', revenueShare: 0.7, kycStatus: 'APPROVED' },
   });
 
   for (let i = 0; i < dramas.length; i++) {
@@ -98,7 +98,7 @@ async function main() {
           priceVnd: isFree ? 0n : 10000n,
           priceCredits: isFree ? 0n : 10n,
           durationSec: 90 + (ep % 4) * 15,
-          hlsUrl: `https://cdn.dramavn.example.com/v/${drama.uuid}/ep${ep}/index.m3u8`,
+          hlsUrl: `https://cdn.velvet.example.com/v/${drama.uuid}/ep${ep}/index.m3u8`,
           thumbnailUrl: `https://picsum.photos/seed/${drama.uuid}_${ep}/400/225`,
           transcodeStatus: 'COMPLETED',
         },
@@ -146,7 +146,7 @@ async function main() {
 }
 
 async function ensureBootstrapAdmin() {
-  const email = (process.env.ADMIN_BOOTSTRAP_EMAIL || 'admin@dramavn.local').trim().toLowerCase();
+  const email = (process.env.ADMIN_BOOTSTRAP_EMAIL || 'admin@velvet.local').trim().toLowerCase();
   const password = process.env.ADMIN_BOOTSTRAP_PASSWORD || 'admin';
   const username = (process.env.ADMIN_BOOTSTRAP_USERNAME || 'admin').trim().toLowerCase();
   const existing = await prisma.adminUser.findUnique({ where: { email } });

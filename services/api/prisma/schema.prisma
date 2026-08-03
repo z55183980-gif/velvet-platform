@@ -1,4 +1,4 @@
-// DramaVN 数据库 Schema（v7.0）
+// Velvet 数据库 Schema（v7.0）
 // 严格对应 docs/03-数据库Schema与API文档.md §三（17 张表）。
 // 注意：Better Auth 自带 user/session/account/verification 表，本版鉴权采用自研会话
 // （见 src/auth），User.id 为 BigInt；若后续切换到 Better Auth 需迁移主键类型，已在 05 文档标注。
@@ -28,6 +28,8 @@ model User {
   passwordHash  String?
   avatarUrl     String?
   locale        String      @default("vi")     // vi | zh
+  /// VIP 到期时间；null 或已过期 = 非会员
+  vipExpireAt   DateTime?   @db.Timestamptz
   status        UserStatus  @default(ACTIVE)
   createdAt     DateTime    @default(now()) @db.Timestamptz
   updatedAt     DateTime    @updatedAt
@@ -37,14 +39,18 @@ model User {
   creator       Creator?
   orders        Order[]
   unlocks       UserUnlock[]
+  dramaUnlocks  UserDramaUnlock[]
   favorites     Favorite[]
   watchHistory  WatchHistory[]
   notifications Notification[]
   sessions      Session[]
+  redeemCodesUsed RedeemCode[] @relation("RedeemUsedBy")
+  redeemRedemptions RedeemRedemption[]
 
   @@index([phone])
   @@index([zaloId])
   @@index([createdAt])
+  @@index([vipExpireAt])
   @@map("users")
 }
 
@@ -159,7 +165,10 @@ model Drama {
   // 免费判定优先级（播放/解锁前校验，见 00 F6）：
   //   1) episode.isFree == true            → 免费
   //   2) episodeNumber <= freeEpisodeCount → 免费
+  //   3) 用户 VIP 有效 / 整剧买断          → 可播
   //   否则为付费集
+  /// 整剧买断积分价；null 或 0 = 不提供整剧购买
+  buyoutCredits   BigInt?
 
   viewCount       BigInt      @default(0)
   unlockCount     BigInt      @default(0)
@@ -178,6 +187,7 @@ model Drama {
   creator         Creator     @relation(fields: [creatorId], references: [id])
   episodes        Episode[]
   favorites       Favorite[]
+  dramaUnlocks    UserDramaUnlock[]
 
   @@index([status, publishedAt(sort: Desc)])
   @@index([categorySlug, status])
@@ -259,6 +269,24 @@ model UserUnlock {
   @@unique([userId, episodeId])
   @@index([userId, unlockedAt(sort: Desc)])
   @@map("user_unlocks")
+}
+
+/// 整剧买断解锁
+model UserDramaUnlock {
+  id            BigInt      @id @default(autoincrement())
+  userId        BigInt
+  dramaId       BigInt
+  orderId       BigInt?
+  unlockedAt    DateTime    @default(now()) @db.Timestamptz
+
+  user          User        @relation(fields: [userId], references: [id])
+  drama         Drama       @relation(fields: [dramaId], references: [id])
+  order         Order?      @relation(fields: [orderId], references: [id])
+
+  @@unique([userId, dramaId])
+  @@index([userId, unlockedAt(sort: Desc)])
+  @@index([dramaId])
+  @@map("user_drama_unlocks")
 }
 
 // ========== 收藏 ==========
@@ -347,6 +375,8 @@ model Order {
   dramaId         BigInt?
   /// 充值套餐（历史单可空）
   packageId       BigInt?
+  /// VIP 套餐（VIP_SUB 单）
+  vipPlanId       BigInt?
 
   amountVnd         BigInt
   amountCredits     BigInt      @default(0)          // 本单移动的积分（充值=购入积分 / 解锁=扣减积分）
@@ -371,6 +401,8 @@ model Order {
   refundNote       String?
   /** 创作者收益是否已从 pending 解冻到 available（T+7） */
   earningSettled   Boolean       @default(false)
+  /// 扩展元数据（卡密批次、VIP 天数快照等）
+  meta             Json?
 
   createdAt       DateTime    @default(now()) @db.Timestamptz
   updatedAt       DateTime    @updatedAt
@@ -378,18 +410,24 @@ model Order {
   user            User        @relation(fields: [userId], references: [id])
   creator         Creator?    @relation(fields: [creatorId], references: [id])
   package         TopupPackage? @relation(fields: [packageId], references: [id])
+  vipPlan         VipPlan?      @relation(fields: [vipPlanId], references: [id])
   unlocks         UserUnlock[]
+  dramaUnlocks    UserDramaUnlock[]
 
   @@index([userId, createdAt(sort: Desc)])
   @@index([creatorId, createdAt(sort: Desc)])
   @@index([paymentStatus, createdAt])
   @@index([packageId])
+  @@index([vipPlanId])
+  @@index([orderType, paymentStatus, createdAt])
   @@map("orders")
 }
 
 enum OrderType {
   TOPUP
   EPISODE_UNLOCK
+  VIP_SUB
+  DRAMA_BUYOUT
 }
 
 enum PaymentMethod {
@@ -475,6 +513,98 @@ model TopupPackage {
 
   @@index([active, sortOrder])
   @@map("topup_packages")
+}
+
+/// VIP 订阅套餐：按时长，基准价人民币；其它法币按汇率折算
+model VipPlan {
+  id            BigInt    @id @default(autoincrement())
+  name          String?
+  durationDays  Int                                 // 有效天数
+  baseCurrency  String    @default("CNY")
+  basePrice     Decimal   @db.Decimal(18, 2)
+  sortOrder     Int       @default(0)
+  active        Boolean   @default(true)
+  badge         String?                             // 展示角标，如「推荐」
+  createdAt     DateTime  @default(now()) @db.Timestamptz
+  updatedAt     DateTime  @updatedAt
+
+  orders        Order[]
+
+  @@index([active, sortOrder])
+  @@map("vip_plans")
+}
+
+enum RedeemCodeType {
+  VIP
+  CREDITS
+}
+
+enum RedeemCodeStatus {
+  UNUSED
+  USED
+  VOID
+}
+
+/// 卡密批次
+model RedeemCodeBatch {
+  id              BigInt          @id @default(autoincrement())
+  name            String?
+  type            RedeemCodeType
+  vipDays         Int?
+  creditsAmount   BigInt?
+  quantity        Int
+  expiresAt       DateTime?       @db.Timestamptz
+  createdByAdminId BigInt?
+  note            String?
+  createdAt       DateTime        @default(now()) @db.Timestamptz
+
+  codes           RedeemCode[]
+
+  @@index([createdAt(sort: Desc)])
+  @@map("redeem_code_batches")
+}
+
+/// 卡密
+model RedeemCode {
+  id              BigInt            @id @default(autoincrement())
+  batchId         BigInt
+  code            String            @unique
+  type            RedeemCodeType
+  vipDays         Int?
+  creditsAmount   BigInt?
+  status          RedeemCodeStatus  @default(UNUSED)
+  usedByUserId    BigInt?
+  usedAt          DateTime?         @db.Timestamptz
+  expiresAt       DateTime?         @db.Timestamptz
+  createdAt       DateTime          @default(now()) @db.Timestamptz
+
+  batch           RedeemCodeBatch   @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  usedBy          User?             @relation("RedeemUsedBy", fields: [usedByUserId], references: [id])
+  redemptions     RedeemRedemption[]
+
+  @@index([batchId, status])
+  @@index([status, expiresAt])
+  @@map("redeem_codes")
+}
+
+/// 卡密兑换审计
+model RedeemRedemption {
+  id            BigInt    @id @default(autoincrement())
+  codeId        BigInt
+  userId        BigInt
+  type          RedeemCodeType
+  vipDays       Int?
+  creditsAmount BigInt?
+  vipExpireAt   DateTime? @db.Timestamptz
+  orderId       BigInt?
+  createdAt     DateTime  @default(now()) @db.Timestamptz
+
+  code          RedeemCode @relation(fields: [codeId], references: [id])
+  user          User       @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([codeId])
+  @@map("redeem_redemptions")
 }
 
 /// 法币相对人民币汇率。

@@ -470,8 +470,8 @@ export class AdminService {
     }
     if (!creator) {
       const u = await this.prisma.user.upsert({
-        where: { email: 'sample@dramavn.dev' },
-        create: { email: 'sample@dramavn.dev', nickname: 'Sample Studio' },
+        where: { email: 'sample@velvet.dev' },
+        create: { email: 'sample@velvet.dev', nickname: 'Sample Studio' },
         update: {},
       });
       creator = await this.prisma.creator.create({
@@ -837,6 +837,13 @@ export class AdminService {
     if (dto.categorySlug != null) data.categorySlug = dto.categorySlug;
     if (dto.coverUrl != null) data.coverUrl = dto.coverUrl;
     if (dto.freeEpisodeCount != null) data.freeEpisodeCount = Number(dto.freeEpisodeCount);
+    if (dto.buyoutCredits !== undefined) {
+      if (dto.buyoutCredits === null || dto.buyoutCredits === '' || Number(dto.buyoutCredits) === 0) {
+        data.buyoutCredits = null;
+      } else {
+        data.buyoutCredits = BigInt(String(dto.buyoutCredits));
+      }
+    }
     if (dto.sortWeight != null) data.sortWeight = Math.floor(Number(dto.sortWeight));
     if (dto.isFeatured != null) data.isFeatured = !!dto.isFeatured;
     if (dto.isOfficial != null) data.isOfficial = !!dto.isOfficial;

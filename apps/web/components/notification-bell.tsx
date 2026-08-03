@@ -39,8 +39,7 @@ async function fetchNotifs<T>(path: string, init?: RequestInit): Promise<T> {
 
 export function NotificationBell() {
   const { user } = useAuth();
-  const { locale } = useLocale();
-  const zh = locale === "zh";
+  const { locale, t } = useLocale();
   const [unread, setUnread] = useState(0);
   const [items, setItems] = useState<NotifItem[]>([]);
   const [open, setOpen] = useState(false);
@@ -94,7 +93,7 @@ export function NotificationBell() {
     <div className="relative" ref={wrapRef}>
       <button
         type="button"
-        aria-label={zh ? "通知" : "Thông báo"}
+        aria-label={t("notifications.title")}
         onClick={() => setOpen((o) => !o)}
         className="relative grid h-9 w-9 place-items-center rounded-md text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
       >
@@ -109,25 +108,31 @@ export function NotificationBell() {
         <div className="absolute right-0 mt-2 w-[320px] max-h-[420px] overflow-auto rounded-xl border border-line bg-base shadow-lg">
           <div className="flex items-center justify-between border-b border-line px-4 py-3">
             <h3 className="text-body-sm font-semibold text-ink">
-              {zh ? "通知" : "Thông báo"}
+              {t("notifications.title")}
             </h3>
             <Link
               href="/notifications"
               className="text-caption text-brand hover:underline"
               onClick={() => setOpen(false)}
             >
-              {zh ? "查看全部" : "Xem tất cả"}
+              {t("notifications.viewAll")}
             </Link>
           </div>
           {items.length === 0 ? (
             <p className="px-4 py-8 text-center text-caption text-ink-subtle">
-              {zh ? "暂无通知" : "Chưa có thông báo"}
+              {t("notifications.empty")}
             </p>
           ) : (
             <ul className="divide-y divide-line">
               {items.map((n) => {
-                const title = zh ? n.titleZh || n.titleVi : n.titleVi || n.titleZh;
-                const body = zh ? n.bodyZh || n.bodyVi : n.bodyVi || n.bodyZh;
+                const title =
+                  locale === "vi"
+                    ? n.titleVi || n.titleZh
+                    : n.titleZh || n.titleVi;
+                const body =
+                  locale === "vi"
+                    ? n.bodyVi || n.bodyZh
+                    : n.bodyZh || n.bodyVi;
                 return (
                   <li
                     key={n.id}

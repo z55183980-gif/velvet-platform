@@ -1,0 +1,11 @@
+﻿.embedded-pg/
+.embedded-pg-*/
+storage/
+.env
+scripts/reset-db.cjs
+
+# prisma 编译产物（本地 ts-node/tsc 残留）
+prisma/*.js
+prisma/*.d.ts
+prisma/*.js.map
+

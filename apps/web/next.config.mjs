@@ -15,6 +15,10 @@ const nextConfig = {
   async rewrites() {
     // 本地 / 非静态导出：同源代理到 NestJS，cookie 鉴权可用
     if (staticExport) return [];
+    const apiTarget = (process.env.API_PROXY_TARGET || "http://127.0.0.1:4100").replace(
+      /\/$/,
+      "",
+    );
     return [
       {
         source: "/favicon.ico",
@@ -22,7 +26,7 @@ const nextConfig = {
       },
       {
         source: "/api/:path*",
-        destination: "http://localhost:4000/api/:path*",
+        destination: `${apiTarget}/api/:path*`,
       },
     ];
   },

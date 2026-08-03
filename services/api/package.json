@@ -1,7 +1,7 @@
 {
-  "name": "dramavn-api",
+  "name": "velvet-api",
   "version": "0.1.0",
-  "description": "DramaVN 短剧平台 API 服务 (NestJS + Prisma)",
+  "description": "Velvet 短剧平台 API 服务 (NestJS + Prisma)",
   "private": true,
   "scripts": {
     "build": "nest build",

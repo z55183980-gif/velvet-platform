@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useLocale } from "@/lib/i18n";
-import { adminForceLogout, adminGetUser, adminSetUserStatus, adminWalletAdjust } from "@/lib/api";
+import { adminForceLogout, adminGetUser, adminSetUserStatus, adminSetUserVip, adminWalletAdjust } from "@/lib/api";
 import { AdminLayout, fmtDate, fmtNum } from "@/components/admin/AdminLayout";
 import { buttonVariants } from "@/components/ui/button";
 import { adminPath } from "@/lib/admin-path";
@@ -18,6 +18,8 @@ export default function AdminUserDetailPage() {
   const [reason, setReason] = useState("");
   const [delta, setDelta] = useState(0);
   const [adjReason, setAdjReason] = useState("");
+  const [extendDays, setExtendDays] = useState(30);
+  const [vipDate, setVipDate] = useState("");
 
   const load = useCallback(async () => {
     setErr(null);
@@ -115,6 +117,83 @@ export default function AdminUserDetailPage() {
                 }}
               >
                 {zh ? "强制登出" : "Force logout"}
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2 items-center pt-3 border-t border-line">
+              <div className="w-full flex items-center justify-between gap-2 mb-1">
+                <p className="text-body-sm font-medium">
+                  VIP{" "}
+                  <span
+                    className={
+                      user.vipExpireAt && new Date(user.vipExpireAt) > new Date()
+                        ? "text-success"
+                        : "text-ink-muted"
+                    }
+                  >
+                    {user.vipExpireAt
+                      ? fmtDate(user.vipExpireAt)
+                      : zh
+                        ? "未开通"
+                        : "Chưa có"}
+                  </span>
+                </p>
+              </div>
+              <input
+                type="number"
+                className="rounded-md bg-surface-2 border border-line px-3 py-2 text-body-sm w-28"
+                value={extendDays}
+                onChange={(e) => setExtendDays(Number(e.target.value))}
+                placeholder={zh ? "延长天数" : "Gia hạn ngày"}
+              />
+              <button
+                type="button"
+                className={buttonVariants({ size: "sm" })}
+                onClick={async () => {
+                  try {
+                    await adminSetUserVip(id, { extendDays });
+                    await load();
+                  } catch (e: any) {
+                    setErr(e?.message || "failed");
+                  }
+                }}
+              >
+                {zh ? "延长 VIP" : "Gia hạn VIP"}
+              </button>
+              <input
+                type="datetime-local"
+                className="rounded-md bg-surface-2 border border-line px-3 py-2 text-body-sm"
+                value={vipDate}
+                onChange={(e) => setVipDate(e.target.value)}
+              />
+              <button
+                type="button"
+                className={buttonVariants({ variant: "secondary", size: "sm" })}
+                onClick={async () => {
+                  try {
+                    await adminSetUserVip(id, {
+                      vipExpireAt: vipDate ? new Date(vipDate).toISOString() : null,
+                    });
+                    await load();
+                  } catch (e: any) {
+                    setErr(e?.message || "failed");
+                  }
+                }}
+              >
+                {zh ? "设置到期" : "Set hết hạn"}
+              </button>
+              <button
+                type="button"
+                className={buttonVariants({ variant: "ghost", size: "sm" })}
+                onClick={async () => {
+                  try {
+                    await adminSetUserVip(id, { vipExpireAt: null });
+                    await load();
+                  } catch (e: any) {
+                    setErr(e?.message || "failed");
+                  }
+                }}
+              >
+                {zh ? "清空 VIP" : "Xóa VIP"}
               </button>
             </div>
             <div className="flex flex-wrap gap-2 items-center pt-3 border-t border-line">

@@ -28,6 +28,9 @@ function buildNav(): NavItem[] {
     { href: adminPath("/kyc"), key: "admin.kyc" },
     { href: adminPath("/wallet"), key: "admin.wallet", finance: true },
     { href: adminPath("/packages"), key: "admin.packages", finance: true },
+    { href: adminPath("/vip-plans"), key: "admin.vipPlans", finance: true },
+    { href: adminPath("/redeem-codes"), key: "admin.redeemCodes", finance: true },
+    { href: adminPath("/ops"), key: "admin.ops", finance: true },
     { href: adminPath("/rates"), key: "admin.rates", finance: true },
     { href: adminPath("/reconcile"), key: "admin.reconcile" },
     { href: adminPath("/audit"), key: "admin.audit" },
@@ -92,7 +95,7 @@ export function AdminLayout({
         <div className="border-b border-line px-4 py-5">
           <Link href={dashHref} className="block">
             <span className="text-overline uppercase tracking-widest text-ink-subtle">Ops</span>
-            <p className="mt-1 text-h4 font-semibold tracking-tight text-ink">DramaVN</p>
+            <p className="mt-1 text-h4 font-semibold tracking-tight text-ink">Velvet</p>
           </Link>
           <p className="mt-2 truncate text-caption text-ink-muted">
             {admin?.displayName || admin?.username} · {role}

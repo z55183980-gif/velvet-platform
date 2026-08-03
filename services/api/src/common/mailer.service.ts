@@ -27,7 +27,7 @@ export class MailerService {
         ? port === 465
         : /^(1|true|yes|on)$/i.test(String(secureEnv));
     const from = String(this.config.get('SMTP_FROM') || user).trim();
-    const fromName = String(this.config.get('SMTP_FROM_NAME') || 'DramaVN').trim();
+    const fromName = String(this.config.get('SMTP_FROM_NAME') || 'Velvet').trim();
     return { host, port, secure, user, pass, from, fromName };
   }
 
@@ -93,9 +93,9 @@ export class MailerService {
       reset: { zh: '重置密码验证码', action: '重置密码' },
     } as const;
     const t = titles[purpose];
-    const subject = `【DramaVN】${t.zh} ${code}`;
+    const subject = `【Velvet】${t.zh} ${code}`;
     const text = [
-      `你正在${t.action} DramaVN 短剧平台。`,
+      `你正在${t.action} Velvet 短剧平台。`,
       '',
       `验证码：${code}`,
       `有效期：${expiresMinutes} 分钟`,
@@ -105,7 +105,7 @@ export class MailerService {
     const html = `
   <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;max-width:520px;margin:0 auto;padding:24px;color:#1f2430">
     <h2 style="margin:0 0 8px;font-size:20px;color:#111827">${t.zh}</h2>
-    <p style="margin:0 0 20px;font-size:14px;color:#4b5563">你正在${t.action} DramaVN，请在页面中输入下面的验证码：</p>
+    <p style="margin:0 0 20px;font-size:14px;color:#4b5563">你正在${t.action} Velvet，请在页面中输入下面的验证码：</p>
     <div style="font-size:32px;font-weight:700;letter-spacing:8px;padding:16px 20px;background:#f3f4f6;border-radius:10px;text-align:center;color:#111827">${code}</div>
     <p style="margin:20px 0 0;font-size:13px;color:#6b7280">验证码 ${expiresMinutes} 分钟内有效，请勿转发给他人。</p>
   </div>`;

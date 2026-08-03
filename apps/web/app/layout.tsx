@@ -7,8 +7,8 @@ import { ToastProvider } from "@/components/toast";
 import { AppShell } from "@/components/app-shell";
 
 export const metadata: Metadata = {
-  title: "DramaVN — Phim ngắn Việt Nam",
-  description: "Nền tảng phim ngắn hàng đầu Việt Nam",
+  title: "Velvet — Spicy Short Dramas",
+  description: "Forbidden romance. Private affairs. Unlock every episode.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

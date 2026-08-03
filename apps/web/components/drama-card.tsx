@@ -5,6 +5,7 @@ import { Star } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { Badge } from "./ui/badge";
 import { categoryName, type Drama } from "@/lib/mock-data";
+import { pickContentText } from "@/lib/languages";
 import { formatCredits, cn } from "@/lib/utils";
 
 function isImg(s: string) {
@@ -13,7 +14,7 @@ function isImg(s: string) {
 
 export function DramaCard({ drama, compact }: { drama: Drama; compact?: boolean }) {
   const { locale, t } = useLocale();
-  const title = locale === "vi" ? drama.titleVi : drama.titleZh;
+  const title = pickContentText(locale, drama.titleVi, drama.titleZh);
   const cat = categoryName(drama.categorySlug, locale);
   const isFree = drama.freeCount > 0;
 
