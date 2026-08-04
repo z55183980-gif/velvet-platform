@@ -4,7 +4,7 @@ import { Request, Response } from 'express';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ConfigService } from '@nestjs/config';
-import { verifyMediaSig } from '../common/media-sign.util';
+import { rewriteSignedPlaylist, verifyMediaSig } from '../common/media-sign.util';
 
 const MIME: Record<string, string> = {
   '.mp4': 'video/mp4',
@@ -86,12 +86,26 @@ export class MediaController {
     }
 
     const mime = MIME[ext] || 'application/octet-stream';
+    const posixRel = normalized.replace(/\\/g, '/');
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Cache-Control', VIDEO_EXTS.has(ext) ? 'private, max-age=60' : 'public, max-age=3600');
+
+    // HLS 播放列表：相对分片/子清单补 path 绑定签名，否则浏览器二次请求无 sig → 403
+    if (ext === '.m3u8') {
+      const key = this.config.get<string>('CDN_SIGN_KEY') || 'dev';
+      const expN = typeof exp === 'string' ? parseInt(exp, 10) : Number(exp);
+      const raw = fs.readFileSync(abs, 'utf8');
+      const rewritten = rewriteSignedPlaylist(raw, posixRel, expN, key);
+      const buf = Buffer.from(rewritten, 'utf8');
+      res.setHeader('Content-Length', buf.length);
+      res.setHeader('Accept-Ranges', 'none');
+      res.status(200).end(buf);
+      return;
+    }
+
     const stat = fs.statSync(abs);
     const range = req.headers.range as string | undefined;
-
-    res.setHeader('Content-Type', mime);
     res.setHeader('Accept-Ranges', 'bytes');
-    res.setHeader('Cache-Control', VIDEO_EXTS.has(ext) ? 'private, max-age=60' : 'public, max-age=3600');
 
     if (range) {
       const m = /bytes=(\d*)-(\d*)/.exec(range);
