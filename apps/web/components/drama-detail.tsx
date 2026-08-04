@@ -109,11 +109,13 @@ export function DramaDetail({ id }: { id: string }) {
   const [showRate, setShowRate] = useState(false);
   const [showMore, setShowMore] = useState(false);
   const [epLineExpanded, setEpLineExpanded] = useState(false);
-  /** 移动端：竖屏铺满 ↔ 横屏信箱（可由片源比例自动，或用户右下角切换） */
+  /** 移动端：横片源自动 16:9 信箱；竖片源竖屏铺满 */
   const [landscapeMode, setLandscapeMode] = useState(false);
   const [followVideoAspect, setFollowVideoAspect] = useState(true);
   const [browserFs, setBrowserFs] = useState(false);
-  /** iOS 等无法 lock 横屏时的 CSS 强制横屏全屏 */
+  /** Fullscreen API 不可用时仍进入竖屏沉浸 UI（如部分 iOS Safari） */
+  const [uiImmersive, setUiImmersive] = useState(false);
+  /** iOS 等无法 lock 横屏时的 CSS 强制横屏全屏（仅横屏全屏路径） */
   const [rotateFs, setRotateFs] = useState(false);
   const [qualities, setQualities] = useState<Array<{ index: number; height: number; label: string }>>([]);
   const [qualityIndex, setQualityIndex] = useState(-1); // -1 = auto
@@ -164,6 +166,7 @@ export function DramaDetail({ id }: { id: string }) {
     setShowQuality(false);
     setFollowVideoAspect(true);
     setLandscapeMode(false);
+    setUiImmersive(false);
     setRotateFs(false);
     setQualityIndex(-1);
     setQualities([]);
@@ -173,6 +176,7 @@ export function DramaDetail({ id }: { id: string }) {
     if (!watching) {
       setLandscapeMode(false);
       setBrowserFs(false);
+      setUiImmersive(false);
       setRotateFs(false);
       setShowQuality(false);
       setResumeToast(false);
@@ -193,7 +197,10 @@ export function DramaDetail({ id }: { id: string }) {
     const onFs = () => {
       const fs = !!document.fullscreenElement;
       setBrowserFs(fs);
-      if (!fs) setRotateFs(false);
+      if (!fs) {
+        setRotateFs(false);
+        setUiImmersive(false);
+      }
     };
     document.addEventListener("fullscreenchange", onFs);
     return () => document.removeEventListener("fullscreenchange", onFs);
@@ -477,6 +484,7 @@ export function DramaDetail({ id }: { id: string }) {
     };
 
     const exitImmersiveFs = async () => {
+      setUiImmersive(false);
       setRotateFs(false);
       try {
         if (document.fullscreenElement) await document.exitFullscreen();
@@ -491,10 +499,29 @@ export function DramaDetail({ id }: { id: string }) {
       }
     };
 
-    const enterWatchFullscreen = async () => {
+    /** 竖屏沉浸：隐藏浏览器栏，不 lock、不 rotate */
+    const enterPortraitFullscreen = async () => {
       setShowRate(false);
       setShowMore(false);
       setShowQuality(false);
+      setRotateFs(false);
+      setUiImmersive(true);
+      const el = watchShellRef.current;
+      try {
+        if (el?.requestFullscreen && !document.fullscreenElement) {
+          await el.requestFullscreen();
+        }
+      } catch {
+        /* ignore — uiImmersive 已生效 */
+      }
+    };
+
+    /** 横屏沉浸：requestFullscreen + orientation.lock；失败则 CSS rotateFs */
+    const enterLandscapeFullscreen = async () => {
+      setShowRate(false);
+      setShowMore(false);
+      setShowQuality(false);
+      setUiImmersive(false);
       const el = watchShellRef.current;
       let locked = false;
       try {
@@ -511,20 +538,7 @@ export function DramaDetail({ id }: { id: string }) {
       } catch {
         locked = false;
       }
-      // iOS / 无法 orientation.lock：CSS 旋转全屏
       if (!locked) setRotateFs(true);
-    };
-
-    const toggleLandscapeMode = () => {
-      setShowRate(false);
-      setShowMore(false);
-      setShowQuality(false);
-      setFollowVideoAspect(false);
-      setLandscapeMode((v) => {
-        const next = !v;
-        if (!next) void exitImmersiveFs();
-        return next;
-      });
     };
 
     const applyQuality = (index: number) => {
@@ -541,8 +555,8 @@ export function DramaDetail({ id }: { id: string }) {
       setShowMore(false);
     };
 
-    const fillVideo = !landscapeMode || browserFs || rotateFs;
-    const immersiveFs = browserFs || rotateFs;
+    const immersiveFs = browserFs || uiImmersive || rotateFs;
+    const fillVideo = !landscapeMode || immersiveFs;
     const resumeTimeLabel = resumeHint
       ? `${Math.floor(resumeHint.progressSec / 60)}:${String(Math.floor(resumeHint.progressSec % 60)).padStart(2, "0")}`
       : "";
@@ -734,7 +748,7 @@ export function DramaDetail({ id }: { id: string }) {
             <div className="mt-3 flex justify-center px-3">
               <button
                 type="button"
-                onClick={() => void enterWatchFullscreen()}
+                onClick={() => void enterLandscapeFullscreen()}
                 className="inline-flex items-center gap-1.5 rounded-full bg-black/45 px-4 py-2 text-[13px] font-medium text-white ring-1 ring-white/12 backdrop-blur-sm"
               >
                 <Smartphone className="h-4 w-4 rotate-90" strokeWidth={1.75} />
@@ -910,17 +924,15 @@ export function DramaDetail({ id }: { id: string }) {
               <span className="my-2.5 w-px shrink-0 bg-white/15" aria-hidden />
               <button
                 type="button"
-                onClick={toggleLandscapeMode}
-                className="grid w-12 shrink-0 place-items-center"
-                aria-label={
-                  landscapeMode ? t("player.exitFullscreen") : t("player.fullscreen")
+                onClick={() =>
+                  void (landscapeMode
+                    ? enterLandscapeFullscreen()
+                    : enterPortraitFullscreen())
                 }
+                className="grid w-12 shrink-0 place-items-center"
+                aria-label={t("player.fullscreen")}
               >
-                {landscapeMode ? (
-                  <Minimize2 className="h-5 w-5" strokeWidth={1.75} />
-                ) : (
-                  <Maximize className="h-5 w-5" strokeWidth={1.75} />
-                )}
+                <Maximize className="h-5 w-5" strokeWidth={1.75} />
               </button>
             </div>
           </div>

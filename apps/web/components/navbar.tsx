@@ -31,6 +31,8 @@ export function Navbar() {
   const isHomeOverlay = isHome;
 
   const ThemeIcon = theme === "light" ? Sun : theme === "dark" ? Moon : Monitor;
+  // Mobile /me has its own Hongguo-style chrome (theme + settings).
+  const hideOnMobileMe = pathname === "/me" || pathname.startsWith("/me/");
 
   const links = [
     { href: "/", label: t("nav.home"), match: (p: string) => p === "/" && !filteredHome },
@@ -65,6 +67,7 @@ export function Navbar() {
         "z-50 shrink-0 transition-[background-color,border-color,backdrop-filter] duration-300",
         // Mobile: sticky solid chrome (in feed shell the parent is overflow-hidden, so it stays put)
         "sticky top-0 border-b border-line/60 bg-base/70 backdrop-blur-xl",
+        hideOnMobileMe && "max-md:hidden",
         // Desktop home: fixed overlay until scroll
         isHomeOverlay &&
           cn(

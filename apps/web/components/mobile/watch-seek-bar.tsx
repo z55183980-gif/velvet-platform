@@ -16,6 +16,8 @@ type WatchSeekBarProps = {
   className?: string;
   disabled?: boolean;
   absolute?: boolean;
+  /** Fired when scrub drag starts/ends (parent uses this to ignore swipe gestures). */
+  onSeekingChange?: (seeking: boolean) => void;
 };
 
 /**
@@ -30,6 +32,7 @@ export function WatchSeekBar({
   className,
   disabled,
   absolute = true,
+  onSeekingChange,
 }: WatchSeekBarProps) {
   const seekRef = useRef<HTMLDivElement>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -147,6 +150,10 @@ export function WatchSeekBar({
     setCurrent(time);
     scheduleSeek(time);
   };
+
+  useEffect(() => {
+    onSeekingChange?.(dragging);
+  }, [dragging, onSeekingChange]);
 
   useEffect(() => {
     if (!dragging) return;
