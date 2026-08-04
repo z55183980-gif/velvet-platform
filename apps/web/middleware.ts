@@ -8,7 +8,7 @@ import {
 } from "@/lib/site";
 
 /**
- * 管理端已拆至独立应用 apps/admin（生产：velvetadmin.slc8.com）。
+ * 管理端已拆至独立应用 apps/admin（生产：admin.velvetmovie.space）。
  * 本中间件仅：
  * - 用户域访问 /admin|/ops|/console → 跳转管理端域名
  * - 误把管理域指到本应用时 → 跳转 ADMIN_ORIGIN

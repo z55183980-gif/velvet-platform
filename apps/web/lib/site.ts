@@ -3,11 +3,11 @@
  * Localhost is used when these are unset (dev).
  */
 export const WEB_HOST = (
-  process.env.NEXT_PUBLIC_WEB_HOST || "velvet.slc8.com"
+  process.env.NEXT_PUBLIC_WEB_HOST || "velvetmovie.space"
 ).trim().toLowerCase();
 
 export const ADMIN_HOST = (
-  process.env.NEXT_PUBLIC_ADMIN_HOST || "velvetadmin.slc8.com"
+  process.env.NEXT_PUBLIC_ADMIN_HOST || "admin.velvetmovie.space"
 ).trim().toLowerCase();
 
 export const WEB_ORIGIN = (

@@ -33,7 +33,7 @@ lerna-debug.log*
 logs/
 
 # ===== 运行时 / 上传 / 媒体 =====
-storage/
+/storage/
 uploads/
 *.tsbuildinfo
 

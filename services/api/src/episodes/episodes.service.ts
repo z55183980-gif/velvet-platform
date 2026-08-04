@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { DramasService } from '../dramas/dramas.service';
 import { BizException, BizCode } from '../common/biz.exception';
-import { signMediaPath, signCdnEpisode } from '../common/media-sign.util';
+import { signMediaPath } from '../common/media-sign.util';
 import { LockAccessService } from '../common/lock-access.service';
 
 @Injectable()
@@ -44,7 +44,10 @@ export class EpisodesService {
     }
 
     const key = this.config.get('CDN_SIGN_KEY') || 'dev';
-    const base = this.config.get<string>('CDN_BASE_URL') || 'https://cdn.velvet.example.com';
+    const base = (this.config.get<string>('CDN_BASE_URL') || 'https://cdn.velvetmovie.space').replace(
+      /\/$/,
+      '',
+    );
     const raw = episode.hlsUrl || `${base}/v/${episodeId}/index.m3u8`;
     const exp = Math.floor(Date.now() / 1000) + 3600; // 1h
 
@@ -70,11 +73,21 @@ export class EpisodesService {
       };
     }
 
-    // 自有 CDN 绝对 URL：mock 签名（生产替换为 CloudFront/OSS）
-    const sig = signCdnEpisode(episodeId, exp, key);
-    const sep = raw.includes('?') ? '&' : '?';
+    // 自有 CDN（cdn.velvetmovie.space / velvet-cdn Worker）：object key path HMAC
+    let playUrl = raw;
+    try {
+      const u = new URL(raw);
+      const objectKey = decodeURIComponent(u.pathname.replace(/^\/+/, ''));
+      if (objectKey) {
+        u.searchParams.set('sig', signMediaPath(objectKey, exp, key));
+        u.searchParams.set('exp', String(exp));
+        playUrl = u.toString();
+      }
+    } catch {
+      /* keep raw */
+    }
     return {
-      playUrl: `${raw}${sep}sig=${sig}&exp=${exp}`,
+      playUrl,
       expiresAt: new Date(exp * 1000).toISOString(),
       durationSec: episode.durationSec,
     };

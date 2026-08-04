@@ -98,7 +98,7 @@ async function main() {
           priceVnd: isFree ? 0n : 10000n,
           priceCredits: isFree ? 0n : 10n,
           durationSec: 90 + (ep % 4) * 15,
-          hlsUrl: `https://cdn.velvet.example.com/v/${drama.uuid}/ep${ep}/index.m3u8`,
+          hlsUrl: `https://cdn.velvetmovie.space/v/${drama.uuid}/ep${ep}/index.m3u8`,
           thumbnailUrl: `https://picsum.photos/seed/${drama.uuid}_${ep}/400/225`,
           transcodeStatus: 'COMPLETED',
         },

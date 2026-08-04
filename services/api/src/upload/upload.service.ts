@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { BizException, BizCode } from '../common/biz.exception';
+import { R2StorageService } from '../storage/r2.storage.service';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
@@ -39,6 +40,7 @@ export class UploadService implements OnModuleInit {
   constructor(
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
+    private readonly r2: R2StorageService,
   ) {}
 
   onModuleInit() {
@@ -243,18 +245,32 @@ export class UploadService implements OnModuleInit {
       job.status = 'completed';
       job.outputRel = outputRel;
       const durationSec = await this.probeDurationSec(ffmpeg, inputAbs);
+
+      let hlsUrl: string = outputRel;
+      if (this.r2.isEnabled()) {
+        try {
+          const prefix = `hls/${job.episodeId || jobId}`;
+          hlsUrl = await this.r2.uploadHlsDirectory(outDir, prefix);
+          this.logger.log(`transcode uploaded to R2 → ${hlsUrl}`);
+        } catch (uploadErr: any) {
+          this.logger.error(
+            `R2 upload failed, keeping local hlsUrl: ${uploadErr?.message || uploadErr}`,
+          );
+        }
+      }
+
       if (job.episodeId) {
         await this.prisma.episode.update({
           where: { id: BigInt(job.episodeId) },
           data: {
-            hlsUrl: outputRel,
+            hlsUrl,
             transcodeStatus: 'COMPLETED',
             uploadStatus: 'COMPLETED',
             ...(durationSec != null ? { durationSec } : {}),
           },
         });
       }
-      this.logger.log(`transcode ok job=${jobId} → ${outputRel} duration=${durationSec ?? '?'}`);
+      this.logger.log(`transcode ok job=${jobId} → ${hlsUrl} duration=${durationSec ?? '?'}`);
     } catch (e: any) {
       job.status = 'failed';
       job.error = e?.message || String(e);

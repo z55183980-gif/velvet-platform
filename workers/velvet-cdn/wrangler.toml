@@ -1,0 +1,17 @@
+name = "velvet-cdn"
+main = "src/index.ts"
+compatibility_date = "2026-08-04"
+account_id = "21b25a7b09ec30542ca9ace2fa98dd4e"
+
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "velvet-media"
+
+[vars]
+# secrets: CDN_SIGN_KEY via `wrangler secret put CDN_SIGN_KEY`
+
+# Optional: worker routes are attached via Cloudflare Workers Custom Domain API.
+# Keep wrangler.toml routes commented if the deploy token lacks Zone Workers Routes Edit.
+# [[routes]]
+# pattern = "cdn.velvetmovie.space/*"
+# zone_name = "velvetmovie.space"

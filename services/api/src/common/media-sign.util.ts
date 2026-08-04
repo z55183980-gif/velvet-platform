@@ -26,7 +26,7 @@ export function verifyMediaSig(
   }
 }
 
-/** CDN 绝对 URL：绑定 episodeId + exp（生产可换 CloudFront 私钥） */
+/** @deprecated Prefer path HMAC via signMediaPath for R2/CDN Worker (`velvet-cdn`). */
 export function signCdnEpisode(episodeId: string | bigint, exp: number, key: string): string {
   return createHmac('sha256', key).update(`${episodeId}:${exp}`).digest('base64url');
 }

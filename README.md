@@ -11,7 +11,7 @@
 
 ## ✨ 特性一览
 
-- 🎬 **三端分工**：观众/创作者同站路径分区；管理端独立应用与域名（生产：`velvet.slc8.com` / `velvetadmin.slc8.com`）
+- 🎬 **三端分工**：观众/创作者同站路径分区；管理端独立应用与域名（生产：`velvetmovie.space` / `admin.velvetmovie.space`）
 - 🌐 **双语 Day 1**：vi（默认）+ zh，i18n key + slug 双绑
 - 🔐 **签名播放**：HLS 短时签名 URL，片源不外泄
 - 💰 **账本只认 VND**：订单保留实付币种 + 汇率快照，可审计
@@ -95,8 +95,8 @@ npx pnpm dev               # http://localhost:3001
 
 | 端 | 域名 | 应用 |
 |---|---|---|
-| 用户端（观众 / 创作者） | https://velvet.slc8.com | `apps/web` |
-| 管理端 | https://velvetadmin.slc8.com | `apps/admin` |
+| 用户端（观众 / 创作者） | https://velvetmovie.space | `apps/web` |
+| 管理端 | https://admin.velvetmovie.space | `apps/admin` |
 
 前端通过 `NEXT_PUBLIC_WEB_HOST` / `NEXT_PUBLIC_ADMIN_HOST`（及对应 `*_URL`）配置；API 的 `ALLOWED_ORIGINS` 需同时放行两个源。
 

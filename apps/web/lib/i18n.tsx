@@ -309,7 +309,7 @@ const vi = {
     license3: "Dành cho nhà sáng tạo",
     license3Href: "",
     supportLabel: "Email hỗ trợ: ",
-    supportEmail: "support@velvet.slc8.com",
+    supportEmail: "support@velvetmovie.space",
   },
   ds: {
     title: "Hệ thống thiết kế Velvet",
@@ -663,7 +663,7 @@ const zh: typeof vi = {
     license3: "创作者入驻",
     license3Href: "",
     supportLabel: "客服邮箱：",
-    supportEmail: "support@velvet.slc8.com",
+    supportEmail: "support@velvetmovie.space",
   },
   ds: {
     title: "Velvet 设计系统",
@@ -1017,7 +1017,7 @@ const en: typeof vi = {
     license3: "For Creators",
     license3Href: "",
     supportLabel: "Support: ",
-    supportEmail: "support@velvet.slc8.com",
+    supportEmail: "support@velvetmovie.space",
   },
   ds: {
     title: "Velvet design system",
@@ -1371,7 +1371,7 @@ const fr: typeof vi = {
     license3: "Créateurs",
     license3Href: "",
     supportLabel: "Support : ",
-    supportEmail: "support@velvet.slc8.com",
+    supportEmail: "support@velvetmovie.space",
   },
   ds: {
     title: "Design system Velvet",
@@ -1725,7 +1725,7 @@ const ru: typeof vi = {
     license3: "Создателям",
     license3Href: "",
     supportLabel: "Поддержка: ",
-    supportEmail: "support@velvet.slc8.com",
+    supportEmail: "support@velvetmovie.space",
   },
   ds: {
     title: "Дизайн-система Velvet",
