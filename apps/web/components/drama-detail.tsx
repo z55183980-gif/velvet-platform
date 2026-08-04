@@ -9,7 +9,9 @@ import {
   Clock3,
   Heart,
   Maximize,
+  Minimize2,
   MoreVertical,
+  Smartphone,
   Star,
   Volume2,
   VolumeX,
@@ -31,6 +33,7 @@ import {
 } from "@/lib/api";
 import { categoryName, type Drama, type Episode } from "@/lib/mock-data";
 import { pickContentText } from "@/lib/languages";
+import { WatchSeekBar } from "@/components/mobile/watch-seek-bar";
 import { mediaUrl, cn } from "@/lib/utils";
 import { DramaCard } from "@/components/drama-card";
 
@@ -106,8 +109,19 @@ export function DramaDetail({ id }: { id: string }) {
   const [showRate, setShowRate] = useState(false);
   const [showMore, setShowMore] = useState(false);
   const [epLineExpanded, setEpLineExpanded] = useState(false);
+  /** 移动端：竖屏铺满 ↔ 横屏信箱（可由片源比例自动，或用户右下角切换） */
+  const [landscapeMode, setLandscapeMode] = useState(false);
+  const [followVideoAspect, setFollowVideoAspect] = useState(true);
+  const [browserFs, setBrowserFs] = useState(false);
+  /** iOS 等无法 lock 横屏时的 CSS 强制横屏全屏 */
+  const [rotateFs, setRotateFs] = useState(false);
+  const [qualities, setQualities] = useState<Array<{ index: number; height: number; label: string }>>([]);
+  const [qualityIndex, setQualityIndex] = useState(-1); // -1 = auto
+  const [showQuality, setShowQuality] = useState(false);
+  const [resumeToast, setResumeToast] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const watchShellRef = useRef<HTMLDivElement>(null);
+  const hlsRef = useRef<any>(null);
   const resumeApplied = useRef(false);
 
   useEffect(() => {
@@ -147,7 +161,43 @@ export function DramaDetail({ id }: { id: string }) {
     setEpLineExpanded(false);
     setShowRate(false);
     setShowMore(false);
+    setShowQuality(false);
+    setFollowVideoAspect(true);
+    setLandscapeMode(false);
+    setRotateFs(false);
+    setQualityIndex(-1);
+    setQualities([]);
   }, [selected?.no]);
+
+  useEffect(() => {
+    if (!watching) {
+      setLandscapeMode(false);
+      setBrowserFs(false);
+      setRotateFs(false);
+      setShowQuality(false);
+      setResumeToast(false);
+    }
+  }, [watching]);
+
+  useEffect(() => {
+    if (!watching) return;
+    if (resumeHint && resumeHint.progressSec > 5 && selected?.no === resumeHint.epNo) {
+      setResumeToast(true);
+      const timer = window.setTimeout(() => setResumeToast(false), 5200);
+      return () => window.clearTimeout(timer);
+    }
+    setResumeToast(false);
+  }, [watching, resumeHint, selected?.no]);
+
+  useEffect(() => {
+    const onFs = () => {
+      const fs = !!document.fullscreenElement;
+      setBrowserFs(fs);
+      if (!fs) setRotateFs(false);
+    };
+    document.addEventListener("fullscreenchange", onFs);
+    return () => document.removeEventListener("fullscreenchange", onFs);
+  }, []);
 
   useEffect(() => {
     if (!user || !data) return;
@@ -220,12 +270,19 @@ export function DramaDetail({ id }: { id: string }) {
     return () => ac.abort();
   }, [data?.drama.categorySlug, data?.drama.id]);
 
-  // HLS attach
+  // HLS attach + quality levels + 横竖检测
   useEffect(() => {
     const video = videoRef.current;
     if (!video || !playUrl || !playerReady || !user || !watching) return;
 
+    const applyAspect = () => {
+      if (!video.videoWidth || !video.videoHeight) return;
+      const isLand = video.videoWidth >= video.videoHeight;
+      if (followVideoAspect) setLandscapeMode(isLand);
+    };
+
     const onMeta = () => {
+      applyAspect();
       if (seekTo != null && seekTo > 5 && !resumeApplied.current) {
         try {
           video.currentTime = seekTo;
@@ -239,10 +296,14 @@ export function DramaDetail({ id }: { id: string }) {
 
     if (!isHls(playUrl)) {
       video.src = playUrl;
+      setQualities([]);
+      hlsRef.current = null;
       return () => video.removeEventListener("loadedmetadata", onMeta);
     }
     if (video.canPlayType("application/vnd.apple.mpegurl")) {
       video.src = playUrl;
+      setQualities([]);
+      hlsRef.current = null;
       return () => video.removeEventListener("loadedmetadata", onMeta);
     }
     let hls: any;
@@ -255,9 +316,24 @@ export function DramaDetail({ id }: { id: string }) {
           if (!cancelled) setPlayErr("Trình duyệt không hỗ trợ HLS");
           return;
         }
-        hls = new Hls();
+        hls = new Hls({ capLevelToPlayerSize: true });
+        hlsRef.current = hls;
         hls.loadSource(playUrl);
         hls.attachMedia(video);
+        hls.on(Hls.Events.MANIFEST_PARSED, () => {
+          if (cancelled) return;
+          const levels = (hls.levels || []) as Array<{ height?: number }>;
+          const mapped = levels
+            .map((lv, index) => {
+              const height = Number(lv.height || 0);
+              return { index, height, label: height > 0 ? `${height}P` : `L${index + 1}` };
+            })
+            .filter((x) => x.height > 0)
+            .sort((a, b) => b.height - a.height);
+          setQualities(mapped);
+          setQualityIndex(-1);
+          hls.currentLevel = -1;
+        });
       } catch {
         if (!cancelled) setPlayErr("Không tải được trình phát HLS");
       }
@@ -266,8 +342,9 @@ export function DramaDetail({ id }: { id: string }) {
       cancelled = true;
       video.removeEventListener("loadedmetadata", onMeta);
       if (hls) hls.destroy();
+      if (hlsRef.current === hls) hlsRef.current = null;
     };
-  }, [playUrl, seekTo, playerReady, user, watching]);
+  }, [playUrl, seekTo, playerReady, user, watching, followVideoAspect]);
 
   if (loading || !mobileReady) {
     return (
@@ -399,24 +476,105 @@ export function DramaDetail({ id }: { id: string }) {
       }
     };
 
-    const toggleFullscreen = async () => {
-      const el = watchShellRef.current;
-      if (!el) return;
+    const exitImmersiveFs = async () => {
+      setRotateFs(false);
       try {
         if (document.fullscreenElement) await document.exitFullscreen();
-        else await el.requestFullscreen();
+      } catch {
+        /* ignore */
+      }
+      try {
+        const orient = screen.orientation as ScreenOrientation & { unlock?: () => void };
+        orient.unlock?.();
       } catch {
         /* ignore */
       }
     };
 
+    const enterWatchFullscreen = async () => {
+      setShowRate(false);
+      setShowMore(false);
+      setShowQuality(false);
+      const el = watchShellRef.current;
+      let locked = false;
+      try {
+        if (el?.requestFullscreen && !document.fullscreenElement) {
+          await el.requestFullscreen();
+        }
+        const orient = screen.orientation as ScreenOrientation & {
+          lock?: (orientation: string) => Promise<void>;
+        };
+        if (orient.lock) {
+          await orient.lock("landscape");
+          locked = true;
+        }
+      } catch {
+        locked = false;
+      }
+      // iOS / 无法 orientation.lock：CSS 旋转全屏
+      if (!locked) setRotateFs(true);
+    };
+
+    const toggleLandscapeMode = () => {
+      setShowRate(false);
+      setShowMore(false);
+      setShowQuality(false);
+      setFollowVideoAspect(false);
+      setLandscapeMode((v) => {
+        const next = !v;
+        if (!next) void exitImmersiveFs();
+        return next;
+      });
+    };
+
+    const applyQuality = (index: number) => {
+      setQualityIndex(index);
+      const hls = hlsRef.current;
+      if (hls) {
+        try {
+          hls.currentLevel = index;
+        } catch {
+          /* ignore */
+        }
+      }
+      setShowQuality(false);
+      setShowMore(false);
+    };
+
+    const fillVideo = !landscapeMode || browserFs || rotateFs;
+    const immersiveFs = browserFs || rotateFs;
+    const resumeTimeLabel = resumeHint
+      ? `${Math.floor(resumeHint.progressSec / 60)}:${String(Math.floor(resumeHint.progressSec % 60)).padStart(2, "0")}`
+      : "";
+
     return (
-      <div ref={watchShellRef} className="fixed inset-0 z-[70] bg-black">
+      <div
+        ref={watchShellRef}
+        className={cn(
+          rotateFs
+            ? "fixed z-[70] overflow-hidden bg-black"
+            : cn("fixed inset-0 z-[70]", landscapeMode ? "bg-[#181a1a]" : "bg-black"),
+        )}
+        style={
+          rotateFs
+            ? {
+                width: "100vh",
+                height: "100vw",
+                top: "50%",
+                left: "50%",
+                transform: "translate(-50%, -50%) rotate(90deg)",
+              }
+            : undefined
+        }
+      >
         {/* Top chrome */}
-        <div className="absolute left-0 right-0 top-0 z-40 flex items-center justify-between px-2.5 pb-2 pt-[max(0.4rem,env(safe-area-inset-top))]">
+        <div className="absolute left-0 right-0 top-0 z-40 flex items-center justify-between bg-gradient-to-b from-black/65 via-black/25 to-transparent px-2.5 pb-3 pt-[max(0.4rem,env(safe-area-inset-top))]">
           <button
             type="button"
-            onClick={() => setWatching(false)}
+            onClick={() => {
+              void exitImmersiveFs();
+              setWatching(false);
+            }}
             className="inline-flex items-center gap-0.5 text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
             aria-label="back"
           >
@@ -426,14 +584,15 @@ export function DramaDetail({ id }: { id: string }) {
             </span>
           </button>
 
-          <div className="relative flex items-center gap-1">
+          <div className="relative flex items-center gap-0.5">
             <button
               type="button"
               onClick={() => {
                 setShowMore(false);
+                setShowQuality(false);
                 setShowRate((v) => !v);
               }}
-              className="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-[13px] text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
+              className="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-[13px] text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
             >
               <Clock3 className="h-4 w-4" />
               {t("player.speed")}
@@ -442,16 +601,17 @@ export function DramaDetail({ id }: { id: string }) {
               type="button"
               onClick={() => {
                 setShowRate(false);
+                setShowQuality(false);
                 setShowMore((v) => !v);
               }}
-              className="grid h-9 w-9 place-items-center text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
+              className="grid h-9 w-9 place-items-center rounded-full text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
               aria-label={t("player.more")}
             >
               <MoreVertical className="h-5 w-5" />
             </button>
 
             {showRate && (
-              <div className="absolute right-0 top-full z-50 mt-1 min-w-[88px] overflow-hidden rounded-lg bg-[#1c1e1e]/95 py-1 shadow-lg ring-1 ring-white/10 backdrop-blur">
+              <div className="absolute right-0 top-full z-50 mt-1 min-w-[92px] overflow-hidden rounded-xl bg-[#2a2c2c]/96 py-1 shadow-lg ring-1 ring-white/10 backdrop-blur-md">
                 {PLAYER_RATES.map((r) => (
                   <button
                     key={r}
@@ -461,8 +621,8 @@ export function DramaDetail({ id }: { id: string }) {
                       setShowRate(false);
                     }}
                     className={cn(
-                      "flex w-full items-center justify-center px-3 py-2 text-[13px]",
-                      r === rate ? "text-[#ff7e0d]" : "text-white/85",
+                      "flex w-full items-center justify-center px-3 py-2.5 text-[13px]",
+                      r === rate ? "font-semibold text-[#ff7e0d]" : "text-white/85",
                     )}
                   >
                     {r === 1 ? t("player.speedNormal") : `${r}x`}
@@ -471,7 +631,7 @@ export function DramaDetail({ id }: { id: string }) {
               </div>
             )}
             {showMore && (
-              <div className="absolute right-0 top-full z-50 mt-1 min-w-[120px] overflow-hidden rounded-lg bg-[#1c1e1e]/95 py-1 shadow-lg ring-1 ring-white/10 backdrop-blur">
+              <div className="absolute right-0 top-full z-50 mt-1 min-w-[132px] overflow-hidden rounded-xl bg-[#2a2c2c]/96 py-1 shadow-lg ring-1 ring-white/10 backdrop-blur-md">
                 <button
                   type="button"
                   onClick={() => {
@@ -483,124 +643,297 @@ export function DramaDetail({ id }: { id: string }) {
                   {muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
                   {muted ? t("player.unmute") : t("player.mute")}
                 </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowMore(false);
+                    setShowQuality(true);
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2.5 text-[13px] text-white/85"
+                >
+                  {t("player.quality")}
+                  <span className="ml-auto text-white/45">
+                    {qualityIndex < 0
+                      ? t("player.qualityAuto")
+                      : qualities.find((q) => q.index === qualityIndex)?.label || t("player.qualityAuto")}
+                  </span>
+                </button>
+              </div>
+            )}
+            {showQuality && (
+              <div className="absolute right-0 top-full z-50 mt-1 min-w-[120px] overflow-hidden rounded-xl bg-[#2a2c2c]/96 py-1 shadow-lg ring-1 ring-white/10 backdrop-blur-md">
+                <button
+                  type="button"
+                  onClick={() => applyQuality(-1)}
+                  className={cn(
+                    "flex w-full items-center justify-center px-3 py-2.5 text-[13px]",
+                    qualityIndex < 0 ? "font-semibold text-[#ff7e0d]" : "text-white/85",
+                  )}
+                >
+                  {t("player.qualityAuto")}
+                </button>
+                {qualities.map((q) => (
+                  <button
+                    key={q.index}
+                    type="button"
+                    onClick={() => applyQuality(q.index)}
+                    className={cn(
+                      "flex w-full items-center justify-center px-3 py-2.5 text-[13px]",
+                      qualityIndex === q.index ? "font-semibold text-[#ff7e0d]" : "text-white/85",
+                    )}
+                  >
+                    {q.label}
+                  </button>
+                ))}
+                {qualities.length === 0 ? (
+                  <p className="px-3 py-2 text-center text-[11px] text-white/40">{t("player.qualitySingle")}</p>
+                ) : null}
               </div>
             )}
           </div>
         </div>
 
-        <VerticalPlayer
-          videoRef={videoRef}
-          active
-          chrome="watch"
-          bottomInset={WATCH_BAR_H}
-          playbackRate={rate}
-          onPlaybackRateChange={setRate}
-          src={playerReady && user && playUrl ? playUrl : null}
-          poster={coverIsImg ? drama.cover[0] : undefined}
-          autoPlay
-          muted={muted}
-          onMutedChange={setMuted}
-          seekTo={resumeApplied.current ? null : seekTo}
-          loginRequired={needsLogin}
-          onLogin={() => openLogin()}
-          locked={locked}
-          lockLabel={
-            selected
-              ? `${t("detail.episodeList")} ${selected.no}`
-              : t("player.empty")
-          }
-          lockActionLabel={lockActionLabel}
-          onUnlock={selected && !isUnlocked(selected) ? () => openVipGate(selected) : undefined}
-          error={playErr}
-          loading={playLoading}
-          hasNext={hasNext}
-          onNext={playNext}
-          onEnded={playNext}
-        />
+        {/* Video stage */}
+        {landscapeMode && !immersiveFs ? (
+          <div className="absolute inset-x-0 top-[max(3.25rem,calc(env(safe-area-inset-top)+2.75rem))] z-10">
+            <div className="relative mx-auto w-full bg-black" style={{ aspectRatio: "16 / 9" }}>
+              <VerticalPlayer
+                videoRef={videoRef}
+                active
+                chrome="watch"
+                objectFit="contain"
+                showSeek={false}
+                bottomInset={0}
+                playbackRate={rate}
+                onPlaybackRateChange={setRate}
+                src={playerReady && user && playUrl ? playUrl : null}
+                poster={coverIsImg ? drama.cover[0] : undefined}
+                autoPlay
+                muted={muted}
+                onMutedChange={setMuted}
+                seekTo={resumeApplied.current ? null : seekTo}
+                loginRequired={needsLogin}
+                onLogin={() => openLogin()}
+                locked={locked}
+                lockLabel={
+                  selected
+                    ? `${t("detail.episodeList")} ${selected.no}`
+                    : t("player.empty")
+                }
+                lockActionLabel={lockActionLabel}
+                onUnlock={
+                  selected && !isUnlocked(selected) ? () => openVipGate(selected) : undefined
+                }
+                error={playErr}
+                loading={playLoading}
+                hasNext={hasNext}
+                onNext={playNext}
+                onEnded={playNext}
+              />
+            </div>
+            <div className="mt-3 flex justify-center px-3">
+              <button
+                type="button"
+                onClick={() => void enterWatchFullscreen()}
+                className="inline-flex items-center gap-1.5 rounded-full bg-black/45 px-4 py-2 text-[13px] font-medium text-white ring-1 ring-white/12 backdrop-blur-sm"
+              >
+                <Smartphone className="h-4 w-4 rotate-90" strokeWidth={1.75} />
+                {t("player.watchFullscreen")}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <VerticalPlayer
+            videoRef={videoRef}
+            active
+            chrome="watch"
+            objectFit={fillVideo ? "cover" : "contain"}
+            bottomInset={immersiveFs ? 12 : WATCH_BAR_H}
+            showSeek={!landscapeMode || immersiveFs}
+            playbackRate={rate}
+            onPlaybackRateChange={setRate}
+            src={playerReady && user && playUrl ? playUrl : null}
+            poster={coverIsImg ? drama.cover[0] : undefined}
+            autoPlay
+            muted={muted}
+            onMutedChange={setMuted}
+            seekTo={resumeApplied.current ? null : seekTo}
+            loginRequired={needsLogin}
+            onLogin={() => openLogin()}
+            locked={locked}
+            lockLabel={
+              selected
+                ? `${t("detail.episodeList")} ${selected.no}`
+                : t("player.empty")
+            }
+            lockActionLabel={lockActionLabel}
+            onUnlock={selected && !isUnlocked(selected) ? () => openVipGate(selected) : undefined}
+            error={playErr}
+            loading={playLoading}
+            hasNext={hasNext}
+            onNext={playNext}
+            onEnded={playNext}
+          />
+        )}
 
         {/* Right actions */}
-        <div className="absolute bottom-[9.75rem] right-2.5 z-40 flex flex-col items-center gap-5">
-          <WatchSideAction
-            label={favorited ? t("detail.favorited") : t("detail.favorite")}
-            count={formatCount(counts.favorite + (favorited ? 1 : 0), locale)}
-            onClick={() => void toggleFavorite()}
+        {!immersiveFs ? (
+          <div
+            className={cn(
+              "absolute right-2.5 z-40 flex flex-col items-center gap-5",
+              landscapeMode ? "bottom-[8.5rem]" : "bottom-[9.75rem]",
+            )}
           >
-            <Star
-              className={cn(
-                "h-[30px] w-[30px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]",
-                favorited ? "fill-[#ffb000] text-[#ffb000]" : "text-white",
-              )}
-              strokeWidth={1.75}
-            />
-          </WatchSideAction>
-          <WatchSideAction
-            label={t("feed.like")}
-            count={formatCount(counts.like + (liked ? 1 : 0), locale)}
-            onClick={() => setLiked((v) => !v)}
-          >
-            <Heart
-              className={cn(
-                "h-[30px] w-[30px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]",
-                liked ? "fill-[#ff4d6d] text-[#ff4d6d]" : "text-white",
-              )}
-              strokeWidth={1.75}
-            />
-          </WatchSideAction>
-        </div>
-
-        {/* Bottom info (above progress + bar) */}
-        <div
-          className="pointer-events-none absolute inset-x-0 z-40 px-3"
-          style={{ bottom: WATCH_BAR_H + 18 }}
-        >
-          <div className="pointer-events-auto max-w-[calc(100%-4.5rem)]">
-            <button
-              type="button"
-              className="inline-flex max-w-full items-center gap-0.5 text-[17px] font-semibold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.65)]"
-              onClick={() => setDrawerOpen(true)}
+            <WatchSideAction
+              label={favorited ? t("detail.favorited") : t("detail.favorite")}
+              count={formatCount(counts.favorite + (favorited ? 1 : 0), locale)}
+              onClick={() => void toggleFavorite()}
             >
-              <span className="truncate">{title}</span>
-              <ChevronRight className="h-5 w-5 shrink-0 opacity-90" strokeWidth={2.25} />
-            </button>
-            <button
-              type="button"
-              className="mt-1.5 flex w-full items-start text-left text-[13px] leading-5 text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
-              onClick={() => setEpLineExpanded((v) => !v)}
-            >
-              <span className="min-w-0 flex-1">
-                {epLineExpanded ? epLine : epPreview}
-                {!epLineExpanded && epLine.length > 26 && (
-                  <span className="ml-1 font-medium text-white">{t("detail.expand")}</span>
+              <Star
+                className={cn(
+                  "h-[30px] w-[30px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]",
+                  favorited ? "fill-[#ffb000] text-[#ffb000]" : "text-white",
                 )}
-              </span>
-            </button>
+                strokeWidth={1.75}
+              />
+            </WatchSideAction>
+            <WatchSideAction
+              label={t("feed.like")}
+              count={formatCount(counts.like + (liked ? 1 : 0), locale)}
+              onClick={() => setLiked((v) => !v)}
+            >
+              <Heart
+                className={cn(
+                  "h-[30px] w-[30px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]",
+                  liked ? "fill-[#ff4d6d] text-[#ff4d6d]" : "text-white",
+                )}
+                strokeWidth={1.75}
+              />
+            </WatchSideAction>
           </div>
-        </div>
+        ) : null}
 
-        {/* Episode picker bar + fullscreen */}
-        <div
-          className="absolute inset-x-0 bottom-0 z-40 flex items-center gap-2 px-3 pb-[max(0.35rem,env(safe-area-inset-bottom))] pt-1"
-          style={{ minHeight: WATCH_BAR_H }}
-        >
+        {/* Bottom info */}
+        {!immersiveFs ? (
+          <div
+            className="pointer-events-none absolute inset-x-0 z-40 px-3"
+            style={{ bottom: WATCH_BAR_H + 26 }}
+          >
+            <div className="pointer-events-auto max-w-[calc(100%-4.5rem)]">
+              <button
+                type="button"
+                className="inline-flex max-w-full items-center gap-0.5 text-[17px] font-semibold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.65)]"
+                onClick={() => setDrawerOpen(true)}
+              >
+                <span className="truncate">{title}</span>
+                <ChevronRight className="h-5 w-5 shrink-0 opacity-90" strokeWidth={2.25} />
+              </button>
+              <button
+                type="button"
+                className="mt-1.5 flex w-full items-start text-left text-[13px] leading-5 text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
+                onClick={() => setEpLineExpanded((v) => !v)}
+              >
+                <span className="min-w-0 flex-1">
+                  {epLineExpanded ? epLine : epPreview}
+                  {!epLineExpanded && epLine.length > 26 && (
+                    <span className="ml-1 font-medium text-white">{t("detail.expand")}</span>
+                  )}
+                </span>
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {/* Progress for letterbox (outside 16:9 frame, above episode bar) */}
+        {landscapeMode && !immersiveFs ? (
+          <WatchSeekBar
+            videoRef={videoRef}
+            bottom={WATCH_BAR_H}
+            disabled={!playUrl || needsLogin || locked}
+          />
+        ) : null}
+
+        {/* Resume toast */}
+        {resumeToast && !immersiveFs ? (
+          <div className="absolute inset-x-0 top-[max(4.25rem,calc(env(safe-area-inset-top)+3.5rem))] z-50 flex justify-center px-4">
+            <div className="flex max-w-[92%] items-center gap-2 rounded-full bg-black/70 px-3.5 py-2 text-[12px] text-white shadow-lg ring-1 ring-white/10 backdrop-blur-md">
+              <span className="truncate">
+                {t("player.resumeToast", { time: resumeTimeLabel })}
+              </span>
+              <button
+                type="button"
+                className="shrink-0 font-medium text-[#ff9a3d]"
+                onClick={() => {
+                  const v = videoRef.current;
+                  if (v) {
+                    try {
+                      v.currentTime = 0;
+                    } catch {
+                      /* ignore */
+                    }
+                  }
+                  setSeekTo(null);
+                  setResumeToast(false);
+                }}
+              >
+                {t("player.fromBeginning")}
+              </button>
+              <button
+                type="button"
+                className="shrink-0 text-white/55"
+                onClick={() => setResumeToast(false)}
+                aria-label={t("close")}
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {/* Episode picker bar + layout toggle */}
+        {!immersiveFs ? (
+          <div
+            className="absolute inset-x-0 bottom-0 z-40 px-2.5 pb-[max(0.35rem,env(safe-area-inset-bottom))] pt-1"
+            style={{ minHeight: WATCH_BAR_H }}
+          >
+            <div className="flex h-11 items-stretch overflow-hidden rounded-xl bg-[#2a2c2c]/92 text-white shadow-[0_-2px_16px_rgba(0,0,0,0.25)] ring-1 ring-white/8 backdrop-blur-md">
+              <button
+                type="button"
+                onClick={() => setDrawerOpen(true)}
+                className="flex min-w-0 flex-1 items-center justify-between gap-2 px-3.5"
+              >
+                <span className="truncate text-[13px] font-medium">
+                  {t("detail.pickEpisodesBar", { n: drama.episodesCount })}
+                </span>
+                <ChevronUp className="h-4 w-4 shrink-0 opacity-85" />
+              </button>
+              <span className="my-2.5 w-px shrink-0 bg-white/15" aria-hidden />
+              <button
+                type="button"
+                onClick={toggleLandscapeMode}
+                className="grid w-12 shrink-0 place-items-center"
+                aria-label={
+                  landscapeMode ? t("player.exitFullscreen") : t("player.fullscreen")
+                }
+              >
+                {landscapeMode ? (
+                  <Minimize2 className="h-5 w-5" strokeWidth={1.75} />
+                ) : (
+                  <Maximize className="h-5 w-5" strokeWidth={1.75} />
+                )}
+              </button>
+            </div>
+          </div>
+        ) : (
           <button
             type="button"
-            onClick={() => setDrawerOpen(true)}
-            className="flex h-10 min-w-0 flex-1 items-center justify-between rounded-full bg-white/15 px-3.5 text-white backdrop-blur-sm"
+            onClick={() => void exitImmersiveFs()}
+            className="absolute bottom-[max(0.75rem,env(safe-area-inset-bottom))] right-3 z-50 grid h-10 w-10 place-items-center rounded-[10px] bg-black/40 text-white backdrop-blur-sm"
+            aria-label={t("player.exitFullscreen")}
           >
-            <span className="truncate text-[13px] font-medium">
-              {t("detail.pickEpisodesBar", { n: drama.episodesCount })}
-            </span>
-            <ChevronUp className="ml-2 h-4 w-4 shrink-0 opacity-85" />
+            <Minimize2 className="h-5 w-5" strokeWidth={1.75} />
           </button>
-          <button
-            type="button"
-            onClick={() => void toggleFullscreen()}
-            className="grid h-10 w-10 shrink-0 place-items-center rounded-[10px] bg-white/15 text-white backdrop-blur-sm"
-            aria-label={t("player.fullscreen")}
-          >
-            <Maximize className="h-5 w-5" strokeWidth={1.75} />
-          </button>
-        </div>
+        )}
 
         <EpisodeDrawer
           open={drawerOpen}

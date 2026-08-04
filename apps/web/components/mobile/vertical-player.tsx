@@ -20,6 +20,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useLocale } from "@/lib/i18n";
 import { buttonVariants } from "@/components/ui/button";
+import { WatchSeekBar } from "@/components/mobile/watch-seek-bar";
 
 const ACCENT = "#ff7e0d";
 export const PLAYER_RATES = [0.75, 1, 1.25, 1.5, 2] as const;
@@ -64,6 +65,8 @@ export function VerticalPlayer({
   active = true,
   chrome = "full",
   bottomInset = 0,
+  objectFit = "cover",
+  showSeek = true,
   playbackRate,
   onPlaybackRateChange,
 }: {
@@ -92,6 +95,8 @@ export function VerticalPlayer({
   chrome?: VerticalPlayerChrome;
   /** Extra space below thin progress (watch page action bar) */
   bottomInset?: number;
+  objectFit?: "cover" | "contain";
+  showSeek?: boolean;
   playbackRate?: number;
   onPlaybackRateChange?: (rate: number) => void;
 }) {
@@ -324,12 +329,22 @@ export function VerticalPlayer({
           playsInline
           muted={muted}
           loop={false}
-          className="absolute inset-0 h-full w-full object-cover"
+          className={cn(
+            "absolute inset-0 h-full w-full",
+            objectFit === "contain" ? "object-contain" : "object-cover",
+          )}
           onClick={(e) => e.stopPropagation()}
         />
       ) : poster && isImg(poster) && !overlay ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={poster} alt="" className="absolute inset-0 h-full w-full object-cover" />
+        <img
+          src={poster}
+          alt=""
+          className={cn(
+            "absolute inset-0 h-full w-full",
+            objectFit === "contain" ? "object-contain" : "object-cover",
+          )}
+        />
       ) : null}
 
       {poster && isImg(poster) && !src && (
@@ -362,7 +377,11 @@ export function VerticalPlayer({
         </div>
       )}
 
-      {src && !locked && !loginRequired && !error && isMinimal && (
+      {src && !locked && !loginRequired && !error && chrome === "watch" && showSeek ? (
+        <WatchSeekBar videoRef={videoRef} bottom={bottomInset} />
+      ) : null}
+
+      {src && !locked && !loginRequired && !error && chrome === "feed" && showSeek && (
         <div
           className="absolute inset-x-0 z-20 px-3 pb-1.5 pt-4"
           style={{ bottom: bottomInset }}
