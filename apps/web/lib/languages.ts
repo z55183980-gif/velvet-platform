@@ -6,8 +6,6 @@ export const INTERFACE_LANGUAGE_OPTIONS = [
   { code: "zh", label: "简体中文" },
   { code: "en", label: "English" },
   { code: "fr", label: "Français" },
-  { code: "ru", label: "Русский" },
-  { code: "vi", label: "Tiếng Việt" },
 ] as const;
 
 export type Locale = (typeof INTERFACE_LANGUAGE_OPTIONS)[number]["code"];
@@ -16,8 +14,6 @@ export const INTERFACE_LANGUAGE_SHORT_LABELS: Record<Locale, string> = {
   zh: "ZH",
   en: "EN",
   fr: "FR",
-  ru: "RU",
-  vi: "VI",
 };
 
 export const SUPPORTED_LOCALES: Locale[] = INTERFACE_LANGUAGE_OPTIONS.map(
@@ -55,6 +51,25 @@ export function detectSystemLanguage(): Locale {
   return FALLBACK_LOCALE;
 }
 
+/** Parse Accept-Language header (middleware / SSR) → supported locale. */
+export function localeFromAcceptLanguage(header?: string | null): Locale {
+  if (!header) return FALLBACK_LOCALE;
+  const parts = header.split(",").map((p) => {
+    const [tag, qPart] = p.trim().split(";").map((s) => s.trim());
+    const q = qPart?.startsWith("q=") ? Number(qPart.slice(2)) : 1;
+    return { tag, q: Number.isFinite(q) ? q : 1 };
+  });
+  parts.sort((a, b) => b.q - a.q);
+  for (const { tag } of parts) {
+    if (!tag) continue;
+    const normalized = tag.replace(/_/g, "-").toLowerCase();
+    if (normalized.startsWith("zh")) return "zh";
+    const base = normalized.split("-")[0];
+    if (isSupportedLocale(base)) return base;
+  }
+  return FALLBACK_LOCALE;
+}
+
 export function getInterfaceLanguageShortLabel(code?: string | null): string {
   const normalized = normalizeInterfaceLanguage(code);
   return (
@@ -63,15 +78,15 @@ export function getInterfaceLanguageShortLabel(code?: string | null): string {
   );
 }
 
-/** Content fields are currently vi/zh only; map UI locale → content side. */
-export function contentLocale(locale: Locale): "vi" | "zh" {
-  return locale === "vi" ? "vi" : "zh";
+/** Content fields are en/zh; map UI locale → content side. */
+export function contentLocale(locale: Locale): "en" | "zh" {
+  return locale === "en" ? "en" : "zh";
 }
 
 export function pickContentText(
   locale: Locale,
-  viText: string,
+  enText: string,
   zhText: string,
 ): string {
-  return contentLocale(locale) === "vi" ? viText : zhText || viText;
+  return contentLocale(locale) === "en" ? enText : zhText || enText;
 }

@@ -33,6 +33,10 @@ function fmtTime(sec: number) {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+function safePlay(video: HTMLVideoElement) {
+  return video.play().catch(() => {});
+}
+
 export function VideoPlayer({
   src,
   poster,
@@ -46,6 +50,7 @@ export function VideoPlayer({
   onUnlock,
   loginRequired,
   onLogin,
+  onRegister,
   error,
   loading,
   seekTo,
@@ -66,6 +71,7 @@ export function VideoPlayer({
   onUnlock?: () => void;
   loginRequired?: boolean;
   onLogin?: () => void;
+  onRegister?: () => void;
   error?: string | null;
   loading?: boolean;
   seekTo?: number | null;
@@ -170,7 +176,7 @@ export function VideoPlayer({
   const togglePlay = () => {
     const v = videoRef.current;
     if (!v || !src) return;
-    if (v.paused) void v.play();
+    if (v.paused) void safePlay(v);
     else v.pause();
     bumpChrome();
   };
@@ -248,11 +254,20 @@ export function VideoPlayer({
         <p className="text-[18px] font-medium text-white/95">{t("player.loginToWatch")}</p>
         <button
           className={buttonVariants({ variant: "primary", size: "lg" })}
-          onClick={onLogin}
+          onClick={onRegister ?? onLogin}
           style={{ background: `linear-gradient(92.27deg, ${ACCENT} 0.32%, #ff9233)` }}
         >
-          {t("nav.login")}
+          {t("player.freeRegister")}
         </button>
+        {onLogin ? (
+          <button
+            type="button"
+            onClick={onLogin}
+            className="text-[14px] text-white/75 underline-offset-2 hover:text-white hover:underline"
+          >
+            {t("player.hasAccountLogin")}
+          </button>
+        ) : null}
       </Overlay>
     );
   } else if (locked) {

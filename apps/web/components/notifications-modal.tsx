@@ -10,9 +10,9 @@ import { cn } from "@/lib/utils";
 interface NotifItem {
   id: string;
   type: string;
-  titleVi: string | null;
+  titleEn: string | null;
   titleZh: string | null;
-  bodyVi: string | null;
+  bodyEn: string | null;
   bodyZh: string | null;
   readAt: string | null;
   createdAt: string;
@@ -172,9 +172,9 @@ export function NotificationsModal({
             <ul className={cn("divide-y divide-line", loading && "opacity-60")}>
               {items.map((n) => {
                 const title =
-                  locale === "vi" ? n.titleVi || n.titleZh : n.titleZh || n.titleVi;
+                  locale === "en" ? n.titleEn || n.titleZh : n.titleZh || n.titleEn;
                 const body =
-                  locale === "vi" ? n.bodyVi || n.bodyZh : n.bodyZh || n.bodyVi;
+                  locale === "en" ? n.bodyEn || n.bodyZh : n.bodyZh || n.bodyEn;
                 return (
                   <li
                     key={n.id}

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Sun, Moon, Monitor, Crown } from "lucide-react";
+import { Sun, Moon, Crown } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { useAuth } from "@/components/auth-context";
 import { useTheme } from "@/components/theme-provider";
@@ -23,7 +23,7 @@ export function Navbar() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { user, ready: authReady, openLogin, openVip } = useAuth();
-  const { theme, cycleTheme } = useTheme();
+  const { theme, ready: themeReady, cycleTheme } = useTheme();
   const { locked: feedLocked } = useMobileFeedLock();
   const [scrolled, setScrolled] = useState(false);
   const filteredHome =
@@ -32,11 +32,16 @@ export function Navbar() {
   // Hero overlay only on desktop home
   const isHomeOverlay = isHome;
 
-  const ThemeIcon = theme === "light" ? Sun : theme === "dark" ? Moon : Monitor;
+  // Keep SSR + first client paint on dark so localStorage theme doesn't hydrate-mismatch.
+  const uiTheme = themeReady ? theme : "dark";
+  const ThemeIcon = uiTheme === "light" ? Sun : Moon;
   // Mobile /me has its own Hongguo-style chrome (theme + settings).
   // Mobile home feed is immersive video; hide shell navbar.
+  // Mobile /theater relies on bottom tabs; hide shell navbar.
   const hideOnMobileMe = pathname === "/me" || pathname.startsWith("/me/");
   const hideOnMobileFeed = feedLocked;
+  const hideOnMobileTheater =
+    pathname === "/theater" || pathname.startsWith("/theater/");
 
   const links = [
     { href: "/", label: t("nav.home"), match: (p: string) => p === "/" && !filteredHome },
@@ -73,6 +78,7 @@ export function Navbar() {
         "sticky top-0 border-b border-line/60 bg-base/70 backdrop-blur-xl",
         hideOnMobileMe && "max-md:hidden",
         hideOnMobileFeed && "max-md:hidden",
+        hideOnMobileTheater && "max-md:hidden",
         // Desktop home: fixed overlay until scroll
         isHomeOverlay &&
           cn(
@@ -142,7 +148,8 @@ export function Navbar() {
               "text-ink-muted hover:bg-surface-2 hover:text-ink",
             )}
             aria-label="theme"
-            title={theme}
+            title={uiTheme}
+            suppressHydrationWarning
           >
             <ThemeIcon className="h-4 w-4" />
           </button>
@@ -210,12 +217,27 @@ export function Navbar() {
                     : user.label.slice(0, 8)}
             </Link>
           ) : (
-            <button
-              onClick={() => openLogin()}
-              className="grid h-9 place-items-center rounded-full bg-brand px-4 text-body-sm font-medium text-white transition-opacity hover:opacity-90"
-            >
-              {t("nav.login")}
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => openLogin("register")}
+                className={cn(
+                  "hidden h-9 place-items-center rounded-full px-4 text-body-sm font-medium transition-colors md:grid",
+                  isHomeOverlay
+                    ? "text-ink-muted hover:bg-surface-2 hover:text-ink md:text-white/80 md:hover:bg-white/10 md:hover:text-white"
+                    : "text-ink-muted hover:bg-surface-2 hover:text-ink",
+                )}
+              >
+                {t("nav.register")}
+              </button>
+              <button
+                type="button"
+                onClick={() => openLogin("login")}
+                className="grid h-9 place-items-center rounded-full bg-brand px-4 text-body-sm font-medium text-white transition-opacity hover:opacity-90"
+              >
+                {t("nav.login")}
+              </button>
+            </>
           )}
 
           <Link

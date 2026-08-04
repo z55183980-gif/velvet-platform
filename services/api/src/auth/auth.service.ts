@@ -76,13 +76,10 @@ export class AuthService {
    */
   async sendPhoneOtp(phone: string, purpose: OtpPurpose = 'login') {
     if (!this.phoneOtpEnabled) {
-      throw new BizException(
-        BizCode.BAD_REQUEST,
-        'Đăng nhập SĐT OTP chưa mở (cấu hình AUTH_PHONE_OTP_ENABLED)',
-      );
+      throw new BizException(BizCode.BAD_REQUEST, 'auth.phoneOtpDisabled');
     }
     if (!/^\+?[0-9]{9,15}$/.test(phone)) {
-      throw new BizException(BizCode.BAD_REQUEST, 'Số điện thoại không hợp lệ');
+      throw new BizException(BizCode.BAD_REQUEST, 'auth.invalidPhone');
     }
     const r = this.otp.generate('phone', phone, purpose);
     // TODO(公测): 接入 SMS_PROVIDER 真实发信
@@ -103,13 +100,10 @@ export class AuthService {
     meta?: ClientMeta | null,
   ): Promise<LoginResult> {
     if (!this.phoneOtpEnabled) {
-      throw new BizException(
-        BizCode.BAD_REQUEST,
-        'Đăng nhập SĐT OTP chưa mở (cấu hình AUTH_PHONE_OTP_ENABLED)',
-      );
+      throw new BizException(BizCode.BAD_REQUEST, 'auth.phoneOtpDisabled');
     }
     if (!this.otp.verify('phone', phone, code, purpose)) {
-      throw new BizException(BizCode.INVALID_OTP, 'Mã OTP không đúng hoặc đã hết hạn');
+      throw new BizException(BizCode.INVALID_OTP, 'auth.invalidOtp');
     }
     const user = await this.upsertUserByPhone(phone);
     return this.issueSession(user, meta);
@@ -118,7 +112,7 @@ export class AuthService {
   /** @deprecated 请用 sendPhoneOtp；保留兼容旧调用 */
   sendOtp(phone: string) {
     if (!/^\+?[0-9]{9,15}$/.test(phone)) {
-      throw new BizException(BizCode.BAD_REQUEST, 'Số điện thoại không hợp lệ');
+      throw new BizException(BizCode.BAD_REQUEST, 'auth.invalidPhone');
     }
     return this.otp.generate('phone', phone, 'login');
   }
@@ -131,28 +125,25 @@ export class AuthService {
   async sendEmailOtp(email: string, purpose: OtpPurpose = 'login') {
     const normalized = this.normalizeEmail(email);
     if (!normalized) {
-      throw new BizException(BizCode.BAD_REQUEST, 'Email không hợp lệ');
+      throw new BizException(BizCode.BAD_REQUEST, 'auth.invalidEmail');
     }
 
     // 登录/注册激活：需打开 AUTH_EMAIL_OTP_ENABLED；reset（找回）始终允许
     if ((purpose === 'login' || purpose === 'register') && !this.emailOtpEnabled) {
-      throw new BizException(
-        BizCode.BAD_REQUEST,
-        'Email OTP chưa mở (nội bộ dùng mật khẩu; bật AUTH_EMAIL_OTP_ENABLED khi công khai)',
-      );
+      throw new BizException(BizCode.BAD_REQUEST, 'auth.emailOtpDisabled');
     }
 
     if (purpose === 'register') {
       const existing = await this.prisma.user.findUnique({ where: { email: normalized } });
       if (existing?.passwordHash) {
-        throw new BizException(BizCode.CONFLICT, 'Email đã được đăng ký, vui lòng đăng nhập');
+        throw new BizException(BizCode.CONFLICT, 'auth.emailAlreadyRegistered');
       }
     }
 
     if (purpose === 'reset') {
       const existing = await this.prisma.user.findUnique({ where: { email: normalized } });
       if (!existing) {
-        throw new BizException(BizCode.NOT_FOUND, 'Email chưa đăng ký');
+        throw new BizException(BizCode.NOT_FOUND, 'auth.emailNotRegistered');
       }
     }
 
@@ -189,17 +180,14 @@ export class AuthService {
     meta?: ClientMeta | null,
   ): Promise<LoginResult> {
     if (!this.emailOtpEnabled) {
-      throw new BizException(
-        BizCode.BAD_REQUEST,
-        'Email OTP chưa mở (nội bộ dùng mật khẩu)',
-      );
+      throw new BizException(BizCode.BAD_REQUEST, 'auth.emailOtpDisabledShort');
     }
     const normalized = this.normalizeEmail(email);
     if (!normalized) {
-      throw new BizException(BizCode.BAD_REQUEST, 'Email không hợp lệ');
+      throw new BizException(BizCode.BAD_REQUEST, 'auth.invalidEmail');
     }
     if (!this.otp.verify('email', normalized, code, 'login')) {
-      throw new BizException(BizCode.INVALID_OTP, 'Mã OTP không đúng hoặc đã hết hạn');
+      throw new BizException(BizCode.INVALID_OTP, 'auth.invalidOtp');
     }
     const user = await this.upsertUserByEmail(normalized);
     return this.issueSession(user, meta);
@@ -221,27 +209,26 @@ export class AuthService {
   ): Promise<LoginResult> {
     const normalized = this.normalizeEmail(opts.email);
     if (!normalized) {
-      throw new BizException(BizCode.BAD_REQUEST, 'Email không hợp lệ');
+      throw new BizException(BizCode.BAD_REQUEST, 'auth.invalidEmail');
     }
     const username = this.normalizeUsername(opts.username);
     if (!username) {
-      throw new BizException(
-        BizCode.BAD_REQUEST,
-        'Tài khoản 3–24 ký tự (chữ/số/_)',
-      );
+      throw new BizException(BizCode.BAD_REQUEST, 'auth.usernameRules');
     }
     const password = String(opts.password || '');
     if (password.length < MIN_PASSWORD_LEN) {
-      throw new BizException(BizCode.BAD_REQUEST, `Mật khẩu ít nhất ${MIN_PASSWORD_LEN} ký tự`);
+      throw new BizException(BizCode.BAD_REQUEST, 'auth.passwordMinLength', undefined, {
+        min: MIN_PASSWORD_LEN,
+      });
     }
 
     const code = String(opts.code || '').trim();
     if (this.emailOtpEnabled) {
       if (!code || !this.otp.verify('email', normalized, code, 'register')) {
-        throw new BizException(BizCode.INVALID_OTP, 'Mã OTP không đúng hoặc đã hết hạn');
+        throw new BizException(BizCode.INVALID_OTP, 'auth.invalidOtp');
       }
     } else if (code && !this.otp.verify('email', normalized, code, 'register')) {
-      throw new BizException(BizCode.INVALID_OTP, 'Mã OTP không đúng hoặc đã hết hạn');
+      throw new BizException(BizCode.INVALID_OTP, 'auth.invalidOtp');
     }
 
     const [byEmail, byUsername] = await Promise.all([
@@ -249,10 +236,10 @@ export class AuthService {
       this.prisma.user.findUnique({ where: { username } }),
     ]);
     if (byEmail?.passwordHash) {
-      throw new BizException(BizCode.CONFLICT, 'Email đã được đăng ký, vui lòng đăng nhập');
+      throw new BizException(BizCode.CONFLICT, 'auth.emailAlreadyRegistered');
     }
     if (byUsername && byUsername.id !== byEmail?.id) {
-      throw new BizException(BizCode.CONFLICT, 'Tài khoản đã được sử dụng');
+      throw new BizException(BizCode.CONFLICT, 'auth.usernameTaken');
     }
 
     const nickname =
@@ -296,7 +283,7 @@ export class AuthService {
   ): Promise<LoginResult> {
     const raw = String(account || '').trim();
     if (!raw || !password) {
-      throw new BizException(BizCode.UNAUTHORIZED, 'Tài khoản hoặc mật khẩu không đúng');
+      throw new BizException(BizCode.UNAUTHORIZED, 'auth.invalidCredentials');
     }
 
     const email = this.normalizeEmail(raw);
@@ -307,10 +294,10 @@ export class AuthService {
         });
 
     if (!user || !user.passwordHash) {
-      throw new BizException(BizCode.UNAUTHORIZED, 'Tài khoản hoặc mật khẩu không đúng');
+      throw new BizException(BizCode.UNAUTHORIZED, 'auth.invalidCredentials');
     }
     if (!this.verifyPassword(password, user.passwordHash)) {
-      throw new BizException(BizCode.UNAUTHORIZED, 'Tài khoản hoặc mật khẩu không đúng');
+      throw new BizException(BizCode.UNAUTHORIZED, 'auth.invalidCredentials');
     }
     return this.issueSession(user, meta);
   }
@@ -331,19 +318,21 @@ export class AuthService {
   ): Promise<LoginResult> {
     const normalized = this.normalizeEmail(opts.email);
     if (!normalized) {
-      throw new BizException(BizCode.BAD_REQUEST, 'Email không hợp lệ');
+      throw new BizException(BizCode.BAD_REQUEST, 'auth.invalidEmail');
     }
     const password = String(opts.password || '');
     if (password.length < MIN_PASSWORD_LEN) {
-      throw new BizException(BizCode.BAD_REQUEST, `Mật khẩu mới ít nhất ${MIN_PASSWORD_LEN} ký tự`);
+      throw new BizException(BizCode.BAD_REQUEST, 'auth.newPasswordMinLength', undefined, {
+        min: MIN_PASSWORD_LEN,
+      });
     }
     if (!this.otp.verify('email', normalized, opts.code, 'reset')) {
-      throw new BizException(BizCode.INVALID_OTP, 'Mã OTP không đúng hoặc đã hết hạn');
+      throw new BizException(BizCode.INVALID_OTP, 'auth.invalidOtp');
     }
 
     const user = await this.prisma.user.findUnique({ where: { email: normalized } });
     if (!user) {
-      throw new BizException(BizCode.NOT_FOUND, 'Email chưa đăng ký');
+      throw new BizException(BizCode.NOT_FOUND, 'auth.emailNotRegistered');
     }
 
     const passwordHash = this.hashPassword(password);
@@ -362,7 +351,7 @@ export class AuthService {
       where: { id: userId },
       include: { creator: true },
     });
-    if (!user) throw new BizException(BizCode.UNAUTHORIZED, 'Phiên đăng nhập không hợp lệ');
+    if (!user) throw new BizException(BizCode.UNAUTHORIZED, 'auth.sessionInvalid');
     return this.toProfile(user);
   }
 

@@ -120,7 +120,7 @@ export class AdminAuthController {
   async me(@Req() req: any) {
     const adminId = req.adminId as bigint | undefined;
     if (!adminId) {
-      throw new BizException(BizCode.UNAUTHORIZED, 'Cần đăng nhập tài khoản quản trị');
+      throw new BizException(BizCode.UNAUTHORIZED, 'admin.loginRequired');
     }
     return ok(await this.auth.me(adminId));
   }
@@ -137,7 +137,7 @@ export class AdminAuthController {
   async password(@Req() req: any, @Body() dto: PasswordDto) {
     const adminId = req.adminId as bigint | undefined;
     if (!adminId) {
-      throw new BizException(BizCode.UNAUTHORIZED, 'Cần đăng nhập tài khoản quản trị');
+      throw new BizException(BizCode.UNAUTHORIZED, 'admin.loginRequired');
     }
     return ok(await this.auth.changePassword(adminId, dto.oldPassword, dto.newPassword));
   }
@@ -147,7 +147,7 @@ export class AdminAuthController {
   async profile(@Req() req: any, @Body() dto: ProfileDto) {
     const adminId = req.adminId as bigint | undefined;
     if (!adminId) {
-      throw new BizException(BizCode.UNAUTHORIZED, 'Cần đăng nhập tài khoản quản trị');
+      throw new BizException(BizCode.UNAUTHORIZED, 'admin.loginRequired');
     }
     return ok(
       await this.auth.updateProfile(adminId, {

@@ -53,9 +53,9 @@ function pctDelta(curr: number, prev: number): number | null {
 }
 
 function localeLabel(t: ReturnType<typeof useI18n>["t"], locale: string) {
-  if (locale === "vi") return t("localeVi");
   if (locale === "zh") return t("localeZh");
-  return t("localeOther");
+  if (locale === "fr") return "Français";
+  return "English";
 }
 
 function KpiCard({

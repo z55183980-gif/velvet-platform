@@ -21,15 +21,15 @@ export class AuthGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest<Request & { user?: any; sessionId?: string }>();
     const token = this.extractToken(req);
-    if (!token) throw new BizException(BizCode.UNAUTHORIZED, 'Chưa đăng nhập');
+    if (!token) throw new BizException(BizCode.UNAUTHORIZED, 'auth.notLoggedIn');
 
     const payload = this.session.verify(token);
-    if (!payload) throw new BizException(BizCode.UNAUTHORIZED, 'Phiên đăng nhập hết hạn');
+    if (!payload) throw new BizException(BizCode.UNAUTHORIZED, 'auth.sessionExpired');
 
     // 校验 session 仍存在且未过期
     const sess = await this.prisma.session.findUnique({ where: { id: payload.sessionId } });
     if (!sess || sess.expiresAt < new Date()) {
-      throw new BizException(BizCode.UNAUTHORIZED, 'Phiên đăng nhập hết hạn');
+      throw new BizException(BizCode.UNAUTHORIZED, 'auth.sessionExpired');
     }
 
     req.user = {

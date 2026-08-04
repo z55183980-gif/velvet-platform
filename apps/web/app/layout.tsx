@@ -1,10 +1,12 @@
 import type { Metadata, Viewport } from "next";
+import { cookies } from "next/headers";
 import "./globals.css";
 import { LocaleProvider } from "@/lib/i18n";
 import { AuthProvider } from "@/components/auth-context";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ToastProvider } from "@/components/toast";
 import { AppShell } from "@/components/app-shell";
+import { normalizeInterfaceLanguage } from "@/lib/languages";
 
 export const metadata: Metadata = {
   title: "Velvet — Spicy Short Dramas",
@@ -25,6 +27,9 @@ export const metadata: Metadata = {
     // insets still apply once viewportFit is cover.
     statusBarStyle: "black",
   },
+  other: {
+    "mobile-web-app-capable": "yes",
+  },
 };
 
 /**
@@ -38,11 +43,18 @@ export const viewport: Viewport = {
   maximumScale: 1,
   userScalable: false,
   viewportFit: "cover",
+  themeColor: [
+    { media: "(prefers-color-scheme: dark)", color: "#0B0D12" },
+    { media: "(prefers-color-scheme: light)", color: "#0B0D12" },
+  ],
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const jar = await cookies();
+  const initialLocale = normalizeInterfaceLanguage(jar.get("dv_locale")?.value);
+
   return (
-    <html lang="vi" className="dark" data-theme="dark" suppressHydrationWarning>
+    <html lang={initialLocale} className="dark" data-theme="dark" suppressHydrationWarning>
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
@@ -52,13 +64,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem('dv_theme')||'dark';var r=t==='system'?(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'):t;var d=document.documentElement;d.dataset.theme=r;d.classList.add(r);d.classList.remove(r==='light'?'dark':'light');d.style.colorScheme=r;}catch(e){}})();`,
+            __html: `(function(){try{var t=localStorage.getItem('dv_theme');var r=(t==='light'||t==='dark')?t:'dark';var d=document.documentElement;d.dataset.theme=r;d.classList.add(r);d.classList.remove(r==='light'?'dark':'light');d.style.colorScheme=r;}catch(e){}})();`,
           }}
         />
       </head>
       <body>
         <ThemeProvider>
-          <LocaleProvider>
+          <LocaleProvider initialLocale={initialLocale}>
             <ToastProvider>
               <AuthProvider>
                 <AppShell>{children}</AppShell>

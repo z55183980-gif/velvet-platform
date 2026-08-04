@@ -12,3 +12,4 @@ export {
   DataTable,
   type Column,
 } from "./components";
+export { Modal, ConfirmDialog, type ModalProps, type ModalSize } from "./modal";

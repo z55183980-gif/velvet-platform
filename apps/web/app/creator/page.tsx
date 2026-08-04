@@ -41,7 +41,7 @@ export default function CreatorPage() {
   const [dash, setDash] = useState<any>(null);
   const [dramas, setDramas] = useState<any[]>([]);
   const [err, setErr] = useState<string | null>(null);
-  const [titleVi, setTitleVi] = useState("");
+  const [titleEn, setTitleEn] = useState("");
   const [titleZh, setTitleZh] = useState("");
   const [categorySlug, setCategorySlug] = useState("ngon_tinh");
   const [withdrawAmount, setWithdrawAmount] = useState("100000");
@@ -109,15 +109,15 @@ export default function CreatorPage() {
   }, [ready, user, reload]);
 
   async function createDrama() {
-    if (!titleVi.trim()) return;
+    if (!titleEn.trim()) return;
     setBusy(true);
     try {
       await creatorApi("/dramas", {
         method: "POST",
-        body: JSON.stringify({ titleVi, titleZh: titleZh || titleVi, categorySlug }),
+        body: JSON.stringify({ titleEn, titleZh: titleZh || titleEn, categorySlug }),
       });
       track("create_drama", { categorySlug });
-      setTitleVi("");
+      setTitleEn("");
       setTitleZh("");
       await reload();
     } catch (e: any) {
@@ -147,7 +147,7 @@ export default function CreatorPage() {
     try {
       await creatorApi(`/dramas/${id}`, {
         method: "PATCH",
-        body: JSON.stringify({ titleVi: title.trim() }),
+        body: JSON.stringify({ titleEn: title.trim() }),
       });
       await reload();
     } catch (e: any) {
@@ -204,7 +204,7 @@ export default function CreatorPage() {
         method: "POST",
         body: JSON.stringify({
           episodeNumber: Number(epNo),
-          title: `Tập ${epNo}`,
+          title: `Episode ${epNo}`,
           isFree: Number(epNo) <= 3,
           priceVnd: Number(epPrice),
           priceCredits: Number(epPrice),
@@ -459,8 +459,8 @@ export default function CreatorPage() {
           <input
             className="rounded-md border border-line bg-surface px-3 py-2 text-body-sm text-ink"
             placeholder="Title (VI)"
-            value={titleVi}
-            onChange={(e) => setTitleVi(e.target.value)}
+            value={titleEn}
+            onChange={(e) => setTitleEn(e.target.value)}
           />
           <input
             className="rounded-md border border-line bg-surface px-3 py-2 text-body-sm text-ink"
@@ -589,7 +589,7 @@ export default function CreatorPage() {
           {dramas.map((d) => (
             <li key={String(d.id)} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
               <div>
-                <div className="text-body font-medium text-ink">{d.titleVi}</div>
+                <div className="text-body font-medium text-ink">{d.titleEn}</div>
                 <div className="text-caption text-ink-subtle">
                   {d.status} · {d._count?.episodes ?? 0} ep · {d.slug}
                 </div>
@@ -646,7 +646,7 @@ export default function CreatorPage() {
             <option value="">{zh ? "选择短剧" : "Chọn phim"}</option>
             {dramas.map((d) => (
               <option key={String(d.id)} value={String(d.id)}>
-                {d.titleVi}
+                {d.titleEn}
               </option>
             ))}
           </select>
@@ -692,7 +692,7 @@ export default function CreatorPage() {
             (d.episodes || []).map((ep: any) => (
               <li key={String(ep.id)} className="flex flex-wrap justify-between gap-2 px-4 py-3 text-body-sm">
                 <span className="text-ink">
-                  {d.titleVi} · ep{ep.episodeNumber}
+                  {d.titleEn} · ep{ep.episodeNumber}
                 </span>
                 <span className="flex items-center gap-3 text-ink-subtle">
                   {ep.transcodeStatus || "—"} · {ep.hlsUrl || ep.originalUrl || "no url"}

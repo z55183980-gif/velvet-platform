@@ -243,16 +243,16 @@ export default function AccountPage() {
         <p className="mt-3 text-body text-ink-muted">{t("account.loginVipHint")}</p>
         <div className="mt-8 flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
           <button
-            onClick={() => openLogin()}
+            onClick={() => openLogin("login")}
             className="rounded-full bg-brand px-6 py-3 text-body-sm font-medium text-white hover:opacity-90"
           >
-            {t("nav.login")}
+            {t("account.loginNow")}
           </button>
           <button
-            onClick={() => openLogin()}
+            onClick={() => openLogin("register")}
             className="rounded-full bg-gold px-6 py-3 text-body-sm font-semibold text-ink hover:opacity-90"
           >
-            {t("vip.open")}
+            {t("account.freeRegister")}
           </button>
         </div>
       </div>
@@ -260,7 +260,7 @@ export default function AccountPage() {
   }
 
   const titleOf = (d: any) =>
-    locale === "zh" ? d?.titleZh || d?.titleVi : d?.titleVi || d?.titleZh || "—";
+    locale === "zh" ? d?.titleZh || d?.titleEn : d?.titleEn || d?.titleZh || "—";
   const avatar = mediaUrl(user.avatarUrl);
 
   return (

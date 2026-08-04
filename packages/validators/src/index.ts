@@ -17,16 +17,10 @@ export const exchangeRateSchema = z.object({
   sellRate: z.coerce.number().positive().optional(),
 });
 
-export const topupPackageSchema = z.object({
-  name: z.string().optional(),
-  credits: z.coerce.number().int().positive(),
-  basePrice: z.coerce.number().positive(),
-  sortOrder: z.coerce.number().int().optional(),
-  active: z.boolean().optional(),
-});
-
 export const vipPlanSchema = z.object({
-  name: z.string().optional(),
+  nameEn: z.string().trim().min(1),
+  nameZh: z.string().optional(),
+  nameFr: z.string().optional(),
   durationDays: z.coerce.number().int().positive(),
   basePrice: z.coerce.number().positive(),
   sortOrder: z.coerce.number().int().optional(),
@@ -51,6 +45,5 @@ export const reasonSchema = z.object({
 export type PaginationInput = z.infer<typeof paginationSchema>;
 export type WalletAdjustInput = z.infer<typeof walletAdjustSchema>;
 export type ExchangeRateInput = z.infer<typeof exchangeRateSchema>;
-export type TopupPackageInput = z.infer<typeof topupPackageSchema>;
 export type VipPlanInput = z.infer<typeof vipPlanSchema>;
 export type RedeemBatchInput = z.infer<typeof redeemBatchSchema>;

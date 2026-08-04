@@ -1,0 +1,396 @@
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { execFile } from 'child_process';
+import { createHash } from 'crypto';
+import * as path from 'path';
+import { promisify } from 'util';
+import { BizCode, BizException } from '../common/biz.exception';
+import {
+  defaultYtdlpBinDir,
+  ensureYtdlpBinary,
+  ytdlpLocalFileName,
+} from './ytdlp-bootstrap.util';
+
+const execFileAsync = promisify(execFile);
+
+export type YtdlpFormatPreference = 'best_hls' | 'best_mp4' | 'best';
+
+export type YtdlpProbeEpisode = {
+  index: number;
+  id: string;
+  title: string;
+  durationSec?: number;
+  /** 单集页链接；播放列表无独立页时指向列表页，并配合 playlistIndex */
+  webpageUrl: string;
+  playlistIndex?: number;
+  candidateCount: number;
+};
+
+export type YtdlpProbeResult = {
+  extractor: string;
+  id: string;
+  title: string;
+  coverUrl?: string;
+  description?: string;
+  webpageUrl: string;
+  kind: 'single' | 'playlist';
+  episodes: YtdlpProbeEpisode[];
+};
+
+export type YtdlpBinSource = 'env' | 'bundled' | 'path' | 'auto_download' | null;
+
+/**
+ * 本地 yt-dlp 解析 Provider：无第三方 API Key。
+ * 优先使用已安装 / 捆绑二进制；缺失时可选自动从 GitHub 下载到 STORAGE_ROOT/bin。
+ * 配置：YTDLP_BIN、YTDLP_BIN_DIR、YTDLP_AUTO_INSTALL、YTDLP_TIMEOUT_MS、YTDLP_ENABLED
+ */
+@Injectable()
+export class YtdlpProvider implements OnModuleInit {
+  private readonly logger = new Logger(YtdlpProvider.name);
+  private binPath: string | null | undefined;
+  private binSource: YtdlpBinSource = null;
+  private versionCache: string | null = null;
+  private ensurePromise: Promise<string | null> | null = null;
+  private lastError: string | null = null;
+
+  constructor(private readonly config: ConfigService) {}
+
+  onModuleInit() {
+    // 不阻塞 Nest 启动；后台拉齐二进制，status/probe 时也会 await ensure
+    this.ensureReady().catch((e) => {
+      this.lastError = e?.message || String(e);
+      this.logger.warn(`yt-dlp bootstrap deferred fail: ${this.lastError}`);
+    });
+  }
+
+  private enabled() {
+    const v = String(this.config.get<string>('YTDLP_ENABLED') ?? 'true').toLowerCase();
+    return v !== '0' && v !== 'false' && v !== 'no';
+  }
+
+  private autoInstall() {
+    const v = String(this.config.get<string>('YTDLP_AUTO_INSTALL') ?? 'true').toLowerCase();
+    return v !== '0' && v !== 'false' && v !== 'no';
+  }
+
+  private timeoutMs() {
+    const n = Number(this.config.get<string>('YTDLP_TIMEOUT_MS') || 90_000);
+    return Number.isFinite(n) && n >= 5_000 ? n : 90_000;
+  }
+
+  private storageRoot() {
+    return (
+      this.config.get<string>('STORAGE_ROOT')?.trim() ||
+      path.join(process.cwd(), 'storage')
+    );
+  }
+
+  private bundledBinPath() {
+    const dir =
+      this.config.get<string>('YTDLP_BIN_DIR')?.trim() ||
+      defaultYtdlpBinDir(this.storageRoot());
+    return path.join(dir, ytdlpLocalFileName());
+  }
+
+  /** 探测或自动安装，缓存可用二进制路径 */
+  async ensureReady(): Promise<string | null> {
+    if (this.binPath !== undefined) return this.binPath;
+    if (this.ensurePromise) return this.ensurePromise;
+    this.ensurePromise = this.detectOrInstall().finally(() => {
+      this.ensurePromise = null;
+    });
+    return this.ensurePromise;
+  }
+
+  private async probeCandidate(
+    bin: string,
+    source: YtdlpBinSource,
+  ): Promise<string | null> {
+    try {
+      const { stdout } = await execFileAsync(bin, ['--version'], {
+        timeout: 8_000,
+        windowsHide: true,
+        maxBuffer: 256 * 1024,
+      });
+      this.binPath = bin;
+      this.binSource = source;
+      this.versionCache = String(stdout || '').trim().split(/\r?\n/)[0] || null;
+      this.lastError = null;
+      this.logger.log(`yt-dlp ready: ${bin} (${this.versionCache}) [${source}]`);
+      return bin;
+    } catch {
+      return null;
+    }
+  }
+
+  private async detectOrInstall(): Promise<string | null> {
+    if (!this.enabled()) {
+      this.binPath = null;
+      this.binSource = null;
+      return null;
+    }
+
+    const envBin = this.config.get<string>('YTDLP_BIN')?.trim();
+    const bundled = this.bundledBinPath();
+    const candidates: Array<{ bin: string; source: YtdlpBinSource }> = [
+      ...(envBin ? [{ bin: envBin, source: 'env' as const }] : []),
+      { bin: bundled, source: 'bundled' },
+      { bin: 'yt-dlp', source: 'path' },
+      { bin: 'yt-dlp.exe', source: 'path' },
+      { bin: '/usr/local/bin/yt-dlp', source: 'path' },
+      { bin: '/usr/bin/yt-dlp', source: 'path' },
+      { bin: '/opt/homebrew/bin/yt-dlp', source: 'path' },
+    ];
+
+    for (const c of candidates) {
+      const ok = await this.probeCandidate(c.bin, c.source);
+      if (ok) return ok;
+    }
+
+    if (this.autoInstall()) {
+      try {
+        const dir = path.dirname(bundled);
+        const dest = await ensureYtdlpBinary({
+          binDir: dir,
+          timeoutMs: Math.max(this.timeoutMs(), 120_000),
+        });
+        const ok = await this.probeCandidate(dest, 'auto_download');
+        if (ok) return ok;
+        this.lastError = 'downloaded binary failed --version';
+      } catch (e: any) {
+        this.lastError = e?.message || String(e);
+        this.logger.warn(`yt-dlp auto-install failed: ${this.lastError}`);
+      }
+    }
+
+    this.binPath = null;
+    this.binSource = null;
+    this.logger.warn(
+      'yt-dlp not available — set YTDLP_BIN, preinstall in image, or enable YTDLP_AUTO_INSTALL',
+    );
+    return null;
+  }
+
+  /** @deprecated use ensureReady — kept as alias for callers */
+  async detectBin(): Promise<string | null> {
+    return this.ensureReady();
+  }
+
+  async status() {
+    const bin = await this.ensureReady();
+    return {
+      configured: !!bin,
+      enabled: this.enabled(),
+      autoInstall: this.autoInstall(),
+      bin: bin || null,
+      binSource: this.binSource,
+      version: this.versionCache,
+      provider: 'yt-dlp',
+      requiresApiKey: false,
+      lastError: bin ? null : this.lastError,
+    };
+  }
+
+  async probe(url: string): Promise<YtdlpProbeResult> {
+    const pageUrl = this.requireHttpUrl(url);
+    const raw = await this.runJson([
+      '--dump-single-json',
+      '--flat-playlist',
+      '--no-download',
+      '--no-warnings',
+      pageUrl,
+    ]);
+
+    const extractor = String(raw.extractor || raw.extractor_key || 'unknown');
+    const id = String(raw.id || this.hashRef(pageUrl));
+    const title = String(raw.title || raw.playlist_title || `Import ${id}`).trim();
+    const coverUrl = this.pickThumb(raw);
+    const description = raw.description != null ? String(raw.description).trim() : undefined;
+    const webpageUrl = String(raw.webpage_url || raw.original_url || pageUrl);
+
+    const entries = Array.isArray(raw.entries) ? raw.entries.filter(Boolean) : null;
+    if (entries && entries.length > 0) {
+      const episodes: YtdlpProbeEpisode[] = [];
+      for (let i = 0; i < entries.length; i++) {
+        const ep = entries[i];
+        if (!ep || typeof ep !== 'object') continue;
+        const epId = String(ep.id || ep.url || `${id}-${i + 1}`);
+        const epUrl = String(ep.webpage_url || ep.url || ep.original_url || '').trim();
+        const hasOwnPage = /^https?:\/\//i.test(epUrl);
+        episodes.push({
+          index: i + 1,
+          id: epId,
+          title: String(ep.title || `第 ${i + 1} 集`).trim(),
+          durationSec: Number(ep.duration) > 0 ? Math.round(Number(ep.duration)) : undefined,
+          webpageUrl: hasOwnPage ? epUrl : pageUrl,
+          playlistIndex: hasOwnPage ? undefined : i + 1,
+          candidateCount: Array.isArray(ep.formats) ? ep.formats.length : 0,
+        });
+      }
+      return {
+        extractor,
+        id,
+        title,
+        coverUrl,
+        description,
+        webpageUrl,
+        kind: 'playlist',
+        episodes,
+      };
+    }
+
+    return {
+      extractor,
+      id,
+      title,
+      coverUrl,
+      description,
+      webpageUrl,
+      kind: 'single',
+      episodes: [
+        {
+          index: 1,
+          id,
+          title,
+          durationSec: Number(raw.duration) > 0 ? Math.round(Number(raw.duration)) : undefined,
+          webpageUrl,
+          candidateCount: Array.isArray(raw.formats) ? raw.formats.length : 0,
+        },
+      ],
+    };
+  }
+
+  async resolvePlayUrl(
+    url: string,
+    preference: YtdlpFormatPreference = 'best_hls',
+    playlistIndex?: number,
+  ): Promise<string> {
+    const pageUrl = this.requireHttpUrl(url);
+    const format = this.formatSelector(preference);
+    const args = ['-g', '-f', format, '--no-download', '--no-warnings'];
+    if (playlistIndex && playlistIndex > 0) {
+      args.push('--playlist-items', String(playlistIndex));
+    } else {
+      args.push('--no-playlist');
+    }
+    args.push(pageUrl);
+
+    const stdout = await this.runText(args);
+    const lines = stdout
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter((l) => /^https?:\/\//i.test(l));
+    if (!lines.length) {
+      throw new BizException(BizCode.BAD_REQUEST, `无法从该链接解析播放地址`);
+    }
+
+    const hls = lines.find((l) => /\.m3u8(\?|$)/i.test(l) || /\/hls\//i.test(l));
+    if (preference === 'best_hls' && hls) return hls;
+    const mp4 = lines.find((l) => /\.mp4(\?|$)/i.test(l));
+    if (preference === 'best_mp4' && mp4) return mp4;
+    return lines[0];
+  }
+
+  externalRefFor(webpageUrl: string, extractor: string, id: string) {
+    const safeExt = String(extractor || 'unknown')
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, '-')
+      .slice(0, 32);
+    const safeId = String(id || this.hashRef(webpageUrl))
+      .replace(/[^\w.-]+/g, '_')
+      .slice(0, 80);
+    return `ytdlp:${safeExt}:${safeId}`;
+  }
+
+  private formatSelector(preference: YtdlpFormatPreference) {
+    if (preference === 'best_mp4') {
+      return 'best[ext=mp4]/bestvideo[ext=mp4]+bestaudio/best';
+    }
+    if (preference === 'best') {
+      return 'best/bestvideo+bestaudio';
+    }
+    return 'best[protocol^=m3u8]/best[ext=m3u8]/best/bestvideo+bestaudio';
+  }
+
+  private async requireBin() {
+    const bin = await this.ensureReady();
+    if (!bin) {
+      throw new BizException(
+        BizCode.BAD_REQUEST,
+        this.lastError
+          ? `yt-dlp 不可用: ${this.lastError}`
+          : '未检测到 yt-dlp。已默认尝试自动下载；也可设置 YTDLP_BIN 或在镜像中预装后重启 API',
+      );
+    }
+    return bin;
+  }
+
+  private requireHttpUrl(url: string) {
+    const u = String(url || '').trim();
+    if (!u) throw new BizException(BizCode.BAD_REQUEST, '请填写公开视频页链接');
+    let parsed: URL;
+    try {
+      parsed = new URL(u);
+    } catch {
+      throw new BizException(BizCode.BAD_REQUEST, '无效链接');
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new BizException(BizCode.BAD_REQUEST, '仅支持 http/https 公开链接');
+    }
+    return u;
+  }
+
+  private pickThumb(raw: any): string | undefined {
+    const t = raw?.thumbnail;
+    if (typeof t === 'string' && /^https?:\/\//i.test(t)) return t;
+    if (Array.isArray(raw?.thumbnails) && raw.thumbnails.length) {
+      const last = raw.thumbnails[raw.thumbnails.length - 1];
+      const u = last?.url;
+      if (typeof u === 'string' && /^https?:\/\//i.test(u)) return u;
+    }
+    return undefined;
+  }
+
+  private hashRef(s: string) {
+    return createHash('sha1').update(s).digest('hex').slice(0, 16);
+  }
+
+  private async runJson(args: string[]): Promise<any> {
+    const text = await this.runText(args);
+    try {
+      return JSON.parse(text);
+    } catch {
+      throw new BizException(BizCode.BAD_REQUEST, 'yt-dlp 返回非 JSON，无法解析该链接');
+    }
+  }
+
+  private async runText(args: string[]): Promise<string> {
+    const bin = await this.requireBin();
+    try {
+      const { stdout, stderr } = await execFileAsync(bin, args, {
+        timeout: this.timeoutMs(),
+        windowsHide: true,
+        maxBuffer: 16 * 1024 * 1024,
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+      });
+      const out = String(stdout || '').trim();
+      if (out) return out;
+      const err = String(stderr || '').trim();
+      throw new BizException(
+        BizCode.BAD_REQUEST,
+        `yt-dlp 无输出${err ? `: ${err.slice(0, 200)}` : ''}`,
+      );
+    } catch (e: any) {
+      if (e instanceof BizException) throw e;
+      const msg =
+        e?.stderr?.toString?.()?.trim() ||
+        e?.message ||
+        'yt-dlp 执行失败';
+      this.logger.warn(`yt-dlp failed: ${String(msg).slice(0, 300)}`);
+      throw new BizException(
+        BizCode.BAD_REQUEST,
+        `yt-dlp 解析失败: ${String(msg).replace(/\s+/g, ' ').slice(0, 220)}`,
+      );
+    }
+  }
+}

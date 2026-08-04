@@ -15,18 +15,21 @@ export class EpisodesService {
     private readonly lockAccess: LockAccessService,
   ) {}
 
-  /** 生成 HLS/片源短时签名播放地址 */
-  async getPlayUrl(episodeId: bigint, userId: bigint) {
+  /** 生成 HLS/片源短时签名播放地址；未登录仅允许免费集 */
+  async getPlayUrl(episodeId: bigint, userId?: bigint) {
     const episode = await this.prisma.episode.findUnique({
       where: { id: episodeId },
       include: { drama: true },
     });
-    if (!episode) throw new BizException(BizCode.NOT_FOUND, 'Tập phim không tồn tại');
+    if (!episode) throw new BizException(BizCode.NOT_FOUND, 'episode.notFound');
 
     const policy = await this.lockAccess.resolveForDrama(episode.drama);
     const free = this.lockAccess.isFree(episode, policy);
     let unlocked = free;
     if (!free) {
+      if (!userId) {
+        throw new BizException(BizCode.UNAUTHORIZED, 'Chưa đăng nhập');
+      }
       const [u, user, dramaUnlock] = await Promise.all([
         this.prisma.userUnlock.findUnique({
           where: { userId_episodeId: { userId, episodeId } },
@@ -98,7 +101,7 @@ export class EpisodesService {
       where: { id: episodeId },
       select: { dramaId: true, durationSec: true },
     });
-    if (!ep) throw new BizException(BizCode.NOT_FOUND, 'Tập phim không tồn tại');
+    if (!ep) throw new BizException(BizCode.NOT_FOUND, 'episode.notFound');
     const duration = Math.max(0, ep.durationSec || 0);
     const raw = Number(progressSec);
     if (!Number.isFinite(raw) || raw < 0) {

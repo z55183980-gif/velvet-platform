@@ -5,6 +5,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
 import {
@@ -33,6 +34,15 @@ function isImg(s: string) {
   return /^https?:\/\//.test(s) || s.startsWith("/");
 }
 
+function isHlsUrl(url: string) {
+  return /\.m3u8(\?|$)/i.test(url);
+}
+
+function safePlay(video: HTMLVideoElement) {
+  // NotSupportedError when src not attached yet / unsupported — never let it bubble to Next overlay.
+  return video.play().catch(() => {});
+}
+
 function fmtTime(sec: number) {
   if (!Number.isFinite(sec) || sec < 0) return "0:00";
   const m = Math.floor(sec / 60);
@@ -55,6 +65,7 @@ export function VerticalPlayer({
   onUnlock,
   loginRequired,
   onLogin,
+  onRegister,
   error,
   loading,
   seekTo,
@@ -70,6 +81,10 @@ export function VerticalPlayer({
   playbackRate,
   onPlaybackRateChange,
   onSeekingChange,
+  /** When false, parent owns HLS/src attach (e.g. drama-detail quality picker). Default true. */
+  attachMedia = true,
+  /** Local tap-to-toggle. Disable when a parent pager owns tap gestures. */
+  tapToToggle = true,
 }: {
   src?: string | null;
   poster?: string;
@@ -85,6 +100,7 @@ export function VerticalPlayer({
   onUnlock?: () => void;
   loginRequired?: boolean;
   onLogin?: () => void;
+  onRegister?: () => void;
   error?: string | null;
   loading?: boolean;
   seekTo?: number | null;
@@ -96,17 +112,20 @@ export function VerticalPlayer({
   chrome?: VerticalPlayerChrome;
   /** Extra space below thin progress (watch page action bar) */
   bottomInset?: number;
+  attachMedia?: boolean;
   objectFit?: "cover" | "contain";
   showSeek?: boolean;
   playbackRate?: number;
   onPlaybackRateChange?: (rate: number) => void;
   /** Fired when the feed/full scrubber drag starts or ends (for parent gesture locking). */
   onSeekingChange?: (seeking: boolean) => void;
+  tapToToggle?: boolean;
 }) {
   const { t } = useLocale();
   const innerRef = useRef<HTMLVideoElement>(null);
   const videoRef = externalRef ?? innerRef;
   const seekRef = useRef<HTMLDivElement>(null);
+  const tapRef = useRef<{ x: number; y: number; t: number } | null>(null);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(mutedProp ?? true);
   const [current, setCurrent] = useState(0);
@@ -154,6 +173,61 @@ export function VerticalPlayer({
     v.muted = muted;
   }, [muted, videoRef]);
 
+  // Attach media source here so play() is never called against an empty <video>.
+  // Parents that own HLS (drama-detail quality UI) pass attachMedia={false}.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!attachMedia || !v || !src || locked || loginRequired) return;
+
+    let cancelled = false;
+    let hls: { destroy: () => void } | null = null;
+
+    const clearSrc = () => {
+      try {
+        v.removeAttribute("src");
+        v.load();
+      } catch {
+        /* ignore */
+      }
+    };
+
+    if (!isHlsUrl(src)) {
+      v.src = src;
+      return () => {
+        cancelled = true;
+        clearSrc();
+      };
+    }
+
+    if (v.canPlayType("application/vnd.apple.mpegurl")) {
+      v.src = src;
+      return () => {
+        cancelled = true;
+        clearSrc();
+      };
+    }
+
+    (async () => {
+      try {
+        const mod = await import("hls.js");
+        const Hls = mod.default;
+        if (cancelled || !Hls.isSupported()) return;
+        const instance = new Hls({ enableWorker: true });
+        hls = instance;
+        instance.loadSource(src);
+        instance.attachMedia(v);
+      } catch {
+        /* ignore — play() stay no-ops until user retries */
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      hls?.destroy();
+      clearSrc();
+    };
+  }, [attachMedia, src, locked, loginRequired, videoRef]);
+
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
@@ -161,9 +235,19 @@ export function VerticalPlayer({
       v.pause();
       return;
     }
-    if (autoPlay && src && !locked && !loginRequired) {
-      void v.play().catch(() => {});
-    }
+    if (!autoPlay || !src || locked || loginRequired) return;
+
+    const tryPlay = () => {
+      if (!v.paused) return;
+      void safePlay(v);
+    };
+    tryPlay();
+    v.addEventListener("canplay", tryPlay);
+    v.addEventListener("loadeddata", tryPlay);
+    return () => {
+      v.removeEventListener("canplay", tryPlay);
+      v.removeEventListener("loadeddata", tryPlay);
+    };
   }, [active, autoPlay, src, locked, loginRequired, videoRef]);
 
   useEffect(() => {
@@ -222,9 +306,34 @@ export function VerticalPlayer({
   const togglePlay = () => {
     const v = videoRef.current;
     if (!v || !src || locked || loginRequired) return;
-    if (v.paused) void v.play();
+    if (v.paused) void safePlay(v);
     else v.pause();
     bumpChrome();
+  };
+
+  const onTapPointerDown = (e: ReactPointerEvent) => {
+    if (!tapToToggle) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    const target = e.target;
+    if (target instanceof Element && target.closest("button, a, input, [data-no-tap], [role='slider']")) {
+      tapRef.current = null;
+      return;
+    }
+    tapRef.current = { x: e.clientX, y: e.clientY, t: performance.now() };
+  };
+
+  const onTapPointerUp = (e: ReactPointerEvent) => {
+    if (!tapToToggle) return;
+    const tap = tapRef.current;
+    tapRef.current = null;
+    if (!tap) return;
+    if (performance.now() - tap.t > 420) return;
+    if (Math.hypot(e.clientX - tap.x, e.clientY - tap.y) > 12) return;
+    togglePlay();
+  };
+
+  const onTapPointerCancel = () => {
+    tapRef.current = null;
   };
 
   const toggleMute = () => {
@@ -283,11 +392,20 @@ export function VerticalPlayer({
         <p className="text-[18px] font-medium text-white">{t("player.loginToWatch")}</p>
         <button
           className={buttonVariants({ variant: "primary", size: "lg" })}
-          onClick={onLogin}
+          onClick={onRegister ?? onLogin}
           style={{ background: `linear-gradient(92.27deg, ${ACCENT} 0.32%, #ff9233)` }}
         >
-          {t("nav.login")}
+          {t("player.freeRegister")}
         </button>
+        {onLogin ? (
+          <button
+            type="button"
+            onClick={onLogin}
+            className="text-[14px] text-white/75 underline-offset-2 hover:text-white hover:underline"
+          >
+            {t("player.hasAccountLogin")}
+          </button>
+        ) : null}
       </Overlay>
     );
   } else if (locked) {
@@ -336,9 +454,16 @@ export function VerticalPlayer({
 
   return (
     <div
-      className="relative h-full w-full overflow-hidden bg-black"
-      onClick={togglePlay}
-      onPointerDown={isMinimal ? undefined : bumpChrome}
+      className={cn(
+        "relative h-full w-full overflow-hidden",
+        chrome === "feed" ? "bg-base" : "bg-black",
+      )}
+      onPointerDown={(e) => {
+        if (!isMinimal) bumpChrome();
+        onTapPointerDown(e);
+      }}
+      onPointerUp={onTapPointerUp}
+      onPointerCancel={onTapPointerCancel}
     >
       {src && !locked && !loginRequired ? (
         <video
@@ -348,12 +473,11 @@ export function VerticalPlayer({
           autoPlay={autoPlay && active}
           playsInline
           muted={muted}
-          loop={false}
+          loop={chrome === "feed"}
           className={cn(
             "absolute inset-0 h-full w-full",
             objectFit === "contain" ? "object-contain" : "object-cover",
           )}
-          onClick={(e) => e.stopPropagation()}
         />
       ) : poster && isImg(poster) && !overlay ? (
         // eslint-disable-next-line @next/next/no-img-element
@@ -400,65 +524,6 @@ export function VerticalPlayer({
       {src && !locked && !loginRequired && !error && chrome === "watch" && showSeek ? (
         <WatchSeekBar videoRef={videoRef} bottom={bottomInset} />
       ) : null}
-
-      {src && !locked && !loginRequired && !error && chrome === "feed" && showSeek && (
-        <div
-          className="absolute inset-x-0 z-20 px-3 pb-1"
-          style={{ bottom: bottomInset }}
-          onClick={(e) => e.stopPropagation()}
-          onTouchStart={(e) => e.stopPropagation()}
-          onTouchEnd={(e) => e.stopPropagation()}
-          onTouchMove={(e) => e.stopPropagation()}
-        >
-          <div
-            ref={seekRef}
-            className="relative h-11 touch-none select-none cursor-pointer"
-            onPointerDown={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              try {
-                e.currentTarget.setPointerCapture(e.pointerId);
-              } catch {
-                /* ignore */
-              }
-              setSeeking(true);
-              seekToRatio(ratioFromEvent(e.clientX));
-            }}
-          >
-            {dragging ? (
-              <div className="pointer-events-none absolute inset-x-0 bottom-7 text-center text-[11px] tabular-nums text-white/90 drop-shadow-[0_1px_2px_rgba(0,0,0,0.65)]">
-                {fmtTime(current)} / {fmtTime(duration)}
-              </div>
-            ) : null}
-            <div
-              className={cn(
-                "absolute inset-x-0 bottom-[7px] overflow-visible rounded-full bg-white/30 transition-[height] duration-150",
-                dragging ? "h-1.5" : "h-[2px]",
-              )}
-            >
-              <div
-                className="absolute inset-y-0 left-0 rounded-full bg-white/35"
-                style={{ width: `${buffered * 100}%` }}
-              />
-              <div
-                className="absolute inset-y-0 left-0 rounded-full bg-white"
-                style={{ width: `${progress * 100}%` }}
-              />
-            </div>
-            <div
-              className={cn(
-                "absolute bottom-[3px] rounded-full bg-white shadow transition-transform duration-150",
-                dragging ? "h-3.5 w-3.5 scale-110" : "h-2.5 w-2.5",
-              )}
-              style={{
-                left: dragging
-                  ? `calc(${progress * 100}% - 7px)`
-                  : `calc(${progress * 100}% - 5px)`,
-              }}
-            />
-          </div>
-        </div>
-      )}
 
       {src && !locked && !loginRequired && !error && !isMinimal && (
         <div

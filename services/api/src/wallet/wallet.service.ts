@@ -3,19 +3,23 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { BizException, BizCode } from '../common/biz.exception';
 import { toBigInt, genOrderNo, toDecimal } from '../common/money.util';
-import { ExchangeService } from '../exchange/exchange.service';
 import { PackagesService } from '../packages/packages.service';
 import { VipPlansService } from '../vip/vip-plans.service';
 import { StructuredLogger } from '../common/structured-logger.service';
 import { LockAccessService } from '../common/lock-access.service';
 
 const WALLET_RETRY = 3;
+const PAY_CURRENCY = 'USD';
+
+/** Ledger minor units: USD cents (amountVnd column retains legacy name). */
+function usdToCents(payAmount: Prisma.Decimal): bigint {
+  return BigInt(payAmount.mul(100).toDecimalPlaces(0, Prisma.Decimal.ROUND_HALF_UP).toString());
+}
 
 @Injectable()
 export class WalletService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly exchange: ExchangeService,
     private readonly packages: PackagesService,
     private readonly vipPlans: VipPlansService,
     private readonly log: StructuredLogger,
@@ -58,20 +62,22 @@ export class WalletService {
     return { rows, total, page, pageSize };
   }
 
-  // ============ 充值下单（选套餐 + 支付币种；积分以套餐为准）============
+  // ============ 充值下单（USD 标价；积分以套餐为准）============
   async createTopupOrder(
     dto: {
       packageId: number | string;
-      currency: string;
+      currency?: string;
       paymentMethod?: string;
       idempotencyKey?: string;
     },
     userId: bigint,
   ) {
-    const currency = (dto.currency || 'CNY').toUpperCase();
+    const currency = PAY_CURRENCY;
     const pkg = await this.packages.getActive(toBigInt(dto.packageId));
-    const quote = await this.exchange.quoteBasePrice(pkg.basePrice, currency);
-    const payAmount = new Prisma.Decimal(quote.payAmount);
+    const payAmount = new Prisma.Decimal(pkg.basePrice.toString()).toDecimalPlaces(
+      2,
+      Prisma.Decimal.ROUND_HALF_UP,
+    );
     const credits = pkg.credits;
     if (credits <= 0n) throw new BizException(BizCode.BAD_REQUEST, 'Gói nạp không hợp lệ');
 
@@ -81,15 +87,11 @@ export class WalletService {
     const existing = await this.prisma.order.findUnique({ where: { idempotencyKey: idem } });
     if (existing) return this.orderView(existing);
 
-    const amountVnd = await this.exchange.fiatToVnd(currency, payAmount);
+    const amountVnd = usdToCents(payAmount);
     const method = (dto.paymentMethod || 'STRIPE') as any;
 
-    // 首期：支付宝仅支持 CNY
-    if (method === 'ALIPAY' && currency !== 'CNY') {
-      throw new BizException(
-        BizCode.BAD_REQUEST,
-        'Alipay chỉ hỗ trợ thanh toán CNY; vui lòng chọn CNY hoặc phương thức khác',
-      );
+    if (method === 'ALIPAY') {
+      throw new BizException(BizCode.BAD_REQUEST, 'Alipay is not supported for USD payments');
     }
 
     await this.ensureWallet(userId);
@@ -106,8 +108,8 @@ export class WalletService {
         platformFeeVnd: 0n,
         payCurrency: currency,
         payAmount,
-        fxRate: new Prisma.Decimal(quote.cnyToFiat),
-        fxSource: 'cnyToFiat',
+        fxRate: new Prisma.Decimal(1),
+        fxSource: 'usd',
         paymentMethod: method,
         paymentStatus: 'PENDING',
       },
@@ -118,19 +120,8 @@ export class WalletService {
       credits: credits.toString(),
       packageId: pkg.id.toString(),
       packageName: pkg.name,
-      basePriceCny: pkg.basePrice.toString(),
+      basePriceUsd: pkg.basePrice.toString(),
     };
-
-    if (method === 'ALIPAY') {
-      // 开源版不内置真实渠道 SDK。
-      // 部署时接入方应在自己的支付服务里生成跳转链接 / 表单，
-      // 并通过 webhook 回写 PAID 状态。本函数仅返回订单与提示。
-      return {
-        ...base,
-        amountYuan: payAmount.toFixed(2),
-        notice: '开源版未集成支付渠道 SDK，请接入真实渠道后返回 payUrl/payForm',
-      };
-    }
 
     if (process.env.NODE_ENV !== 'production') {
       base.devPayUrl = `/api/v1/payments/simulate?orderNo=${order.orderNo}`;
@@ -139,20 +130,22 @@ export class WalletService {
     return base;
   }
 
-  // ============ VIP 订阅下单（法币支付，成功后延长 vipExpireAt）============
+  // ============ VIP 订阅下单（USD 标价，成功后延长 vipExpireAt）============
   async createVipSubOrder(
     dto: {
       vipPlanId: number | string;
-      currency: string;
+      currency?: string;
       paymentMethod?: string;
       idempotencyKey?: string;
     },
     userId: bigint,
   ) {
-    const currency = (dto.currency || 'CNY').toUpperCase();
+    const currency = PAY_CURRENCY;
     const plan = await this.vipPlans.getActive(toBigInt(dto.vipPlanId));
-    const quote = await this.exchange.quoteBasePrice(plan.basePrice, currency);
-    const payAmount = new Prisma.Decimal(quote.payAmount);
+    const payAmount = new Prisma.Decimal(plan.basePrice.toString()).toDecimalPlaces(
+      2,
+      Prisma.Decimal.ROUND_HALF_UP,
+    );
 
     const idem =
       dto.idempotencyKey ||
@@ -160,14 +153,11 @@ export class WalletService {
     const existing = await this.prisma.order.findUnique({ where: { idempotencyKey: idem } });
     if (existing) return this.orderView(existing);
 
-    const amountVnd = await this.exchange.fiatToVnd(currency, payAmount);
+    const amountVnd = usdToCents(payAmount);
     const method = (dto.paymentMethod || 'STRIPE') as any;
 
-    if (method === 'ALIPAY' && currency !== 'CNY') {
-      throw new BizException(
-        BizCode.BAD_REQUEST,
-        'Alipay chỉ hỗ trợ thanh toán CNY; vui lòng chọn CNY hoặc phương thức khác',
-      );
+    if (method === 'ALIPAY') {
+      throw new BizException(BizCode.BAD_REQUEST, 'Alipay is not supported for USD payments');
     }
 
     const order = await this.prisma.order.create({
@@ -183,8 +173,8 @@ export class WalletService {
         platformFeeVnd: 0n,
         payCurrency: currency,
         payAmount,
-        fxRate: new Prisma.Decimal(quote.cnyToFiat),
-        fxSource: 'cnyToFiat',
+        fxRate: new Prisma.Decimal(1),
+        fxSource: 'usd',
         paymentMethod: method,
         paymentStatus: 'PENDING',
         meta: { durationDays: plan.durationDays, planName: plan.name } as any,
@@ -196,16 +186,8 @@ export class WalletService {
       vipPlanId: plan.id.toString(),
       planName: plan.name,
       durationDays: plan.durationDays,
-      basePriceCny: plan.basePrice.toString(),
+      basePriceUsd: plan.basePrice.toString(),
     };
-
-    if (method === 'ALIPAY') {
-      return {
-        ...base,
-        amountYuan: payAmount.toFixed(2),
-        notice: '开源版未集成支付渠道 SDK，请接入真实渠道后返回 payUrl/payForm',
-      };
-    }
 
     if (process.env.NODE_ENV !== 'production') {
       base.devPayUrl = `/api/v1/payments/simulate?orderNo=${order.orderNo}`;
@@ -373,7 +355,7 @@ export class WalletService {
       where: { id: episodeId },
       include: { drama: true },
     });
-    if (!episode) throw new BizException(BizCode.NOT_FOUND, 'Tập phim không tồn tại');
+    if (!episode) throw new BizException(BizCode.NOT_FOUND, 'episode.notFound');
 
     const isFree = this.lockAccess.isFree(
       episode,
@@ -554,11 +536,11 @@ export class WalletService {
     try {
       return await this.prisma.$transaction(async (tx) => {
         const order = await tx.order.findUnique({ where: { orderNo } });
-        if (!order) throw new BizException(BizCode.NOT_FOUND, 'Đơn hàng không tồn tại');
+        if (!order) throw new BizException(BizCode.NOT_FOUND, 'order.notFound');
         if (order.paymentStatus === 'REFUNDED') {
           throw new BizException(
             BizCode.CONFLICT,
-            'Đơn hàng đã hoàn tiền, không thể đánh dấu PAID',
+            'order.alreadyRefundedCannotMarkPaid',
           );
         }
         if (order.paymentStatus === 'PAID') {
@@ -608,10 +590,10 @@ export class WalletService {
   // ============ 退款（原路退回积分 + 回滚收益/计数）============
   async refundOrder(orderNo: string, userId: bigint, reason?: string) {
     const order = await this.prisma.order.findUnique({ where: { orderNo } });
-    if (!order) throw new BizException(BizCode.NOT_FOUND, 'Đơn hàng không tồn tại');
+    if (!order) throw new BizException(BizCode.NOT_FOUND, 'order.notFound');
     if (order.userId !== userId) {
       this.log.warn({ event: 'wallet.refund.forbidden', orderNo, userId });
-      throw new BizException(BizCode.FORBIDDEN, 'Không có quyền');
+      throw new BizException(BizCode.FORBIDDEN, 'common.forbidden');
     }
     // 充值单禁止用户自助退款（防刷积分）；仅允许解锁单自助退
     if (order.orderType === 'TOPUP') {
@@ -628,7 +610,7 @@ export class WalletService {
       return { refunded: true, alreadyRefunded: true, orderNo };
     }
     if (order.paymentStatus !== 'PAID') {
-      throw new BizException(BizCode.ORDER_NOT_PAID, 'Đơn hàng chưa thanh toán, không thể hoàn');
+      throw new BizException(BizCode.ORDER_NOT_PAID, 'order.unpaidCannotCompleteRefund');
     }
 
     const t0 = Date.now();
@@ -707,7 +689,7 @@ export class WalletService {
    */
   async refundTopupByAdmin(orderNo: string, reason?: string) {
     const order = await this.prisma.order.findUnique({ where: { orderNo } });
-    if (!order) throw new BizException(BizCode.NOT_FOUND, 'Đơn hàng không tồn tại');
+    if (!order) throw new BizException(BizCode.NOT_FOUND, 'order.notFound');
     if (order.orderType !== 'TOPUP') {
       throw new BizException(BizCode.FORBIDDEN, 'Chỉ dùng cho đơn nạp');
     }
@@ -715,7 +697,7 @@ export class WalletService {
       return { refunded: true, alreadyRefunded: true, orderNo };
     }
     if (order.paymentStatus !== 'PAID') {
-      throw new BizException(BizCode.ORDER_NOT_PAID, 'Đơn hàng chưa thanh toán, không thể hoàn');
+      throw new BizException(BizCode.ORDER_NOT_PAID, 'order.unpaidCannotCompleteRefund');
     }
 
     const t0 = Date.now();
@@ -895,9 +877,9 @@ export class WalletService {
         data: {
           userId: order.userId,
           type: 'VIP_SUCCESS',
-          titleVi: 'Kích hoạt VIP thành công',
+          titleEn: 'VIP activated successfully',
           titleZh: 'VIP 开通成功',
-          bodyVi: `VIP còn hiệu lực đến ${vipExpireAt.toISOString()}.`,
+          bodyEn: `VIP is valid until ${vipExpireAt.toISOString()}.`,
           bodyZh: `VIP 有效期至 ${vipExpireAt.toISOString()}。`,
           payload: {
             orderNo: order.orderNo,
@@ -958,7 +940,7 @@ export class WalletService {
       }
     }
     if (finalBalance === 0n) {
-      throw new BizException(BizCode.CONFLICT, 'Cập nhật ví thất bại, vui lòng thử lại');
+      throw new BizException(BizCode.CONFLICT, 'wallet.updateFailed');
     }
 
     // 用户通知：充值成功
@@ -967,9 +949,9 @@ export class WalletService {
         data: {
           userId: order.userId,
           type: 'TOPUP_SUCCESS',
-          titleVi: 'Nạp tiền thành công',
+          titleEn: 'Top-up successful',
           titleZh: '充值成功',
-          bodyVi: `Đã nạp ${credits} credits vào ví. Số dư hiện tại: ${finalBalance} credits.`,
+          bodyEn: `${credits} credits added to your wallet. Current balance: ${finalBalance} credits.`,
           bodyZh: `已到账 ${credits} 积分，当前余额：${finalBalance} 积分。`,
           payload: {
             orderNo: order.orderNo,

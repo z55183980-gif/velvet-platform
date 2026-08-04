@@ -10,7 +10,7 @@ generator client {
 datasource db {
   provider   = "postgresql"
   url        = env("DATABASE_URL")
-  // 越南语 + 中文 ICU 排序（数据库已 CREATE COLLATION vi_vn / zh_cn）
+  // 英语 + 中文 ICU 排序（数据库已 CREATE COLLATION en_us / zh_cn；历史可能仍有 vi_vn）
 }
 
 // ========== 用户 ==========
@@ -27,7 +27,7 @@ model User {
   /// scrypt 哈希；OTP-only 用户可为空
   passwordHash  String?
   avatarUrl     String?
-  locale        String      @default("vi")     // vi | zh
+  locale        String      @default("en")     // en | zh | fr
   /// VIP 到期时间；null 或已过期 = 非会员
   vipExpireAt   DateTime?   @db.Timestamptz
   status        UserStatus  @default(ACTIVE)
@@ -135,7 +135,7 @@ model Session {
 // ========== 分类（主数据，F9：slug + 双语名）==========
 model Category {
   slug        String   @id
-  nameVi      String
+  nameEn      String
   nameZh      String
   sortOrder   Int      @default(0)
   isActive    Boolean  @default(true)
@@ -153,9 +153,9 @@ model Drama {
   slug            String      @unique
   creatorId       BigInt
 
-  titleVi         String
+  titleEn         String
   titleZh         String?
-  descriptionVi   String?
+  descriptionEn   String?
   descriptionZh   String?
 
   categorySlug    String
@@ -164,7 +164,7 @@ model Drama {
 
   coverUrl        String?
 
-  /// 外部来源去重键，如 hongguo:{bookId}
+  /// 外部来源去重键，如 ytdlp:{extractor}:{id}
   externalRef     String?     @unique
 
   totalEpisodes   Int         @default(0)
@@ -543,13 +543,13 @@ enum WithdrawStatus {
 
 // ========== 配置 / Banner / 对账 ==========
 
-/// 充值积分套餐：积分固定，基准价为人民币；其它法币按汇率折算
+/// 充值积分套餐：积分固定，基准价为 USD（直接标价，无汇率折算）
 model TopupPackage {
   id            BigInt    @id @default(autoincrement())
   name          String?
   credits       BigInt                              // 到账积分
-  baseCurrency  String    @default("CNY")           // 基准币，固定 CNY
-  basePrice     Decimal   @db.Decimal(18, 2)        // 人民币价格
+  baseCurrency  String    @default("USD")           // 基准币，固定 USD
+  basePrice     Decimal   @db.Decimal(18, 2)        // USD 价格
   sortOrder     Int       @default(0)
   active        Boolean   @default(true)
   createdAt     DateTime  @default(now()) @db.Timestamptz
@@ -561,12 +561,15 @@ model TopupPackage {
   @@map("topup_packages")
 }
 
-/// VIP 订阅套餐：按时长，基准价人民币；其它法币按汇率折算
+/// VIP 订阅套餐：按时长，基准价 USD（直接标价，无汇率折算）
 model VipPlan {
   id            BigInt    @id @default(autoincrement())
-  name          String?
+  name          String?                             // 兼容字段，与英文名称保持同步
+  nameEn        String
+  nameZh        String?
+  nameFr        String?
   durationDays  Int                                 // 有效天数
-  baseCurrency  String    @default("CNY")
+  baseCurrency  String    @default("USD")
   basePrice     Decimal   @db.Decimal(18, 2)
   sortOrder     Int       @default(0)
   active        Boolean   @default(true)
@@ -692,7 +695,7 @@ model SystemSetting {
 
 model Banner {
   id        BigInt   @id @default(autoincrement())
-  titleVi   String
+  titleEn   String
   titleZh   String?
   imageUrl  String
   linkUrl   String?
@@ -763,9 +766,9 @@ model Notification {
   id         BigInt    @id @default(autoincrement())
   userId     BigInt
   type       String    // kyc.approved | kyc.rejected | withdraw.paid | drama.live | drama.rejected
-  titleVi    String
+  titleEn    String
   titleZh    String?
-  bodyVi     String?
+  bodyEn     String?
   bodyZh     String?
   payload    Json?
   readAt     DateTime?

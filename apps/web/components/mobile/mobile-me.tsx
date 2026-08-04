@@ -17,6 +17,7 @@ import {
   Search,
   Settings,
   SlidersHorizontal,
+  Smartphone,
   Sun,
   Ticket,
   X,
@@ -24,6 +25,7 @@ import {
 import { useTheme } from "@/components/theme-provider";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { cn, mediaUrl } from "@/lib/utils";
+import { isPwaStandalone, openPwaInstallGuide } from "@/lib/pwa";
 
 export type MobileMeTab = "history" | "favorites" | "liked";
 
@@ -90,6 +92,16 @@ function progressLabel(
   return null;
 }
 
+/** Finished = latest progress reached the drama's last episode. */
+function isHistoryFinished(row: any): boolean {
+  if (typeof row?.finished === "boolean") return row.finished;
+  const total = Number(row?.drama?.totalEpisodes || 0);
+  const epNo = Number(row?.episode?.episodeNumber || 0);
+  return total > 0 && epNo >= total;
+}
+
+type HistoryStatusFilter = "all" | "finished" | "unfinished";
+
 export function MobileMe(props: Props) {
   const {
     user,
@@ -141,6 +153,7 @@ export function MobileMe(props: Props) {
   const [editing, setEditing] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [showGroups, setShowGroups] = useState(false);
+  const [historyStatus, setHistoryStatus] = useState<HistoryStatusFilter>("all");
 
   const avatar = mediaUrl(user.avatarUrl);
 
@@ -154,10 +167,13 @@ export function MobileMe(props: Props) {
     () =>
       history.filter((row) => {
         const d = row.drama;
-        return matchesQuery(titleOf(d));
+        if (!matchesQuery(titleOf(d))) return false;
+        if (historyStatus === "finished") return isHistoryFinished(row);
+        if (historyStatus === "unfinished") return !isHistoryFinished(row);
+        return true;
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [history, query, locale],
+    [history, query, locale, historyStatus],
   );
 
   const favoriteRows = useMemo(
@@ -197,6 +213,7 @@ export function MobileMe(props: Props) {
   const onTabChange = (next: MobileMeTab) => {
     exitEdit();
     setShowGroups(false);
+    setHistoryStatus("all");
     setTab(next);
   };
 
@@ -284,31 +301,8 @@ export function MobileMe(props: Props) {
         </div>
       </div>
 
-      {/* Quick shortcuts — download omitted (not implemented) */}
-      <div className="mt-6 flex items-start justify-around px-4">
-        <Link href="/theater" className="flex w-24 flex-col items-center gap-2 text-center">
-          <span className="grid h-12 w-12 place-items-center rounded-2xl bg-surface-2 text-ink">
-            <SlidersHorizontal className="h-5 w-5" />
-          </span>
-          <span className="text-caption leading-snug text-ink-muted">{t("account.watchPrefs")}</span>
-        </Link>
-        <button
-          type="button"
-          onClick={() => {
-            setSettingsOpen(true);
-            setShowHelp(true);
-          }}
-          className="flex w-24 flex-col items-center gap-2 text-center"
-        >
-          <span className="grid h-12 w-12 place-items-center rounded-2xl bg-surface-2 text-ink">
-            <HelpCircle className="h-5 w-5" />
-          </span>
-          <span className="text-caption leading-snug text-ink-muted">{t("account.feedbackHelp")}</span>
-        </button>
-      </div>
-
-      {/* VIP card — keep between shortcuts and content tabs */}
-      <div className="mt-5 px-4">
+      {/* VIP card */}
+      <div className="mt-6 px-4">
         <div
           className="rounded-2xl border border-gold/25 p-4"
           style={{
@@ -388,25 +382,35 @@ export function MobileMe(props: Props) {
 
       {/* Filter pills */}
       <div className="mt-3 flex items-center gap-2 overflow-x-auto px-4 pb-1">
-        <span className="shrink-0 rounded-full bg-surface-2 px-3 py-1.5 text-caption font-medium text-ink">
-          {t("account.allGroups")}
-        </span>
-        <button
-          type="button"
-          disabled
-          title={t("account.filterStatusHint")}
-          className="shrink-0 rounded-full bg-surface-2/50 px-3 py-1.5 text-caption text-ink-subtle disabled:cursor-not-allowed"
-        >
-          {t("account.filterFinished")}
-        </button>
-        <button
-          type="button"
-          disabled
-          title={t("account.filterStatusHint")}
-          className="shrink-0 rounded-full bg-surface-2/50 px-3 py-1.5 text-caption text-ink-subtle disabled:cursor-not-allowed"
-        >
-          {t("account.filterUnfinished")}
-        </button>
+        {tab === "history" ? (
+          <>
+            {(
+              [
+                ["all", t("account.allGroups")],
+                ["finished", t("account.filterFinished")],
+                ["unfinished", t("account.filterUnfinished")],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setHistoryStatus(key)}
+                className={cn(
+                  "shrink-0 rounded-full px-3 py-1.5 text-caption font-medium transition-colors",
+                  historyStatus === key
+                    ? "bg-brand text-white"
+                    : "bg-surface-2 text-ink-muted hover:bg-surface-3 hover:text-ink",
+                )}
+              >
+                {label}
+              </button>
+            ))}
+          </>
+        ) : (
+          <span className="shrink-0 rounded-full bg-surface-2 px-3 py-1.5 text-caption font-medium text-ink">
+            {t("account.allGroups")}
+          </span>
+        )}
         <div className="ml-auto flex shrink-0 items-center gap-1">
           {tab === "favorites" ? (
             <button
@@ -420,7 +424,7 @@ export function MobileMe(props: Props) {
               <SlidersHorizontal className="h-3.5 w-3.5" />
               {t("account.filterAction")}
             </button>
-          ) : (
+          ) : tab === "liked" ? (
             <button
               type="button"
               disabled
@@ -430,7 +434,7 @@ export function MobileMe(props: Props) {
               <SlidersHorizontal className="h-3.5 w-3.5" />
               {t("account.filterAction")}
             </button>
-          )}
+          ) : null}
           {(tab === "history" || tab === "favorites" || tab === "liked") && (
             <button
               type="button"
@@ -830,6 +834,21 @@ export function MobileMe(props: Props) {
                   <span className="flex-1 text-body-sm text-ink">{t("account.creatorCenter")}</span>
                   <ChevronRight className="h-4 w-4 text-ink-subtle" />
                 </Link>
+
+                {!isPwaStandalone() && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSettingsOpen(false);
+                      openPwaInstallGuide();
+                    }}
+                    className="flex w-full items-center gap-3 border-t border-line px-4 py-3.5 text-left hover:bg-surface-2"
+                  >
+                    <Smartphone className="h-4 w-4 text-ink-muted" />
+                    <span className="flex-1 text-body-sm text-ink">{t("pwa.settingsEntry")}</span>
+                    <ChevronRight className="h-4 w-4 text-ink-subtle" />
+                  </button>
+                )}
 
                 <button
                   type="button"

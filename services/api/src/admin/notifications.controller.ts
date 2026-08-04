@@ -14,9 +14,9 @@ import { AdminGuard } from './admin.guard';
 import { AdminRoleGuard, AdminRoles } from './admin-role.guard';
 
 class BroadcastDto {
-  @IsNotEmpty() @IsString() titleVi!: string;
+  @IsNotEmpty() @IsString() titleEn!: string;
   @IsOptional() @IsString() titleZh?: string;
-  @IsNotEmpty() @IsString() bodyVi!: string;
+  @IsNotEmpty() @IsString() bodyEn!: string;
   @IsOptional() @IsString() bodyZh?: string;
   @IsOptional() @IsString() userId?: string;
   @IsOptional() @IsBoolean() broadcast?: boolean;
@@ -38,9 +38,9 @@ export class AdminNotificationsController {
   @Post('notifications/broadcast')
   @AdminRoles('SUPER_ADMIN', 'OPS')
   async broadcast(@Body() dto: BroadcastDto, @Req() req: any) {
-    const titleVi = dto.titleVi?.trim();
-    const bodyVi = dto.bodyVi?.trim();
-    if (!titleVi || !bodyVi) {
+    const titleEn = dto.titleEn?.trim();
+    const bodyEn = dto.bodyEn?.trim();
+    if (!titleEn || !bodyEn) {
       throw new BizException(BizCode.BAD_REQUEST, '标题与正文不能为空');
     }
 
@@ -70,9 +70,9 @@ export class AdminNotificationsController {
     const data = userIds.map((userId) => ({
       userId,
       type: 'ops.broadcast',
-      titleVi,
+      titleEn,
       titleZh: dto.titleZh?.trim() || null,
-      bodyVi,
+      bodyEn,
       bodyZh: dto.bodyZh?.trim() || null,
     }));
 

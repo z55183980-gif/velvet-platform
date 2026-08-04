@@ -99,7 +99,7 @@ export type DashboardOverview = {
     topByView: Array<{
       id: string;
       titleZh: string | null;
-      titleVi: string | null;
+      titleEn: string | null;
       slug: string | null;
       viewCount: number;
       unlockCount: number;
@@ -107,7 +107,7 @@ export type DashboardOverview = {
     topByUnlock: Array<{
       id: string;
       titleZh: string | null;
-      titleVi: string | null;
+      titleEn: string | null;
       slug: string | null;
       viewCount: number;
       unlockCount: number;
@@ -115,7 +115,7 @@ export type DashboardOverview = {
     topBySales: Array<{
       dramaId: string;
       titleZh: string | null;
-      titleVi: string | null;
+      titleEn: string | null;
       slug: string | null;
       orderCount: number;
       credits: string;
@@ -222,8 +222,29 @@ export async function adminDramaEpisodes(id: string) {
   return adminRequest(`/admin/dramas/${id}/episodes`);
 }
 
+export async function adminCreateEpisode(dramaId: string, body: Record<string, unknown>) {
+  return adminRequest(`/admin/dramas/${dramaId}/episodes`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export async function adminUpdateEpisode(id: string, body: Record<string, unknown>) {
   return adminRequest(`/admin/episodes/${id}/update`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function adminDeleteEpisode(id: string) {
+  return adminRequest(`/admin/episodes/${id}/delete`, { method: "POST", body: "{}" });
+}
+
+export async function adminBatchEpisodes(
+  dramaId: string,
+  body: { ids: (string | number)[]; isFree?: boolean; priceCredits?: number },
+) {
+  return adminRequest(`/admin/dramas/${dramaId}/episodes/batch`, {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -450,42 +471,14 @@ export async function adminSetRate(body: {
   return adminRequest("/admin/exchange-rates", { method: "POST", body: JSON.stringify(body) });
 }
 
-export async function adminListPackages() {
-  return adminRequest("/admin/topup-packages");
-}
-
-export async function adminCreatePackage(body: {
-  name?: string;
-  credits: number;
-  basePrice: number;
-  sortOrder?: number;
-  active?: boolean;
-}) {
-  return adminRequest("/admin/topup-packages", { method: "POST", body: JSON.stringify(body) });
-}
-
-export async function adminUpdatePackage(
-  id: string,
-  body: Partial<{
-    name: string;
-    credits: number;
-    basePrice: number;
-    sortOrder: number;
-    active: boolean;
-  }>,
-) {
-  return adminRequest(`/admin/topup-packages/${id}`, {
-    method: "PATCH",
-    body: JSON.stringify(body),
-  });
-}
-
 export async function adminListVipPlans() {
   return adminRequest("/admin/vip-plans");
 }
 
 export async function adminCreateVipPlan(body: {
-  name?: string;
+  nameEn: string;
+  nameZh?: string;
+  nameFr?: string;
   durationDays: number;
   basePrice: number;
   sortOrder?: number;
@@ -498,7 +491,9 @@ export async function adminCreateVipPlan(body: {
 export async function adminUpdateVipPlan(
   id: string,
   body: Partial<{
-    name: string;
+    nameEn: string;
+    nameZh: string;
+    nameFr: string;
     durationDays: number;
     basePrice: number;
     sortOrder: number;
@@ -604,9 +599,9 @@ export async function adminPendingCreators() {
 }
 
 export async function adminBroadcastNotification(body: {
-  titleVi: string;
+  titleEn: string;
   titleZh?: string;
-  bodyVi: string;
+  bodyEn: string;
   bodyZh?: string;
   userId?: string;
   broadcast?: boolean;
@@ -639,10 +634,10 @@ export async function adminLocalImport(rootPath?: string, dryRun?: boolean) {
 
 export async function adminCreateOnlineDrama(body: {
   titleZh: string;
-  titleVi?: string;
+  titleEn?: string;
   slug?: string;
   descriptionZh?: string;
-  descriptionVi?: string;
+  descriptionEn?: string;
   categorySlug: string;
   coverUrl?: string;
   freeEpisodeCount?: number;
@@ -669,42 +664,52 @@ export async function adminCreateOnlineDrama(body: {
   });
 }
 
-export async function adminHongguoStatus() {
-  return adminRequest<{ configured: boolean; baseUrl: string; provider: string }>(
-    "/admin/hongguo/status",
-  );
-}
-
-export async function adminHongguoSearch(q: string, page = 1) {
-  return adminRequest<
-    Array<{
-      id: string;
-      title: string;
-      coverUrl?: string;
-      episodeCount?: number;
-      intro?: string;
-    }>
-  >(`/admin/hongguo/search?${toQuery({ q, page })}`);
-}
-
-export async function adminHongguoDetail(id: string) {
+export async function adminYtdlpStatus() {
   return adminRequest<{
+    configured: boolean;
+    enabled: boolean;
+    autoInstall: boolean;
+    bin: string | null;
+    binSource: "env" | "bundled" | "path" | "auto_download" | null;
+    version: string | null;
+    provider: string;
+    requiresApiKey: boolean;
+    lastError: string | null;
+  }>("/admin/ytdlp/status");
+}
+
+export async function adminYtdlpProbe(url: string) {
+  return adminRequest<{
+    extractor: string;
     id: string;
     title: string;
     coverUrl?: string;
-    intro?: string;
-    episodeCount?: number;
-    episodes: Array<{ videoId: string; episodeNumber: number; title?: string }>;
-  }>(`/admin/hongguo/detail?${toQuery({ id })}`);
+    description?: string;
+    webpageUrl: string;
+    kind: "single" | "playlist";
+    episodes: Array<{
+      index: number;
+      id: string;
+      title: string;
+      durationSec?: number;
+      webpageUrl: string;
+      playlistIndex?: number;
+      candidateCount: number;
+    }>;
+  }>("/admin/ytdlp/probe", {
+    method: "POST",
+    body: JSON.stringify({ url }),
+  });
 }
 
-export async function adminHongguoImport(body: {
-  id: string;
+export async function adminYtdlpImport(body: {
+  url: string;
   categorySlug: string;
   titleZh?: string;
-  titleVi?: string;
+  titleEn?: string;
   status?: "DRAFT" | "LIVE";
   maxEpisodes?: number;
+  formatPreference?: "best_hls" | "best_mp4" | "best";
 }) {
   return adminRequest<{
     id: string;
@@ -713,9 +718,10 @@ export async function adminHongguoImport(body: {
     totalEpisodes: number;
     resolvedEpisodes: number;
     externalRef: string;
-    hongguoId: string;
-    failedEpisodes: Array<{ episodeNumber: number; videoId: string; error: string }>;
-  }>("/admin/hongguo/import", {
+    extractor: string;
+    kind: "single" | "playlist";
+    failedEpisodes: Array<{ episodeNumber: number; url: string; error: string }>;
+  }>("/admin/ytdlp/import", {
     method: "POST",
     body: JSON.stringify(body),
   });

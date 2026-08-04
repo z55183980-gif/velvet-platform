@@ -18,8 +18,8 @@ function bannerToSlide(banner: HomeBanner): HeroSlide {
   const cover = banner.imageUrl || "#1a1a1a";
   return {
     id: `banner-${banner.id}`,
-    titleVi: banner.titleVi,
-    titleZh: banner.titleZh || banner.titleVi,
+    titleEn: banner.titleEn,
+    titleZh: banner.titleZh || banner.titleEn,
     cover: [cover, cover],
     href,
     tags: [],
@@ -197,7 +197,7 @@ function HomeInner() {
   if (isMobile && !filtered) {
     if (initialLoading && feedDramas.length === 0) {
       return (
-        <div className="flex h-full min-h-[50dvh] items-center justify-center bg-black text-white/60">
+        <div className="flex h-full min-h-[50dvh] items-center justify-center bg-base text-ink-muted">
           …
         </div>
       );

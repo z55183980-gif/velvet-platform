@@ -52,7 +52,7 @@ export class AdminGuard implements CanActivate {
 
     throw new BizException(
       BizCode.FORBIDDEN,
-      'Không có quyền quản trị',
+      'admin.forbidden',
       HttpStatus.FORBIDDEN,
     );
   }

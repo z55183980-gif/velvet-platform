@@ -1,7 +1,37 @@
 /** @type {import('next').NextConfig} */
 const staticExport = process.env.STATIC_EXPORT === "1";
 
+/** LAN / Tailscale 访问 dev 时放行（否则 /_next/* 被拦，手机端页面空白或路由异常） */
+function devOriginsFromEnv() {
+  const raw = process.env.ALLOWED_DEV_ORIGINS || process.env.CORS_ALLOWED_ORIGINS || "";
+  const fromEnv = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => {
+      try {
+        if (s.includes("://")) return new URL(s).host; // host:port
+        return s.replace(/^https?:\/\//, "");
+      } catch {
+        return s;
+      }
+    });
+  return Array.from(
+    new Set([
+      "192.168.8.194",
+      "192.168.8.194:3000",
+      "127.0.0.1",
+      "127.0.0.1:3000",
+      "localhost",
+      "localhost:3000",
+      ...fromEnv,
+    ]),
+  );
+}
+
 const nextConfig = {
+  // Next 16：非 localhost 访问需要显式允许，否则 HMR/部分资源跨域被拒
+  allowedDevOrigins: devOriginsFromEnv(),
   ...(staticExport
     ? {
         output: "export",

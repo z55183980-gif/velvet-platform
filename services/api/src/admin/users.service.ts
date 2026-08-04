@@ -14,7 +14,7 @@ export class AdminUsersService {
   async list(filter: {
     q?: string;
     status?: 'ACTIVE' | 'SUSPENDED' | 'BANNED' | 'ALL';
-    locale?: 'vi' | 'zh';
+    locale?: 'en' | 'zh' | 'fr';
     page?: number;
     pageSize?: number;
   }) {
@@ -94,7 +94,7 @@ export class AdminUsersService {
         },
       },
     });
-    if (!user) throw new BizException(BizCode.NOT_FOUND, 'Không tìm thấy người dùng');
+    if (!user) throw new BizException(BizCode.NOT_FOUND, 'user.notFound');
 
     const [txs, orders, unlocks, favs, history, notifications] = await Promise.all([
       this.prisma.walletTransaction.findMany({
@@ -111,13 +111,13 @@ export class AdminUsersService {
         where: { userId: user.id },
         orderBy: { unlockedAt: 'desc' },
         take: 20,
-        include: { episode: { include: { drama: { select: { id: true, titleVi: true, titleZh: true, slug: true } } } } },
+        include: { episode: { include: { drama: { select: { id: true, titleEn: true, titleZh: true, slug: true } } } } },
       }),
       this.prisma.favorite.findMany({
         where: { userId: user.id },
         orderBy: { createdAt: 'desc' },
         take: 20,
-        include: { drama: { select: { id: true, slug: true, titleVi: true, titleZh: true, coverUrl: true } } },
+        include: { drama: { select: { id: true, slug: true, titleEn: true, titleZh: true, coverUrl: true } } },
       }),
       this.prisma.watchHistory.findMany({
         where: { userId: user.id },
@@ -144,7 +144,7 @@ export class AdminUsersService {
 
   async setStatus(id: string, status: 'ACTIVE' | 'SUSPENDED' | 'BANNED', reason: string, actorId?: bigint) {
     if (!reason || !reason.trim()) {
-      throw new BizException(BizCode.BAD_REQUEST, 'Lý do là bắt buộc');
+      throw new BizException(BizCode.BAD_REQUEST, 'common.reasonRequired');
     }
     const user = await this.prisma.user.update({
       where: { id: BigInt(id) },
@@ -163,9 +163,9 @@ export class AdminUsersService {
           data: {
             userId: user.id,
             type: status === 'BANNED' ? 'user.banned' : 'user.suspended',
-            titleVi: status === 'BANNED' ? 'Tài khoản đã bị cấm' : 'Tài khoản tạm khóa',
+            titleEn: status === 'BANNED' ? 'Account banned' : 'Account suspended',
             titleZh: status === 'BANNED' ? '账号已被封禁' : '账号已被暂停',
-            bodyVi: `Lý do: ${reason}`,
+            bodyEn: `Reason: ${reason}`,
             bodyZh: `原因：${reason}`,
             payload: { reason } as any,
           },
@@ -196,7 +196,7 @@ export class AdminUsersService {
   ) {
     const userId = BigInt(id);
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user) throw new BizException(BizCode.NOT_FOUND, 'Không tìm thấy người dùng');
+    if (!user) throw new BizException(BizCode.NOT_FOUND, 'user.notFound');
 
     let vipExpireAt: Date | null = user.vipExpireAt;
     if (dto.extendDays != null) {

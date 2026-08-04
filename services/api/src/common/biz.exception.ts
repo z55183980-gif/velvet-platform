@@ -1,4 +1,6 @@
 import { HttpException, HttpStatus } from '@nestjs/common';
+import type { MessageKey } from './i18n/messages';
+import type { MessageParams } from './i18n/translate';
 
 function defaultHttpStatus(bizCode: number): HttpStatus {
   if (bizCode === 401) return HttpStatus.UNAUTHORIZED;
@@ -10,18 +12,26 @@ function defaultHttpStatus(bizCode: number): HttpStatus {
   return HttpStatus.BAD_REQUEST;
 }
 
-/** 业务异常：携带业务码 code + HTTP 状态码，由 AllExceptionsFilter 统一包装成 { code, message, data } */
+/**
+ * Business exception: biz code + message.
+ * Prefer catalog keys (auth.*, common.*) so AllExceptionsFilter can localize via Accept-Language.
+ * Raw English strings are fine for non-i18n paths; Vietnamese literals are deprecated.
+ */
 export class BizException extends HttpException {
+  public readonly messageParams?: MessageParams;
+
   constructor(
     public readonly bizCode: number,
-    message: string,
+    message: string | MessageKey,
     httpStatus: HttpStatus = defaultHttpStatus(bizCode),
+    messageParams?: MessageParams,
   ) {
     super(message, httpStatus);
+    this.messageParams = messageParams;
   }
 }
 
-// 常用业务码
+// Common business codes
 export const BizCode = {
   BAD_REQUEST: 400,
   UNAUTHORIZED: 401,

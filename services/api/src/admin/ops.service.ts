@@ -93,7 +93,7 @@ export class AdminOpsService {
     const dramaIds = grouped.map((g) => g.dramaId!).filter(Boolean);
     const dramas = await this.prisma.drama.findMany({
       where: { id: { in: dramaIds } },
-      select: { id: true, slug: true, titleVi: true, titleZh: true, coverUrl: true },
+      select: { id: true, slug: true, titleEn: true, titleZh: true, coverUrl: true },
     });
     const map = new Map(dramas.map((d) => [d.id.toString(), d]));
 
@@ -102,7 +102,7 @@ export class AdminOpsService {
       return {
         dramaId: g.dramaId!.toString(),
         slug: d?.slug ?? null,
-        titleVi: d?.titleVi ?? null,
+        titleEn: d?.titleEn ?? null,
         titleZh: d?.titleZh ?? null,
         coverUrl: d?.coverUrl ?? null,
         orderCount: g._count,
@@ -122,7 +122,7 @@ export class AdminOpsService {
     },
     actorId?: bigint | null,
   ) {
-    if (!dto.ids?.length) throw new BizException(BizCode.BAD_REQUEST, 'ids trống');
+    if (!dto.ids?.length) throw new BizException(BizCode.BAD_REQUEST, 'ids.empty');
     const ids = dto.ids.map((id) => BigInt(id));
 
     const data: any = {};

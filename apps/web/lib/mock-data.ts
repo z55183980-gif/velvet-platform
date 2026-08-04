@@ -3,14 +3,14 @@ import type { Locale } from "./languages";
 
 export interface Category {
   slug: string;
-  nameVi: string;
+  nameEn: string;
   nameZh: string;
 }
 
 export interface Episode {
   id?: string | number;
   no: number;
-  titleVi: string;
+  titleEn: string;
   titleZh: string;
   isFree: boolean;
   price: number;
@@ -21,9 +21,9 @@ export interface Drama {
   id: string;
   /** 数据库数字 ID，收藏等接口用 */
   numericId?: string;
-  titleVi: string;
+  titleEn: string;
   titleZh: string;
-  descVi: string;
+  descEn: string;
   descZh: string;
   categorySlug: string;
   /** Theme/genre tags (Hongguo-style chips under title) */
@@ -46,12 +46,12 @@ export interface Drama {
 }
 
 export const categories: Category[] = [
-  { slug: "do_thi", nameVi: "Đô thị", nameZh: "都市" },
-  { slug: "ngon_tinh", nameVi: "Ngôn tình", nameZh: "言情" },
-  { slug: "hanh_dong", nameVi: "Hành động", nameZh: "动作" },
-  { slug: "hai_huoc", nameVi: "Hài hước", nameZh: "喜剧" },
-  { slug: "tam_ly", nameVi: "Tâm lý", nameZh: "心理" },
-  { slug: "co_trang", nameVi: "Cổ trang", nameZh: "古装" },
+  { slug: "do_thi", nameEn: "Urban", nameZh: "都市" },
+  { slug: "ngon_tinh", nameEn: "Romance", nameZh: "言情" },
+  { slug: "hanh_dong", nameEn: "Action", nameZh: "动作" },
+  { slug: "hai_huoc", nameEn: "Comedy", nameZh: "喜剧" },
+  { slug: "tam_ly", nameEn: "Psychological", nameZh: "心理" },
+  { slug: "co_trang", nameEn: "Costume", nameZh: "古装" },
 ];
 
 function makeEpisodes(count: number, freeCount: number, price: number): Episode[] {
@@ -60,7 +60,7 @@ function makeEpisodes(count: number, freeCount: number, price: number): Episode[
     return {
       id: `ep-${no}`,
       no,
-      titleVi: `Tập ${no}:${no <= 3 ? " Mở đầu" : no % 5 === 0 ? " Cao trào" : " Diễn biến"}`,
+      titleEn: `Episode ${no}: ${no <= 3 ? "Opening" : no % 5 === 0 ? "Climax" : "Development"}`,
       titleZh: `第 ${no} 集：${no <= 3 ? "开端" : no % 5 === 0 ? "高潮" : "剧情"}`,
       isFree: no <= freeCount,
       price,
@@ -71,9 +71,9 @@ function makeEpisodes(count: number, freeCount: number, price: number): Episode[
 export const dramas: Drama[] = [
   {
     id: "d01",
-    titleVi: "Tổng tài lạnh lùng đột nhiên theo đuổi tôi",
+    titleEn: "The Cold CEO Suddenly Pursues Me",
     titleZh: "冷面霸总突然追我",
-    descVi: "Cô ấy chỉ là một thư ký bình thường, cho đến khi ông chủ tối cao đột nhiên thay đổi thái độ.",
+    descEn: "She was just an ordinary secretary — until the all-powerful boss suddenly changed his attitude.",
     descZh: "她只是个普通秘书，直到那位至高无上的老板突然改变了态度。",
     categorySlug: "ngon_tinh",
     cover: ["#FF6A88", "#FF99AC"],
@@ -87,9 +87,9 @@ export const dramas: Drama[] = [
   },
   {
     id: "d02",
-    titleVi: "Vợ cũ trở về sau 5 năm",
+    titleEn: "The Ex-Wife Returns After Five Years",
     titleZh: "五年后前妻归来",
-    descVi: "Anh ấy đã quên cô ấy, nhưng số phận một lần nữa kéo hai người lại gần nhau.",
+    descEn: "He had forgotten her, but fate pulls them together once more.",
     descZh: "他已忘了她，但命运再次将两人拉近。",
     categorySlug: "ngon_tinh",
     cover: ["#6A5ACD", "#9D8DF1"],
@@ -103,9 +103,9 @@ export const dramas: Drama[] = [
   },
   {
     id: "d03",
-    titleVi: "Cảnh sát đặc nhiệm và nữ luật sư",
+    titleEn: "The SWAT Officer and the Female Lawyer",
     titleZh: "特警与女律师",
-    descVi: "Một vụ án mạng kéo hai thế giới song song lại với nhau.",
+    descEn: "A murder case draws two parallel worlds together.",
     descZh: "一桩命案将两个平行世界拉到一起。",
     categorySlug: "tam_ly",
     cover: ["#1F2937", "#374151"],
@@ -119,9 +119,9 @@ export const dramas: Drama[] = [
   },
   {
     id: "d04",
-    titleVi: "Thị trưởng và cô gái bán hoa",
+    titleEn: "The Mayor and the Flower Girl",
     titleZh: "市长与卖花女孩",
-    descVi: "Một tình yêu vượt qua tầng lớp xã hội giữa ánh đèn thành phố.",
+    descEn: "A love that crosses social classes under city lights.",
     descZh: "城市灯火下，一段跨越阶层的爱情。",
     categorySlug: "do_thi",
     cover: ["#F59E0B", "#FBBF24"],
@@ -135,9 +135,9 @@ export const dramas: Drama[] = [
   },
   {
     id: "d05",
-    titleVi: "Ông trùm giả danh nhân viên văn phòng",
+    titleEn: "The Tycoon Disguised as an Office Worker",
     titleZh: "大佬伪装成办公室职员",
-    descVi: "Không ai ngờ người đàn ông trầm tính ấy lại là ông chủ của cả tập đoàn.",
+    descEn: "Nobody expected that quiet man to be the owner of the entire corporation.",
     descZh: "没人想到那个沉静的男人竟是整座集团的主人。",
     categorySlug: "ngon_tinh",
     cover: ["#0EA5E9", "#38BDF8"],
@@ -151,9 +151,9 @@ export const dramas: Drama[] = [
   },
   {
     id: "d06",
-    titleVi: "Mẹ đơn thân thế kỷ mới",
+    titleEn: "Single Mom of the New Era",
     titleZh: "新时代单亲妈妈",
-    descVi: "Cô ấy nuôi con một mình, nhưng chưa bao giờ đầu hàng số phận.",
+    descEn: "She raises her child alone, but never bows to fate.",
     descZh: "她独自抚育孩子，却从未向命运低头。",
     categorySlug: "hai_huoc",
     cover: ["#EC4899", "#F472B6"],
@@ -167,9 +167,9 @@ export const dramas: Drama[] = [
   },
   {
     id: "d07",
-    titleVi: "Đặc vụ ngầm: Phi vụ cuối cùng",
+    titleEn: "Undercover Agent: The Final Job",
     titleZh: "卧底特工：最后一单",
-    descVi: "Anh ta thâm nhập tổ chức tội phạm, nhưng tình cảm khiến一切 thay đổi.",
+    descEn: "He infiltrates a crime organization, but emotion changes everything.",
     descZh: "他潜入犯罪组织，却因情感让一切改变。",
     categorySlug: "hanh_dong",
     cover: ["#7F1D1D", "#B91C1C"],
@@ -183,9 +183,9 @@ export const dramas: Drama[] = [
   },
   {
     id: "d08",
-    titleVi: "Cô dâu thay thế của gia tộc họ Mặc",
+    titleEn: "The Substitute Bride of the Mo Family",
     titleZh: "墨家替嫁新娘",
-    descVi: "Một đêm trước hôn lễ, cô dâu thật biến mất, kẻ thay thế bước vào đại môn.",
+    descEn: "The night before the wedding, the real bride vanishes and a stand-in walks into the elite household.",
     descZh: "婚礼前一晚，真新娘消失，替身踏入豪门。",
     categorySlug: "ngon_tinh",
     cover: ["#8B5CF6", "#A78BFA"],
@@ -199,9 +199,9 @@ export const dramas: Drama[] = [
   },
   {
     id: "d09",
-    titleVi: "Bác sĩ thiên tài và nữ CEO",
+    titleEn: "Genius Doctor and Female CEO",
     titleZh: "天才医生与女总裁",
-    descVi: "Trong phòng mổ, anh là vị cứu tinh; ngoài đời, cô là người cầm quyền.",
+    descEn: "In the operating room he is a savior; in life she holds the power.",
     descZh: "手术台上他是救星，生活里她掌握权柄。",
     categorySlug: "do_thi",
     cover: ["#10B981", "#34D399"],
@@ -222,7 +222,7 @@ export function getDrama(id: string): Drama | undefined {
 export function categoryName(slug: string, locale: Locale): string {
   const cat = categories.find((c) => c.slug === slug);
   if (!cat) return slug;
-  return locale === "vi" ? cat.nameVi : cat.nameZh;
+  return locale === "en" ? cat.nameEn : cat.nameZh;
 }
 
 // ---- 兜底数据（API 不可达时使用，保持预览可见）----
@@ -239,9 +239,9 @@ export function mockHome(
     const q = opts.q.toLowerCase();
     list = list.filter(
       (d) =>
-        d.titleVi.toLowerCase().includes(q) ||
+        d.titleEn.toLowerCase().includes(q) ||
         d.titleZh.toLowerCase().includes(q) ||
-        d.descVi.toLowerCase().includes(q),
+        d.descEn.toLowerCase().includes(q),
     );
   }
   if (opts?.sort === "latest") {

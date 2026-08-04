@@ -42,7 +42,7 @@ export function EpisodeList({
   layout?: "list" | "rail" | "grid" | "sidebar";
 }) {
   const { locale, t } = useLocale();
-  const epTitle = (ep: Episode) => pickContentText(locale, ep.titleVi, ep.titleZh);
+  const epTitle = (ep: Episode) => pickContentText(locale, ep.titleEn, ep.titleZh);
   const unlocked = (ep: Episode) =>
     isUnlocked?.(ep) ?? !!(ep.isFree || ep.unlocked);
 

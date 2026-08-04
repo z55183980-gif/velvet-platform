@@ -34,8 +34,8 @@ import { CreatorsController } from './creators.controller';
 import { OpsController } from './ops.controller';
 import { SettingsController } from './settings.controller';
 import { AdminNotificationsController } from './notifications.controller';
-import { HongguoProvider } from './hongguo.provider';
-import { HongguoImportService } from './hongguo-import.service';
+import { YtdlpProvider } from './ytdlp.provider';
+import { YtdlpImportService } from './ytdlp-import.service';
 
 @Module({
   imports: [WalletModule, ExchangeModule, ReconcileModule, AuthModule, RedeemModule],
@@ -72,8 +72,8 @@ import { HongguoImportService } from './hongguo-import.service';
     AdminsService,
     AdminExportService,
     AdminOpsService,
-    HongguoProvider,
-    HongguoImportService,
+    YtdlpProvider,
+    YtdlpImportService,
   ],
   exports: [
     AdminService,

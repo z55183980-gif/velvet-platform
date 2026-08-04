@@ -16,6 +16,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CurrentUser, AuthUser } from '../common/current-user.decorator';
 import { ok } from '../common/response';
 import { enrichClientMeta, getClientMeta } from '../common/request-meta';
+import { tFromAcceptLanguage } from '../common/i18n/translate';
 import {
   IsEmail,
   IsIn,
@@ -31,7 +32,7 @@ class SendOtpDto {
   /** 统一字段名 phone；兼容旧客户端 phoneNumber */
   @IsString()
   @IsNotEmpty()
-  @Matches(/^\+?[0-9]{9,15}$/, { message: 'Số điện thoại không hợp lệ' })
+  @Matches(/^\+?[0-9]{9,15}$/, { message: 'auth.invalidPhone' })
   phone!: string;
 }
 
@@ -45,7 +46,7 @@ class VerifyOtpDto {
 }
 
 class SendEmailOtpDto {
-  @IsEmail({}, { message: 'Email không hợp lệ' })
+  @IsEmail({}, { message: 'auth.invalidEmail' })
   @IsNotEmpty()
   email!: string;
 
@@ -55,7 +56,7 @@ class SendEmailOtpDto {
 }
 
 class VerifyEmailOtpDto {
-  @IsEmail({}, { message: 'Email không hợp lệ' })
+  @IsEmail({}, { message: 'auth.invalidEmail' })
   @IsNotEmpty()
   email!: string;
   @IsString()
@@ -64,7 +65,7 @@ class VerifyEmailOtpDto {
 }
 
 class RegisterEmailDto {
-  @IsEmail({}, { message: 'Email không hợp lệ' })
+  @IsEmail({}, { message: 'auth.invalidEmail' })
   @IsNotEmpty()
   email!: string;
 
@@ -72,12 +73,12 @@ class RegisterEmailDto {
   @IsString()
   @IsNotEmpty()
   @Matches(/^[a-zA-Z0-9_]{3,24}$/, {
-    message: 'Tài khoản 3–24 ký tự (chữ/số/_)',
+    message: 'auth.usernameRules',
   })
   username!: string;
 
   @IsString()
-  @MinLength(6, { message: 'Mật khẩu ít nhất 6 ký tự' })
+  @MinLength(6, { message: 'auth.passwordMinLength' })
   password!: string;
 
   /**
@@ -101,7 +102,7 @@ class LoginPasswordDto {
 
   /** 兼容旧客户端仅传 email */
   @IsOptional()
-  @IsEmail({}, { message: 'Email không hợp lệ' })
+  @IsEmail({}, { message: 'auth.invalidEmail' })
   email?: string;
 
   @IsString()
@@ -110,13 +111,13 @@ class LoginPasswordDto {
 }
 
 class ForgotPasswordDto {
-  @IsEmail({}, { message: 'Email không hợp lệ' })
+  @IsEmail({}, { message: 'auth.invalidEmail' })
   @IsNotEmpty()
   email!: string;
 }
 
 class ResetPasswordDto {
-  @IsEmail({}, { message: 'Email không hợp lệ' })
+  @IsEmail({}, { message: 'auth.invalidEmail' })
   @IsNotEmpty()
   email!: string;
 
@@ -125,7 +126,7 @@ class ResetPasswordDto {
   code!: string;
 
   @IsString()
-  @MinLength(6, { message: 'Mật khẩu mới ít nhất 6 ký tự' })
+  @MinLength(6, { message: 'auth.newPasswordMinLength' })
   password!: string;
 }
 
@@ -157,11 +158,11 @@ export class AuthController {
     'otp-hour': { limit: 10, ttl: 3_600_000 },
   })
   @Post('phone-number/send-otp')
-  async sendOtp(@Body() body: any) {
+  async sendOtp(@Body() body: any, @Req() req: Request) {
     const phone = String(body?.phone || body?.phoneNumber || '').trim();
     const purpose = (body?.purpose || 'login') as OtpPurpose;
     const r = await this.auth.sendPhoneOtp(phone, purpose);
-    return ok(r, 'OTP đã gửi');
+    return ok(r, this.msg(req, 'auth.otpSent'));
   }
 
   @Post('phone-number/verify')
@@ -175,7 +176,7 @@ export class AuthController {
     const purpose = (body?.purpose || 'login') as OtpPurpose;
     const result = await this.auth.verifyPhoneOtp(phone, code, purpose, getClientMeta(req));
     this.setSessionCookie(res, result.token);
-    return ok(result, 'Đăng nhập thành công');
+    return ok(result, this.msg(req, 'auth.loginSuccess'));
   }
 
   // —— 公测预留：邮箱 OTP（登录/注册激活）；找回密码内测已启用 ——
@@ -184,12 +185,12 @@ export class AuthController {
     otp: { limit: 1, ttl: 60_000 },
     'otp-hour': { limit: 10, ttl: 3_600_000 },
   })
-  async sendEmailOtp(@Body() dto: SendEmailOtpDto) {
+  async sendEmailOtp(@Body() dto: SendEmailOtpDto, @Req() req: Request) {
     const purpose = dto.purpose || 'login';
     const r = await this.auth.sendEmailOtp(dto.email, purpose);
     return ok(
       r,
-      r.mailed ? 'OTP đã gửi tới email' : 'OTP đã tạo (SMTP chưa配置，见控制台/devCode)',
+      this.msg(req, r.mailed ? 'auth.otpSentEmail' : 'auth.otpCreatedDev'),
     );
   }
 
@@ -201,7 +202,7 @@ export class AuthController {
   ) {
     const result = await this.auth.verifyEmailOtp(dto.email, dto.code, getClientMeta(req));
     this.setSessionCookie(res, result.token);
-    return ok(result, 'Đăng nhập thành công');
+    return ok(result, this.msg(req, 'auth.loginSuccess'));
   }
 
   /** 内测：邮箱 + 账号 + 密码（无需验证码）。公测可传 code 做邮箱激活。 */
@@ -213,7 +214,7 @@ export class AuthController {
   ) {
     const result = await this.auth.registerEmail(dto, getClientMeta(req));
     this.setSessionCookie(res, result.token);
-    return ok(result, 'Đăng ký thành công');
+    return ok(result, this.msg(req, 'auth.registerSuccess'));
   }
 
   /** 内测：账号或邮箱 + 密码登录 */
@@ -226,7 +227,7 @@ export class AuthController {
     const account = String(dto.account || dto.email || '').trim();
     const result = await this.auth.loginWithPassword(account, dto.password, getClientMeta(req));
     this.setSessionCookie(res, result.token);
-    return ok(result, 'Đăng nhập thành công');
+    return ok(result, this.msg(req, 'auth.loginSuccess'));
   }
 
   @Post('email/forgot')
@@ -234,11 +235,11 @@ export class AuthController {
     otp: { limit: 1, ttl: 60_000 },
     'otp-hour': { limit: 10, ttl: 3_600_000 },
   })
-  async forgotPassword(@Body() dto: ForgotPasswordDto) {
+  async forgotPassword(@Body() dto: ForgotPasswordDto, @Req() req: Request) {
     const r = await this.auth.forgotPassword(dto.email);
     return ok(
       r,
-      r.mailed ? 'Mã đặt lại đã gửi tới email' : 'Mã đặt lại đã tạo (SMTP chưa配置，见控制台/devCode)',
+      this.msg(req, r.mailed ? 'auth.resetSentEmail' : 'auth.resetCreatedDev'),
     );
   }
 
@@ -250,7 +251,7 @@ export class AuthController {
   ) {
     const result = await this.auth.resetPassword(dto, getClientMeta(req));
     this.setSessionCookie(res, result.token);
-    return ok(result, 'Đặt lại mật khẩu thành công');
+    return ok(result, this.msg(req, 'auth.resetSuccess'));
   }
 
   @Post('sign-out')
@@ -293,6 +294,10 @@ export class AuthController {
 
     const profile = await this.auth.getSession(BigInt(payload.userId));
     return ok(profile);
+  }
+
+  private msg(req: Request, key: string) {
+    return tFromAcceptLanguage(key, req.headers['accept-language']);
   }
 
   private setSessionCookie(res: Response, token: string) {

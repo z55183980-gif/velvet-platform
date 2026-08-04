@@ -192,17 +192,17 @@ export class CreatorService {
     const creator = await this.ensureCreator(userId);
     const drama = await this.prisma.drama.findUnique({ where: { id: BigInt(dramaId) } });
     if (!drama || drama.creatorId !== creator.id) {
-      throw new BizException(BizCode.NOT_FOUND, 'Không tìm thấy phim');
+      throw new BizException(BizCode.NOT_FOUND, 'drama.notFound');
     }
     const data: any = {};
-    if (dto.titleVi != null) data.titleVi = String(dto.titleVi).trim();
+    if (dto.titleEn != null) data.titleEn = String(dto.titleEn).trim();
     if (dto.titleZh != null) data.titleZh = String(dto.titleZh).trim();
-    if (dto.descriptionVi != null) data.descriptionVi = dto.descriptionVi;
+    if (dto.descriptionEn != null) data.descriptionEn = dto.descriptionEn;
     if (dto.descriptionZh != null) data.descriptionZh = dto.descriptionZh;
     if (dto.coverUrl != null) data.coverUrl = dto.coverUrl;
     if (dto.freeEpisodeCount != null) data.freeEpisodeCount = Number(dto.freeEpisodeCount);
     if (Object.keys(data).length === 0) {
-      throw new BizException(BizCode.BAD_REQUEST, 'Không có trường nào để cập nhật');
+      throw new BizException(BizCode.BAD_REQUEST, 'common.noFieldsToUpdate');
     }
     const updated = await this.prisma.drama.update({
       where: { id: drama.id },
@@ -216,7 +216,7 @@ export class CreatorService {
     const creator = await this.ensureCreator(userId);
     const drama = await this.prisma.drama.findUnique({ where: { id: BigInt(dramaId) } });
     if (!drama || drama.creatorId !== creator.id) {
-      throw new BizException(BizCode.NOT_FOUND, 'Không tìm thấy phim');
+      throw new BizException(BizCode.NOT_FOUND, 'drama.notFound');
     }
     if (drama.status !== 'DRAFT') {
       throw new BizException(BizCode.CONFLICT, 'Chỉ xoá được phim ở trạng thái DRAFT');
@@ -234,7 +234,7 @@ export class CreatorService {
     const creator = await this.ensureCreator(userId);
     const drama = await this.prisma.drama.findUnique({ where: { id: BigInt(dramaId) } });
     if (!drama || drama.creatorId !== creator.id) {
-      throw new BizException(BizCode.NOT_FOUND, 'Không tìm thấy phim');
+      throw new BizException(BizCode.NOT_FOUND, 'drama.notFound');
     }
     if (drama.status !== 'LIVE') {
       throw new BizException(BizCode.CONFLICT, 'Chỉ có thể gỡ phim đang LIVE');
@@ -254,7 +254,7 @@ export class CreatorService {
       include: { drama: true },
     });
     if (!ep || ep.drama.creatorId !== creator.id) {
-      throw new BizException(BizCode.NOT_FOUND, 'Không tìm thấy tập');
+      throw new BizException(BizCode.NOT_FOUND, 'episode.notFound');
     }
     if (ep.drama.status !== 'DRAFT') {
       throw new BizException(BizCode.CONFLICT, 'Chỉ xoá được tập của phim DRAFT');
@@ -338,8 +338,8 @@ export class CreatorService {
   async createDrama(userId: bigint, dto: any) {
     return withPrismaGuard(async () => {
       const creator = await this.ensureCreator(userId);
-      if (!dto?.titleVi || !String(dto.titleVi).trim()) {
-        throw new BizException(BizCode.BAD_REQUEST, '缺少必要字段 titleVi');
+      if (!dto?.titleEn || !String(dto.titleEn).trim()) {
+        throw new BizException(BizCode.BAD_REQUEST, '缺少必要字段 titleEn');
       }
       if (!dto?.categorySlug || !String(dto.categorySlug).trim()) {
         throw new BizException(BizCode.BAD_REQUEST, '缺少必要字段 categorySlug');
@@ -348,9 +348,9 @@ export class CreatorService {
         data: {
           creatorId: creator.id,
           slug: `d-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-          titleVi: String(dto.titleVi).trim(),
+          titleEn: String(dto.titleEn).trim(),
           titleZh: dto.titleZh,
-          descriptionVi: dto.descriptionVi,
+          descriptionEn: dto.descriptionEn,
           descriptionZh: dto.descriptionZh,
           categorySlug: dto.categorySlug,
           coverUrl: dto.coverUrl,
@@ -367,7 +367,7 @@ export class CreatorService {
     const creator = await this.ensureCreator(userId);
     const drama = await this.prisma.drama.findUnique({ where: { id: BigInt(dramaId) } });
     if (!drama || drama.creatorId !== creator.id) {
-      throw new BizException(BizCode.NOT_FOUND, 'Không tìm thấy phim');
+      throw new BizException(BizCode.NOT_FOUND, 'drama.notFound');
     }
     if (drama.status !== 'DRAFT' && drama.status !== 'REJECTED') {
       throw new BizException(
@@ -391,7 +391,7 @@ export class CreatorService {
       const creator = await this.ensureCreator(userId);
       const drama = await this.prisma.drama.findUnique({ where: { id: BigInt(dto.dramaId) } });
       if (!drama || drama.creatorId !== creator.id) {
-        throw new BizException(BizCode.NOT_FOUND, 'Không tìm thấy phim');
+        throw new BizException(BizCode.NOT_FOUND, 'drama.notFound');
       }
       if (dto.episodeNumber == null || Number(dto.episodeNumber) < 1) {
         throw new BizException(BizCode.BAD_REQUEST, 'episodeNumber không hợp lệ');

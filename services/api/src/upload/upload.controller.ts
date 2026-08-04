@@ -49,10 +49,10 @@ export class UploadController {
         where: { id: BigInt(body.episodeId) },
         include: { drama: true },
       });
-      if (!ep) throw new BizException(BizCode.NOT_FOUND, 'Tập không tồn tại');
+      if (!ep) throw new BizException(BizCode.NOT_FOUND, 'episode.notFound');
       const creator = await this.creator.ensureCreator(user.userId);
       if (ep.drama.creatorId !== creator.id) {
-        throw new BizException(BizCode.FORBIDDEN, 'Không có quyền');
+        throw new BizException(BizCode.FORBIDDEN, 'common.forbidden');
       }
       await this.prisma.episode.update({
         where: { id: ep.id },
@@ -90,10 +90,10 @@ export class UploadController {
         where: { id: BigInt(body.episodeId) },
         include: { drama: true },
       });
-      if (!ep) throw new BizException(BizCode.NOT_FOUND, 'Tập không tồn tại');
+      if (!ep) throw new BizException(BizCode.NOT_FOUND, 'episode.notFound');
       const creator = await this.creator.ensureCreator(user.userId);
       if (ep.drama.creatorId !== creator.id) {
-        throw new BizException(BizCode.FORBIDDEN, 'Không có quyền');
+        throw new BizException(BizCode.FORBIDDEN, 'common.forbidden');
       }
       await this.prisma.episode.update({
         where: { id: ep.id },

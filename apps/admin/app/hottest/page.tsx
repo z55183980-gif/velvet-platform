@@ -18,7 +18,7 @@ import { useI18n } from "@/lib/i18n";
 type Drama = {
   id: string | number;
   titleZh?: string;
-  titleVi?: string;
+  titleEn?: string;
   slug?: string;
   status?: string;
   viewCount?: number;
@@ -110,7 +110,7 @@ export default function AdminHottestPage() {
         cell: (row) => (
           <div>
             <Link href={`/content/${row.id}`} className="font-medium text-brand hover:underline">
-              {row.titleZh || row.titleVi || "—"}
+              {row.titleZh || row.titleEn || "—"}
             </Link>
             <div className="text-caption text-ink-muted">{row.slug}</div>
           </div>
@@ -169,7 +169,7 @@ export default function AdminHottestPage() {
         header: t("drama"),
         cell: (row) => (
           <div>
-            <div className="font-medium">{row.titleZh || row.titleVi || "—"}</div>
+            <div className="font-medium">{row.titleZh || row.titleEn || "—"}</div>
             <div className="text-caption text-ink-muted">{row.slug}</div>
           </div>
         ),
@@ -273,7 +273,7 @@ export default function AdminHottestPage() {
         onClose={() => setRemoveId(null)}
         busy={actionMut.isPending}
         message={t("hottestConfirmRemove", {
-          title: removeRow?.titleZh || removeRow?.titleVi || removeId || "",
+          title: removeRow?.titleZh || removeRow?.titleEn || removeId || "",
         })}
         onConfirm={() => {
           if (!removeId) return;

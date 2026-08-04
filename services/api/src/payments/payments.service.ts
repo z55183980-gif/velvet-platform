@@ -193,7 +193,7 @@ export class PaymentsService {
     const order = await this.prisma.order.findUnique({ where: { orderNo } });
     if (!order) {
       this.log.warn({ event: 'webhook.order.missing', provider, orderNo });
-      throw new BizException(BizCode.NOT_FOUND, 'Đơn hàng không tồn tại');
+      throw new BizException(BizCode.NOT_FOUND, 'order.notFound');
     }
     if (order.paymentStatus === 'REFUNDED') {
       this.log.warn({
@@ -202,7 +202,7 @@ export class PaymentsService {
         orderNo,
         status: order.paymentStatus,
       });
-      throw new BizException(BizCode.CONFLICT, 'Đơn hàng đã hoàn tiền, không thể đánh dấu PAID');
+      throw new BizException(BizCode.CONFLICT, 'order.alreadyRefundedCannotMarkPaid');
     }
     const expected = PROVIDER_TO_METHOD[provider.toLowerCase()];
     if (!expected) return;

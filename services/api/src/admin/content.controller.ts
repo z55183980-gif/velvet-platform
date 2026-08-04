@@ -35,8 +35,7 @@ import { AdminService } from './admin.service';
 import { ContentService } from './content.service';
 import { AdminEpisodesService } from './episodes.service';
 import { AdminOpsService } from './ops.service';
-import { HongguoImportService } from './hongguo-import.service';
-import { HongguoProvider } from './hongguo.provider';
+import { YtdlpImportService } from './ytdlp-import.service';
 
 function getActor(req: any): bigint | undefined {
   return req?.adminId as bigint | undefined;
@@ -55,7 +54,7 @@ class LocalImportDto {
 }
 
 class BannerDto {
-  @IsNotEmpty() @IsString() titleVi!: string;
+  @IsNotEmpty() @IsString() titleEn!: string;
   @IsOptional() @IsString() titleZh?: string;
   @IsNotEmpty() @IsString() imageUrl!: string;
   @IsOptional() @IsString() linkUrl?: string;
@@ -71,7 +70,7 @@ class BannerDto {
 
 class CategoryDto {
   @IsNotEmpty() @IsString() slug!: string;
-  @IsNotEmpty() @IsString() nameVi!: string;
+  @IsNotEmpty() @IsString() nameEn!: string;
   @IsNotEmpty() @IsString() nameZh!: string;
   @IsOptional() @Type(() => Number) @IsNumber() sortOrder?: number;
   @IsOptional()
@@ -81,9 +80,9 @@ class CategoryDto {
 }
 
 class DramaUpdateDto {
-  @IsOptional() @IsString() titleVi?: string;
+  @IsOptional() @IsString() titleEn?: string;
   @IsOptional() @IsString() titleZh?: string;
-  @IsOptional() @IsString() descriptionVi?: string;
+  @IsOptional() @IsString() descriptionEn?: string;
   @IsOptional() @IsString() descriptionZh?: string;
   @IsOptional() @IsString() categorySlug?: string;
   @IsOptional() @IsString() coverUrl?: string;
@@ -124,7 +123,36 @@ class EpisodeUpdateDto {
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) priceCredits?: number;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) priceVnd?: number;
   @IsOptional() @IsString() thumbnailUrl?: string;
+  @IsOptional() @IsString() sourceUrl?: string;
+  @IsOptional() @IsString() hlsUrl?: string;
+  @IsOptional() @IsString() originalUrl?: string;
   @IsOptional() @IsString() transcodeStatus?: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
+}
+
+class EpisodeCreateDto {
+  @IsOptional() @IsString() title?: string;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) episodeNumber?: number;
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true' || value === 1)
+  @IsBoolean()
+  isFree?: boolean;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) priceCredits?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) priceVnd?: number;
+  @IsOptional() @IsString() thumbnailUrl?: string;
+  @IsOptional() @IsString() sourceUrl?: string;
+  @IsOptional() @IsString() hlsUrl?: string;
+  @IsOptional() @IsString() originalUrl?: string;
+}
+
+class EpisodeBatchDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  ids!: (string | number)[];
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true' || value === 1)
+  @IsBoolean()
+  isFree?: boolean;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) priceCredits?: number;
 }
 
 class ReorderDto {
@@ -143,10 +171,10 @@ class OnlineEpisodeDto {
 
 class CreateOnlineDramaDto {
   @IsNotEmpty() @IsString() titleZh!: string;
-  @IsOptional() @IsString() titleVi?: string;
+  @IsOptional() @IsString() titleEn?: string;
   @IsOptional() @IsString() slug?: string;
   @IsOptional() @IsString() descriptionZh?: string;
-  @IsOptional() @IsString() descriptionVi?: string;
+  @IsOptional() @IsString() descriptionEn?: string;
   @IsNotEmpty() @IsString() categorySlug!: string;
   @IsOptional() @IsString() coverUrl?: string;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) freeEpisodeCount?: number;
@@ -162,14 +190,27 @@ class CreateOnlineDramaDto {
   episodes!: OnlineEpisodeDto[];
 }
 
-class HongguoImportDto {
-  @IsNotEmpty() @IsString() id!: string;
+class YtdlpProbeDto {
+  @IsNotEmpty() @IsString() url!: string;
+}
+
+class YtdlpResolveDto {
+  @IsNotEmpty() @IsString() url!: string;
+  @IsOptional() @IsIn(['best_hls', 'best_mp4', 'best'])
+  formatPreference?: 'best_hls' | 'best_mp4' | 'best';
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) playlistIndex?: number;
+}
+
+class YtdlpImportDto {
+  @IsNotEmpty() @IsString() url!: string;
   @IsNotEmpty() @IsString() categorySlug!: string;
   @IsOptional() @IsString() titleZh?: string;
-  @IsOptional() @IsString() titleVi?: string;
+  @IsOptional() @IsString() titleEn?: string;
   @IsOptional() @IsIn(['DRAFT', 'LIVE'])
   status?: 'DRAFT' | 'LIVE';
   @IsOptional() @Type(() => Number) @IsNumber() @Min(1) maxEpisodes?: number;
+  @IsOptional() @IsIn(['best_hls', 'best_mp4', 'best'])
+  formatPreference?: 'best_hls' | 'best_mp4' | 'best';
 }
 
 @Controller('v1/admin')
@@ -180,7 +221,7 @@ export class ContentController {
     private readonly content: ContentService,
     private readonly episodes: AdminEpisodesService,
     private readonly ops: AdminOpsService,
-    private readonly hongguo: HongguoImportService,
+    private readonly ytdlp: YtdlpImportService,
   ) {}
 
   @Get('dramas')
@@ -191,6 +232,7 @@ export class ContentController {
     @Query('isOfficial') isOfficial?: string,
     @Query('isFeatured') isFeatured?: string,
     @Query('isHottest') isHottest?: string,
+    @Query('sort') sort?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
   ) {
@@ -201,6 +243,7 @@ export class ContentController {
       isOfficial: isOfficial as any,
       isFeatured: isFeatured as any,
       isHottest: isHottest as any,
+      sort: sort === 'latest' ? 'latest' : 'weight',
       page: page ? Number(page) : 1,
       pageSize: pageSize ? Number(pageSize) : 20,
     }));
@@ -231,28 +274,29 @@ export class ContentController {
     return ok(await this.admin.createOnlineDrama(dto as any, getActor(req)));
   }
 
-  @Get('hongguo/status')
+  /** 公开链接解析（本地 yt-dlp，无需 API Key） */
+  @Get('ytdlp/status')
   @AdminRoles('SUPER_ADMIN', 'OPS')
-  async hongguoStatus() {
-    return ok(this.hongguo.status());
+  async ytdlpStatus() {
+    return ok(await this.ytdlp.status());
   }
 
-  @Get('hongguo/search')
+  @Post('ytdlp/probe')
   @AdminRoles('SUPER_ADMIN', 'OPS')
-  async hongguoSearch(@Query('q') q?: string, @Query('page') page?: string) {
-    return ok(await this.hongguo.search(q || '', page ? Number(page) : 1));
+  async ytdlpProbe(@Body() dto: YtdlpProbeDto) {
+    return ok(await this.ytdlp.probe(dto.url));
   }
 
-  @Get('hongguo/detail')
+  @Post('ytdlp/resolve')
   @AdminRoles('SUPER_ADMIN', 'OPS')
-  async hongguoDetail(@Query('id') id?: string) {
-    return ok(await this.hongguo.detail(id || ''));
+  async ytdlpResolve(@Body() dto: YtdlpResolveDto) {
+    return ok(await this.ytdlp.resolve(dto.url, dto.formatPreference, dto.playlistIndex));
   }
 
-  @Post('hongguo/import')
+  @Post('ytdlp/import')
   @AdminRoles('SUPER_ADMIN', 'OPS')
-  async hongguoImport(@Body() dto: HongguoImportDto, @Req() req: any) {
-    return ok(await this.hongguo.importDrama(dto, getActor(req)));
+  async ytdlpImport(@Body() dto: YtdlpImportDto, @Req() req: any) {
+    return ok(await this.ytdlp.importDrama(dto, getActor(req)));
   }
 
   @Post('dramas/hottest/reorder')
@@ -345,10 +389,28 @@ export class ContentController {
     return ok(await this.episodes.listByDrama(id));
   }
 
+  @Post('dramas/:id/episodes')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async createEpisode(@Param('id') id: string, @Body() dto: EpisodeCreateDto, @Req() req: any) {
+    return ok(await this.episodes.create(id, dto as any, getActor(req)));
+  }
+
+  @Post('dramas/:id/episodes/batch')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async batchEpisodes(@Param('id') id: string, @Body() dto: EpisodeBatchDto, @Req() req: any) {
+    return ok(await this.episodes.batchUpdate(id, dto as any, getActor(req)));
+  }
+
   @Post('episodes/:id/update')
   @AdminRoles('SUPER_ADMIN', 'OPS')
   async updateEpisode(@Param('id') id: string, @Body() dto: EpisodeUpdateDto, @Req() req: any) {
     return ok(await this.episodes.update(id, dto as any, getActor(req)));
+  }
+
+  @Post('episodes/:id/delete')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async deleteEpisode(@Param('id') id: string, @Req() req: any) {
+    return ok(await this.episodes.delete(id, getActor(req)));
   }
 
   @Post('dramas/:id/episodes/reorder')

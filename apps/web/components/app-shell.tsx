@@ -9,6 +9,7 @@ import {
   MobileFeedLockProvider,
   useMobileFeedLock,
 } from "@/components/mobile/mobile-feed-lock";
+import { PwaInstallRoot } from "@/components/pwa-install";
 import { cn } from "@/lib/utils";
 
 function isDramaPath(pathname: string | null) {
@@ -34,8 +35,9 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
     <div
       className={cn(
         // Only while mobile VerticalFeed is mounted: pin entire chrome; main is the video stage.
+        // feed-immersive locks dark palette so light theme cannot bleach the home feed.
         lockMobileHome &&
-          "max-md:fixed max-md:inset-0 max-md:flex max-md:h-dvh max-md:flex-col max-md:overflow-hidden max-md:overscroll-none",
+          "feed-immersive max-md:fixed max-md:inset-0 max-md:flex max-md:h-dvh max-md:flex-col max-md:overflow-hidden max-md:overscroll-none",
       )}
     >
       <Suspense
@@ -65,6 +67,7 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
       </div>
       {/* Bottom tabs mobile-only; already has md:hidden. Hidden on drama detail. */}
       {!onDrama && <BottomTabBar inline={lockMobileHome} />}
+      <PwaInstallRoot />
     </div>
   );
 }

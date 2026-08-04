@@ -31,7 +31,7 @@ export class RedeemService {
       const row = await tx.redeemCode.findUnique({ where: { code } });
       if (!row) throw new BizException(BizCode.NOT_FOUND, 'Mã không tồn tại');
       if (row.status === 'VOID') throw new BizException(BizCode.FORBIDDEN, 'Mã đã bị vô hiệu');
-      if (row.status === 'USED') throw new BizException(BizCode.CONFLICT, 'Mã đã được sử dụng');
+      if (row.status === 'USED') throw new BizException(BizCode.CONFLICT, 'code.alreadyUsed');
       if (row.expiresAt && row.expiresAt.getTime() < Date.now()) {
         throw new BizException(BizCode.FORBIDDEN, 'Mã đã hết hạn');
       }
@@ -41,7 +41,7 @@ export class RedeemService {
         data: { status: 'USED', usedByUserId: userId, usedAt: new Date() },
       });
       if (claimed.count !== 1) {
-        throw new BizException(BizCode.CONFLICT, 'Mã đã được sử dụng');
+        throw new BizException(BizCode.CONFLICT, 'code.alreadyUsed');
       }
 
       let vipExpireAt: Date | null = null;
@@ -176,7 +176,7 @@ export class RedeemService {
         return;
       }
     }
-    throw new BizException(BizCode.CONFLICT, 'Cập nhật ví thất bại');
+    throw new BizException(BizCode.CONFLICT, 'wallet.updateFailed');
   }
 
   // ---- Admin ----
@@ -368,7 +368,7 @@ export class RedeemService {
   }
 
   async voidCodes(ids: string[], actorId?: bigint | null) {
-    if (!ids?.length) throw new BizException(BizCode.BAD_REQUEST, 'ids trống');
+    if (!ids?.length) throw new BizException(BizCode.BAD_REQUEST, 'ids.empty');
     const bigIds = ids.map((id) => BigInt(id));
     const res = await this.prisma.redeemCode.updateMany({
       where: { id: { in: bigIds }, status: 'UNUSED' },

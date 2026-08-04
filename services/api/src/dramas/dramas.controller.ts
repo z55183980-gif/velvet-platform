@@ -53,7 +53,7 @@ export class DramasController {
   @Get('dramas/:id')
   async detail(@Param('id') id: string) {
     const drama = await this.dramas.getDrama(id);
-    if (!drama) throw new BizException(BizCode.NOT_FOUND, 'Không tìm thấy');
+    if (!drama) throw new BizException(BizCode.NOT_FOUND, 'common.notFound');
     return ok(drama);
   }
 
@@ -61,7 +61,7 @@ export class DramasController {
   async episodes(@Param('id') id: string, @Req() req: Request) {
     const userId = await this.optionalUserId(req);
     const data = await this.dramas.getEpisodes(id, userId);
-    if (!data) throw new BizException(BizCode.NOT_FOUND, 'Không tìm thấy');
+    if (!data) throw new BizException(BizCode.NOT_FOUND, 'common.notFound');
     return ok(data);
   }
 

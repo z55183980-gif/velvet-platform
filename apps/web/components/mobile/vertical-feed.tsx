@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
   useCallback,
   useEffect,
@@ -13,20 +12,21 @@ import {
 } from "react";
 import {
   ChevronRight,
-  Flame,
   Heart,
-  MessageCircle,
   Star,
 } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { useAuth } from "@/components/auth-context";
 import { VerticalPlayer } from "@/components/mobile/vertical-player";
+import { VerticalPager } from "@/components/mobile/vertical-pager";
+import { FeedEpisodeBar } from "@/components/mobile/feed-episode-bar";
 import { useMobileFeedLock } from "@/components/mobile/mobile-feed-lock";
 import { getPlayUrl, loadDramaDetail, checkFavorite, addFavorite, removeFavorite, checkLike, addLike, removeLike, reportProgress, type DramaDetailPayload } from "@/lib/api";
 import type { Drama, Episode } from "@/lib/mock-data";
 import { categories } from "@/lib/mock-data";
-import { pickContentText } from "@/lib/languages";
+import { pickContentText, type Locale } from "@/lib/languages";
 import { cn, formatCredits } from "@/lib/utils";
+import { useGuestWatchQuota } from "@/lib/use-guest-watch-quota";
 
 function isUrl(s: string) {
   return /^https?:\/\//.test(s) || s.startsWith("/");
@@ -36,21 +36,8 @@ function isHls(url: string) {
   return /\.m3u8(\?|$)/i.test(url);
 }
 
-/** Fake comment counts until comments ship; favorite/like use real API counts. */
-function socialCounts(id: string) {
-  let h = 2166136261;
-  for (let i = 0; i < id.length; i++) {
-    h ^= id.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  const u = h >>> 0;
-  return {
-    comment: 1_200 + ((u >> 5) % 48_000),
-  };
-}
-
 function formatCount(n: number, locale: string) {
-  const zhStyle = locale === "zh" || locale === "vi";
+  const zhStyle = locale === "zh";
   if (zhStyle) {
     if (n >= 10_000) {
       const w = n / 10_000;
@@ -75,10 +62,79 @@ type FeedEntry = {
   episode: Episode | null;
 };
 
+type PlayUrlEntry = {
+  playUrl: string;
+  expiresAtMs: number;
+};
+
+/** Mainstream short-video window: prev 1 + next 2. */
+const PREFETCH_OFFSETS = [-1, 1, 2] as const;
+const PLAY_URL_REFRESH_MS = 5 * 60_000;
+const PLAY_URL_CACHE_MAX = 24;
+const MEDIA_WARM_HIGH_SEGMENTS = 3;
+const MEDIA_WARM_LOW_SEGMENTS = 2;
+const MEDIA_WARM_HIGH_BYTES = 512 * 1024;
+const MEDIA_WARM_LOW_BYTES = 256 * 1024;
+
 const detailCache = new Map<string, FeedEntry>();
+const playUrlCache = new Map<string, PlayUrlEntry>();
+const playUrlInflight = new Map<string, Promise<string | null>>();
+const mediaWarmDone = new Set<string>();
 
 function pickEpisode(detail: DramaDetailPayload): Episode | null {
   return detail.episodes.find((e) => e.isFree || e.unlocked) ?? detail.episodes[0] ?? null;
+}
+
+function isPlayableEpisode(ep: Episode | null | undefined): ep is Episode {
+  return !!(ep && (ep.isFree || ep.unlocked));
+}
+
+function absoluteUrl(url: string) {
+  if (/^https?:\/\//i.test(url)) return url;
+  if (typeof window === "undefined") return url;
+  try {
+    return new URL(url, window.location.origin).href;
+  } catch {
+    return url;
+  }
+}
+
+function resolveUrl(base: string, ref: string) {
+  try {
+    return new URL(ref, absoluteUrl(base)).href;
+  } catch {
+    return ref;
+  }
+}
+
+function shouldSkipMediaWarm() {
+  if (typeof navigator === "undefined") return false;
+  const conn = (
+    navigator as Navigator & {
+      connection?: { saveData?: boolean; effectiveType?: string };
+    }
+  ).connection;
+  if (conn?.saveData) return true;
+  const type = conn?.effectiveType;
+  return type === "slow-2g" || type === "2g";
+}
+
+function trimPlayUrlCache() {
+  while (playUrlCache.size > PLAY_URL_CACHE_MAX) {
+    const oldest = playUrlCache.keys().next().value;
+    if (oldest == null) break;
+    playUrlCache.delete(oldest);
+  }
+}
+
+function getCachedPlayUrl(episodeId: string): string | null {
+  const hit = playUrlCache.get(episodeId);
+  if (!hit) return null;
+  if (hit.expiresAtMs - Date.now() < PLAY_URL_REFRESH_MS) {
+    playUrlCache.delete(episodeId);
+    return null;
+  }
+  return hit.playUrl;
 }
 
 async function ensureDetail(dramaId: string, signal?: AbortSignal): Promise<FeedEntry | null> {
@@ -91,42 +147,169 @@ async function ensureDetail(dramaId: string, signal?: AbortSignal): Promise<Feed
   return entry;
 }
 
+async function ensurePlayUrl(episodeId: string, signal?: AbortSignal): Promise<string | null> {
+  const cached = getCachedPlayUrl(episodeId);
+  if (cached) return cached;
+  if (signal?.aborted) return null;
+
+  const existing = playUrlInflight.get(episodeId);
+  if (existing) {
+    const url = await existing;
+    if (signal?.aborted) return null;
+    return url;
+  }
+
+  // No AbortSignal on the network call: one in-flight fill is shared so a swipe-in
+  // can reuse a neighbor prefetch without inheriting its cancellation.
+  const task = (async () => {
+    try {
+      const r = await getPlayUrl(episodeId);
+      if (!r?.playUrl) return null;
+      const expiresAtMs = Date.parse(r.expiresAt);
+      playUrlCache.set(episodeId, {
+        playUrl: r.playUrl,
+        expiresAtMs: Number.isFinite(expiresAtMs) ? expiresAtMs : Date.now() + 60 * 60_000,
+      });
+      trimPlayUrlCache();
+      return r.playUrl;
+    } catch {
+      return null;
+    } finally {
+      playUrlInflight.delete(episodeId);
+    }
+  })();
+
+  playUrlInflight.set(episodeId, task);
+  const url = await task;
+  if (signal?.aborted) return null;
+  return url;
+}
+
+async function warmMedia(
+  playUrl: string,
+  opts: { signal?: AbortSignal; priority: "high" | "low" },
+): Promise<void> {
+  if (!playUrl || mediaWarmDone.has(playUrl) || shouldSkipMediaWarm()) return;
+  if (opts.signal?.aborted) return;
+  mediaWarmDone.add(playUrl);
+
+  const fetchOpts: RequestInit = {
+    signal: opts.signal,
+    mode: "cors",
+    credentials: "omit",
+    cache: "force-cache",
+  };
+
+  try {
+    if (isHls(playUrl)) {
+      const manifestRes = await fetch(absoluteUrl(playUrl), fetchOpts);
+      if (!manifestRes.ok) throw new Error("manifest");
+      let playlistText = await manifestRes.text();
+      let playlistUrl = absoluteUrl(playUrl);
+      const lines = playlistText
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter(Boolean);
+      if (lines.some((l) => l.startsWith("#EXT-X-STREAM-INF"))) {
+        const variant = lines.find((l) => l && !l.startsWith("#"));
+        if (!variant) return;
+        playlistUrl = resolveUrl(playUrl, variant);
+        const variantRes = await fetch(playlistUrl, fetchOpts);
+        if (!variantRes.ok) throw new Error("variant");
+        playlistText = await variantRes.text();
+      }
+      const segments = playlistText
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter((l) => l && !l.startsWith("#"))
+        .slice(0, opts.priority === "high" ? MEDIA_WARM_HIGH_SEGMENTS : MEDIA_WARM_LOW_SEGMENTS);
+      await Promise.all(
+        segments.map((seg) =>
+          fetch(resolveUrl(playlistUrl, seg), fetchOpts).catch(() => null),
+        ),
+      );
+      return;
+    }
+
+    const bytes = opts.priority === "high" ? MEDIA_WARM_HIGH_BYTES : MEDIA_WARM_LOW_BYTES;
+    await fetch(absoluteUrl(playUrl), {
+      ...fetchOpts,
+      headers: { Range: `bytes=0-${bytes - 1}` },
+    });
+  } catch {
+    mediaWarmDone.delete(playUrl);
+  }
+}
+
+async function prefetchNeighbor(
+  dramaId: string,
+  opts: { signal?: AbortSignal; priority: "high" | "low" },
+) {
+  // Detail + play URL keep filling even if the caller aborts; only media bytes cancel.
+  const entry = await ensureDetail(dramaId);
+  if (opts.signal?.aborted || !entry) return;
+  if (!isPlayableEpisode(entry.episode)) return;
+  const url = await ensurePlayUrl(String(entry.episode.id));
+  if (!url || opts.signal?.aborted) return;
+  await warmMedia(url, { signal: opts.signal, priority: opts.priority });
+}
+
+function buildFeedMeta(
+  drama: Drama,
+  locale: Locale,
+  t: (key: string, vars?: Record<string, string | number>) => string,
+) {
+  const title = pickContentText(locale, drama.titleEn, drama.titleZh);
+  const cat = categories.find((c) => c.slug === drama.categorySlug);
+  const catName = cat ? pickContentText(locale, cat.nameEn, cat.nameZh) : "";
+  const ratingLabel = formatRating(drama.rating);
+  const tags: { key: string; node: ReactNode }[] = [];
+  if (ratingLabel) {
+    tags.push({
+      key: "rating",
+      node: (
+        <span className="inline-flex items-center gap-0.5">
+          <Star className="h-3 w-3 fill-white/90 text-white/90" />
+          {t("feed.ratingScore", { n: ratingLabel })}
+        </span>
+      ),
+    });
+  }
+  tags.push({ key: "season", node: t("feed.season", { n: 1 }) });
+  if (catName) tags.push({ key: "cat", node: catName });
+  const extraTag = (drama.tags || []).find((x) => x && x !== catName);
+  if (extraTag) tags.push({ key: "tag", node: extraTag });
+  const creator = drama.creator?.displayName?.trim();
+  if (creator) {
+    tags.push({ key: "cast", node: t("feed.actors", { names: creator }) });
+  }
+  return { title, tags: tags.slice(0, 4) };
+}
+
 export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
-  const { locale, t } = useLocale();
-  const router = useRouter();
-  const { user, ready: authReady, openLogin } = useAuth();
+  const { t } = useLocale();
+  const { user, ready: authReady } = useAuth();
   const { setLocked } = useMobileFeedLock();
   const [index, setIndex] = useState(0);
   const [muted, setMuted] = useState(true);
-  const [episode, setEpisode] = useState<Episode | null>(null);
-  const [playUrl, setPlayUrl] = useState<string | null>(null);
-  const [playErr, setPlayErr] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [liked, setLiked] = useState(false);
-  const [likeCount, setLikeCount] = useState(0);
-  const [favorited, setFavorited] = useState(false);
-  const [favCount, setFavCount] = useState(0);
-  const [descOpen, setDescOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const touchStart = useRef<{ x: number; y: number } | null>(null);
-  const seekingRef = useRef(false);
-  /** Blocks the current gesture after scrubbing (pointerup can fire before touchend). */
-  const blockSwipeGestureRef = useRef(false);
+  const [pagerBlocked, setPagerBlocked] = useState(false);
+  const shellRef = useRef<HTMLDivElement>(null);
+  const togglePlayRef = useRef<(() => void) | null>(null);
 
-  const go = useCallback(
-    (delta: number) => {
-      setIndex((i) => Math.max(0, Math.min(dramas.length - 1, i + delta)));
-    },
-    [dramas.length],
-  );
+  const onIndexChange = useCallback((next: number) => {
+    setIndex(next);
+  }, []);
 
   const onSeekingChange = useCallback((seeking: boolean) => {
-    seekingRef.current = seeking;
-    if (seeking) {
-      blockSwipeGestureRef.current = true;
-      touchStart.current = null;
-    }
+    setPagerBlocked(seeking);
+  }, []);
+
+  const onFeedTap = useCallback(() => {
+    togglePlayRef.current?.();
+  }, []);
+
+  const registerTogglePlay = useCallback((fn: (() => void) | null) => {
+    togglePlayRef.current = fn;
   }, []);
 
   // Tell the app shell to use a fixed non-scrolling chrome layout (TikTok-style).
@@ -136,7 +319,6 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
   }, [setLocked]);
 
   // Pin the document so iOS can't rubber-band the visual viewport (chrome would appear to drag).
-  // App shell is also a fixed non-scrolling flex column on mobile home; this is belt-and-suspenders.
   useEffect(() => {
     const html = document.documentElement;
     const body = document.body;
@@ -175,12 +357,8 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
     };
   }, []);
 
-  // iOS still rubber-bands unless touchmove is canceled (passive:false).
-  // Keep nested modal/drawer scroll working by skipping overflow scrollers.
+  // Block document rubber-band outside nested scrollers (modals/drawers).
   useEffect(() => {
-    const el = rootRef.current;
-    if (!el) return;
-
     const canScrollTouchTarget = (target: EventTarget | null) => {
       let node = target instanceof Element ? target : null;
       while (node && node !== document.documentElement) {
@@ -206,41 +384,128 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
       e.preventDefault();
     };
 
-    el.addEventListener("touchmove", onTouchMove, { passive: false });
-    // Header / tab chrome sit outside the feed; block their document bounce too.
     document.addEventListener("touchmove", onTouchMove, { passive: false });
-    return () => {
-      el.removeEventListener("touchmove", onTouchMove);
-      document.removeEventListener("touchmove", onTouchMove);
-    };
+    return () => document.removeEventListener("touchmove", onTouchMove);
   }, []);
 
+  // Prefetch neighbor details / media around the settled index.
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "ArrowDown" || e.key === "PageDown") {
-        e.preventDefault();
-        go(1);
-      } else if (e.key === "ArrowUp" || e.key === "PageUp") {
-        e.preventDefault();
-        go(-1);
+    const drama = dramas[index];
+    if (!drama) return;
+    for (const offset of PREFETCH_OFFSETS) {
+      const id = dramas[index + offset]?.id;
+      if (id && !detailCache.has(id)) void ensureDetail(id).catch(() => {});
+    }
+  }, [index, dramas]);
+
+  useEffect(() => {
+    if (!authReady || !user) return;
+    const ac = new AbortController();
+
+    const run = async () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      const next = dramas[index + 1];
+      if (next) {
+        await prefetchNeighbor(next.id, { signal: ac.signal, priority: "high" });
+      }
+      if (ac.signal.aborted) return;
+      for (const offset of [-1, 2] as const) {
+        const neighbor = dramas[index + offset];
+        if (!neighbor) continue;
+        await prefetchNeighbor(neighbor.id, { signal: ac.signal, priority: "low" });
+        if (ac.signal.aborted) return;
       }
     };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [go]);
 
-  const drama = dramas[index] ?? null;
+    void run();
+    const onVis = () => {
+      if (!document.hidden) void run();
+    };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      ac.abort();
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [authReady, user, index, dramas]);
+
+  if (dramas.length === 0) {
+    return (
+      <div className="flex h-full min-h-0 items-center justify-center text-ink-muted">
+        {t("theater.empty")}
+      </div>
+    );
+  }
+
+  return (
+    <div ref={shellRef} className="h-full min-h-0">
+      <VerticalPager
+        index={index}
+        count={dramas.length}
+        onChange={onIndexChange}
+        blocked={pagerBlocked}
+        onTap={onFeedTap}
+      >
+        {({ pageIndex, active }) => {
+          const drama = dramas[pageIndex];
+          if (!drama) return null;
+          return (
+            <FeedPage
+              drama={drama}
+              active={active}
+              muted={muted}
+              onMutedChange={setMuted}
+              onSeekingChange={onSeekingChange}
+              registerTogglePlay={registerTogglePlay}
+            />
+          );
+        }}
+      </VerticalPager>
+    </div>
+  );
+}
+
+function FeedPage({
+  drama,
+  active,
+  muted,
+  onMutedChange,
+  onSeekingChange,
+  registerTogglePlay,
+}: {
+  drama: Drama;
+  active: boolean;
+  muted: boolean;
+  onMutedChange: (m: boolean) => void;
+  onSeekingChange: (seeking: boolean) => void;
+  registerTogglePlay: (fn: (() => void) | null) => void;
+}) {
+  const { locale, t } = useLocale();
+  const { user, ready: authReady, openLogin } = useAuth();
+  const { ready: guestReady, canWatch: canGuestWatch, markWatched: markGuestWatched } =
+    useGuestWatchQuota();
+  const [episode, setEpisode] = useState<Episode | null>(
+    () => detailCache.get(drama.id)?.episode ?? null,
+  );
+  const [playUrl, setPlayUrl] = useState<string | null>(null);
+  const [playErr, setPlayErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(!detailCache.has(drama.id));
+  const [liked, setLiked] = useState(false);
+  const [likeCount, setLikeCount] = useState(drama.likeCount ?? 0);
+  const [favorited, setFavorited] = useState(false);
+  const [favCount, setFavCount] = useState(drama.favoriteCount ?? 0);
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  const meta = useMemo(() => buildFeedMeta(drama, locale, t), [drama, locale, t]);
 
   useEffect(() => {
     setLiked(false);
-    setLikeCount(drama?.likeCount ?? 0);
+    setLikeCount(drama.likeCount ?? 0);
     setFavorited(false);
-    setFavCount(drama?.favoriteCount ?? 0);
-    setDescOpen(false);
-  }, [drama?.id]);
+    setFavCount(drama.favoriteCount ?? 0);
+  }, [drama.id, drama.likeCount, drama.favoriteCount]);
 
   useEffect(() => {
-    if (!authReady || !drama) return;
+    if (!authReady) return;
     const dramaId = drama.numericId;
     if (!user || !dramaId || !/^\d+$/.test(dramaId)) {
       setFavorited(false);
@@ -265,11 +530,9 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
     return () => {
       alive = false;
     };
-  }, [authReady, user, drama?.numericId, drama?.id]);
+  }, [authReady, user, drama.numericId, drama.id]);
 
-  // Load current + prefetch neighbors
   useEffect(() => {
-    if (!drama) return;
     const ac = new AbortController();
     const cached = detailCache.get(drama.id);
     if (cached) {
@@ -290,46 +553,79 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
         if (!ac.signal.aborted) setLoading(false);
       });
 
-    const prevId = dramas[index - 1]?.id;
-    const nextId = dramas[index + 1]?.id;
-    for (const id of [prevId, nextId]) {
-      if (id && !detailCache.has(id)) {
-        void ensureDetail(id).catch(() => {});
-      }
-    }
-
     return () => ac.abort();
-  }, [drama?.id, index, dramas]);
+  }, [drama.id]);
 
   useEffect(() => {
-    if (!episode || !(episode.isFree || episode.unlocked)) {
+    if (!isPlayableEpisode(episode)) {
       setPlayUrl(null);
       return;
     }
-    if (!authReady || !user) {
+    if (!authReady || !guestReady) {
       setPlayUrl(null);
       return;
     }
+    const episodeId = String(episode.id);
+    const allowed = !!(user || canGuestWatch(episodeId));
+    if (!allowed) {
+      setPlayUrl(null);
+      setLoading(false);
+      setPlayErr(null);
+      return;
+    }
+
+    // Guests only resolve URL on the active page so peeking won't burn quota.
+    if (!user && !active) {
+      const cachedOnly = getCachedPlayUrl(episodeId);
+      setPlayUrl(cachedOnly);
+      return;
+    }
+
+    const cached = getCachedPlayUrl(episodeId);
+    if (cached) {
+      setPlayUrl(cached);
+      setLoading(false);
+      setPlayErr(null);
+      if (active && !user) markGuestWatched(episodeId);
+      return;
+    }
+
     const ac = new AbortController();
-    if (!playUrl) setLoading(true);
+    if (active) setLoading(true);
     setPlayErr(null);
-    getPlayUrl(String(episode.id), { signal: ac.signal })
-      .then((r) => {
+    void ensurePlayUrl(episodeId, ac.signal)
+      .then((url) => {
         if (ac.signal.aborted) return;
-        setPlayUrl(r.playUrl);
+        if (!url) {
+          if (active) setPlayErr(t("player.error"));
+          setLoading(false);
+          return;
+        }
+        setPlayUrl(url);
         setLoading(false);
+        if (active && !user) markGuestWatched(episodeId);
       })
       .catch((e) => {
         if (ac.signal.aborted) return;
-        setPlayErr(e?.message || t("player.error"));
+        if (active) setPlayErr(e?.message || t("player.error"));
         setLoading(false);
       });
     return () => ac.abort();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [episode?.id, episode?.isFree, episode?.unlocked, authReady, user]);
+  }, [
+    episode?.id,
+    episode?.isFree,
+    episode?.unlocked,
+    authReady,
+    guestReady,
+    user,
+    active,
+    canGuestWatch,
+    markGuestWatched,
+    t,
+  ]);
 
   useEffect(() => {
-    if (!user || !episode?.id || !playUrl) return;
+    if (!active || !user || !episode?.id || !playUrl) return;
     const episodeId = String(episode.id);
     if (!/^\d+$/.test(episodeId)) return;
 
@@ -360,83 +656,33 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
       flush(true);
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [user, episode?.id, playUrl]);
+  }, [active, user, episode?.id, playUrl]);
+
+  const unlocked = !!(episode && (episode.isFree || episode.unlocked));
+  const episodeId = episode?.id ? String(episode.id) : "";
+  const guestAllowed = !!unlocked && !user && guestReady && !!episodeId && canGuestWatch(episodeId);
+  const canPlay = unlocked && !!(user || guestAllowed);
+  const needsLogin = authReady && guestReady && unlocked && !user && !guestAllowed;
+  const locked = !!episode && !unlocked;
+  const cover = isUrl(drama.cover[0]) ? drama.cover[0] : undefined;
 
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video || !playUrl) return;
-
-    if (!isHls(playUrl)) {
-      video.src = playUrl;
-      return;
-    }
-    if (video.canPlayType("application/vnd.apple.mpegurl")) {
-      video.src = playUrl;
-      return;
-    }
-
-    let cancelled = false;
-    let hls: { destroy: () => void; loadSource: (u: string) => void; attachMedia: (v: HTMLVideoElement) => void } | null =
-      null;
-    (async () => {
-      try {
-        const mod = await import("hls.js");
-        const Hls = mod.default;
-        if (cancelled || !Hls.isSupported()) return;
-        hls = new Hls();
-        hls.loadSource(playUrl);
-        hls.attachMedia(video);
-      } catch {
-        /* ignore */
-      }
-    })();
-    return () => {
-      cancelled = true;
-      hls?.destroy();
-    };
-  }, [playUrl]);
-
-  useEffect(() => {
-    setPlayUrl(null);
-  }, [drama?.id]);
-
-  const meta = useMemo(() => {
-    if (!drama) return null;
-    const title = pickContentText(locale, drama.titleVi, drama.titleZh);
-    const desc = pickContentText(locale, drama.descVi, drama.descZh);
-    const cat = categories.find((c) => c.slug === drama.categorySlug);
-    const catName = cat ? pickContentText(locale, cat.nameVi, cat.nameZh) : "";
-    const counts = socialCounts(drama.id);
-    const ratingLabel = formatRating(drama.rating);
-    const tags: { key: string; node: ReactNode }[] = [];
-    if (ratingLabel) {
-      tags.push({
-        key: "rating",
-        node: (
-          <span className="inline-flex items-center gap-0.5">
-            <Star className="h-3 w-3 fill-white/90 text-white/90" />
-            {t("feed.ratingScore", { n: ratingLabel })}
-          </span>
-        ),
-      });
-    }
-    tags.push({ key: "season", node: t("feed.season", { n: 1 }) });
-    if (catName) tags.push({ key: "cat", node: catName });
-    const extraTag = (drama.tags || []).find((x) => x && x !== catName);
-    if (extraTag) tags.push({ key: "tag", node: extraTag });
-    const creator = drama.creator?.displayName?.trim();
-    if (creator) {
-      tags.push({ key: "cast", node: t("feed.actors", { names: creator }) });
-    }
-    return { title, desc, counts, tags: tags.slice(0, 4) };
-  }, [drama, locale, t]);
+    if (!active) return;
+    registerTogglePlay(() => {
+      const v = videoRef.current;
+      if (!v || !playUrl || !canPlay || locked || needsLogin) return;
+      if (v.paused) void v.play().catch(() => {});
+      else v.pause();
+    });
+    return () => registerTogglePlay(null);
+  }, [active, playUrl, canPlay, locked, needsLogin, registerTogglePlay]);
 
   const toggleFavorite = async () => {
     if (!user) {
       openLogin();
       return;
     }
-    const dramaId = drama?.numericId;
+    const dramaId = drama.numericId;
     if (!dramaId || !/^\d+$/.test(dramaId)) return;
     const next = !favorited;
     setFavorited(next);
@@ -455,7 +701,7 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
       openLogin();
       return;
     }
-    const dramaId = drama?.numericId;
+    const dramaId = drama.numericId;
     if (!dramaId || !/^\d+$/.test(dramaId)) return;
     const next = !liked;
     setLiked(next);
@@ -469,76 +715,20 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
     }
   };
 
-  if (dramas.length === 0) {
-    return (
-      <div className="flex h-full min-h-0 items-center justify-center text-ink-muted">
-        {t("theater.empty")}
-      </div>
-    );
-  }
-
-  if (!drama || !meta) return null;
-
-  const unlocked = !!(episode && (episode.isFree || episode.unlocked));
-  const needsLogin = authReady && unlocked && !user;
-  const locked = !!episode && !unlocked;
-  const cover = isUrl(drama.cover[0]) ? drama.cover[0] : undefined;
-  const hotText = meta.desc.trim() || meta.title;
-  const hotPreview = hotText.length > 22 ? `${hotText.slice(0, 22)}...` : hotText;
-
   return (
-    <div
-      ref={rootRef}
-      className="relative h-full min-h-0 touch-none overflow-hidden overscroll-none bg-black"
-      onTouchStart={(e) => {
-        if (seekingRef.current) {
-          blockSwipeGestureRef.current = true;
-          touchStart.current = null;
-          return;
-        }
-        blockSwipeGestureRef.current = false;
-        const t0 = e.touches[0];
-        touchStart.current =
-          t0 != null ? { x: t0.clientX, y: t0.clientY } : null;
-      }}
-      onTouchEnd={(e) => {
-        if (blockSwipeGestureRef.current || seekingRef.current) {
-          blockSwipeGestureRef.current = false;
-          touchStart.current = null;
-          return;
-        }
-        const start = touchStart.current;
-        touchStart.current = null;
-        if (!start) return;
-        const touch = e.changedTouches[0];
-        if (!touch) return;
-        const dx = touch.clientX - start.x;
-        const dy = touch.clientY - start.y;
-        const absX = Math.abs(dx);
-        const absY = Math.abs(dy);
-        // Require a clearly vertical swipe so horizontal scrub wobble won't switch videos.
-        if (absY < 56 || absY < absX * 1.5) return;
-        go(dy < 0 ? 1 : -1);
-      }}
-      onWheel={(e) => {
-        e.preventDefault();
-        if (seekingRef.current) return;
-        if (Math.abs(e.deltaY) < 40) return;
-        go(e.deltaY > 0 ? 1 : -1);
-      }}
-    >
+    <div className="relative h-full min-h-0 overflow-hidden bg-base">
       <VerticalPlayer
-        key={drama.id}
         videoRef={videoRef}
-        active
+        active={active}
         chrome="feed"
-        src={playUrl && unlocked && user ? playUrl : null}
+        src={playUrl && canPlay ? playUrl : null}
         poster={cover}
-        autoPlay
+        autoPlay={active}
         muted={muted}
-        onMutedChange={setMuted}
-        loginRequired={needsLogin}
-        onLogin={() => openLogin()}
+        onMutedChange={onMutedChange}
+        loginRequired={active && needsLogin}
+        onLogin={() => openLogin("login")}
+        onRegister={() => openLogin("register")}
         locked={locked}
         lockLabel={
           locked && episode
@@ -547,57 +737,46 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
         }
         lockActionLabel={t("feed.watch")}
         onUnlock={undefined}
-        error={playErr}
-        loading={loading}
-        onEnded={() => go(1)}
-        onSeekingChange={onSeekingChange}
+        error={active ? playErr : null}
+        loading={active && loading}
+        showSeek={false}
+        tapToToggle={false}
       />
 
-      {/* Right action column: favorite / comment / like */}
-      <div className="absolute bottom-[9.75rem] right-2.5 z-30 flex flex-col items-center gap-5">
-        <SideAction
-          label={t("feed.favorite")}
-          count={formatCount(favCount, locale)}
-          active={favorited}
-          onClick={() => void toggleFavorite()}
-        >
-          <Star
-            className={cn(
-              "h-[30px] w-[30px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]",
-              favorited ? "fill-[#ffb000] text-[#ffb000]" : "fill-none text-white",
-            )}
-            strokeWidth={1.75}
-          />
-        </SideAction>
-        <SideAction
-          label={t("feed.comment")}
-          count={formatCount(meta.counts.comment, locale)}
-          onClick={() => router.push(`/drama/${drama.id}`)}
-        >
-          <MessageCircle
-            className="h-[30px] w-[30px] text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
-            strokeWidth={1.75}
-          />
-        </SideAction>
-        <SideAction
-          label={t("feed.like")}
-          count={formatCount(likeCount, locale)}
-          active={liked}
-          onClick={() => void toggleLike()}
-        >
-          <Heart
-            className={cn(
-              "h-[30px] w-[30px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]",
-              liked ? "fill-[#ff4d6d] text-[#ff4d6d]" : "fill-none text-white",
-            )}
-            strokeWidth={1.75}
-          />
-        </SideAction>
-      </div>
+      {/* Bottom info stack: title → tags → episode bar; side actions hug the top */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex flex-col">
+        <div className="pointer-events-auto absolute bottom-full right-2.5 mb-2 flex flex-col items-center gap-5">
+          <SideAction
+            label={t("feed.favorite")}
+            count={formatCount(favCount, locale)}
+            active={favorited}
+            onClick={() => void toggleFavorite()}
+          >
+            <Star
+              className={cn(
+                "h-[30px] w-[30px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]",
+                favorited ? "fill-[#ffb000] text-[#ffb000]" : "fill-none text-white",
+              )}
+              strokeWidth={1.75}
+            />
+          </SideAction>
+          <SideAction
+            label={t("feed.like")}
+            count={formatCount(likeCount, locale)}
+            active={liked}
+            onClick={() => void toggleLike()}
+          >
+            <Heart
+              className={cn(
+                "h-[30px] w-[30px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]",
+                liked ? "fill-[#ff4d6d] text-[#ff4d6d]" : "fill-none text-white",
+              )}
+              strokeWidth={1.75}
+            />
+          </SideAction>
+        </div>
 
-      {/* Bottom info stack: title → tags → hot → watch-full → seek reserve */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex flex-col px-3 pb-0">
-        <div className="pointer-events-auto max-w-[calc(100%-4.75rem)]">
+        <div className="pointer-events-auto max-w-[calc(100%-4.75rem)] px-3">
           <Link
             href={`/drama/${drama.id}`}
             className="inline-flex max-w-full items-center gap-0.5 text-[17px] font-semibold leading-snug text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.65)]"
@@ -617,37 +796,16 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
               ))}
             </div>
           )}
-
-          <button
-            type="button"
-            className="mt-1.5 flex w-full items-start gap-1 text-left text-[13px] leading-5 text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
-            onClick={(e) => {
-              e.stopPropagation();
-              setDescOpen((v) => !v);
-            }}
-          >
-            <Flame className="mt-0.5 h-3.5 w-3.5 shrink-0 text-white" strokeWidth={2} />
-            <span className="min-w-0 flex-1">
-              <span>{t("feed.hotComment", { text: descOpen ? hotText : hotPreview })}</span>
-              {!descOpen && hotText.length > 22 && (
-                <span className="ml-1 font-medium text-white">{t("feed.expand")}</span>
-              )}
-            </span>
-          </button>
         </div>
 
-        <Link
+        <FeedEpisodeBar
+          className="pointer-events-auto mt-1.5"
           href={`/drama/${drama.id}`}
-          className="pointer-events-auto mt-2.5 flex h-9 items-center gap-1 rounded-lg bg-black/45 px-3 text-white backdrop-blur-sm"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
-            {t("feed.watchFull", { n: drama.episodesCount })}
-          </span>
-          <ChevronRight className="h-4 w-4 shrink-0 opacity-80" />
-        </Link>
-        {/* Reserve full seek hit strip so CTA never covers the scrubber */}
-        <div className="h-11 shrink-0" aria-hidden />
+          label={t("feed.watchFull", { n: drama.episodesCount })}
+          videoRef={videoRef}
+          seekEnabled={active && !!playUrl && canPlay && !locked && !needsLogin && !playErr}
+          onSeekingChange={active ? onSeekingChange : undefined}
+        />
       </div>
     </div>
   );

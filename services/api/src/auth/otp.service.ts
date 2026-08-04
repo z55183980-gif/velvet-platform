@@ -44,10 +44,9 @@ export class OtpService {
     const existing = this.store.get(k);
     if (existing?.lockedUntil && Date.now() < existing.lockedUntil) {
       const remain = Math.ceil((existing.lockedUntil - Date.now()) / 1000);
-      throw new BizException(
-        BizCode.OTP_LOCKED,
-        `OTP bị khóa, thử lại sau ${remain}s`,
-      );
+      throw new BizException(BizCode.OTP_LOCKED, 'auth.otpLockedRetry', undefined, {
+        sec: remain,
+      });
     }
     const code = Array.from({ length: this.length }, () =>
       Math.floor(Math.random() * 10),
@@ -73,7 +72,7 @@ export class OtpService {
     const entry = this.store.get(k);
     if (!entry) return false;
     if (entry.lockedUntil && Date.now() < entry.lockedUntil) {
-      throw new BizException(BizCode.OTP_LOCKED, 'OTP bị khóa do nhập sai quá nhiều lần');
+      throw new BizException(BizCode.OTP_LOCKED, 'auth.otpLocked');
     }
     if (Date.now() > entry.expiresAt) {
       this.store.delete(k);
@@ -84,10 +83,7 @@ export class OtpService {
       if (entry.failCount >= this.maxFails) {
         entry.lockedUntil = Date.now() + this.lockMs;
         this.store.set(k, entry);
-        throw new BizException(
-          BizCode.OTP_LOCKED,
-          'Nhập sai OTP quá 5 lần, khóa 15 phút',
-        );
+        throw new BizException(BizCode.OTP_LOCKED, 'auth.otpLockedMaxFails');
       }
       this.store.set(k, entry);
       return false;

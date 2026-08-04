@@ -28,10 +28,12 @@ export function BottomTabBar({ inline = false }: { inline?: boolean }) {
       className={cn(
         // --mobile-tab-safe-bottom: env(safe-area) in browser; +air in standalone
         // (see globals.css). Works for both fixed overlay and feed-lock inline.
-        "z-50 bg-black pb-[var(--mobile-tab-safe-bottom)] md:hidden",
-        // Home feed shell: flow in the fixed flex column (no viewport bounce).
-        // Other pages: overlay fixed so long content can scroll underneath.
-        inline ? "relative shrink-0" : "fixed inset-x-0 bottom-0",
+        "z-50 pb-[var(--mobile-tab-safe-bottom)] md:hidden",
+        // Home feed: solid immersive chrome (parent .feed-immersive forces dark tokens).
+        // Other pages: follow the active theme.
+        inline
+          ? "relative shrink-0 border-t border-line/60 bg-base"
+          : "fixed inset-x-0 bottom-0 border-t border-line/60 bg-base/90 backdrop-blur-xl",
       )}
       aria-label="Primary"
     >
@@ -44,7 +46,7 @@ export function BottomTabBar({ inline = false }: { inline?: boolean }) {
               href={tab.href}
               className={cn(
                 "flex flex-1 items-center justify-center text-[15px] transition-colors",
-                active ? "font-semibold text-white" : "font-normal text-white/55",
+                active ? "font-semibold text-ink" : "font-normal text-ink-muted",
               )}
             >
               {t(tab.key)}

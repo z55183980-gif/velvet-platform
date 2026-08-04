@@ -11,7 +11,7 @@ import { useI18n, statusLabel } from "@/lib/i18n";
 
 type DramaIncome = {
   id?: string | number;
-  drama?: { id: string | number; titleZh?: string; titleVi?: string };
+  drama?: { id: string | number; titleZh?: string; titleEn?: string };
   incomeVnd?: number;
   amountVnd?: number;
   orders?: number;
@@ -43,7 +43,7 @@ export default function AdminCreatorDetailPage() {
         header: t("drama"),
         cell: (row) => row.drama ? (
           <Link href={`/content/${row.drama.id}`} className="text-brand hover:underline">
-            {row.drama.titleZh || row.drama.titleVi || "—"}
+            {row.drama.titleZh || row.drama.titleEn || "—"}
           </Link>
         ) : "—",
       },

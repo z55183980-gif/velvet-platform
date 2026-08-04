@@ -215,7 +215,7 @@ model Session {
 // ========== 分类（主数据，F9：slug + 双语名）==========
 model Category {
   slug        String   @id                            // 'do_thi' | 'ngon_tinh' | ...
-  nameVi      String
+  nameEn      String
   nameZh      String
   sortOrder   Int      @default(0)
   isActive    Boolean  @default(true)
@@ -232,10 +232,10 @@ model Drama {
   uuid            String      @unique @default(uuid())
   creatorId       BigInt
 
-  // 双语标题（越南语 + 中文，见 00 F8）
-  titleVi         String
+  // 双语标题（英语 + 中文）
+  titleEn         String
   titleZh         String?
-  descriptionVi   String?
+  descriptionEn   String?
   descriptionZh   String?
 
   categorySlug    String                          // = Category.slug（冗余存储，便于查询）
@@ -557,7 +557,7 @@ model SystemSetting {
 
 model Banner {
   id        BigInt   @id @default(autoincrement())
-  titleVi   String
+  titleEn   String
   titleZh   String?
   imageUrl  String
   linkUrl   String?

@@ -17,7 +17,6 @@ import { IsBoolean, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'clas
 import { BizCode, BizException } from '../common/biz.exception';
 import { ok } from '../common/response';
 import { ExchangeService } from '../exchange/exchange.service';
-import { PackagesService } from '../packages/packages.service';
 import { RedeemService } from '../redeem/redeem.service';
 import { VipPlansService } from '../vip/vip-plans.service';
 import { AdminRoleGuard, AdminRoles } from './admin-role.guard';
@@ -41,30 +40,10 @@ class SetRateDto {
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0.000001) sellRate?: number;
 }
 
-class UpsertPackageDto {
-  @IsOptional() @IsString() name?: string;
-  @IsNotEmpty() @Type(() => Number) @IsNumber() @Min(1) credits!: number;
-  @IsNotEmpty() @Type(() => Number) @IsNumber() @Min(0.01) basePrice!: number;
-  @IsOptional() @Type(() => Number) @IsNumber() sortOrder?: number;
-  @IsOptional()
-  @Transform(({ value }) => value === true || value === 'true' || value === 1)
-  @IsBoolean()
-  active?: boolean;
-}
-
-class PatchPackageDto {
-  @IsOptional() @IsString() name?: string;
-  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) credits?: number;
-  @IsOptional() @Type(() => Number) @IsNumber() @Min(0.01) basePrice?: number;
-  @IsOptional() @Type(() => Number) @IsNumber() sortOrder?: number;
-  @IsOptional()
-  @Transform(({ value }) => value === true || value === 'true' || value === 1)
-  @IsBoolean()
-  active?: boolean;
-}
-
 class UpsertVipPlanDto {
-  @IsOptional() @IsString() name?: string;
+  @IsNotEmpty() @IsString() nameEn!: string;
+  @IsOptional() @IsString() nameZh?: string;
+  @IsOptional() @IsString() nameFr?: string;
   @IsNotEmpty() @Type(() => Number) @IsNumber() @Min(1) durationDays!: number;
   @IsNotEmpty() @Type(() => Number) @IsNumber() @Min(0.01) basePrice!: number;
   @IsOptional() @Type(() => Number) @IsNumber() sortOrder?: number;
@@ -76,7 +55,9 @@ class UpsertVipPlanDto {
 }
 
 class PatchVipPlanDto {
-  @IsOptional() @IsString() name?: string;
+  @IsOptional() @IsString() nameEn?: string;
+  @IsOptional() @IsString() nameZh?: string;
+  @IsOptional() @IsString() nameFr?: string;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(1) durationDays?: number;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0.01) basePrice?: number;
   @IsOptional() @Type(() => Number) @IsNumber() sortOrder?: number;
@@ -113,7 +94,6 @@ export class FinanceController {
   constructor(
     private readonly admin: AdminService,
     private readonly exchange: ExchangeService,
-    private readonly packages: PackagesService,
     private readonly walletAdmin: AdminWalletService,
     private readonly withdraws: AdminWithdrawsService,
     private readonly vipPlans: VipPlansService,
@@ -179,23 +159,6 @@ export class FinanceController {
       cnyToFiat,
       sellRate: dto.sellRate ?? cnyToFiat,
     }, getActor(req)));
-  }
-
-  @Get('topup-packages')
-  async listPackages() {
-    return ok(await this.packages.listAdmin());
-  }
-
-  @Post('topup-packages')
-  @AdminRoles('SUPER_ADMIN')
-  async createPackage(@Body() dto: UpsertPackageDto, @Req() req: any) {
-    return ok(await this.packages.create(dto, getActor(req)));
-  }
-
-  @Patch('topup-packages/:id')
-  @AdminRoles('SUPER_ADMIN')
-  async updatePackage(@Param('id') id: string, @Body() dto: PatchPackageDto, @Req() req: any) {
-    return ok(await this.packages.update(BigInt(id), dto, getActor(req)));
   }
 
   @Get('vip-plans')

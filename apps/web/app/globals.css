@@ -166,6 +166,25 @@ html[data-theme="light"] {
   --shadow-3: 0 12px 32px oklch(0 0 0 / 0.08), 0 4px 8px oklch(0 0 0 / 0.04);
 }
 
+/*
+  Mobile home vertical feed: always stay on the default dark palette,
+  even when html[data-theme="light"]. Matches other pages in dark theme.
+*/
+.feed-immersive {
+  color-scheme: dark;
+  --color-base: oklch(0.16 0.005 250);
+  --color-surface: oklch(0.20 0.006 250);
+  --color-surface-2: oklch(0.25 0.007 250);
+  --color-surface-3: oklch(0.31 0.008 250);
+  --color-ink: oklch(0.97 0.003 250);
+  --color-ink-muted: oklch(0.72 0.006 250);
+  --color-ink-subtle: oklch(0.56 0.007 250);
+  --color-line: oklch(1 0 0 / 0.08);
+  --color-line-strong: oklch(1 0 0 / 0.16);
+  background-color: var(--color-base);
+  color: var(--color-ink);
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

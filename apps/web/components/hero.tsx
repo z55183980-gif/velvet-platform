@@ -16,9 +16,9 @@ const AUTO_MS = 5500;
 
 export type HeroSlide = {
   id: string;
-  titleVi: string;
+  titleEn: string;
   titleZh: string;
-  descVi?: string;
+  descEn?: string;
   descZh?: string;
   cover: [string, string];
   href: string;
@@ -41,9 +41,9 @@ export function dramaToHeroSlide(
 ): HeroSlide {
   return {
     id: drama.id,
-    titleVi: drama.titleVi,
+    titleEn: drama.titleEn,
     titleZh: drama.titleZh,
-    descVi: drama.descVi,
+    descEn: drama.descEn,
     descZh: drama.descZh,
     cover: drama.cover,
     href: `/drama/${drama.id}`,
@@ -92,8 +92,8 @@ export function Hero({ slides }: { slides: HeroSlide[] }) {
   if (items.length === 0) return null;
 
   const current = items[index] ?? items[0];
-  const title = pickContentText(locale, current.titleVi, current.titleZh);
-  const desc = pickContentText(locale, current.descVi || "", current.descZh || "");
+  const title = pickContentText(locale, current.titleEn, current.titleZh);
+  const desc = pickContentText(locale, current.descEn || "", current.descZh || "");
   const tags = current.tags ?? [];
   const cover = current.cover[0];
 
@@ -204,7 +204,7 @@ export function Hero({ slides }: { slides: HeroSlide[] }) {
               {items.map((d, i) => {
                 const active = i === index;
                 const thumb = d.cover[0];
-                const tip = pickContentText(locale, d.titleVi, d.titleZh);
+                const tip = pickContentText(locale, d.titleEn, d.titleZh);
                 return (
                   <button
                     key={d.id}

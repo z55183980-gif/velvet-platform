@@ -9,11 +9,13 @@ import {
   type ReactNode,
 } from "react";
 
-export type ThemeMode = "light" | "dark" | "system";
+export type ThemeMode = "light" | "dark";
 
 type ThemeCtx = {
   theme: ThemeMode;
-  resolved: "light" | "dark";
+  resolved: ThemeMode;
+  /** False until localStorage theme is applied — keep SSR/client first paint aligned. */
+  ready: boolean;
   setTheme: (t: ThemeMode) => void;
   cycleTheme: () => void;
 };
@@ -21,13 +23,7 @@ type ThemeCtx = {
 const Ctx = createContext<ThemeCtx | null>(null);
 const STORAGE_KEY = "dv_theme";
 
-function resolve(theme: ThemeMode): "light" | "dark" {
-  if (theme === "light" || theme === "dark") return theme;
-  if (typeof window === "undefined") return "dark";
-  return window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
-}
-
-function applyDom(resolved: "light" | "dark") {
+function applyDom(resolved: ThemeMode) {
   const root = document.documentElement;
   root.dataset.theme = resolved;
   root.classList.toggle("dark", resolved === "dark");
@@ -35,56 +31,48 @@ function applyDom(resolved: "light" | "dark") {
   root.style.colorScheme = resolved;
 }
 
+function readStoredTheme(): ThemeMode {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    // Migrate legacy "system" to dark
+    if (saved === "light" || saved === "dark") return saved;
+  } catch {
+    /* ignore */
+  }
+  return "dark";
+}
+
 export function ThemeProvider({ children }: { children: ReactNode }) {
+  // SSR + first client render must match (default dark). Load preference after mount.
   const [theme, setThemeState] = useState<ThemeMode>("dark");
-  const [resolved, setResolved] = useState<"light" | "dark">("dark");
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY) as ThemeMode | null;
-      if (saved === "light" || saved === "dark" || saved === "system") {
-        setThemeState(saved);
-        const r = resolve(saved);
-        setResolved(r);
-        applyDom(r);
-        return;
-      }
-    } catch {
-      /* ignore */
-    }
-    applyDom("dark");
+    const next = readStoredTheme();
+    setThemeState(next);
+    applyDom(next);
+    setReady(true);
   }, []);
 
   useEffect(() => {
-    const r = resolve(theme);
-    setResolved(r);
-    applyDom(r);
+    if (!ready) return;
+    applyDom(theme);
     try {
       localStorage.setItem(STORAGE_KEY, theme);
     } catch {
       /* ignore */
     }
-  }, [theme]);
-
-  useEffect(() => {
-    if (theme !== "system") return;
-    const mq = window.matchMedia("(prefers-color-scheme: light)");
-    const onChange = () => {
-      const r = resolve("system");
-      setResolved(r);
-      applyDom(r);
-    };
-    mq.addEventListener("change", onChange);
-    return () => mq.removeEventListener("change", onChange);
-  }, [theme]);
+  }, [theme, ready]);
 
   const setTheme = useCallback((t: ThemeMode) => setThemeState(t), []);
   const cycleTheme = useCallback(() => {
-    setThemeState((prev) => (prev === "dark" ? "light" : prev === "light" ? "system" : "dark"));
+    setThemeState((prev) => (prev === "dark" ? "light" : "dark"));
   }, []);
 
   return (
-    <Ctx.Provider value={{ theme, resolved, setTheme, cycleTheme }}>{children}</Ctx.Provider>
+    <Ctx.Provider value={{ theme, resolved: theme, ready, setTheme, cycleTheme }}>
+      {children}
+    </Ctx.Provider>
   );
 }
 

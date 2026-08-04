@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
   Play,
@@ -22,6 +22,7 @@ import { useAuth } from "@/components/auth-context";
 import { EpisodeList } from "@/components/episode-list";
 import { VideoPlayer } from "@/components/video-player";
 import { PLAYER_RATES, VerticalPlayer } from "@/components/mobile/vertical-player";
+import { VerticalPager } from "@/components/mobile/vertical-pager";
 import { EpisodeDrawer } from "@/components/mobile/episode-drawer";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import {
@@ -38,6 +39,7 @@ import {
   removeLike,
 } from "@/lib/api";
 import { categoryName, type Drama, type Episode } from "@/lib/mock-data";
+import { useGuestWatchQuota } from "@/lib/use-guest-watch-quota";
 import { pickContentText } from "@/lib/languages";
 import { WatchSeekBar } from "@/components/mobile/watch-seek-bar";
 import { mediaUrl, cn } from "@/lib/utils";
@@ -52,7 +54,7 @@ function isHls(url: string) {
 }
 
 function formatCount(n: number, locale: string) {
-  const zhStyle = locale === "zh" || locale === "vi";
+  const zhStyle = locale === "zh";
   if (zhStyle) {
     if (n >= 10_000) {
       const w = n / 10_000;
@@ -76,6 +78,7 @@ export function DramaDetail({ id }: { id: string }) {
   const router = useRouter();
   const { locale, t } = useLocale();
   const { user, openLogin, openVip, ready: authReady } = useAuth();
+  const { ready: guestReady, canWatch: canGuestWatch, markWatched: markGuestWatched } = useGuestWatchQuota();
   const { mobile: isMobile, ready: mobileReady } = useIsMobile();
   const [data, setData] = useState<{
     drama: Drama;
@@ -117,6 +120,7 @@ export function DramaDetail({ id }: { id: string }) {
   const [qualityIndex, setQualityIndex] = useState(-1); // -1 = auto
   const [showQuality, setShowQuality] = useState(false);
   const [resumeToast, setResumeToast] = useState(false);
+  const [pagerBlocked, setPagerBlocked] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const watchShellRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<any>(null);
@@ -286,18 +290,27 @@ export function DramaDetail({ id }: { id: string }) {
       setPlayErr(null);
       return;
     }
-    if (!authReady || !user) {
+    if (!authReady || !guestReady) {
+      setPlayUrl(null);
+      setPlayErr(null);
+      return;
+    }
+    const episodeId = String(selected.id);
+    const allowed = !!(user || canGuestWatch(episodeId));
+    if (!allowed) {
       setPlayUrl(null);
       setPlayErr(null);
       return;
     }
     const ac = new AbortController();
+    // Drop previous episode's URL so HLS never attaches the wrong source.
     setPlayUrl(null);
     setPlayErr(null);
-    getPlayUrl(String(selected.id), { signal: ac.signal })
+    getPlayUrl(episodeId, { signal: ac.signal })
       .then((r) => {
         if (ac.signal.aborted) return;
         setPlayUrl(r.playUrl);
+        if (!user) markGuestWatched(episodeId);
       })
       .catch((e) => {
         if (ac.signal.aborted) return;
@@ -305,7 +318,7 @@ export function DramaDetail({ id }: { id: string }) {
         else setPlayErr(e?.message || t("player.error"));
       });
     return () => ac.abort();
-  }, [playerReady, selected?.id, user, authReady, t]);
+  }, [playerReady, selected?.id, user, authReady, guestReady, canGuestWatch, markGuestWatched, t]);
 
   useEffect(() => {
     if (!data?.drama.categorySlug) return;
@@ -359,7 +372,9 @@ export function DramaDetail({ id }: { id: string }) {
   // HLS attach + quality levels + 横竖检测
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !playUrl || !playerReady || !user || !watching) return;
+    const episodeId = selected?.id ? String(selected.id) : "";
+    const allowed = !!(user || (episodeId && canGuestWatch(episodeId)));
+    if (!video || !playUrl || !playerReady || !watching || !allowed) return;
 
     const applyAspect = () => {
       if (!video.videoWidth || !video.videoHeight) return;
@@ -419,6 +434,7 @@ export function DramaDetail({ id }: { id: string }) {
           setQualities(mapped);
           setQualityIndex(-1);
           hls.currentLevel = -1;
+          void video.play().catch(() => {});
         });
       } catch {
         if (!cancelled) setPlayErr("Không tải được trình phát HLS");
@@ -430,7 +446,30 @@ export function DramaDetail({ id }: { id: string }) {
       if (hls) hls.destroy();
       if (hlsRef.current === hls) hlsRef.current = null;
     };
-  }, [playUrl, seekTo, playerReady, user, watching, followVideoAspect]);
+    // landscapeMode toggles which <video> is mounted — rebind when the surface changes.
+  }, [
+    playUrl,
+    seekTo,
+    playerReady,
+    user,
+    watching,
+    followVideoAspect,
+    selected?.id,
+    landscapeMode,
+    canGuestWatch,
+  ]);
+
+  const selectEpisodeByIndex = useCallback(
+    (i: number) => {
+      const ep = data?.episodes[i];
+      if (ep) setSelected(ep);
+    },
+    [data?.episodes],
+  );
+
+  const onSeekingChange = useCallback((seeking: boolean) => {
+    setPagerBlocked(seeking);
+  }, []);
 
   if (!mobileReady) {
     return <div className="min-h-[40vh]" aria-busy="true" />;
@@ -469,8 +508,8 @@ export function DramaDetail({ id }: { id: string }) {
   }
 
   const { drama } = data;
-  const title = pickContentText(locale, drama.titleVi, drama.titleZh);
-  const desc = pickContentText(locale, drama.descVi, drama.descZh);
+  const title = pickContentText(locale, drama.titleEn, drama.titleZh);
+  const desc = pickContentText(locale, drama.descEn, drama.descZh);
   const cat = categoryName(drama.categorySlug, locale);
   const coverIsImg = isUrl(drama.cover[0]);
   const favoriteDramaId = drama.numericId || drama.id;
@@ -522,10 +561,6 @@ export function DramaDetail({ id }: { id: string }) {
   }
 
   function onWatchFree() {
-    if (!user) {
-      openLogin();
-      return;
-    }
     const f =
       data!.episodes.find((e) => isUnlocked(e)) ?? data!.episodes[0];
     if (f) {
@@ -544,8 +579,7 @@ export function DramaDetail({ id }: { id: string }) {
     for (let i = idx + 1; i < data.episodes.length; i++) {
       const ep = data.episodes[i];
       if (isUnlocked(ep)) {
-        if (!user) openLogin();
-        else setSelected(ep);
+        setSelected(ep);
         return;
       }
     }
@@ -558,18 +592,17 @@ export function DramaDetail({ id }: { id: string }) {
   })();
 
   // session 未就绪时不要误显示「请登录」（V3-01）
-  const needsLogin = authReady && playerReady && !user;
+  const needsLogin = authReady && guestReady && playerReady && !user && !(selected?.id && canGuestWatch(String(selected.id)));
+  const guestAllowed = !user && guestReady && playerReady && !!selected?.id && canGuestWatch(String(selected.id));
+  const canPlay = playerReady && !!(user || guestAllowed);
   const locked = !playerReady;
-  const playLoading = !authReady || (playerReady && !!user && !playUrl && !playErr);
+  const playLoading = !authReady || !guestReady || (canPlay && !playUrl && !playErr);
 
   const selectEpisode = (ep: Episode) => {
     if (isUnlocked(ep)) {
-      if (!user) openLogin();
-      else {
-        setSelected(ep);
-        setDrawerOpen(false);
-        setWatching(true);
-      }
+      setSelected(ep);
+      setDrawerOpen(false);
+      setWatching(true);
     } else openVipGate(ep);
   };
 
@@ -582,7 +615,7 @@ export function DramaDetail({ id }: { id: string }) {
   /* ---- Watching: mobile vertical ---- */
   if (watching && isMobile) {
     const epTitle = selected
-      ? pickContentText(locale, selected.titleVi, selected.titleZh)
+      ? pickContentText(locale, selected.titleEn, selected.titleZh)
       : "";
     const epLine = selected
       ? `${t("detail.episodeLabel", { n: selected.no })}${epTitle ? ` | ${epTitle}` : ""}`
@@ -666,6 +699,14 @@ export function DramaDetail({ id }: { id: string }) {
     const resumeTimeLabel = resumeHint
       ? `${Math.floor(resumeHint.progressSec / 60)}:${String(Math.floor(resumeHint.progressSec % 60)).padStart(2, "0")}`
       : "";
+    const episodeIndex = selected
+      ? Math.max(
+          0,
+          data.episodes.findIndex((e) => e.no === selected.no),
+        )
+      : 0;
+    const coverUrl = coverIsImg ? drama.cover[0] : undefined;
+    const pagerMenusOpen = showRate || showMore || showQuality || drawerOpen;
 
     return (
       <div
@@ -830,14 +871,16 @@ export function DramaDetail({ id }: { id: string }) {
                 bottomInset={0}
                 playbackRate={rate}
                 onPlaybackRateChange={setRate}
-                src={playerReady && user && playUrl ? playUrl : null}
-                poster={coverIsImg ? drama.cover[0] : undefined}
+                attachMedia={false}
+                src={canPlay && playUrl ? playUrl : null}
+                poster={coverUrl}
                 autoPlay
                 muted={muted}
                 onMutedChange={setMuted}
                 seekTo={resumeApplied.current ? null : seekTo}
                 loginRequired={needsLogin}
-                onLogin={() => openLogin()}
+                onLogin={() => openLogin("login")}
+                onRegister={() => openLogin("register")}
                 locked={locked}
                 lockLabel={
                   selected
@@ -867,105 +910,194 @@ export function DramaDetail({ id }: { id: string }) {
             </div>
           </div>
         ) : (
-          <VerticalPlayer
-            videoRef={videoRef}
-            active
-            chrome="watch"
-            objectFit={fillVideo ? "cover" : "contain"}
-            bottomInset={immersiveFs ? 12 : WATCH_BAR_H}
-            showSeek={!landscapeMode || immersiveFs}
-            playbackRate={rate}
-            onPlaybackRateChange={setRate}
-            src={playerReady && user && playUrl ? playUrl : null}
-            poster={coverIsImg ? drama.cover[0] : undefined}
-            autoPlay
-            muted={muted}
-            onMutedChange={setMuted}
-            seekTo={resumeApplied.current ? null : seekTo}
-            loginRequired={needsLogin}
-            onLogin={() => openLogin()}
-            locked={locked}
-            lockLabel={
-              selected
-                ? `${t("detail.episodeList")} ${selected.no}`
-                : t("player.empty")
-            }
-            lockActionLabel={lockActionLabel}
-            onUnlock={selected && !isUnlocked(selected) ? () => openVipGate(selected) : undefined}
-            error={playErr}
-            loading={playLoading}
-            hasNext={hasNext}
-            onNext={playNext}
-            onEnded={playNext}
-          />
+          <div className="absolute inset-0 z-10">
+            <VerticalPager
+              index={episodeIndex}
+              count={data.episodes.length}
+              onChange={selectEpisodeByIndex}
+              blocked={pagerBlocked || pagerMenusOpen}
+              onTap={() => {
+                const v = videoRef.current;
+                if (!v || !canPlay || !playUrl || locked || needsLogin) return;
+                if (v.paused) void v.play().catch(() => {});
+                else v.pause();
+              }}
+            >
+              {({ pageIndex, offset, active }) => {
+                const ep = data.episodes[pageIndex];
+                if (!ep) return null;
+                // Keep the settled/center player mounted during snap animation.
+                // Only neighbor pages use the lightweight peek (avoids HLS remount flicker).
+                if (offset !== 0) {
+                  return (
+                    <WatchEpisodePeek
+                      coverUrl={coverUrl}
+                      coverFallback={drama.cover}
+                      label={t("detail.episodeLabel", { n: ep.no })}
+                      title={title}
+                    />
+                  );
+                }
+                return (
+                  <div className="relative h-full min-h-0">
+                    <VerticalPlayer
+                      videoRef={videoRef}
+                      active={active}
+                      chrome="watch"
+                      objectFit={fillVideo ? "cover" : "contain"}
+                      bottomInset={immersiveFs ? 12 : WATCH_BAR_H}
+                      showSeek
+                      playbackRate={rate}
+                      onPlaybackRateChange={setRate}
+                      attachMedia={false}
+                      src={canPlay && playUrl ? playUrl : null}
+                      poster={coverUrl}
+                      autoPlay
+                      muted={muted}
+                      onMutedChange={setMuted}
+                      seekTo={resumeApplied.current ? null : seekTo}
+                      loginRequired={needsLogin}
+                      onLogin={() => openLogin("login")}
+                      onRegister={() => openLogin("register")}
+                      locked={locked}
+                      lockLabel={`${t("detail.episodeList")} ${ep.no}`}
+                      lockActionLabel={lockActionLabel}
+                      onUnlock={!isUnlocked(ep) ? () => openVipGate(ep) : undefined}
+                      error={playErr}
+                      loading={playLoading}
+                      hasNext={hasNext}
+                      onNext={playNext}
+                      onEnded={playNext}
+                      onSeekingChange={onSeekingChange}
+                      tapToToggle={false}
+                    />
+
+                    {!immersiveFs ? (
+                      <div className="absolute bottom-[9.75rem] right-2.5 z-40 flex flex-col items-center gap-5">
+                        <WatchSideAction
+                          label={favorited ? t("detail.favorited") : t("detail.favorite")}
+                          count={formatCount(favCount, locale)}
+                          onClick={() => void toggleFavorite()}
+                        >
+                          <Star
+                            className={cn(
+                              "h-[30px] w-[30px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]",
+                              favorited ? "fill-[#ffb000] text-[#ffb000]" : "text-white",
+                            )}
+                            strokeWidth={1.75}
+                          />
+                        </WatchSideAction>
+                        <WatchSideAction
+                          label={t("feed.like")}
+                          count={formatCount(likeCount, locale)}
+                          onClick={() => void toggleLike()}
+                        >
+                          <Heart
+                            className={cn(
+                              "h-[30px] w-[30px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]",
+                              liked ? "fill-[#ff4d6d] text-[#ff4d6d]" : "text-white",
+                            )}
+                            strokeWidth={1.75}
+                          />
+                        </WatchSideAction>
+                      </div>
+                    ) : null}
+
+                    {!immersiveFs ? (
+                      <div
+                        className="pointer-events-none absolute inset-x-0 z-40 px-3"
+                        style={{ bottom: WATCH_BAR_H + 26 }}
+                      >
+                        <div className="pointer-events-auto max-w-[calc(100%-4.5rem)]">
+                          <button
+                            type="button"
+                            className="inline-flex max-w-full items-center gap-0.5 text-[17px] font-semibold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.65)]"
+                            onClick={() => setDrawerOpen(true)}
+                          >
+                            <span className="truncate">{title}</span>
+                            <ChevronRight className="h-5 w-5 shrink-0 opacity-90" strokeWidth={2.25} />
+                          </button>
+                          <button
+                            type="button"
+                            className="mt-1.5 flex w-full items-start text-left text-[13px] leading-5 text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
+                            onClick={() => setEpLineExpanded((v) => !v)}
+                          >
+                            <span className="min-w-0 flex-1">
+                              {epLineExpanded ? epLine : epPreview}
+                              {!epLineExpanded && epLine.length > 26 && (
+                                <span className="ml-1 font-medium text-white">{t("detail.expand")}</span>
+                              )}
+                            </span>
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              }}
+            </VerticalPager>
+          </div>
         )}
 
-        {/* Right actions */}
-        {!immersiveFs ? (
-          <div
-            className={cn(
-              "absolute right-2.5 z-40 flex flex-col items-center gap-5",
-              landscapeMode ? "bottom-[8.5rem]" : "bottom-[9.75rem]",
-            )}
-          >
-            <WatchSideAction
-              label={favorited ? t("detail.favorited") : t("detail.favorite")}
-              count={formatCount(favCount, locale)}
-              onClick={() => void toggleFavorite()}
-            >
-              <Star
-                className={cn(
-                  "h-[30px] w-[30px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]",
-                  favorited ? "fill-[#ffb000] text-[#ffb000]" : "text-white",
-                )}
-                strokeWidth={1.75}
-              />
-            </WatchSideAction>
-            <WatchSideAction
-              label={t("feed.like")}
-              count={formatCount(likeCount, locale)}
-              onClick={() => void toggleLike()}
-            >
-              <Heart
-                className={cn(
-                  "h-[30px] w-[30px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]",
-                  liked ? "fill-[#ff4d6d] text-[#ff4d6d]" : "text-white",
-                )}
-                strokeWidth={1.75}
-              />
-            </WatchSideAction>
-          </div>
-        ) : null}
-
-        {/* Bottom info */}
-        {!immersiveFs ? (
-          <div
-            className="pointer-events-none absolute inset-x-0 z-40 px-3"
-            style={{ bottom: WATCH_BAR_H + 26 }}
-          >
-            <div className="pointer-events-auto max-w-[calc(100%-4.5rem)]">
-              <button
-                type="button"
-                className="inline-flex max-w-full items-center gap-0.5 text-[17px] font-semibold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.65)]"
-                onClick={() => setDrawerOpen(true)}
+        {/* Letterbox mode keeps overlays outside the pager */}
+        {landscapeMode && !immersiveFs ? (
+          <>
+            <div className="absolute bottom-[8.5rem] right-2.5 z-40 flex flex-col items-center gap-5">
+              <WatchSideAction
+                label={favorited ? t("detail.favorited") : t("detail.favorite")}
+                count={formatCount(favCount, locale)}
+                onClick={() => void toggleFavorite()}
               >
-                <span className="truncate">{title}</span>
-                <ChevronRight className="h-5 w-5 shrink-0 opacity-90" strokeWidth={2.25} />
-              </button>
-              <button
-                type="button"
-                className="mt-1.5 flex w-full items-start text-left text-[13px] leading-5 text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
-                onClick={() => setEpLineExpanded((v) => !v)}
-              >
-                <span className="min-w-0 flex-1">
-                  {epLineExpanded ? epLine : epPreview}
-                  {!epLineExpanded && epLine.length > 26 && (
-                    <span className="ml-1 font-medium text-white">{t("detail.expand")}</span>
+                <Star
+                  className={cn(
+                    "h-[30px] w-[30px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]",
+                    favorited ? "fill-[#ffb000] text-[#ffb000]" : "text-white",
                   )}
-                </span>
-              </button>
+                  strokeWidth={1.75}
+                />
+              </WatchSideAction>
+              <WatchSideAction
+                label={t("feed.like")}
+                count={formatCount(likeCount, locale)}
+                onClick={() => void toggleLike()}
+              >
+                <Heart
+                  className={cn(
+                    "h-[30px] w-[30px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]",
+                    liked ? "fill-[#ff4d6d] text-[#ff4d6d]" : "text-white",
+                  )}
+                  strokeWidth={1.75}
+                />
+              </WatchSideAction>
             </div>
-          </div>
+            <div
+              className="pointer-events-none absolute inset-x-0 z-40 px-3"
+              style={{ bottom: WATCH_BAR_H + 26 }}
+            >
+              <div className="pointer-events-auto max-w-[calc(100%-4.5rem)]">
+                <button
+                  type="button"
+                  className="inline-flex max-w-full items-center gap-0.5 text-[17px] font-semibold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.65)]"
+                  onClick={() => setDrawerOpen(true)}
+                >
+                  <span className="truncate">{title}</span>
+                  <ChevronRight className="h-5 w-5 shrink-0 opacity-90" strokeWidth={2.25} />
+                </button>
+                <button
+                  type="button"
+                  className="mt-1.5 flex w-full items-start text-left text-[13px] leading-5 text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
+                  onClick={() => setEpLineExpanded((v) => !v)}
+                >
+                  <span className="min-w-0 flex-1">
+                    {epLineExpanded ? epLine : epPreview}
+                    {!epLineExpanded && epLine.length > 26 && (
+                      <span className="ml-1 font-medium text-white">{t("detail.expand")}</span>
+                    )}
+                  </span>
+                </button>
+              </div>
+            </div>
+          </>
         ) : null}
 
         {/* Progress for letterbox (outside 16:9 frame, above episode bar) */}
@@ -1099,12 +1231,13 @@ export function DramaDetail({ id }: { id: string }) {
             <VideoPlayer
               fill
               videoRef={videoRef}
-              src={playerReady && user && playUrl ? playUrl : null}
+              src={canPlay && playUrl ? playUrl : null}
               poster={coverIsImg ? drama.cover[0] : undefined}
               autoPlay
               seekTo={resumeApplied.current ? null : seekTo}
               loginRequired={needsLogin}
-              onLogin={() => openLogin()}
+              onLogin={() => openLogin("login")}
+              onRegister={() => openLogin("register")}
               locked={locked}
               lockLabel={
                 selected
@@ -1410,6 +1543,43 @@ export function DramaDetail({ id }: { id: string }) {
         </button>
       </div>
 
+    </div>
+  );
+}
+
+function WatchEpisodePeek({
+  coverUrl,
+  coverFallback,
+  label,
+  title,
+}: {
+  coverUrl?: string;
+  coverFallback: string[];
+  label: string;
+  title: string;
+}) {
+  return (
+    <div className="relative h-full min-h-0 overflow-hidden bg-black">
+      {coverUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={coverUrl} alt="" className="h-full w-full object-cover" draggable={false} />
+      ) : (
+        <div
+          className="h-full w-full"
+          style={{
+            background: `linear-gradient(150deg, ${coverFallback[0]}, ${coverFallback[1] || coverFallback[0]})`,
+          }}
+        />
+      )}
+      <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-black/25" />
+      <div className="absolute inset-x-0 bottom-24 px-3">
+        <p className="truncate text-[17px] font-semibold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.65)]">
+          {title}
+        </p>
+        <p className="mt-1 text-[13px] text-white/90 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]">
+          {label}
+        </p>
+      </div>
     </div>
   );
 }

@@ -5,7 +5,6 @@ import { X, Loader2, Check, Crown, Clapperboard, Infinity, Ticket } from "lucide
 import { useLocale } from "@/lib/i18n";
 import { useAuth } from "@/components/auth-context";
 import {
-  getExchangeRates,
   getVipPlans,
   vipSubOrder,
   simulatePay,
@@ -15,18 +14,18 @@ import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { track } from "@/lib/track";
 
-type PayMethod = "ALIPAY" | "SIMULATE";
+const PAY_CURRENCY = "USD";
+
+type PayMethod = "STRIPE" | "SIMULATE";
 
 export function VipModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { t, locale } = useLocale();
   const { user, openLogin, applySession } = useAuth();
   const isDev = process.env.NODE_ENV === "development";
 
-  const [currencies, setCurrencies] = useState<string[]>(["CNY", "VND"]);
-  const [currency, setCurrency] = useState("CNY");
   const [plans, setPlans] = useState<VipPlanQuote[]>([]);
   const [planId, setPlanId] = useState<string | null>(null);
-  const [method, setMethod] = useState<PayMethod>("ALIPAY");
+  const [method, setMethod] = useState<PayMethod>("STRIPE");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
@@ -36,20 +35,13 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
     if (!open) return;
     setErr(null);
     setDone(false);
-    setMethod(isDev ? "SIMULATE" : "ALIPAY");
-    getExchangeRates().then((r) => {
-      const list = r.map((x) => x.currency);
-      if (list.length) {
-        setCurrencies(list);
-        setCurrency((prev) => (list.includes(prev) ? prev : list.includes("CNY") ? "CNY" : list[0]));
-      }
-    });
+    setMethod(isDev ? "SIMULATE" : "STRIPE");
   }, [open, isDev]);
 
   useEffect(() => {
     if (!open) return;
     setLoading(true);
-    getVipPlans(currency)
+    getVipPlans(PAY_CURRENCY)
       .then((list) => {
         setPlans(list);
         setPlanId((prev) => {
@@ -58,13 +50,7 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
         });
       })
       .finally(() => setLoading(false));
-  }, [open, currency]);
-
-  useEffect(() => {
-    if (method === "ALIPAY" && currency !== "CNY") {
-      setMethod(isDev ? "SIMULATE" : "ALIPAY");
-    }
-  }, [currency, method, isDev]);
+  }, [open]);
 
   if (!open) return null;
 
@@ -82,34 +68,14 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
       setErr(t("vip.emptyPlans"));
       return;
     }
-    if (method === "ALIPAY" && currency !== "CNY") {
-      setErr(t("recharge.alipayCnyOnly"));
-      return;
-    }
     setBusy(true);
     setErr(null);
     try {
-      const payMethod = method === "ALIPAY" ? "ALIPAY" : "STRIPE";
-      const r: any = await vipSubOrder(selected.id, currency, payMethod);
-      if (method === "ALIPAY" && r?.payUrl) {
-        track("vip_sub", { method: "ALIPAY", currency, planId: selected.id, payAmount });
-        window.location.href = r.payUrl;
-        return;
-      }
-      if (method === "ALIPAY" && r?.payForm) {
-        const wrap = document.createElement("div");
-        wrap.innerHTML = r.payForm;
-        document.body.appendChild(wrap);
-        const form = wrap.querySelector("form");
-        if (form) {
-          (form as HTMLFormElement).submit();
-          return;
-        }
-      }
+      const r: any = await vipSubOrder(selected.id, PAY_CURRENCY, "STRIPE");
       if (isDev && r?.orderNo && method === "SIMULATE") {
         await simulatePay(r.orderNo);
         await applySession();
-        track("vip_sub", { method, currency, planId: selected.id, payAmount });
+        track("vip_sub", { method, currency: PAY_CURRENCY, planId: selected.id, payAmount });
         setDone(true);
         setTimeout(() => onClose(), 1400);
         return;
@@ -190,27 +156,6 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
             </ul>
 
             <div>
-              <label className="text-caption uppercase text-ink-subtle">{t("recharge.currency")}</label>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {currencies.map((c) => (
-                  <button
-                    key={c}
-                    type="button"
-                    onClick={() => setCurrency(c)}
-                    className={cn(
-                      "rounded-full px-4 py-2 text-body-sm font-medium transition-colors",
-                      currency === c
-                        ? "bg-brand text-white"
-                        : "bg-surface-2 text-ink-muted hover:text-ink",
-                    )}
-                  >
-                    {c}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div>
               <label className="text-caption uppercase text-ink-subtle">{t("vip.plans")}</label>
               {loading ? (
                 <p className="mt-3 text-body-sm text-ink-muted">{t("common.loading")}</p>
@@ -251,7 +196,7 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
                           <p className="text-h4 font-bold tabular-nums text-gold">
                             {Number(p.payAmount || 0).toLocaleString()}
                           </p>
-                          <p className="text-caption text-ink-subtle">{p.payCurrency || currency}</p>
+                          <p className="text-caption text-ink-subtle">{p.payCurrency || PAY_CURRENCY}</p>
                         </div>
                       </button>
                     );
@@ -260,23 +205,10 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
               )}
             </div>
 
-            <div>
-              <label className="text-caption uppercase text-ink-subtle">{t("recharge.method")}</label>
-              <div className="mt-2 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => setMethod("ALIPAY")}
-                  disabled={currency !== "CNY"}
-                  className={cn(
-                    "rounded-full px-4 py-2 text-body-sm font-medium transition-colors disabled:opacity-40",
-                    method === "ALIPAY"
-                      ? "bg-brand text-white"
-                      : "bg-surface-2 text-ink-muted hover:text-ink",
-                  )}
-                >
-                  {t("recharge.alipay")}
-                </button>
-                {isDev ? (
+            {isDev ? (
+              <div>
+                <label className="text-caption uppercase text-ink-subtle">{t("recharge.method")}</label>
+                <div className="mt-2 flex flex-wrap gap-2">
                   <button
                     type="button"
                     onClick={() => setMethod("SIMULATE")}
@@ -289,9 +221,9 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
                   >
                     {t("recharge.simulate")}
                   </button>
-                ) : null}
+                </div>
               </div>
-            </div>
+            ) : null}
 
             {err ? <p className="text-body-sm text-danger">{err}</p> : null}
 
@@ -309,7 +241,7 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
               {isActiveVip ? t("vip.renew") : t("vip.confirm")}
               {selected ? (
                 <span className="ml-1 tabular-nums opacity-90">
-                  · {payAmount.toLocaleString()} {currency}
+                  · {payAmount.toLocaleString()} {PAY_CURRENCY}
                 </span>
               ) : null}
             </button>

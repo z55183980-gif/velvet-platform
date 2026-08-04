@@ -106,7 +106,7 @@ class SubmitKycDto {
 class CreateDramaDto {
   @IsNotEmpty()
   @IsString()
-  titleVi!: string;
+  titleEn!: string;
 
   @IsOptional()
   @IsString()
@@ -114,7 +114,7 @@ class CreateDramaDto {
 
   @IsOptional()
   @IsString()
-  descriptionVi?: string;
+  descriptionEn?: string;
 
   @IsOptional()
   @IsString()
@@ -138,7 +138,7 @@ class CreateDramaDto {
 class UpdateDramaDto {
   @IsOptional()
   @IsString()
-  titleVi?: string;
+  titleEn?: string;
 
   @IsOptional()
   @IsString()
@@ -146,7 +146,7 @@ class UpdateDramaDto {
 
   @IsOptional()
   @IsString()
-  descriptionVi?: string;
+  descriptionEn?: string;
 
   @IsOptional()
   @IsString()

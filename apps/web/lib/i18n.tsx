@@ -26,6 +26,7 @@ const vi = {
     vip: "VIP",
     balance: "Số dư",
     login: "Đăng nhập",
+    register: "Đăng ký",
     account: "Tài khoản",
     creator: "Sáng tạo",
   },
@@ -36,6 +37,7 @@ const vi = {
   },
   theater: {
     title: "Rạp phim",
+    searchPlaceholder: "Tìm kiếm",
     all: "Tất cả",
     latest: "Mới nhất",
     hottest: "Hot nhất",
@@ -233,6 +235,8 @@ const vi = {
     clearHistory: "Xóa lịch sử",
     loginHint: "Đăng nhập để xem tài khoản",
     loginVipHint: "Đăng nhập để mở VIP và theo dõi phim yêu thích",
+    loginNow: "Đăng nhập ngay",
+    freeRegister: "Đăng ký miễn phí",
     episode: "Tập",
     allGroups: "Tất cả",
     note: "Ghi chú",
@@ -271,11 +275,34 @@ const vi = {
     deleteSelected: "Xóa",
     closeSettings: "Đóng",
   },
+  pwa: {
+    title: "Xem mượt hơn, mở là tiếp tục",
+    subtitle: "Thêm vào màn hình chính để mở nhanh, xem toàn màn hình và tiếp tục tập đang dở.",
+    settingsEntry: "Thêm vào màn hình chính",
+    androidBadge: "Android",
+    androidBody: "Cài đặt nhanh như ứng dụng trên thiết bị của bạn.",
+    androidInstall: "Cài đặt ngay",
+    installing: "Đang cài…",
+    androidStep1: "Mở menu trình duyệt (⋮).",
+    androidStep2: "Chọn “Thêm vào màn hình chính” hoặc “Cài đặt ứng dụng”.",
+    androidStep3: "Xác nhận — mở từ biểu tượng trên màn hình chính.",
+    iosBadge: "iPhone / iPad",
+    iosBody: "Trên iOS hãy thêm thủ công từ Safari:",
+    iosStep1: "Nhấn nút Chia sẻ",
+    iosStep2: "Chọn “Thêm vào Màn hình chính”.",
+    iosStep3: "Nhấn “Thêm” để hoàn tất.",
+    iosSafariHint: "Chỉ hỗ trợ Safari (không dùng chế độ ẩn danh nếu có thể).",
+    otherBody: "Hãy dùng trình duyệt di động để thêm Velvet vào màn hình chính.",
+    later: "Để sau",
+    close: "Đóng",
+  },
   player: {
     loading: "Đang tải...",
     error: "Không thể phát video",
     empty: "Chưa có tập được chọn",
     loginToWatch: "Đăng nhập để xem",
+    freeRegister: "Đăng ký miễn phí",
+    hasAccountLogin: "Đã có tài khoản Đăng nhập",
     play: "Phát",
     pause: "Tạm dừng",
     next: "Tập tiếp",
@@ -344,7 +371,7 @@ const vi = {
     states: "Trạng thái",
     notes: "Ghi chú",
   },
-  common: { close: "Đóng", loading: "Đang tải…" },
+  common: { close: "Đóng", clear: "Xóa", loading: "Đang tải…" },
   admin: {
     dashboard: "Tổng quan",
     content: "Nội dung",
@@ -404,6 +431,7 @@ const zh: typeof vi = {
     vip: "VIP",
     balance: "余额",
     login: "登录",
+    register: "注册",
     account: "账户",
     creator: "创作者",
   },
@@ -414,6 +442,7 @@ const zh: typeof vi = {
   },
   theater: {
     title: "剧场",
+    searchPlaceholder: "搜索短剧",
     all: "全部",
     latest: "最新",
     hottest: "最热",
@@ -610,6 +639,8 @@ const zh: typeof vi = {
     clearHistory: "清空历史",
     loginHint: "登录后查看个人中心",
     loginVipHint: "登录后开通 VIP，收藏喜欢的短剧",
+    loginNow: "立即登录",
+    freeRegister: "免费注册",
     episode: "第",
     allGroups: "全部",
     note: "备注",
@@ -648,11 +679,34 @@ const zh: typeof vi = {
     deleteSelected: "删除",
     closeSettings: "关闭",
   },
+  pwa: {
+    title: "更好观看体验，方便继续追",
+    subtitle: "添加到主屏幕，一点即开、全屏沉浸，随时接着看未看完的剧集。",
+    settingsEntry: "添加到主屏幕",
+    androidBadge: "Android",
+    androidBody: "可一键安装为应用图标，体验更接近原生 App。",
+    androidInstall: "立即安装",
+    installing: "安装中…",
+    androidStep1: "打开浏览器菜单（⋮）。",
+    androidStep2: "选择「添加到主屏幕」或「安装应用」。",
+    androidStep3: "确认后，从桌面图标打开即可。",
+    iosBadge: "iPhone / iPad",
+    iosBody: "苹果端需在 Safari 中手动添加：",
+    iosStep1: "点击底部分享按钮",
+    iosStep2: "选择「添加到主屏幕」。",
+    iosStep3: "点「添加」完成。",
+    iosSafariHint: "请使用 Safari 打开（尽量不要用无痕模式）。",
+    otherBody: "请使用手机浏览器将 Velvet 添加到主屏幕。",
+    later: "稍后再说",
+    close: "关闭",
+  },
   player: {
     loading: "加载中...",
     error: "无法播放视频",
     empty: "尚未选择剧集",
     loginToWatch: "登录后观看",
+    freeRegister: "免费注册",
+    hasAccountLogin: "已有账号 登陆",
     play: "播放",
     pause: "暂停",
     next: "下一集",
@@ -721,7 +775,7 @@ const zh: typeof vi = {
     states: "状态",
     notes: "说明",
   },
-  common: { close: "关闭", loading: "加载中…" },
+  common: { close: "关闭", clear: "清除", loading: "加载中…" },
   admin: {
     dashboard: "仪表盘",
     content: "内容库",
@@ -781,6 +835,7 @@ const en: typeof vi = {
     vip: "VIP",
     balance: "Balance",
     login: "Log in",
+    register: "Sign up",
     account: "Account",
     creator: "Creator",
   },
@@ -791,6 +846,7 @@ const en: typeof vi = {
   },
   theater: {
     title: "Theater",
+    searchPlaceholder: "Search dramas",
     all: "All",
     latest: "Latest",
     hottest: "Hottest",
@@ -987,6 +1043,8 @@ const en: typeof vi = {
     clearHistory: "Clear history",
     loginHint: "Log in to view your account",
     loginVipHint: "Log in to join VIP and save favorites",
+    loginNow: "Sign in now",
+    freeRegister: "Sign up free",
     episode: "Ep",
     allGroups: "All",
     note: "Note",
@@ -1025,11 +1083,34 @@ const en: typeof vi = {
     deleteSelected: "Delete",
     closeSettings: "Close",
   },
+  pwa: {
+    title: "Watch smoother, pick up anytime",
+    subtitle: "Add to Home Screen for full-screen viewing and quick return to where you left off.",
+    settingsEntry: "Add to Home Screen",
+    androidBadge: "Android",
+    androidBody: "Install Velvet as an app icon on your device.",
+    androidInstall: "Install now",
+    installing: "Installing…",
+    androidStep1: "Open the browser menu (⋮).",
+    androidStep2: "Tap “Add to Home screen” or “Install app”.",
+    androidStep3: "Confirm, then open from the home screen icon.",
+    iosBadge: "iPhone / iPad",
+    iosBody: "On Apple devices, add it manually in Safari:",
+    iosStep1: "Tap the Share button",
+    iosStep2: "Choose “Add to Home Screen”.",
+    iosStep3: "Tap “Add” to finish.",
+    iosSafariHint: "Use Safari (avoid Private Browsing if possible).",
+    otherBody: "Use a mobile browser to add Velvet to your home screen.",
+    later: "Not now",
+    close: "Close",
+  },
   player: {
     loading: "Loading...",
     error: "Unable to play video",
     empty: "No episode selected",
     loginToWatch: "Log in to watch",
+    freeRegister: "Free sign up",
+    hasAccountLogin: "Already have an account? Log in",
     play: "Play",
     pause: "Pause",
     next: "Next episode",
@@ -1098,7 +1179,7 @@ const en: typeof vi = {
     states: "States",
     notes: "Notes",
   },
-  common: { close: "Close", loading: "Loading…" },
+  common: { close: "Close", clear: "Clear", loading: "Loading…" },
   admin: {
     dashboard: "Overview",
     content: "Content",
@@ -1158,6 +1239,7 @@ const fr: typeof vi = {
     vip: "VIP",
     balance: "Solde",
     login: "Connexion",
+    register: "Inscription",
     account: "Compte",
     creator: "Créateur",
   },
@@ -1168,6 +1250,7 @@ const fr: typeof vi = {
   },
   theater: {
     title: "Théâtre",
+    searchPlaceholder: "Rechercher",
     all: "Tout",
     latest: "Nouveautés",
     hottest: "Populaires",
@@ -1364,6 +1447,8 @@ const fr: typeof vi = {
     clearHistory: "Effacer l’historique",
     loginHint: "Connectez-vous pour voir votre compte",
     loginVipHint: "Connectez-vous pour le VIP et les favoris",
+    loginNow: "Se connecter",
+    freeRegister: "Inscription gratuite",
     episode: "Ép.",
     allGroups: "Tous",
     note: "Note",
@@ -1402,11 +1487,34 @@ const fr: typeof vi = {
     deleteSelected: "Supprimer",
     closeSettings: "Fermer",
   },
+  pwa: {
+    title: "Mieux regarder, reprendre facilement",
+    subtitle: "Ajoutez à l’écran d’accueil pour un mode plein écran et reprendre vite où vous en étiez.",
+    settingsEntry: "Ajouter à l’écran d’accueil",
+    androidBadge: "Android",
+    androidBody: "Installez Velvet comme une icône d’application.",
+    androidInstall: "Installer",
+    installing: "Installation…",
+    androidStep1: "Ouvrez le menu du navigateur (⋮).",
+    androidStep2: "Choisissez « Ajouter à l’écran d’accueil » ou « Installer l’application ».",
+    androidStep3: "Confirmez, puis ouvrez depuis l’icône.",
+    iosBadge: "iPhone / iPad",
+    iosBody: "Sur Apple, ajoutez-la manuellement dans Safari :",
+    iosStep1: "Appuyez sur Partager",
+    iosStep2: "Choisissez « Sur l’écran d’accueil ».",
+    iosStep3: "Appuyez sur « Ajouter ».",
+    iosSafariHint: "Utilisez Safari (évitez la navigation privée si possible).",
+    otherBody: "Utilisez un navigateur mobile pour ajouter Velvet à l’écran d’accueil.",
+    later: "Plus tard",
+    close: "Fermer",
+  },
   player: {
     loading: "Chargement...",
     error: "Impossible de lire la vidéo",
     empty: "Aucun épisode sélectionné",
     loginToWatch: "Connectez-vous pour regarder",
+    freeRegister: "Inscription gratuite",
+    hasAccountLogin: "Déjà un compte ? Connexion",
     play: "Lecture",
     pause: "Pause",
     next: "Épisode suivant",
@@ -1475,7 +1583,7 @@ const fr: typeof vi = {
     states: "États",
     notes: "Notes",
   },
-  common: { close: "Fermer", loading: "Chargement…" },
+  common: { close: "Fermer", clear: "Effacer", loading: "Chargement…" },
   admin: {
     dashboard: "Vue d’ensemble",
     content: "Contenu",
@@ -1535,6 +1643,7 @@ const ru: typeof vi = {
     vip: "VIP",
     balance: "Баланс",
     login: "Войти",
+    register: "Регистрация",
     account: "Аккаунт",
     creator: "Автор",
   },
@@ -1545,6 +1654,7 @@ const ru: typeof vi = {
   },
   theater: {
     title: "Театр",
+    searchPlaceholder: "Поиск",
     all: "Все",
     latest: "Новинки",
     hottest: "Хиты",
@@ -1741,6 +1851,8 @@ const ru: typeof vi = {
     clearHistory: "Очистить историю",
     loginHint: "Войдите, чтобы увидеть аккаунт",
     loginVipHint: "Войдите для VIP и избранного",
+    loginNow: "Войти сейчас",
+    freeRegister: "Бесплатная регистрация",
     episode: "Сер.",
     allGroups: "Все",
     note: "Заметка",
@@ -1779,11 +1891,34 @@ const ru: typeof vi = {
     deleteSelected: "Удалить",
     closeSettings: "Закрыть",
   },
+  pwa: {
+    title: "Удобнее смотреть и продолжать",
+    subtitle: "Добавьте на домашний экран — полноэкранный просмотр и быстрый возврат к незаконченным сериям.",
+    settingsEntry: "На экран «Домой»",
+    androidBadge: "Android",
+    androidBody: "Установите Velvet как значок приложения.",
+    androidInstall: "Установить",
+    installing: "Установка…",
+    androidStep1: "Откройте меню браузера (⋮).",
+    androidStep2: "Выберите «На главный экран» или «Установить приложение».",
+    androidStep3: "Подтвердите и откройте с иконки.",
+    iosBadge: "iPhone / iPad",
+    iosBody: "На Apple нужно добавить вручную в Safari:",
+    iosStep1: "Нажмите «Поделиться»",
+    iosStep2: "Выберите «На экран „Домой“».",
+    iosStep3: "Нажмите «Добавить».",
+    iosSafariHint: "Используйте Safari (по возможности без режима инкогнито).",
+    otherBody: "Добавьте Velvet на домашний экран через мобильный браузер.",
+    later: "Позже",
+    close: "Закрыть",
+  },
   player: {
     loading: "Загрузка...",
     error: "Не удалось воспроизвести",
     empty: "Серия не выбрана",
     loginToWatch: "Войдите, чтобы смотреть",
+    freeRegister: "Бесплатная регистрация",
+    hasAccountLogin: "Уже есть аккаунт? Войти",
     play: "Смотреть",
     pause: "Пауза",
     next: "Следующая",
@@ -1852,7 +1987,7 @@ const ru: typeof vi = {
     states: "Состояния",
     notes: "Заметки",
   },
-  common: { close: "Закрыть", loading: "Загрузка…" },
+  common: { close: "Закрыть", clear: "Очистить", loading: "Загрузка…" },
   admin: {
     dashboard: "Обзор",
     content: "Контент",
@@ -1902,7 +2037,7 @@ const ru: typeof vi = {
   },
 };
 
-const dicts: Record<Locale, typeof vi> = { vi, zh, en, fr, ru };
+const dicts: Record<Locale, typeof vi> = { zh, en, fr };
 
 function lookup(obj: unknown, path: string): string {
   const val = path.split(".").reduce<unknown>((o, k) => {
@@ -1952,13 +2087,21 @@ interface LocaleContextValue {
 
 const LocaleContext = createContext<LocaleContextValue | null>(null);
 
-export function LocaleProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocaleState] = useState<Locale>(FALLBACK_LOCALE);
+export function LocaleProvider({
+  children,
+  initialLocale = FALLBACK_LOCALE,
+}: {
+  children: ReactNode;
+  initialLocale?: Locale;
+}) {
+  // Must match SSR: never read localStorage/navigator during the first client render.
+  const [locale, setLocaleState] = useState<Locale>(initialLocale);
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
+    // After hydrate: prefer persisted choice, then cookie/system.
     const next = resolveInitialLocale();
-    setLocaleState(next);
+    setLocaleState((prev) => (prev === next ? prev : next));
     persistLocale(next);
     setReady(true);
   }, []);

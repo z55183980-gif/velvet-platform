@@ -28,8 +28,6 @@ import {
   LayoutGrid,
   LogOut,
   Menu,
-  Package,
-  PlusCircle,
   Scale,
   Settings2,
   ShieldCheck,
@@ -72,10 +70,10 @@ const NAV_GROUPS: NavGroup[] = [
     id: "content",
     titleKey: "navContent",
     items: [
-      { href: "/content/add", key: "contentAdd", icon: PlusCircle, end: true },
       { href: "/content", key: "content", icon: Clapperboard, end: true },
+      { href: "/content?sort=latest", key: "contentLatest", icon: Clapperboard, end: true },
       { href: "/content?status=PENDING_REVIEW", key: "contentPending", icon: ShieldCheck, end: true },
-      { href: "/categories", key: "categories", icon: FolderTree },
+      { href: "/content?modal=categories", key: "categories", icon: FolderTree, end: true },
     ],
   },
   {
@@ -102,7 +100,6 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: "/orders", key: "orders", icon: CreditCard },
       { href: "/refunds", key: "refunds", icon: Flag, end: true },
-      { href: "/packages", key: "packages", icon: Package, finance: true },
       { href: "/vip-plans", key: "vipPlans", icon: Gift, finance: true },
       { href: "/redeem-codes", key: "redeemCodes", icon: Ticket, finance: true },
     ],
@@ -148,15 +145,22 @@ function isActive(pathname: string, searchParams: URLSearchParams, item: NavItem
     for (const [key, value] of params.entries()) {
       if (searchParams.get(key) !== value) return false;
     }
+    // List-filter nav items should not stay active when a form modal is open.
+    if (!params.has("modal")) {
+      const modal = searchParams.get("modal");
+      if (modal === "add" || modal === "categories") return false;
+    }
     return pathname === path;
   }
 
   if (path === "/content") {
-    return pathname === "/content" && !searchParams.get("status");
-  }
-
-  if (path === "/content/add") {
-    return pathname === "/content/add";
+    const modal = searchParams.get("modal");
+    return (
+      pathname === "/content" &&
+      !searchParams.get("status") &&
+      !searchParams.get("sort") &&
+      (!modal || modal === "detail")
+    );
   }
 
   if (path === "/users") {

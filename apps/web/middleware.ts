@@ -6,6 +6,7 @@ import {
   isLocalHost,
   isWebHost,
 } from "@/lib/site";
+import { localeFromAcceptLanguage } from "@/lib/languages";
 
 /**
  * 管理端已拆至独立应用 apps/admin（生产：admin.velvetmovie.space）。
@@ -13,9 +14,18 @@ import {
  * - 用户域访问 /admin|/ops|/console → 跳转管理端域名
  * - 误把管理域指到本应用时 → 跳转 ADMIN_ORIGIN
  * - locale 前缀 rewrite
+ * - 首次访问根据 Accept-Language 写入 dv_locale（避免 SSR/CSR 语言不一致）
  */
 const ADMIN_PREFIXES = ["/admin", "/ops", "/console"];
-const LOCALE_PREFIXES = ["zh", "en", "fr", "ru", "vi"] as const;
+const LOCALE_PREFIXES = ["zh", "en", "fr"] as const;
+
+function localeCookie(res: NextResponse, locale: string) {
+  res.cookies.set("dv_locale", locale, {
+    path: "/",
+    maxAge: 60 * 60 * 24 * 365,
+    sameSite: "lax",
+  });
+}
 
 function localeRewrite(
   req: NextRequest,
@@ -30,11 +40,7 @@ function localeRewrite(
   url.pathname = rest.startsWith("/") ? rest : `/${rest}`;
 
   const res = NextResponse.rewrite(url);
-  res.cookies.set("dv_locale", prefix, {
-    path: "/",
-    maxAge: 60 * 60 * 24 * 365,
-    sameSite: "lax",
-  });
+  localeCookie(res, prefix);
   return res;
 }
 
@@ -85,6 +91,13 @@ function hostRedirects(req: NextRequest): NextResponse | null {
   return null;
 }
 
+function withDefaultLocaleCookie(req: NextRequest, res: NextResponse) {
+  if (req.cookies.get("dv_locale")?.value) return res;
+  const locale = localeFromAcceptLanguage(req.headers.get("accept-language"));
+  localeCookie(res, locale);
+  return res;
+}
+
 export function middleware(req: NextRequest) {
   const redirected = hostRedirects(req);
   if (redirected) return redirected;
@@ -94,7 +107,7 @@ export function middleware(req: NextRequest) {
     if (rewritten) return rewritten;
   }
 
-  return NextResponse.next();
+  return withDefaultLocaleCookie(req, NextResponse.next());
 }
 
 export const config = {

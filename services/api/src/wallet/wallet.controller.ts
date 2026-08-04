@@ -81,15 +81,15 @@ export class WalletController {
     @CurrentUser() user: AuthUser,
   ) {
     const order = await this.prisma.order.findUnique({ where: { orderNo } });
-    if (!order) throw new BizException(BizCode.NOT_FOUND, 'Đơn hàng không tồn tại');
+    if (!order) throw new BizException(BizCode.NOT_FOUND, 'order.notFound');
     if (order.userId !== user.userId) {
-      throw new BizException(BizCode.FORBIDDEN, 'Không có quyền');
+      throw new BizException(BizCode.FORBIDDEN, 'common.forbidden');
     }
     if (order.paymentStatus !== 'PAID') {
-      throw new BizException(BizCode.ORDER_NOT_PAID, 'Đơn chưa thanh toán, không thể yêu cầu hoàn');
+      throw new BizException(BizCode.ORDER_NOT_PAID, 'order.unpaidCannotRefund');
     }
     if (order.orderType !== 'TOPUP' && order.orderType !== 'EPISODE_UNLOCK') {
-      throw new BizException(BizCode.FORBIDDEN, 'Loại đơn này không hỗ trợ hoàn');
+      throw new BizException(BizCode.FORBIDDEN, 'order.typeNoRefund');
     }
     if (order.refundStatus === 'REQUESTED') {
       return ok({ alreadyRequested: true, orderNo });

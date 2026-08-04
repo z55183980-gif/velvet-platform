@@ -111,18 +111,20 @@ export class AdminAuthService implements OnModuleInit {
   }): Promise<AdminLoginResult> {
     const count = await this.prisma.adminUser.count();
     if (count > 0) {
-      throw new BizException(BizCode.FORBIDDEN, 'Đã có tài khoản quản trị, không thể bootstrap');
+      throw new BizException(BizCode.FORBIDDEN, 'admin.bootstrapExists');
     }
     const email = this.normalizeEmail(opts.email);
-    if (!email) throw new BizException(BizCode.BAD_REQUEST, 'Email không hợp lệ');
+    if (!email) throw new BizException(BizCode.BAD_REQUEST, 'email.invalid');
     const password = String(opts.password || '');
     if (password.length < MIN_PASSWORD_LEN) {
-      throw new BizException(BizCode.BAD_REQUEST, `Mật khẩu ít nhất ${MIN_PASSWORD_LEN} ký tự`);
+      throw new BizException(BizCode.BAD_REQUEST, 'admin.passwordMinLength', undefined, {
+        min: MIN_PASSWORD_LEN,
+      });
     }
     const username = String(opts.username || email.split('@')[0] || 'admin')
       .trim()
       .toLowerCase();
-    if (!username) throw new BizException(BizCode.BAD_REQUEST, 'Username không hợp lệ');
+    if (!username) throw new BizException(BizCode.BAD_REQUEST, 'username.invalid');
 
     const admin = await this.prisma.adminUser.create({
       data: {
@@ -139,7 +141,7 @@ export class AdminAuthService implements OnModuleInit {
   async login(account: string, password: string): Promise<AdminLoginResult> {
     const raw = String(account || '').trim();
     if (!raw || !password) {
-      throw new BizException(BizCode.UNAUTHORIZED, 'Email/username hoặc mật khẩu không đúng');
+      throw new BizException(BizCode.UNAUTHORIZED, 'admin.badCredentials');
     }
 
     const email = this.normalizeEmail(raw);
@@ -157,7 +159,7 @@ export class AdminAuthService implements OnModuleInit {
         result: 'fail',
         message: '账号不存在 / 已停用',
       });
-      throw new BizException(BizCode.UNAUTHORIZED, 'Email/username hoặc mật khẩu không đúng');
+      throw new BizException(BizCode.UNAUTHORIZED, 'admin.badCredentials');
     }
     if (!this.verifyPassword(password, admin.passwordHash)) {
       await this.audit.write({
@@ -168,7 +170,7 @@ export class AdminAuthService implements OnModuleInit {
         result: 'fail',
         message: '密码错误',
       });
-      throw new BizException(BizCode.UNAUTHORIZED, 'Email/username hoặc mật khẩu không đúng');
+      throw new BizException(BizCode.UNAUTHORIZED, 'admin.badCredentials');
     }
     await this.audit.write({
       actorId: admin.id,
@@ -183,7 +185,7 @@ export class AdminAuthService implements OnModuleInit {
   async me(adminId: bigint): Promise<AdminProfile> {
     const admin = await this.prisma.adminUser.findUnique({ where: { id: adminId } });
     if (!admin || admin.status !== 'ACTIVE') {
-      throw new BizException(BizCode.UNAUTHORIZED, 'Phiên quản trị không hợp lệ');
+      throw new BizException(BizCode.UNAUTHORIZED, 'admin.sessionInvalid');
     }
     return this.toProfile(admin);
   }
@@ -197,10 +199,10 @@ export class AdminAuthService implements OnModuleInit {
 
     if (opts.email !== undefined) {
       const email = this.normalizeEmail(opts.email);
-      if (!email) throw new BizException(BizCode.BAD_REQUEST, 'Email không hợp lệ');
+      if (!email) throw new BizException(BizCode.BAD_REQUEST, 'email.invalid');
       if (email !== admin.email) {
         const clash = await this.prisma.adminUser.findUnique({ where: { email } });
-        if (clash) throw new BizException(BizCode.CONFLICT, 'Email đã được sử dụng');
+        if (clash) throw new BizException(BizCode.CONFLICT, 'admin.emailTaken');
         data.email = email;
       }
     }
@@ -210,11 +212,11 @@ export class AdminAuthService implements OnModuleInit {
         .trim()
         .toLowerCase();
       if (!username || username.length < 2) {
-        throw new BizException(BizCode.BAD_REQUEST, 'Username không hợp lệ');
+        throw new BizException(BizCode.BAD_REQUEST, 'username.invalid');
       }
       if (username !== admin.username) {
         const clash = await this.prisma.adminUser.findUnique({ where: { username } });
-        if (clash) throw new BizException(BizCode.CONFLICT, 'Username đã được sử dụng');
+        if (clash) throw new BizException(BizCode.CONFLICT, 'admin.usernameTaken');
         data.username = username;
       }
     }
@@ -237,10 +239,12 @@ export class AdminAuthService implements OnModuleInit {
   ): Promise<{ success: true }> {
     const admin = await this.requireActive(adminId);
     if (!this.verifyPassword(oldPassword, admin.passwordHash)) {
-      throw new BizException(BizCode.UNAUTHORIZED, 'Mật khẩu cũ không đúng');
+      throw new BizException(BizCode.UNAUTHORIZED, 'admin.oldPasswordWrong');
     }
     if (String(newPassword || '').length < MIN_PASSWORD_LEN) {
-      throw new BizException(BizCode.BAD_REQUEST, `Mật khẩu mới ít nhất ${MIN_PASSWORD_LEN} ký tự`);
+      throw new BizException(BizCode.BAD_REQUEST, 'admin.newPasswordMinLength', undefined, {
+        min: MIN_PASSWORD_LEN,
+      });
     }
     await this.prisma.adminUser.update({
       where: { id: adminId },
@@ -258,7 +262,7 @@ export class AdminAuthService implements OnModuleInit {
   private async requireActive(adminId: bigint) {
     const admin = await this.prisma.adminUser.findUnique({ where: { id: adminId } });
     if (!admin || admin.status !== 'ACTIVE') {
-      throw new BizException(BizCode.UNAUTHORIZED, 'Phiên quản trị không hợp lệ');
+      throw new BizException(BizCode.UNAUTHORIZED, 'admin.sessionInvalid');
     }
     return admin;
   }

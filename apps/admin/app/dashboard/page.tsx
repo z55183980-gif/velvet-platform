@@ -24,7 +24,7 @@ type RankTab = "view" | "unlock" | "sales";
 type DramaRankRow = {
   id: string;
   titleZh: string | null;
-  titleVi: string | null;
+  titleEn: string | null;
   viewCount: number;
   unlockCount: number;
 };
@@ -32,7 +32,7 @@ type DramaRankRow = {
 type SalesRankRow = {
   dramaId: string;
   titleZh: string | null;
-  titleVi: string | null;
+  titleEn: string | null;
   orderCount: number;
   credits: string;
   amountVnd: string;
@@ -251,7 +251,7 @@ export default function AdminDashboardPage() {
         header: t("drama"),
         cell: (row) => (
           <Link href={`/content/${row.id}`} className="text-brand hover:underline">
-            {row.titleZh || row.titleVi || "—"}
+            {row.titleZh || row.titleEn || "—"}
           </Link>
         ),
       },
@@ -273,7 +273,7 @@ export default function AdminDashboardPage() {
         header: t("drama"),
         cell: (r) => (
           <Link href={`/content/${r.dramaId}`} className="text-brand hover:underline">
-            {r.titleZh || r.titleVi || "—"}
+            {r.titleZh || r.titleEn || "—"}
           </Link>
         ),
       },

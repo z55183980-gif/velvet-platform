@@ -10,6 +10,8 @@ export interface DramaListFilter {
   isOfficial?: '1' | '0';
   isFeatured?: '1' | '0';
   isHottest?: '1' | '0';
+  /** weight = 运营权重；latest = 上架时间（最新） */
+  sort?: 'weight' | 'latest';
   page?: number;
   pageSize?: number;
 }
@@ -35,7 +37,7 @@ export class ContentService {
     if (filter.isHottest === '0') where.isHottest = false;
     if (filter.q) {
       where.OR = [
-        { titleVi: { contains: filter.q, mode: 'insensitive' } },
+        { titleEn: { contains: filter.q, mode: 'insensitive' } },
         { titleZh: { contains: filter.q, mode: 'insensitive' } },
         { slug: { contains: filter.q, mode: 'insensitive' } },
         { creator: { displayName: { contains: filter.q, mode: 'insensitive' } } },
@@ -44,7 +46,9 @@ export class ContentService {
     const orderBy =
       filter.isHottest === '1'
         ? [{ hottestSortOrder: 'asc' as const }, { updatedAt: 'desc' as const }]
-        : [{ sortWeight: 'desc' as const }, { updatedAt: 'desc' as const }];
+        : filter.sort === 'latest'
+          ? [{ publishedAt: 'desc' as const }, { updatedAt: 'desc' as const }]
+          : [{ sortWeight: 'desc' as const }, { updatedAt: 'desc' as const }];
     const [rows, total] = await Promise.all([
       this.prisma.drama.findMany({
         where,
@@ -78,6 +82,7 @@ export class ContentService {
             priceCredits: true,
             priceVnd: true,
             hlsUrl: true,
+            originalUrl: true,
             thumbnailUrl: true,
             transcodeStatus: true,
             uploadStatus: true,
@@ -89,7 +94,7 @@ export class ContentService {
         _count: { select: { favorites: true } },
       },
     });
-    if (!drama) throw new BizException(BizCode.NOT_FOUND, 'Không tìm thấy phim');
+    if (!drama) throw new BizException(BizCode.NOT_FOUND, 'drama.notFound');
     return drama;
   }
 
@@ -221,23 +226,23 @@ export class ContentService {
         where: { isOfficial: true },
         orderBy: [{ sortWeight: 'desc' }, { updatedAt: 'desc' }],
         take: 50,
-        select: { id: true, titleVi: true, titleZh: true, slug: true, sortWeight: true },
+        select: { id: true, titleEn: true, titleZh: true, slug: true, sortWeight: true },
       }),
       this.prisma.drama.findMany({
         where: { isFeatured: true },
         orderBy: [{ sortWeight: 'desc' }, { updatedAt: 'desc' }],
         take: 50,
-        select: { id: true, titleVi: true, titleZh: true, slug: true, sortWeight: true },
+        select: { id: true, titleEn: true, titleZh: true, slug: true, sortWeight: true },
       }),
       this.prisma.drama.findMany({
         orderBy: { unlockCount: 'desc' },
         take: 20,
-        select: { id: true, titleVi: true, titleZh: true, slug: true, unlockCount: true, viewCount: true },
+        select: { id: true, titleEn: true, titleZh: true, slug: true, unlockCount: true, viewCount: true },
       }),
       this.prisma.drama.findMany({
         orderBy: { viewCount: 'desc' },
         take: 20,
-        select: { id: true, titleVi: true, titleZh: true, slug: true, unlockCount: true, viewCount: true },
+        select: { id: true, titleEn: true, titleZh: true, slug: true, unlockCount: true, viewCount: true },
       }),
     ]);
     return { official, featured, topByUnlock, topByView };

@@ -38,25 +38,18 @@ export class ExchangeService {
   }
 
   /**
-   * 将套餐人民币基准价折算为支付币种金额。
-   * fxRate 快照存 cnyToFiat。
+   * @deprecated 定价已改为直接 USD，不再做汇率折算。
+   * 保留接口兼容：无论请求币种，均返回 USD 标价（payAmount = basePrice）。
    */
-  async quoteBasePrice(basePriceCny: Prisma.Decimal | number | string, currency: string) {
-    const cur = currency.toUpperCase();
-    const base = new Prisma.Decimal(basePriceCny.toString());
+  async quoteBasePrice(basePriceUsd: Prisma.Decimal | number | string, _currency = 'USD') {
+    const base = new Prisma.Decimal(basePriceUsd.toString());
     if (base.lte(0)) throw new BizException(BizCode.BAD_REQUEST, 'basePrice không hợp lệ');
-    const cnyToFiat = await this.getCnyToFiat(cur);
-    const payAmount = base.mul(cnyToFiat);
-    // VND 等无小数币种：向上取整到整数；CNY 保留 2 位
-    const rounded =
-      cur === 'VND' || cur === 'JPY' || cur === 'KRW'
-        ? payAmount.toDecimalPlaces(0, Prisma.Decimal.ROUND_CEIL)
-        : payAmount.toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
+    const payAmount = base.toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
     return {
-      currency: cur,
-      payAmount: rounded.toString(),
-      cnyToFiat: cnyToFiat.toString(),
-      basePriceCny: base.toString(),
+      currency: 'USD',
+      payAmount: payAmount.toString(),
+      cnyToFiat: '1',
+      basePriceUsd: base.toString(),
     };
   }
 

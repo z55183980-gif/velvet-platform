@@ -208,6 +208,7 @@ export function WatchSeekBar({
       className={cn(absolute && "absolute inset-x-0 z-40", "px-3", className)}
       style={absolute ? { bottom } : undefined}
       onClick={(e) => e.stopPropagation()}
+      data-no-tap
     >
       <canvas ref={previewCanvasRef} className="hidden" />
 

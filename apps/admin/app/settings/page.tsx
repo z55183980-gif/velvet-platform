@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -21,7 +21,7 @@ type Setting = {
   value: unknown;
   type?: string;
   labelZh?: string;
-  labelVi?: string;
+  labelEn?: string;
   updatedAt?: string;
 };
 
@@ -222,8 +222,8 @@ export default function AdminSettingsPage() {
               <div>
                 <p className="text-body-sm font-medium">
                   {locale === "zh"
-                    ? item.labelZh || item.labelVi || item.key
-                    : item.labelZh || item.key}
+                    ? item.labelZh || item.labelEn || item.key
+                    : item.labelEn || item.labelZh || item.key}
                 </p>
                 <p className="font-mono text-caption text-ink-muted">{item.key}</p>
                 {item.updatedAt ? (
@@ -242,17 +242,6 @@ export default function AdminSettingsPage() {
                     <option value="FREE_FIRST_N">{t("lockModeFreeFirstN")}</option>
                     <option value="VIP_ALL">{t("lockModeVipAll")}</option>
                     <option value="ALL_FREE">{t("lockModeAllFree")}</option>
-                  </Select>
-                ) : item.type === "boolean" ? (
-                  <Select
-                    className="w-28"
-                    value={drafts[item.key] ?? String(item.value)}
-                    onChange={(e) =>
-                      setDrafts((d) => ({ ...d, [item.key]: e.target.value }))
-                    }
-                  >
-                    <option value="true">{t("enable")}</option>
-                    <option value="false">{t("disable")}</option>
                   </Select>
                 ) : (
                   <Input

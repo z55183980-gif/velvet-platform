@@ -7,7 +7,7 @@ import { adminCreateOnlineDrama, adminListCategories } from "@velvet/api-client"
 import { Button, Input, Select } from "@velvet/ui";
 import { useI18n } from "@/lib/i18n";
 
-type Category = { slug: string; nameZh?: string; nameVi?: string };
+type Category = { slug: string; nameZh?: string; nameEn?: string };
 
 type EpisodeRow = {
   episodeNumber: number;
@@ -113,7 +113,7 @@ export function OnlineDramaForm() {
             <option value="">{t("onlineCategory")}</option>
             {(categoriesQ.data ?? []).map((c) => (
               <option key={c.slug} value={c.slug}>
-                {c.nameZh || c.nameVi || c.slug}
+                {c.nameZh || c.nameEn || c.slug}
               </option>
             ))}
           </Select>

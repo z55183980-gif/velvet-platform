@@ -1,19 +1,24 @@
-﻿"use client";
+"use client";
 
 import { Suspense, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminBatchDramas, adminListCategories, adminListDramas, asRows } from "@velvet/api-client";
-import { Button, DataTable, Input, Select, fmtNum, type Column } from "@velvet/ui";
+import { Button, DataTable, Input, Select, fmtDate, fmtNum, type Column } from "@velvet/ui";
 import { AdminShell } from "@/components/admin-shell";
+import { CategoriesModal } from "@/components/categories-modal";
+import { ContentAddModal } from "@/components/content-add-modal";
 import { ContentDetailModal } from "@/components/content-detail-modal";
-import { ContentImportModal } from "@/components/content-import-modal";
+import {
+  ContentSearchBar,
+  type ContentSearchFilters,
+} from "@/components/content-search-bar";
 import { useI18n, statusLabel } from "@/lib/i18n";
 
 type Drama = {
   id: string | number;
   titleZh?: string;
-  titleVi?: string;
+  titleEn?: string;
   slug?: string;
   status?: string;
   creator?: { displayName?: string };
@@ -22,25 +27,54 @@ type Drama = {
   isOfficial?: boolean;
   isFeatured?: boolean;
   sortWeight?: number;
+  publishedAt?: string | null;
+  _count?: { episodes?: number };
 };
-type Category = { slug: string; nameZh?: string; nameVi?: string };
+type Category = { slug: string; nameZh?: string; nameEn?: string };
+type ContentModal = "detail" | "add" | "categories";
 
 const statuses = ["ALL", "DRAFT", "PENDING_REVIEW", "LIVE", "OFFLINE", "REJECTED"];
 const pageSize = 20;
 
+function buildContentHref(opts: {
+  status?: string;
+  sort?: string;
+  modal?: ContentModal | null;
+  id?: string | null;
+  tab?: string | null;
+}) {
+  const qs = new URLSearchParams();
+  if (opts.status && opts.status !== "ALL") qs.set("status", opts.status);
+  if (opts.sort === "latest") qs.set("sort", "latest");
+  if (opts.modal) qs.set("modal", opts.modal);
+  if (opts.modal === "detail" && opts.id) qs.set("id", opts.id);
+  if (opts.modal === "add" && opts.tab === "online") qs.set("tab", "online");
+  const next = qs.toString();
+  return next ? `/content?${next}` : "/content";
+}
+
 function AdminContentInner() {
   const { t } = useI18n();
+  const router = useRouter();
   const qc = useQueryClient();
   const searchParams = useSearchParams();
   const statusFromUrl = searchParams.get("status") || "ALL";
-  const [filters, setFilters] = useState({
+  const sortFromUrl = searchParams.get("sort") === "latest" ? "latest" : "weight";
+  const modalParam = searchParams.get("modal");
+  const modal =
+    modalParam === "detail" || modalParam === "add" || modalParam === "categories"
+      ? modalParam
+      : null;
+  const detailId = modal === "detail" ? searchParams.get("id") : null;
+  const addTab = searchParams.get("tab") === "online" ? "online" : "local";
+  const [filters, setFilters] = useState<ContentSearchFilters>({
     q: "",
     status: statusFromUrl,
     categorySlug: "",
     isOfficial: "",
     isFeatured: "",
+    sort: sortFromUrl as "weight" | "latest",
   });
-  const [applied, setApplied] = useState(filters);
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [batch, setBatch] = useState({
@@ -50,35 +84,78 @@ function AdminContentInner() {
     lockMode: "" as "" | "INHERIT" | "FREE_FIRST_N" | "VIP_ALL" | "ALL_FREE",
   });
   const [error, setError] = useState<string | null>(null);
-  const [detailId, setDetailId] = useState<string | null>(null);
-  const [importOpen, setImportOpen] = useState(false);
 
   useEffect(() => {
-    const next = {
-      q: "",
+    setFilters((prev) => ({
+      ...prev,
       status: statusFromUrl,
-      categorySlug: "",
-      isOfficial: "",
-      isFeatured: "",
-    };
-    setFilters(next);
-    setApplied(next);
+      sort: sortFromUrl as "weight" | "latest",
+    }));
     setPage(1);
-  }, [statusFromUrl]);
+  }, [statusFromUrl, sortFromUrl]);
+
+  function applyFilters(next: ContentSearchFilters) {
+    setFilters(next);
+    setPage(1);
+    if (next.status !== statusFromUrl || next.sort !== sortFromUrl) {
+      router.replace(
+        buildContentHref({
+          status: next.status,
+          sort: next.sort,
+          modal,
+          id: detailId,
+          tab: modal === "add" ? addTab : null,
+        }),
+      );
+    }
+  }
+
+  function openModal(nextModal: ContentModal, id?: string) {
+    router.replace(
+      buildContentHref({
+        status: statusFromUrl,
+        sort: sortFromUrl,
+        modal: nextModal,
+        id: nextModal === "detail" ? id ?? null : null,
+        tab: nextModal === "add" ? addTab : null,
+      }),
+    );
+  }
+
+  function closeModal() {
+    router.replace(
+      buildContentHref({
+        status: statusFromUrl,
+        sort: sortFromUrl,
+      }),
+    );
+  }
+
+  function setAddTab(tab: "local" | "online") {
+    router.replace(
+      buildContentHref({
+        status: statusFromUrl,
+        sort: sortFromUrl,
+        modal: "add",
+        tab,
+      }),
+    );
+  }
 
   const categoriesQ = useQuery({
     queryKey: ["admin", "categories"],
     queryFn: () => adminListCategories(true) as Promise<Category[]>,
   });
   const dramasQ = useQuery({
-    queryKey: ["admin", "dramas", applied, page],
+    queryKey: ["admin", "dramas", filters, page],
     queryFn: async () => {
       const result = await adminListDramas({
-        q: applied.q || undefined,
-        status: applied.status,
-        categorySlug: applied.categorySlug || undefined,
-        isOfficial: applied.isOfficial || undefined,
-        isFeatured: applied.isFeatured || undefined,
+        q: filters.q || undefined,
+        status: filters.status,
+        categorySlug: filters.categorySlug || undefined,
+        isOfficial: filters.isOfficial || undefined,
+        isFeatured: filters.isFeatured || undefined,
+        sort: filters.sort,
         page,
         pageSize,
       });
@@ -131,13 +208,30 @@ function AdminContentInner() {
         header: t("colTitle"),
         cell: (row) => (
           <div>
-            <div className="font-medium">{row.titleZh || row.titleVi || "—"}</div>
+            <button
+              type="button"
+              className="font-medium text-brand hover:underline"
+              onClick={() => openModal("detail", String(row.id))}
+            >
+              {row.titleZh || row.titleEn || "—"}
+            </button>
             <div className="text-caption text-ink-muted">{row.slug}</div>
           </div>
         ),
       },
       { key: "status", header: t("status"), cell: (row) => statusLabel(t, row.status) },
+      {
+        key: "eps",
+        header: t("episodeCount"),
+        cell: (row) => String(row._count?.episodes ?? "—"),
+        className: "tabular-nums",
+      },
       { key: "creator", header: t("colCreator"), cell: (row) => row.creator?.displayName || "—" },
+      {
+        key: "published",
+        header: t("publishedAt"),
+        cell: (row) => (row.publishedAt ? fmtDate(row.publishedAt) : "—"),
+      },
       {
         key: "metrics",
         header: t("colViewsUnlocks"),
@@ -149,25 +243,18 @@ function AdminContentInner() {
         cell: (row) =>
           `${row.isOfficial ? `${t("official")} ` : ""}${row.isFeatured ? `${t("featuredFlag")} ` : ""}${t("weightLabel")} ${row.sortWeight ?? 0}`,
       },
-      {
-        key: "actions",
-        header: "",
-        cell: (row) => (
-          <button
-            type="button"
-            className="text-brand hover:underline"
-            onClick={() => setDetailId(String(row.id))}
-          >
-            {t("details")}
-          </button>
-        ),
-      },
     ],
-    [t, selected],
+    // openModal depends on URL filters; columns refresh when those/i18n/selection change
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [t, selected, statusFromUrl, sortFromUrl],
   );
 
   const title =
-    statusFromUrl === "PENDING_REVIEW" ? t("contentPending") : t("content");
+    statusFromUrl === "PENDING_REVIEW"
+      ? t("contentPending")
+      : filters.sort === "latest"
+        ? t("contentLatest")
+        : t("content");
 
   return (
     <AdminShell title={title}>
@@ -176,61 +263,14 @@ function AdminContentInner() {
           {error || (dramasQ.error as Error)?.message || (categoriesQ.error as Error)?.message}
         </p>
       ) : null}
-      <div className="mb-4 flex flex-wrap items-end gap-2">
-        <Input
-          className="w-52"
-          placeholder={t("searchTitleSlugCreator")}
-          value={filters.q}
-          onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
-        />
-        <Select
-          className="w-40"
-          value={filters.status}
-          onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}
-        >
-          {statuses.map((status) => (
-            <option key={status}>{status}</option>
-          ))}
-        </Select>
-        <Select
-          className="w-40"
-          value={filters.categorySlug}
-          onChange={(e) => setFilters((f) => ({ ...f, categorySlug: e.target.value }))}
-        >
-          <option value="">{t("allCategories")}</option>
-          {(categoriesQ.data ?? []).map((category) => (
-            <option key={category.slug} value={category.slug}>
-              {category.nameZh || category.nameVi}
-            </option>
-          ))}
-        </Select>
-        {(["isOfficial", "isFeatured"] as const).map((key) => (
-          <Select
-            key={key}
-            className="w-32"
-            value={filters[key]}
-            onChange={(e) => setFilters((f) => ({ ...f, [key]: e.target.value }))}
-          >
-            <option value="">{t(key === "isOfficial" ? "official" : "featuredFlag")}: {t("all")}</option>
-            <option value="1">{t("yes")}</option>
-            <option value="0">{t("no")}</option>
-          </Select>
-        ))}
-        <Button
-          size="sm"
-          onClick={() => {
-            setPage(1);
-            setApplied(filters);
-          }}
-        >
-          {t("query")}
-        </Button>
-        {statusFromUrl !== "PENDING_REVIEW" ? (
-          <Button size="sm" variant="secondary" onClick={() => setImportOpen(true)}>
-            {t("contentImport")}
-          </Button>
-        ) : null}
-      </div>
+      <ContentSearchBar
+        value={filters}
+        onChange={applyFilters}
+        categories={categoriesQ.data ?? []}
+        statuses={statuses}
+        showAdd={statusFromUrl !== "PENDING_REVIEW"}
+        onAdd={() => openModal("add")}
+      />
 
       <div className="mb-4 flex flex-wrap items-end gap-2 card glass-card p-3">
         <span className="text-caption text-ink-muted">{t("selectedCount", { n: selected.size })}</span>
@@ -305,12 +345,14 @@ function AdminContentInner() {
         </Button>
       </div>
 
-      <ContentDetailModal
-        open={!!detailId}
-        dramaId={detailId}
-        onClose={() => setDetailId(null)}
+      <ContentDetailModal open={modal === "detail"} dramaId={detailId} onClose={closeModal} />
+      <ContentAddModal
+        open={modal === "add"}
+        onClose={closeModal}
+        tab={addTab}
+        onTabChange={setAddTab}
       />
-      <ContentImportModal open={importOpen} onClose={() => setImportOpen(false)} />
+      <CategoriesModal open={modal === "categories"} onClose={closeModal} />
     </AdminShell>
   );
 }

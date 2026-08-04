@@ -36,7 +36,7 @@ class UpdateMeDto {
 class UpdateLocaleDto {
   @IsNotEmpty()
   @IsString()
-  @IsIn(['vi', 'zh'])
+  @IsIn(['en', 'zh', 'fr'])
   locale!: string;
 }
 

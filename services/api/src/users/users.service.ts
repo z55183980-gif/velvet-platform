@@ -11,7 +11,7 @@ export class UsersService {
       where: { id: userId },
       include: { creator: true, wallet: true },
     });
-    if (!user) throw new BizException(BizCode.UNAUTHORIZED, 'Người dùng không tồn tại');
+    if (!user) throw new BizException(BizCode.UNAUTHORIZED, 'user.notFound');
     const vipExpireAt = user.vipExpireAt;
     const isVip = !!(vipExpireAt && vipExpireAt.getTime() > Date.now());
     return {
@@ -71,7 +71,7 @@ export class UsersService {
           ? {
               id: r.drama.id.toString(),
               slug: r.drama.slug,
-              titleVi: r.drama.titleVi,
+              titleEn: r.drama.titleEn,
               titleZh: r.drama.titleZh,
               coverUrl: r.drama.coverUrl,
               creator: r.drama.creator,
@@ -145,7 +145,7 @@ export class UsersService {
       data.note = n || null;
     }
     if (Object.keys(data).length === 0) {
-      throw new BizException(BizCode.BAD_REQUEST, 'Không có trường nào để cập nhật');
+      throw new BizException(BizCode.BAD_REQUEST, 'common.noFieldsToUpdate');
     }
     try {
       await this.prisma.favorite.update({
@@ -261,13 +261,20 @@ export class UsersService {
       dramaIds.length
         ? this.prisma.drama.findMany({
             where: { id: { in: dramaIds } },
-            select: { id: true, slug: true, titleVi: true, titleZh: true, coverUrl: true },
+            select: {
+              id: true,
+              slug: true,
+              titleEn: true,
+              titleZh: true,
+              coverUrl: true,
+              totalEpisodes: true,
+            },
           })
         : Promise.resolve([]),
       episodeIds.length
         ? this.prisma.episode.findMany({
             where: { id: { in: episodeIds } },
-            select: { id: true, episodeNumber: true, title: true },
+            select: { id: true, episodeNumber: true, title: true, durationSec: true },
           })
         : Promise.resolve([]),
     ]);
@@ -278,19 +285,24 @@ export class UsersService {
       rows: rows.map((r) => {
         const d = dramaMap.get(r.dramaId.toString());
         const e = episodeMap.get(r.episodeId.toString());
+        const totalEpisodes = d?.totalEpisodes ?? 0;
+        const episodeNumber = e?.episodeNumber ?? 0;
+        const finished = totalEpisodes > 0 && episodeNumber >= totalEpisodes;
         return {
           id: r.id.toString(),
           episodeId: r.episodeId.toString(),
           dramaId: r.dramaId.toString(),
           progressSec: r.progressSec,
           watchedAt: r.watchedAt,
+          finished,
           drama: d
             ? {
                 id: d.id.toString(),
                 slug: d.slug,
-                titleVi: d.titleVi,
+                titleEn: d.titleEn,
                 titleZh: d.titleZh,
                 coverUrl: d.coverUrl,
+                totalEpisodes,
               }
             : null,
           episode: e
@@ -298,6 +310,7 @@ export class UsersService {
                 id: e.id.toString(),
                 episodeNumber: e.episodeNumber,
                 title: e.title,
+                durationSec: e.durationSec,
               }
             : null,
         };
@@ -328,7 +341,7 @@ export class UsersService {
           ? {
               id: r.drama.id.toString(),
               slug: r.drama.slug,
-              titleVi: r.drama.titleVi,
+              titleEn: r.drama.titleEn,
               titleZh: r.drama.titleZh,
               coverUrl: r.drama.coverUrl,
               creator: r.drama.creator,
@@ -354,7 +367,7 @@ export class UsersService {
 
   async addLike(userId: bigint, dramaId: string) {
     if (!/^\d+$/.test(dramaId)) {
-      throw new BizException(BizCode.BAD_REQUEST, 'dramaId không hợp lệ');
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.dramaIdInvalid');
     }
     const existed = await this.prisma.like.findUnique({
       where: { userId_dramaId: { userId, dramaId: BigInt(dramaId) } },
@@ -375,7 +388,7 @@ export class UsersService {
 
   async removeLike(userId: bigint, dramaId: string) {
     if (!/^\d+$/.test(dramaId)) {
-      throw new BizException(BizCode.BAD_REQUEST, 'dramaId không hợp lệ');
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.dramaIdInvalid');
     }
     const deleted = await this.prisma.like.deleteMany({
       where: { userId, dramaId: BigInt(dramaId) },

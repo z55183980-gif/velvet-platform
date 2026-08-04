@@ -26,6 +26,7 @@ const zh = {
   contentImport: "批量导入",
   contentLocal: "本地剧集",
   contentOnline: "在线剧集",
+  contentLatest: "最新上架",
   categories: "分类管理",
   banners: "首页轮播",
   featured: "推荐位",
@@ -34,9 +35,26 @@ const zh = {
   users: "用户列表",
   userOverview: "用户概览",
   usersBanned: "封禁风控",
+  publishedAt: "上架时间",
+  sortByWeight: "按权重",
+  sortByLatest: "按最新",
+  tabDramaInfo: "基础信息",
+  tabEpisodes: "分集管理",
+  tabPlayPolicy: "播放策略",
+  addEpisode: "新增分集",
+  playUrl: "播放地址",
+  confirmDeleteEpisode: "确认删除该分集？删除后将重新编号。",
+  batchKeepFree: "不改免费",
+  batchSetFree: "设为免费",
+  batchSetPaid: "设为付费",
+  policyGlobalHint: "当前全局策略：{mode}（默认免费 {n} 集）。剧级「跟随全局」时使用此配置。",
+  policyPreview: "策略预览",
+  previewAsVip: "模拟 VIP",
+  previewResultFree: "可免费播放",
+  previewResultVip: "VIP 可播",
+  previewResultLocked: "需解锁 / 非 VIP 不可播",
   orders: "订单中心",
   refunds: "退款审核",
-  packages: "充值套餐",
   vipPlans: "VIP会员",
   redeemCodes: "兑换码",
   creators: "创作者管理",
@@ -84,6 +102,9 @@ const zh = {
   search: "搜索",
   query: "查询",
   filter: "筛选",
+  clearFilters: "清除筛选",
+  filtersActive: "{n} 项",
+  sortBy: "排序",
   status: "状态",
   all: "全部",
   pending: "待审",
@@ -163,7 +184,7 @@ const zh = {
   colCity: "城市",
   colContent: "内容",
   colDays: "天数",
-  colPriceCny: "人民币价格",
+  colPriceCny: "美元价格",
   colBadge: "徽标",
   colUnusedUsedVoided: "未用 / 已用 / 作废",
 
@@ -175,6 +196,9 @@ const zh = {
   statusPending: "待处理",
   statusApproved: "已通过",
   statusRejected: "已拒绝",
+  statusDraft: "草稿",
+  statusLive: "已上架",
+  statusOffline: "已下架",
 
   // dashboard
   kpiNewUsers: "新用户",
@@ -295,9 +319,8 @@ const zh = {
   loginCaptchaLoadFailed: "验证码加载失败",
   refreshCaptcha: "刷新验证码",
 
-  // packages / vip
-  packageName: "套餐名称",
-  vipName: "会员名称",
+  // vip
+  vipName: "套餐名称",
 
   // generic toggles / misc
   on: "开",
@@ -429,12 +452,38 @@ const zh = {
   toggleOn: "启用",
   toggleOff: "停用",
 
-  // packages / vip plans extra
-  packagePriceHint: "套餐以人民币定价；用户选其它币种时按「法币汇率」自动折算，到账积分不变。",
-  vipPriceHint: "VIP 套餐以人民币定价；支付成功后按天数延长会员，可叠加。",
+  // vip plans extra
+  vipPriceHint: "VIP 套餐以美元（USD）定价；支付成功后按天数延长会员，可叠加。",
   planCount: "套餐数",
   liveCount: "上架中",
   pricingCurrency: "定价币种",
+  vipPlanList: "套餐列表",
+  vipPlanCreate: "新建套餐",
+  vipPlanEdit: "编辑套餐",
+  vipPlanSave: "保存套餐",
+  vipPlanCreateHint: "填写多语言套餐名称、天数、价格与展示排序",
+  vipPlanSearchPlaceholder: "搜索名称、ID 或徽标",
+  vipPlanEmptyFilter: "暂无匹配套餐",
+  vipPlanUnnamed: "未命名套餐",
+  vipPlanSelectCta: "选择{name}",
+  vipPlanPreview: "用户端预览",
+  vipPlanSectionBasic: "基础信息",
+  vipPlanSectionBasicHint: "维护多语言名称、价格与展示排序；上架状态请使用列表操作按钮。",
+  vipPlanNameLanguages: "套餐名称（多语言）",
+  vipPlanNameFallbackHint: "英文名称必填；其他语言未填写时，会员端将显示英文名称。",
+  vipPlanBadgePlaceholder: "如：推荐",
+  vipPlanSortHint: "数字越小越靠前（0–999）",
+  vipPlanSortHintShort: "越小越前",
+  vipPlanCreated: "套餐已创建",
+  vipPlanUpdated: "套餐已更新",
+  vipPlanOnShelved: "已上架 {name}",
+  vipPlanOffShelved: "已下架 {name}",
+  vipPlanConfirmOn: "上架后用户端将重新展示该套餐。确定上架「{name}」吗？",
+  vipPlanConfirmOff: "下架后用户端将不再展示该套餐。确定下架「{name}」吗？",
+  vipBenefitWatch: "会员期内免费观看付费短剧",
+  vipBenefitNoCredits: "无需再花积分解锁分集",
+  vipBenefitStack: "多次订阅可叠加有效期",
+  saving: "保存中…",
 
   // messages
   broadcastHint: "向指定用户或全量活跃用户发送站内信。全量广播最多覆盖 5000 名活跃用户。",
@@ -492,18 +541,28 @@ const zh = {
   onlineNeedTitle: "请填写标题",
   onlineManualTitle: "或手动粘贴播放链接",
 
-  hongguoImportTitle: "红果导入",
-  hongguoImportHint:
-    "搜索红果短剧并一键转入本站在线剧集（需配置 HONGGUO_API_KEY）。请仅用于合规授权内容。",
-  hongguoNotConfigured: "未配置 HONGGUO_API_KEY，无法使用红果搜索导入。可改用下方手动链接。",
-  hongguoProvider: "当前 Provider",
-  hongguoKeyword: "搜索剧名",
-  hongguoNeedSelect: "请先选择一部剧",
-  hongguoEpisodeCount: "共 {n} 集",
-  hongguoMaxEpisodes: "最多导入集数（可选）",
-  hongguoImportLive: "导入并上架",
-  hongguoImportDraft: "导入为草稿",
-  hongguoImported: "已导入 {n} 集（失败 {failed}）",
+  importEpisodeCount: "共 {n} 集",
+  importMaxEpisodes: "最多导入集数（可选）",
+  importLive: "导入并上架",
+  importDraft: "导入为草稿",
+
+  ytdlpImportTitle: "公开链接解析",
+  ytdlpImportHint:
+    "粘贴公开视频页或播放列表 URL。API 使用本地 yt-dlp 解析（无需 API Key）；若服务器未安装会自动下载到存储目录。请仅用于合规公开内容。",
+  ytdlpNotConfigured:
+    "暂未就绪：API 启动后会自动下载 yt-dlp 到存储目录。若仍失败，请检查服务器出网访问 GitHub，或手动设置 YTDLP_BIN 后重启。",
+  ytdlpProvider: "引擎",
+  ytdlpNoApiKey: "无需 API Key",
+  ytdlpBinSource: "来源",
+  ytdlpUrlPlaceholder: "https://… 公开视频或播放列表链接",
+  ytdlpProbe: "解析预览",
+  ytdlpNeedUrl: "请填写公开视频页链接",
+  ytdlpNeedProbe: "请先解析预览",
+  ytdlpFormat: "清晰度策略",
+  ytdlpFormatHls: "优先 HLS",
+  ytdlpFormatMp4: "优先 MP4",
+  ytdlpFormatBest: "最佳画质",
+  ytdlpImported: "已导入 {n} 集（失败 {failed}）",
 
   // reconcile / settle
   settleDescription: "手动触发创作者收益 T+7 结算。定时任务会自动跑；此处用于补跑或立刻结算。",
@@ -538,6 +597,7 @@ const en: Record<LabelKey, string> = {
   contentImport: "Bulk import",
   contentLocal: "Local dramas",
   contentOnline: "Online dramas",
+  contentLatest: "Latest published",
   categories: "Categories",
   banners: "Home banners",
   featured: "Featured",
@@ -546,9 +606,26 @@ const en: Record<LabelKey, string> = {
   users: "Users",
   userOverview: "User overview",
   usersBanned: "Bans & risk",
+  publishedAt: "Published at",
+  sortByWeight: "By weight",
+  sortByLatest: "By latest",
+  tabDramaInfo: "Info",
+  tabEpisodes: "Episodes",
+  tabPlayPolicy: "Playback policy",
+  addEpisode: "Add episode",
+  playUrl: "Play URL",
+  confirmDeleteEpisode: "Delete this episode? Remaining episodes will be renumbered.",
+  batchKeepFree: "Keep free flag",
+  batchSetFree: "Mark free",
+  batchSetPaid: "Mark paid",
+  policyGlobalHint: "Global policy: {mode} (default free {n} eps). Inherit uses this.",
+  policyPreview: "Policy preview",
+  previewAsVip: "Simulate VIP",
+  previewResultFree: "Playable for free",
+  previewResultVip: "Playable with VIP",
+  previewResultLocked: "Locked / needs unlock",
   orders: "Orders",
   refunds: "Refunds",
-  packages: "Top-up packages",
   vipPlans: "VIP plans",
   redeemCodes: "Redeem codes",
   creators: "Creators",
@@ -593,6 +670,9 @@ const en: Record<LabelKey, string> = {
   search: "Search",
   query: "Search",
   filter: "Filter",
+  clearFilters: "Clear filters",
+  filtersActive: "{n} active",
+  sortBy: "Sort",
   status: "Status",
   all: "All",
   pending: "Pending",
@@ -671,7 +751,7 @@ const en: Record<LabelKey, string> = {
   colCity: "City",
   colContent: "Content",
   colDays: "Days",
-  colPriceCny: "Price (CNY)",
+  colPriceCny: "Price (USD)",
   colBadge: "Badge",
   colUnusedUsedVoided: "Unused / used / void",
 
@@ -682,6 +762,9 @@ const en: Record<LabelKey, string> = {
   statusPending: "Pending",
   statusApproved: "Approved",
   statusRejected: "Rejected",
+  statusDraft: "Draft",
+  statusLive: "Live",
+  statusOffline: "Offline",
 
   kpiNewUsers: "New users",
   kpiGmv: "GMV ₫",
@@ -791,7 +874,6 @@ const en: Record<LabelKey, string> = {
   loginCaptchaLoadFailed: "Failed to load captcha",
   refreshCaptcha: "Refresh captcha",
 
-  packageName: "Package name",
   vipName: "Plan name",
 
   on: "On",
@@ -919,13 +1001,38 @@ const en: Record<LabelKey, string> = {
   toggleOn: "Enable",
   toggleOff: "Disable",
 
-  packagePriceHint:
-    "Packages are priced in CNY; other currencies auto-convert via FX rate, credited amounts stay unchanged.",
   vipPriceHint:
-    "VIP plans are priced in CNY; a successful payment extends membership by days, and durations stack.",
+    "VIP plans are priced in USD; a successful payment extends membership by days, and durations stack.",
   planCount: "Plans",
   liveCount: "Live",
   pricingCurrency: "Pricing currency",
+  vipPlanList: "Plans",
+  vipPlanCreate: "New plan",
+  vipPlanEdit: "Edit plan",
+  vipPlanSave: "Save plan",
+  vipPlanCreateHint: "Enter localized plan names, days, price, and display order.",
+  vipPlanSearchPlaceholder: "Search name, ID, or badge",
+  vipPlanEmptyFilter: "No matching plans",
+  vipPlanUnnamed: "Untitled plan",
+  vipPlanSelectCta: "Choose {name}",
+  vipPlanPreview: "User preview",
+  vipPlanSectionBasic: "Basics",
+  vipPlanSectionBasicHint: "Localized names, price, and display order; use list actions for shelf status",
+  vipPlanNameLanguages: "Plan name (languages)",
+  vipPlanNameFallbackHint: "English is required; missing translations fall back to English.",
+  vipPlanBadgePlaceholder: "e.g. Featured",
+  vipPlanSortHint: "Lower numbers appear first (0–999)",
+  vipPlanSortHintShort: "Lower first",
+  vipPlanCreated: "Plan created",
+  vipPlanUpdated: "Plan updated",
+  vipPlanOnShelved: "Listed {name}",
+  vipPlanOffShelved: "Unlisted {name}",
+  vipPlanConfirmOn: "Listing will show this plan to users again. List “{name}”?",
+  vipPlanConfirmOff: "Unlisting will hide this plan from users. Unlist “{name}”?",
+  vipBenefitWatch: "Free access to paid dramas during membership",
+  vipBenefitNoCredits: "No credits needed to unlock episodes",
+  vipBenefitStack: "Renewals extend the current expiry",
+  saving: "Saving…",
 
   broadcastHint:
     "Send an in-app message to a specific user or all active users. Broadcasts reach up to 5,000 active users.",
@@ -983,19 +1090,28 @@ const en: Record<LabelKey, string> = {
   onlineNeedTitle: "Title is required",
   onlineManualTitle: "Or paste play URLs manually",
 
-  hongguoImportTitle: "Hongguo import",
-  hongguoImportHint:
-    "Search Hongguo dramas and import as online titles (requires HONGGUO_API_KEY). Use only for licensed content.",
-  hongguoNotConfigured:
-    "HONGGUO_API_KEY is not configured. Use the manual link form below instead.",
-  hongguoProvider: "Provider",
-  hongguoKeyword: "Search by title",
-  hongguoNeedSelect: "Select a drama first",
-  hongguoEpisodeCount: "{n} episode(s)",
-  hongguoMaxEpisodes: "Max episodes (optional)",
-  hongguoImportLive: "Import & publish",
-  hongguoImportDraft: "Import as draft",
-  hongguoImported: "Imported {n} episode(s) ({failed} failed)",
+  importEpisodeCount: "{n} episode(s)",
+  importMaxEpisodes: "Max episodes (optional)",
+  importLive: "Import & publish",
+  importDraft: "Import as draft",
+
+  ytdlpImportTitle: "Public URL import",
+  ytdlpImportHint:
+    "Paste a public video or playlist URL. The API resolves streams with local yt-dlp (no API key) and auto-downloads the binary if missing. Use only for licensed / public-domain content.",
+  ytdlpNotConfigured:
+    "Not ready yet: the API auto-downloads yt-dlp into the storage dir on startup. If it still fails, check GitHub egress or set YTDLP_BIN and restart.",
+  ytdlpProvider: "Engine",
+  ytdlpNoApiKey: "No API key required",
+  ytdlpBinSource: "Source",
+  ytdlpUrlPlaceholder: "https://… public video or playlist URL",
+  ytdlpProbe: "Preview",
+  ytdlpNeedUrl: "Enter a public video URL",
+  ytdlpNeedProbe: "Preview the URL first",
+  ytdlpFormat: "Stream preference",
+  ytdlpFormatHls: "Prefer HLS",
+  ytdlpFormatMp4: "Prefer MP4",
+  ytdlpFormatBest: "Best quality",
+  ytdlpImported: "Imported {n} episode(s) ({failed} failed)",
 
   settleDescription:
     "Manually trigger the T+7 creator payout settlement. The scheduled job runs automatically; use this to backfill or settle immediately.",
@@ -1155,6 +1271,12 @@ export function statusLabel(tFn: I18nContextValue["t"], status?: string | null) 
       return tFn("statusApproved");
     case "REJECTED":
       return tFn("statusRejected");
+    case "DRAFT":
+      return tFn("statusDraft");
+    case "LIVE":
+      return tFn("statusLive");
+    case "OFFLINE":
+      return tFn("statusOffline");
     default:
       return status || "—";
   }

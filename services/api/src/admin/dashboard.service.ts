@@ -211,7 +211,7 @@ export class DashboardService {
   private async rankings(start: Date, end: Date) {
     const dramaSelect = {
       id: true,
-      titleVi: true,
+      titleEn: true,
       titleZh: true,
       slug: true,
       unlockCount: true,
@@ -248,7 +248,7 @@ export class DashboardService {
     const salesDramas = salesIds.length
       ? await this.prisma.drama.findMany({
           where: { id: { in: salesIds } },
-          select: { id: true, titleVi: true, titleZh: true, slug: true },
+          select: { id: true, titleEn: true, titleZh: true, slug: true },
         })
       : [];
     const salesMap = new Map(salesDramas.map((d) => [d.id.toString(), d]));
@@ -256,7 +256,7 @@ export class DashboardService {
     const mapDrama = (d: (typeof topByView)[number]) => ({
       id: d.id.toString(),
       titleZh: d.titleZh,
-      titleVi: d.titleVi,
+      titleEn: d.titleEn,
       slug: d.slug,
       viewCount: Number(d.viewCount),
       unlockCount: Number(d.unlockCount),
@@ -270,7 +270,7 @@ export class DashboardService {
         return {
           dramaId: g.dramaId!.toString(),
           titleZh: d?.titleZh ?? null,
-          titleVi: d?.titleVi ?? null,
+          titleEn: d?.titleEn ?? null,
           slug: d?.slug ?? null,
           orderCount: g._count,
           credits: (g._sum.amountCredits ?? 0n).toString(),

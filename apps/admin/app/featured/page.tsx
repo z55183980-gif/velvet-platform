@@ -17,7 +17,7 @@ import { useI18n } from "@/lib/i18n";
 type Drama = {
   id: string | number;
   titleZh?: string;
-  titleVi?: string;
+  titleEn?: string;
   slug?: string;
   status?: string;
   viewCount?: number;
@@ -71,7 +71,7 @@ export default function AdminFeaturedPage() {
         cell: (row) => (
           <div>
             <Link href={`/content/${row.id}`} className="font-medium text-brand hover:underline">
-              {row.titleZh || row.titleVi || "—"}
+              {row.titleZh || row.titleEn || "—"}
             </Link>
             <div className="text-caption text-ink-muted">{row.slug}</div>
           </div>

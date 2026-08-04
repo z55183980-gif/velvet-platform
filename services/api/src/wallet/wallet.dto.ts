@@ -16,10 +16,10 @@ export class TopupOrderDto {
   @IsNotEmpty()
   packageId!: number | string;
 
-  /** 支付币种：VND | CNY（支付宝仅 CNY） */
-  @IsNotEmpty()
+  /** @deprecated 支付固定 USD，此字段忽略 */
+  @IsOptional()
   @IsString()
-  currency!: string;
+  currency?: string = 'USD';
 
   @IsOptional()
   @IsIn(PAYMENT_METHODS)
@@ -34,9 +34,10 @@ export class VipSubOrderDto {
   @IsNotEmpty()
   vipPlanId!: number | string;
 
-  @IsNotEmpty()
+  /** @deprecated 支付固定 USD，此字段忽略 */
+  @IsOptional()
   @IsString()
-  currency!: string;
+  currency?: string = 'USD';
 
   @IsOptional()
   @IsIn(PAYMENT_METHODS)

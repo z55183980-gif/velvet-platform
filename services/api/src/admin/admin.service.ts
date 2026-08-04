@@ -44,16 +44,16 @@ export interface OnlineEpisodeInput {
 
 export interface CreateOnlineDramaInput {
   titleZh: string;
-  titleVi?: string;
+  titleEn?: string;
   slug?: string;
   descriptionZh?: string;
-  descriptionVi?: string;
+  descriptionEn?: string;
   categorySlug: string;
   coverUrl?: string;
   freeEpisodeCount?: number;
   lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE';
   status?: 'DRAFT' | 'LIVE';
-  /** 外部来源去重键，如 hongguo:{id} */
+  /** 外部来源去重键，如 ytdlp:{extractor}:{id} */
   externalRef?: string;
   sourceTags?: string[];
   /** 第三方解析结果允许非扩展名直链 */
@@ -89,9 +89,9 @@ export class AdminService {
 
   async approveDrama(id: string, actorId?: bigint | null) {
     const existing = await this.prisma.drama.findUnique({ where: { id: BigInt(id) } });
-    if (!existing) throw new BizException(BizCode.NOT_FOUND, 'Không tìm thấy phim');
+    if (!existing) throw new BizException(BizCode.NOT_FOUND, 'drama.notFound');
     if (existing.status !== 'PENDING_REVIEW') {
-      throw new BizException(BizCode.CONFLICT, 'Yêu cầu đã được xử lý');
+      throw new BizException(BizCode.CONFLICT, 'request.alreadyProcessed');
     }
     const drama = await this.prisma.drama.update({
       where: { id: BigInt(id) },
@@ -109,9 +109,9 @@ export class AdminService {
 
   async rejectDrama(id: string, reason?: string, actorId?: bigint | null) {
     const existing = await this.prisma.drama.findUnique({ where: { id: BigInt(id) } });
-    if (!existing) throw new BizException(BizCode.NOT_FOUND, 'Không tìm thấy phim');
+    if (!existing) throw new BizException(BizCode.NOT_FOUND, 'drama.notFound');
     if (existing.status !== 'PENDING_REVIEW') {
-      throw new BizException(BizCode.CONFLICT, 'Yêu cầu đã được xử lý');
+      throw new BizException(BizCode.CONFLICT, 'request.alreadyProcessed');
     }
     const drama = await this.prisma.drama.update({
       where: { id: BigInt(id) },
@@ -144,9 +144,9 @@ export class AdminService {
 
   async approveKyc(creatorId: string, actorId?: bigint | null) {
     const existing = await this.prisma.creator.findUnique({ where: { id: BigInt(creatorId) } });
-    if (!existing) throw new BizException(BizCode.NOT_FOUND, 'Không tìm thấy creator');
+    if (!existing) throw new BizException(BizCode.NOT_FOUND, 'creator.notFound');
     if (existing.kycStatus !== 'PENDING') {
-      throw new BizException(BizCode.CONFLICT, 'KYC đã được xử lý');
+      throw new BizException(BizCode.CONFLICT, 'kyc.alreadyProcessed');
     }
     const c = await this.prisma.creator.update({
       where: { id: BigInt(creatorId) },
@@ -160,9 +160,9 @@ export class AdminService {
       payload: { from: existing.kycStatus, to: c.kycStatus },
     });
     await this.notifyCreator(c.userId, 'kyc.approved', {
-      titleVi: 'KYC đã được duyệt',
+      titleEn: 'KYC approved',
       titleZh: 'KYC 已通过',
-      bodyVi: 'Bạn có thể tạo và đăng phim ngay bây giờ.',
+      bodyEn: 'You can create and publish dramas now.',
       bodyZh: '您现在可以创建并发布短剧了。',
     });
     return { creatorId: c.id.toString(), kycStatus: c.kycStatus };
@@ -170,12 +170,12 @@ export class AdminService {
 
   async rejectKyc(creatorId: string, reason?: string, actorId?: bigint | null) {
     if (!reason || !String(reason).trim()) {
-      throw new BizException(BizCode.BAD_REQUEST, 'Lý do từ chối là bắt buộc');
+      throw new BizException(BizCode.BAD_REQUEST, 'common.rejectReasonRequired');
     }
     const existing = await this.prisma.creator.findUnique({ where: { id: BigInt(creatorId) } });
-    if (!existing) throw new BizException(BizCode.NOT_FOUND, 'Không tìm thấy creator');
+    if (!existing) throw new BizException(BizCode.NOT_FOUND, 'creator.notFound');
     if (existing.kycStatus !== 'PENDING') {
-      throw new BizException(BizCode.CONFLICT, 'KYC đã được xử lý');
+      throw new BizException(BizCode.CONFLICT, 'kyc.alreadyProcessed');
     }
     const c = await this.prisma.creator.update({
       where: { id: BigInt(creatorId) },
@@ -189,9 +189,9 @@ export class AdminService {
       payload: { reason, from: existing.kycStatus, to: c.kycStatus },
     });
     await this.notifyCreator(c.userId, 'kyc.rejected', {
-      titleVi: 'KYC bị từ chối',
+      titleEn: 'KYC rejected',
       titleZh: 'KYC 被拒绝',
-      bodyVi: `Lý do: ${reason}`,
+      bodyEn: `Reason: ${reason}`,
       bodyZh: `原因：${reason}`,
     });
     return {
@@ -205,9 +205,9 @@ export class AdminService {
     userId: bigint,
     type: string,
     content: {
-      titleVi: string;
+      titleEn: string;
       titleZh?: string;
-      bodyVi?: string;
+      bodyEn?: string;
       bodyZh?: string;
     },
   ) {
@@ -216,9 +216,9 @@ export class AdminService {
         data: {
           userId,
           type,
-          titleVi: content.titleVi,
+          titleEn: content.titleEn,
           titleZh: content.titleZh ?? null,
-          bodyVi: content.bodyVi ?? null,
+          bodyEn: content.bodyEn ?? null,
           bodyZh: content.bodyZh ?? null,
         },
       });
@@ -250,9 +250,9 @@ export class AdminService {
 
   async approveWithdraw(id: string, actorId?: bigint | null) {
     const req = await this.prisma.withdrawRequest.findUnique({ where: { id: BigInt(id) } });
-    if (!req) throw new BizException(BizCode.NOT_FOUND, 'Yêu cầu không tồn tại');
+    if (!req) throw new BizException(BizCode.NOT_FOUND, 'request.notFound');
     if (req.status !== 'PENDING') {
-      throw new BizException(BizCode.CONFLICT, 'Yêu cầu đã được xử lý');
+      throw new BizException(BizCode.CONFLICT, 'request.alreadyProcessed');
     }
     const pitVnd = toBigInt(Math.floor(Number(req.amountVnd) * this.pitRate));
     const netVnd = req.amountVnd - pitVnd;
@@ -290,12 +290,12 @@ export class AdminService {
 
   async rejectWithdraw(id: string, reason?: string, actorId?: bigint | null) {
     if (!reason || !String(reason).trim()) {
-      throw new BizException(BizCode.BAD_REQUEST, 'Lý do từ chối là bắt buộc');
+      throw new BizException(BizCode.BAD_REQUEST, 'common.rejectReasonRequired');
     }
     const req = await this.prisma.withdrawRequest.findUnique({ where: { id: BigInt(id) } });
-    if (!req) throw new BizException(BizCode.NOT_FOUND, 'Yêu cầu không tồn tại');
+    if (!req) throw new BizException(BizCode.NOT_FOUND, 'request.notFound');
     if (req.status !== 'PENDING') {
-      throw new BizException(BizCode.CONFLICT, 'Yêu cầu đã được xử lý');
+      throw new BizException(BizCode.CONFLICT, 'request.alreadyProcessed');
     }
     const result = await this.prisma.$transaction(async (tx) => {
       const updated = await tx.withdrawRequest.update({
@@ -357,11 +357,11 @@ export class AdminService {
   /** 银行转账兜底：管理员人工确认入账（参数为 orderNo） */
   async markPaid(orderNo: string, externalRef?: string, actorId?: bigint | null) {
     const order = await this.prisma.order.findUnique({ where: { orderNo } });
-    if (!order) throw new BizException(BizCode.NOT_FOUND, 'Đơn hàng không tồn tại');
+    if (!order) throw new BizException(BizCode.NOT_FOUND, 'order.notFound');
     if (order.paymentStatus === 'REFUNDED') {
       throw new BizException(
         BizCode.CONFLICT,
-        'Đơn hàng đã hoàn tiền, không thể đánh dấu PAID',
+        'order.alreadyRefundedCannotMarkPaid',
       );
     }
     if (order.paymentStatus === 'PAID') {
@@ -495,7 +495,7 @@ export class AdminService {
       await this.prisma.category.upsert({
         where: { slug: c.slug },
         create: c,
-        update: { nameVi: c.nameVi, nameZh: c.nameZh },
+        update: { nameEn: c.nameEn, nameZh: c.nameZh },
       });
     }
 
@@ -603,9 +603,9 @@ export class AdminService {
           data: {
             creatorId: creator.id,
             slug: def.slug,
-            titleVi: def.titleVi,
+            titleEn: def.titleEn,
             titleZh: def.titleZh,
-            descriptionVi: def.descVi || null,
+            descriptionEn: def.descEn || null,
             descriptionZh: def.descZh || null,
             categorySlug: def.category,
             coverUrl: coverUrl || null,
@@ -630,7 +630,7 @@ export class AdminService {
             data: {
               dramaId: drama.id,
               episodeNumber: ep,
-              title: `Tập ${ep}`,
+              title: `Episode ${ep}`,
               isFree,
               priceVnd: isFree ? 0n : def.priceVnd,
               // 解锁按积分扣款；导入必须写 priceCredits，否则付费集会变成「0 积分仍上锁」
@@ -701,7 +701,7 @@ export class AdminService {
 
   async createBanner(
     dto: {
-      titleVi: string;
+      titleEn: string;
       titleZh?: string;
       imageUrl: string;
       linkUrl?: string;
@@ -719,11 +719,11 @@ export class AdminService {
       throw new BizException(BizCode.BAD_REQUEST, 'startAt/endAt không hợp lệ');
     }
     if (endAt <= startAt) {
-      throw new BizException(BizCode.BAD_REQUEST, 'endAt phải sau startAt');
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.endAfterStart');
     }
     const banner = await this.prisma.banner.create({
       data: {
-        titleVi: dto.titleVi,
+        titleEn: dto.titleEn,
         titleZh: dto.titleZh,
         imageUrl: dto.imageUrl,
         linkUrl: dto.linkUrl,
@@ -739,14 +739,14 @@ export class AdminService {
       action: 'banner.create',
       targetType: 'banner',
       targetId: banner.id.toString(),
-      payload: { titleVi: banner.titleVi },
+      payload: { titleEn: banner.titleEn },
     });
     return { id: banner.id.toString() };
   }
 
   async updateBanner(id: string, dto: any, actorId?: bigint) {
     const data: any = {};
-    if (dto.titleVi != null) data.titleVi = dto.titleVi;
+    if (dto.titleEn != null) data.titleEn = dto.titleEn;
     if (dto.titleZh != null) data.titleZh = dto.titleZh;
     if (dto.imageUrl != null) data.imageUrl = dto.imageUrl;
     if ("linkUrl" in dto) data.linkUrl = dto.linkUrl ? String(dto.linkUrl) : null;
@@ -767,7 +767,7 @@ export class AdminService {
       const start = data.startAt ?? existing.startAt;
       const end = data.endAt ?? existing.endAt;
       if (end <= start) {
-        throw new BizException(BizCode.BAD_REQUEST, 'endAt phải sau startAt');
+        throw new BizException(BizCode.BAD_REQUEST, 'validation.endAfterStart');
       }
     }
     const banner = await this.prisma.banner.update({
@@ -806,13 +806,13 @@ export class AdminService {
   }
 
   async createCategory(
-    dto: { slug: string; nameVi: string; nameZh: string; sortOrder?: number; isActive?: boolean },
+    dto: { slug: string; nameEn: string; nameZh: string; sortOrder?: number; isActive?: boolean },
     actorId?: bigint,
   ) {
     const cat = await this.prisma.category.create({
       data: {
         slug: dto.slug,
-        nameVi: dto.nameVi,
+        nameEn: dto.nameEn,
         nameZh: dto.nameZh,
         sortOrder: dto.sortOrder ?? 0,
         isActive: dto.isActive ?? true,
@@ -823,14 +823,14 @@ export class AdminService {
       action: 'category.create',
       targetType: 'category',
       targetId: cat.slug,
-      payload: { nameVi: cat.nameVi },
+      payload: { nameEn: cat.nameEn },
     });
     return { slug: cat.slug };
   }
 
   async updateCategory(slug: string, dto: any, actorId?: bigint) {
     const data: any = {};
-    if (dto.nameVi != null) data.nameVi = dto.nameVi;
+    if (dto.nameEn != null) data.nameEn = dto.nameEn;
     if (dto.nameZh != null) data.nameZh = dto.nameZh;
     if (dto.sortOrder != null) data.sortOrder = Number(dto.sortOrder);
     if (dto.isActive != null) data.isActive = !!dto.isActive;
@@ -869,9 +869,9 @@ export class AdminService {
   // ============ Drama 管理动作 ============
   async updateDrama(id: string, dto: any, actorId?: bigint) {
     const data: any = {};
-    if (dto.titleVi != null) data.titleVi = dto.titleVi;
+    if (dto.titleEn != null) data.titleEn = dto.titleEn;
     if (dto.titleZh != null) data.titleZh = dto.titleZh;
-    if (dto.descriptionVi != null) data.descriptionVi = dto.descriptionVi;
+    if (dto.descriptionEn != null) data.descriptionEn = dto.descriptionEn;
     if (dto.descriptionZh != null) data.descriptionZh = dto.descriptionZh;
     if (dto.categorySlug != null) data.categorySlug = dto.categorySlug;
     if (dto.coverUrl != null) data.coverUrl = dto.coverUrl;
@@ -903,7 +903,7 @@ export class AdminService {
     if (dto.isFeatured != null) data.isFeatured = !!dto.isFeatured;
     if (dto.isOfficial != null) data.isOfficial = !!dto.isOfficial;
     if (Object.keys(data).length === 0) {
-      throw new BizException(BizCode.BAD_REQUEST, 'Không có trường nào để cập nhật');
+      throw new BizException(BizCode.BAD_REQUEST, 'common.noFieldsToUpdate');
     }
     const drama = await this.prisma.drama.update({
       where: { id: BigInt(id) },
@@ -922,7 +922,7 @@ export class AdminService {
   /** 强制下架（保留内容，置 status=OFFLINE） */
   async offlineDrama(id: string, reason?: string, actorId?: bigint) {
     if (!reason || !String(reason).trim()) {
-      throw new BizException(BizCode.BAD_REQUEST, 'Lý do là bắt buộc');
+      throw new BizException(BizCode.BAD_REQUEST, 'common.reasonRequired');
     }
     const drama = await this.prisma.drama.update({
       where: { id: BigInt(id) },
@@ -940,7 +940,7 @@ export class AdminService {
 
   async onlineDrama(id: string, reason?: string, actorId?: bigint) {
     if (!reason || !String(reason).trim()) {
-      throw new BizException(BizCode.BAD_REQUEST, 'Lý do là bắt buộc');
+      throw new BizException(BizCode.BAD_REQUEST, 'common.reasonRequired');
     }
     const drama = await this.prisma.drama.update({
       where: { id: BigInt(id) },
@@ -976,7 +976,7 @@ export class AdminService {
       throw new BizException(BizCode.BAD_REQUEST, '至少填写一集播放链接');
     }
 
-    const titleVi = String(dto.titleVi || titleZh).trim();
+    const titleEn = String(dto.titleEn || titleZh).trim();
     let slug = String(dto.slug || slugifyTitle(titleZh)).trim();
     if (!slug) slug = slugifyTitle(titleZh);
 
@@ -1066,9 +1066,9 @@ export class AdminService {
         data: {
           creatorId: creator!.id,
           slug,
-          titleVi,
+          titleEn,
           titleZh,
-          descriptionVi: dto.descriptionVi?.trim() || null,
+          descriptionEn: dto.descriptionEn?.trim() || null,
           descriptionZh: dto.descriptionZh?.trim() || null,
           categorySlug,
           coverUrl: dto.coverUrl?.trim() || null,

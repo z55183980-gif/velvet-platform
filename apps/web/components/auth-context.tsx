@@ -107,7 +107,7 @@ function toUser(s: any, fallback?: string): AuthUser {
     username,
     nickname,
     avatarUrl: s?.avatarUrl ?? null,
-    locale: s?.locale || "vi",
+    locale: s?.locale || "en",
     label,
     hasPassword: !!s?.hasPassword,
     isVip: !!s?.isVip,

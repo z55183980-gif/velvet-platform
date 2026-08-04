@@ -54,7 +54,7 @@ export class AdminWalletService {
     actorId?: bigint,
   ) {
     if (!input?.reason || !String(input.reason).trim()) {
-      throw new BizException(BizCode.BAD_REQUEST, 'Lý do là bắt buộc');
+      throw new BizException(BizCode.BAD_REQUEST, 'common.reasonRequired');
     }
     const delta = toBigInt(input.deltaCredits);
     if (delta === 0n) {
@@ -62,7 +62,7 @@ export class AdminWalletService {
     }
 
     const user = await this.prisma.user.findUnique({ where: { id: BigInt(userId) } });
-    if (!user) throw new BizException(BizCode.NOT_FOUND, 'Người dùng không tồn tại');
+    if (!user) throw new BizException(BizCode.NOT_FOUND, 'user.notFound');
 
     const result = await this.prisma.$transaction(async (tx) => {
       // 创建一个 ADJUST 占位订单，方便 audit / 幂等
@@ -109,7 +109,7 @@ export class AdminWalletService {
         }
         const newBalance = wallet.balanceCredits + delta;
         if (newBalance < 0n) {
-          throw new BizException(BizCode.INSUFFICIENT_BALANCE, 'Số dư không đủ');
+          throw new BizException(BizCode.INSUFFICIENT_BALANCE, 'wallet.insufficientBalance');
         }
         const res = await tx.wallet.updateMany({
           where: { userId: user.id, version: wallet.version },
@@ -127,7 +127,7 @@ export class AdminWalletService {
         }
       }
       if (balanceAfter == null) {
-        throw new BizException(BizCode.CONFLICT, 'Cập nhật ví thất bại, vui lòng thử lại');
+        throw new BizException(BizCode.CONFLICT, 'wallet.updateFailed');
       }
 
       // 记一笔流水（UNLOCK + 负号、TOPUP + 正号可区分方向；用 remark 表明是 ADJUST）

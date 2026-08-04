@@ -31,15 +31,15 @@ export class AdminRefundService {
 
   async request(orderNo: string, userId: bigint, note: string) {
     const order = await this.prisma.order.findUnique({ where: { orderNo } });
-    if (!order) throw new BizException(BizCode.NOT_FOUND, 'Đơn hàng không tồn tại');
+    if (!order) throw new BizException(BizCode.NOT_FOUND, 'order.notFound');
     if (order.userId !== userId) {
-      throw new BizException(BizCode.FORBIDDEN, 'Không có quyền');
+      throw new BizException(BizCode.FORBIDDEN, 'common.forbidden');
     }
     if (order.paymentStatus !== 'PAID') {
-      throw new BizException(BizCode.ORDER_NOT_PAID, 'Đơn chưa thanh toán, không thể yêu cầu hoàn');
+      throw new BizException(BizCode.ORDER_NOT_PAID, 'order.unpaidCannotRefund');
     }
     if (order.orderType !== 'TOPUP' && order.orderType !== 'EPISODE_UNLOCK') {
-      throw new BizException(BizCode.FORBIDDEN, 'Loại đơn này không hỗ trợ hoàn');
+      throw new BizException(BizCode.FORBIDDEN, 'order.typeNoRefund');
     }
     if (order.refundStatus === 'REQUESTED') {
       return { alreadyRequested: true, orderNo };
@@ -56,7 +56,7 @@ export class AdminRefundService {
 
   async approve(orderNo: string, actorId?: bigint) {
     const order = await this.prisma.order.findUnique({ where: { orderNo } });
-    if (!order) throw new BizException(BizCode.NOT_FOUND, 'Đơn hàng không tồn tại');
+    if (!order) throw new BizException(BizCode.NOT_FOUND, 'order.notFound');
     if (order.paymentStatus === 'REFUNDED') {
       // 钱包侧已退完时，仍把工单状态对齐为 APPROVED（幂等）
       if (order.refundStatus !== 'APPROVED') {
@@ -100,10 +100,10 @@ export class AdminRefundService {
 
   async refuse(orderNo: string, reason: string, actorId?: bigint) {
     if (!reason || !reason.trim()) {
-      throw new BizException(BizCode.BAD_REQUEST, 'Lý do từ chối là bắt buộc');
+      throw new BizException(BizCode.BAD_REQUEST, 'common.rejectReasonRequired');
     }
     const order = await this.prisma.order.findUnique({ where: { orderNo } });
-    if (!order) throw new BizException(BizCode.NOT_FOUND, 'Đơn hàng không tồn tại');
+    if (!order) throw new BizException(BizCode.NOT_FOUND, 'order.notFound');
     if (order.refundStatus !== 'REQUESTED') {
       throw new BizException(BizCode.CONFLICT, '工单状态不允许拒绝');
     }

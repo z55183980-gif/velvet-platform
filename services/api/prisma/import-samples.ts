@@ -19,9 +19,9 @@ function norm(s: string) {
 
 interface Def {
   slug: string;
-  titleVi: string;
+  titleEn: string;
   titleZh: string;
-  descVi: string;
+  descEn: string;
   descZh: string;
   category: string;
   freeCount: number;
@@ -38,9 +38,9 @@ const PAID_VND = 10000n;
 const DEFS: Record<string, Def> = {
   末世之约: {
     slug: 'mo-shi-zhi-yue',
-    titleVi: 'Cuối thế giới chi ước',
+    titleEn: 'Apocalypse Pact',
     titleZh: '末世之约',
-    descVi: 'Thế giới sụp đổ, những người sống sót tìm kiếm hy vọng cuối cùng.',
+    descEn: 'The world collapses; survivors search for one last hope among the ruins.',
     descZh: '末世降临，幸存者在废墟中追寻最后的希望。',
     category: 'tam_ly',
     freeCount: 2,
@@ -51,9 +51,9 @@ const DEFS: Record<string, Def> = {
   },
   穿越修仙界我靠手机忽悠全宗门: {
     slug: 'chuan-yue-xiu-xian',
-    titleVi: 'Xuyên việt tu tiên',
+    titleEn: 'Phone Cultivator',
     titleZh: '穿越修仙界，我靠手机忽悠全宗门',
-    descVi: 'Chàng trai hiện đại xuyên không vào thế giới tu tiên với chiếc điện thoại.',
+    descEn: 'A modern man travels into a cultivation world with nothing but his phone.',
     descZh: '现代青年带着手机穿越修仙界，凭科技忽悠整个宗门。',
     category: 'co_trang',
     freeCount: 2,
@@ -63,9 +63,9 @@ const DEFS: Record<string, Def> = {
   },
   青灯引僵成片: {
     slug: 'qing-deng-yin-jiang',
-    titleVi: 'Đèn xanh dẫn xác ướp',
+    titleEn: 'Blue Lantern Summons the Undead',
     titleZh: '青灯引僵',
-    descVi: 'Ngọn đèn xanh dẫn lối những xác ướp trở về.',
+    descEn: 'A blue lantern guides the sleeping undead back to the living world.',
     descZh: '一盏青灯，引动沉睡的僵尸归来。',
     category: 'co_trang',
     freeCount: 1,
@@ -74,9 +74,9 @@ const DEFS: Record<string, Def> = {
   },
   魔兽争霸霜狼之子荣耀觉醒: {
     slug: 'mo-shou-shuang-lang',
-    titleVi: 'Warcraft: Đứa con sói băng',
+    titleEn: "Warcraft: Frostwolf's Child",
     titleZh: '魔兽争霸：霜狼之子',
-    descVi: 'Huyền thoại sói băng trỗi dậy giữa các đấu trường.',
+    descEn: 'The frost-wolf legend rises again across the battlefields.',
     descZh: '霜狼之子在战场中觉醒，书写魔兽传奇。',
     category: 'hanh_dong',
     freeCount: 1,
@@ -85,9 +85,9 @@ const DEFS: Record<string, Def> = {
   },
   星际赘婿地球男儿太抢手: {
     slug: 'xing-ji-zhui-xu',
-    titleVi: 'Tể phu ngôi sao',
+    titleEn: 'Interstellar Son-in-Law',
     titleZh: '星际赘婿：地球男儿太抢手',
-    descVi: 'Chàng rể ngoại tộc từ Trái Đất gây chấn động thiên hà.',
+    descEn: 'An earthborn son-in-law shakes the entire galaxy.',
     descZh: '来自地球的赘婿，意外成为星际焦点。',
     category: 'hanh_dong',
     freeCount: 1,
@@ -96,9 +96,9 @@ const DEFS: Record<string, Def> = {
   },
   江西赶尸人: {
     slug: 'jiang-xi-gan-shi',
-    titleVi: 'Giang Tây thôi thi',
+    titleEn: 'Jiangxi Corpse Herder',
     titleZh: '江西赶尸人',
-    descVi: 'Người dẫn xác từ Giang Tây đi qua những ngôi làng u tối.',
+    descEn: 'A corpse herder from Jiangxi walks through dark mountain villages at night.',
     descZh: '江西赶尸人，夜行于幽暗山村之间。',
     category: 'co_trang',
     freeCount: 2,
@@ -108,12 +108,12 @@ const DEFS: Record<string, Def> = {
 };
 
 const CATEGORIES = [
-  { slug: 'do_thi', nameVi: 'Đô thị', nameZh: '都市' },
-  { slug: 'ngon_tinh', nameVi: 'Ngôn tình', nameZh: '言情' },
-  { slug: 'hanh_dong', nameVi: 'Hành động', nameZh: '动作' },
-  { slug: 'hai_huoc', nameVi: 'Hài hước', nameZh: '喜剧' },
-  { slug: 'tam_ly', nameVi: 'Tâm lý', nameZh: '心理' },
-  { slug: 'co_trang', nameVi: 'Cổ trang', nameZh: '古装' },
+  { slug: 'do_thi', nameEn: 'Urban', nameZh: '都市' },
+  { slug: 'ngon_tinh', nameEn: 'Romance', nameZh: '言情' },
+  { slug: 'hanh_dong', nameEn: 'Action', nameZh: '动作' },
+  { slug: 'hai_huoc', nameEn: 'Comedy', nameZh: '喜剧' },
+  { slug: 'tam_ly', nameEn: 'Psychological', nameZh: '心理' },
+  { slug: 'co_trang', nameEn: 'Costume', nameZh: '古装' },
 ];
 
 function numCmp(a: string, b: string) {
@@ -193,9 +193,9 @@ async function main() {
       data: {
         creatorId: creator.id,
         slug: def.slug,
-        titleVi: def.titleVi,
+        titleEn: def.titleEn,
         titleZh: def.titleZh,
-        descriptionVi: def.descVi,
+        descriptionEn: def.descEn,
         descriptionZh: def.descZh,
         categorySlug: def.category,
         coverUrl,
@@ -219,7 +219,7 @@ async function main() {
         data: {
           dramaId: drama.id,
           episodeNumber: ep,
-          title: `Tập ${ep}`,
+          title: `Episode ${ep}`,
           isFree,
           priceVnd: isFree ? 0n : def.priceVnd,
           priceCredits: isFree ? 0n : def.priceCredits,

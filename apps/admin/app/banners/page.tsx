@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
@@ -19,7 +19,7 @@ import { useI18n } from "@/lib/i18n";
 
 type Banner = {
   id: string | number;
-  titleVi?: string;
+  titleEn?: string;
   titleZh?: string;
   imageUrl?: string;
   linkUrl?: string;
@@ -33,7 +33,7 @@ type Banner = {
 type DramaLite = {
   id: string | number;
   titleZh?: string;
-  titleVi?: string;
+  titleEn?: string;
   slug?: string;
   status?: string;
 };
@@ -86,7 +86,7 @@ function bannerPhase(row: Banner, now = Date.now()): BannerPhase {
 
 function dramaLabel(d: DramaLite | null | undefined, fallbackId?: string) {
   if (!d) return fallbackId || "";
-  return d.titleZh || d.titleVi || d.slug || String(d.id);
+  return d.titleZh || d.titleEn || d.slug || String(d.id);
 }
 
 function truncateUrl(url: string, max = 36) {
@@ -109,7 +109,7 @@ const makeEmpty = (): BannerForm => ({
 
 function bannerFromRow(row: Banner): BannerForm {
   return {
-    titleZh: row.titleZh || row.titleVi || "",
+    titleZh: row.titleZh || row.titleEn || "",
     imageUrl: row.imageUrl || "",
     jumpMode: jumpModeFromRow(row),
     linkUrl: row.linkUrl || "",
@@ -281,7 +281,7 @@ export default function AdminBannersPage() {
 
       const body = {
         titleZh,
-        titleVi: titleZh,
+        titleEn: titleZh,
         imageUrl: form.imageUrl.trim(),
         linkUrl,
         dramaId,
@@ -356,7 +356,7 @@ export default function AdminBannersPage() {
               </div>
             )}
             <div className="min-w-0 truncate font-medium text-ink">
-              {row.titleZh || row.titleVi || "—"}
+              {row.titleZh || row.titleEn || "—"}
             </div>
           </div>
         ),

@@ -36,15 +36,35 @@ function normalizeApiMessage(message: unknown, fallback: string): string {
   return fallback;
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+/** Current UI locale for Accept-Language; default English (system policy). */
+function getClientLocale(): string {
+  if (typeof window === "undefined") return "en";
+  try {
+    const saved = localStorage.getItem("locale");
+    if (saved && /^[a-z]{2}(-[A-Za-z]+)?$/i.test(saved)) return saved;
+    const m = document.cookie.match(/(?:^|; )dv_locale=([a-zA-Z-]+)(?:;|$)/);
+    if (m?.[1]) return m[1];
+  } catch {
+    /* ignore */
+  }
+  return "en";
+}
+
+function withApiHeaders(init?: HeadersInit): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    ...(init?.headers as Record<string, string> | undefined),
+    ...(init as Record<string, string> | undefined),
+    "Accept-Language": getClientLocale(),
   };
   if (typeof window !== "undefined") {
     const token = localStorage.getItem("dv_token");
     if (token && !headers.Authorization) headers.Authorization = `Bearer ${token}`;
   }
+  return headers;
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = withApiHeaders(init?.headers);
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
     credentials: "include",
@@ -135,9 +155,9 @@ function mapDrama(d: any): Drama {
   return {
     id: d.slug || String(d.id),
     numericId: d.id != null ? String(d.id) : undefined,
-    titleVi: d.titleVi || "",
+    titleEn: d.titleEn || "",
     titleZh: d.titleZh || "",
-    descVi: d.descriptionVi || "",
+    descEn: d.descriptionEn || "",
     descZh: d.descriptionZh || "",
     categorySlug: d.categorySlug || "",
     tags: Array.isArray(d.tags)
@@ -167,7 +187,7 @@ function mapEpisode(e: any): Episode {
   return {
     id: e.id,
     no: e.episodeNumber,
-    titleVi: e.title || `Tập ${e.episodeNumber}`,
+    titleEn: e.title || `Episode ${e.episodeNumber}`,
     titleZh: e.title || `第 ${e.episodeNumber} 集`,
     isFree: !!e.isFree,
     // 平台原子定价为积分（priceCredits）；回退 priceVnd
@@ -259,7 +279,7 @@ export async function loadHottest(opts?: { signal?: AbortSignal }): Promise<Dram
 
 export type HomeBanner = {
   id: string;
-  titleVi: string;
+  titleEn: string;
   titleZh?: string | null;
   imageUrl: string;
   linkUrl?: string | null;
@@ -276,7 +296,7 @@ export async function loadBanners(opts?: { signal?: AbortSignal }): Promise<Home
         const list = await request<any[]>("/banners");
         return (Array.isArray(list) ? list : []).map((b) => ({
           id: String(b.id),
-          titleVi: b.titleVi || "",
+          titleEn: b.titleEn || "",
           titleZh: b.titleZh || "",
           imageUrl: b.imageUrl || "",
           linkUrl: b.linkUrl || null,
@@ -349,7 +369,7 @@ export async function verifyOtp(phone: string, code: string) {
   const res = await fetch(`${API_BASE}/auth/phone-number/verify`, {
     method: "POST",
     credentials: "include",
-    headers: { "Content-Type": "application/json" },
+    headers: withApiHeaders(),
     body: JSON.stringify({ phone, code }),
   });
   const json = (await res.json()) as ApiEnvelope<{ token: string; user?: any }>;
@@ -372,7 +392,7 @@ async function authPost<T>(path: string, body: Record<string, unknown>): Promise
   const res = await fetch(`${API_BASE}${path}`, {
     method: "POST",
     credentials: "include",
-    headers: { "Content-Type": "application/json" },
+    headers: withApiHeaders(),
     body: JSON.stringify(body),
   });
   const json = (await res.json()) as ApiEnvelope<T & { token?: string }>;
@@ -596,6 +616,9 @@ export async function vipSubOrder(
 export type VipPlanQuote = {
   id: string;
   name: string | null;
+  nameEn?: string;
+  nameZh?: string | null;
+  nameFr?: string | null;
   durationDays: number;
   baseCurrency: string;
   basePrice: string;
@@ -605,7 +628,7 @@ export type VipPlanQuote = {
   cnyToFiat?: string;
 };
 
-export async function getVipPlans(currency = "CNY"): Promise<VipPlanQuote[]> {
+export async function getVipPlans(currency = "USD"): Promise<VipPlanQuote[]> {
   try {
     return await request(`/vip-plans?currency=${encodeURIComponent(currency)}`);
   } catch {
@@ -646,8 +669,8 @@ export type TopupPackageQuote = {
   cnyToFiat?: string;
 };
 
-/** 公开积分套餐（含指定币种应付价） */
-export async function getTopupPackages(currency = "CNY"): Promise<TopupPackageQuote[]> {
+/** 公开积分套餐（USD 标价） */
+export async function getTopupPackages(currency = "USD"): Promise<TopupPackageQuote[]> {
   try {
     return await request(`/topup-packages?currency=${encodeURIComponent(currency)}`);
   } catch {

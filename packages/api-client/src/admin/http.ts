@@ -1,6 +1,8 @@
 import { ApiError, normalizeApiMessage, type ApiEnvelope } from "../types";
 
 export const ADMIN_TOKEN_KEY = "dv_admin_token";
+/** Must stay aligned with apps/admin `LOCALE_STORAGE_KEY` (admin is zh|en only). */
+export const ADMIN_LOCALE_STORAGE_KEY = "velvet-admin-locale";
 export const API_BASE = "/api/v1";
 
 export type AdminProfile = {
@@ -10,6 +12,8 @@ export type AdminProfile = {
   displayName: string | null;
   role?: "SUPER_ADMIN" | "OPS";
 };
+
+export type AdminLocale = "zh" | "en";
 
 export function getAdminToken() {
   if (typeof window === "undefined") return "";
@@ -24,9 +28,24 @@ export function clearAdminToken() {
   if (typeof window !== "undefined") localStorage.removeItem(ADMIN_TOKEN_KEY);
 }
 
+/** Admin UI is bilingual zh/en only — never fall back to browser language (often vi). */
+export function getAdminLocale(): AdminLocale {
+  if (typeof window === "undefined") return "zh";
+  try {
+    return localStorage.getItem(ADMIN_LOCALE_STORAGE_KEY) === "en" ? "en" : "zh";
+  } catch {
+    return "zh";
+  }
+}
+
 function adminAuthHeaders(): Record<string, string> {
   const token = getAdminToken();
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const locale = getAdminLocale();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    // Prefer UI locale over browser Accept-Language so API errors match admin zh/en.
+    "Accept-Language": locale === "en" ? "en" : "zh",
+  };
   if (token) headers.Authorization = `Bearer ${token}`;
   return headers;
 }
@@ -53,9 +72,13 @@ export async function adminRequest<T = any>(path: string, init?: RequestInit): P
 
 export async function adminDownloadBlob(path: string, filename: string) {
   const token = getAdminToken();
+  const locale = getAdminLocale();
   const res = await fetch(`${API_BASE}${path}`, {
     credentials: "include",
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    headers: {
+      "Accept-Language": locale === "en" ? "en" : "zh",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
   });
   if (!res.ok) {
     const text = await res.text().catch(() => "");

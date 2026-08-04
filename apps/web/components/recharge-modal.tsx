@@ -5,7 +5,6 @@ import { X, Loader2, Check, Coins } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { useAuth } from "@/components/auth-context";
 import {
-  getExchangeRates,
   getTopupPackages,
   topupOrder,
   simulatePay,
@@ -15,18 +14,18 @@ import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { track } from "@/lib/track";
 
-type PayMethod = "ALIPAY" | "SIMULATE";
+const PAY_CURRENCY = "USD";
+
+type PayMethod = "STRIPE" | "SIMULATE";
 
 export function RechargeModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { t } = useLocale();
   const { user, openLogin, refreshWallet } = useAuth();
   const isDev = process.env.NODE_ENV === "development";
 
-  const [currencies, setCurrencies] = useState<string[]>(["CNY", "VND"]);
-  const [currency, setCurrency] = useState("CNY");
   const [packages, setPackages] = useState<TopupPackageQuote[]>([]);
   const [packageId, setPackageId] = useState<string | null>(null);
-  const [method, setMethod] = useState<PayMethod>("ALIPAY");
+  const [method, setMethod] = useState<PayMethod>("STRIPE");
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -37,32 +36,19 @@ export function RechargeModal({ open, onClose }: { open: boolean; onClose: () =>
     setErr(null);
     setDone(false);
     setPayHint(null);
-    setMethod(isDev ? "SIMULATE" : "ALIPAY");
-    getExchangeRates().then((r) => {
-      const list = r.map((x) => x.currency);
-      if (list.length) {
-        setCurrencies(list);
-        if (!list.includes(currency)) setCurrency(list.includes("CNY") ? "CNY" : list[0]);
-      }
-    });
-  }, [open]);
+    setMethod(isDev ? "SIMULATE" : "STRIPE");
+  }, [open, isDev]);
 
   useEffect(() => {
     if (!open) return;
-    getTopupPackages(currency).then((list) => {
+    getTopupPackages(PAY_CURRENCY).then((list) => {
       setPackages(list);
       setPackageId((prev) => {
         if (prev && list.find((p) => p.id === prev)) return prev;
         return list[0]?.id ?? null;
       });
     });
-  }, [open, currency]);
-
-  useEffect(() => {
-    if (method === "ALIPAY" && currency !== "CNY" && isDev) {
-      setMethod("SIMULATE");
-    }
-  }, [currency, method, isDev]);
+  }, [open]);
 
   if (!open) return null;
 
@@ -80,47 +66,26 @@ export function RechargeModal({ open, onClose }: { open: boolean; onClose: () =>
       setErr(t("recharge.emptyPackages"));
       return;
     }
-    if (method === "ALIPAY" && currency !== "CNY") {
-      setErr(t("recharge.alipayCnyOnly"));
-      return;
-    }
     setBusy(true);
     setErr(null);
     setPayHint(null);
     try {
-      const payMethod = method === "ALIPAY" ? "ALIPAY" : "STRIPE";
-      const r: any = await topupOrder(selected.id, currency, payMethod);
-      if (method === "ALIPAY" && r?.payUrl) {
+      const r: any = await topupOrder(selected.id, PAY_CURRENCY, "STRIPE");
+      if (isDev && r?.orderNo && method === "SIMULATE") {
+        await simulatePay(r.orderNo);
+        await refreshWallet();
         track("recharge", {
-          method: "ALIPAY",
-          currency,
+          method,
+          currency: PAY_CURRENCY,
           packageId: selected.id,
           credits,
           payAmount,
         });
-        setPayHint(t("recharge.redirecting"));
-        window.location.href = r.payUrl;
-        return;
-      }
-      if (method === "ALIPAY" && r?.payForm) {
-        const wrap = document.createElement("div");
-        wrap.innerHTML = r.payForm;
-        document.body.appendChild(wrap);
-        const form = wrap.querySelector("form");
-        if (form) {
-          (form as HTMLFormElement).submit();
-          return;
-        }
-      }
-      if (isDev && r?.orderNo && method === "SIMULATE") {
-        await simulatePay(r.orderNo);
-        await refreshWallet();
-        track("recharge", { method, currency, packageId: selected.id, credits, payAmount });
         setDone(true);
         setTimeout(() => onClose(), 1200);
         return;
       }
-      setErr("Chưa nhận được payUrl — kiểm tra cấu hình Alipay");
+      setErr(t("vip.payPending"));
     } catch (e: any) {
       setErr(e?.message || "Nạp tiền thất bại");
     } finally {
@@ -160,27 +125,6 @@ export function RechargeModal({ open, onClose }: { open: boolean; onClose: () =>
         ) : (
           <div className="space-y-6 px-6 pb-6">
             <div>
-              <label className="text-caption uppercase text-ink-subtle">{t("recharge.currency")}</label>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {currencies.map((c) => (
-                  <button
-                    key={c}
-                    type="button"
-                    onClick={() => setCurrency(c)}
-                    className={cn(
-                      "rounded-full px-4 py-2 text-body-sm font-medium transition-colors",
-                      currency === c
-                        ? "bg-brand text-white"
-                        : "bg-surface-2 text-ink-muted hover:text-ink",
-                    )}
-                  >
-                    {c}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div>
               <label className="text-caption uppercase text-ink-subtle">{t("recharge.package")}</label>
               {packages.length === 0 ? (
                 <p className="mt-3 text-body-sm text-ink-muted">{t("recharge.emptyPackages")}</p>
@@ -205,7 +149,7 @@ export function RechargeModal({ open, onClose }: { open: boolean; onClose: () =>
                         </span>
                         <span className="mt-0.5 text-caption text-ink-subtle">积分</span>
                         <span className="mt-3 text-body-sm font-semibold tabular-nums text-gold">
-                          {Number(p.payAmount || 0).toLocaleString()} {currency}
+                          {Number(p.payAmount || 0).toLocaleString()} {PAY_CURRENCY}
                         </span>
                       </button>
                     );
@@ -214,23 +158,10 @@ export function RechargeModal({ open, onClose }: { open: boolean; onClose: () =>
               )}
             </div>
 
-            <div>
-              <label className="text-caption uppercase text-ink-subtle">{t("recharge.method")}</label>
-              <div className="mt-2 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => setMethod("ALIPAY")}
-                  disabled={currency !== "CNY"}
-                  className={cn(
-                    "rounded-full px-4 py-2 text-body-sm font-medium transition-colors disabled:opacity-40",
-                    method === "ALIPAY"
-                      ? "bg-brand text-white"
-                      : "bg-surface-2 text-ink-muted hover:text-ink",
-                  )}
-                >
-                  {t("recharge.alipay")}
-                </button>
-                {isDev && (
+            {isDev ? (
+              <div>
+                <label className="text-caption uppercase text-ink-subtle">{t("recharge.method")}</label>
+                <div className="mt-2 flex flex-wrap gap-2">
                   <button
                     type="button"
                     onClick={() => setMethod("SIMULATE")}
@@ -243,12 +174,9 @@ export function RechargeModal({ open, onClose }: { open: boolean; onClose: () =>
                   >
                     {t("recharge.simulate")}
                   </button>
-                )}
+                </div>
               </div>
-              {currency !== "CNY" && (
-                <p className="mt-2 text-caption text-ink-subtle">{t("recharge.alipayCnyOnly")}</p>
-              )}
-            </div>
+            ) : null}
 
             {selected && (
               <div className="flex items-center justify-between gap-4 rounded-xl bg-surface-2 px-5 py-4">
@@ -261,7 +189,7 @@ export function RechargeModal({ open, onClose }: { open: boolean; onClose: () =>
                     {credits.toLocaleString()}
                   </p>
                   <p className="text-caption text-ink-subtle">
-                    {payAmount.toLocaleString()} {currency}
+                    {payAmount.toLocaleString()} {PAY_CURRENCY}
                   </p>
                 </div>
               </div>

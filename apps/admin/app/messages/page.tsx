@@ -24,9 +24,9 @@ export default function AdminMessagesPage() {
       const bodyZh = form.bodyZh.trim();
       return adminBroadcastNotification({
         titleZh,
-        titleVi: titleZh,
+        titleEn: titleZh,
         bodyZh,
-        bodyVi: bodyZh,
+        bodyEn: bodyZh,
         userId: form.broadcast ? undefined : form.userId.trim() || undefined,
         broadcast: form.broadcast,
       }) as Promise<{ created?: number }>;

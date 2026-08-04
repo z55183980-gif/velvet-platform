@@ -16,12 +16,7 @@ export function ContentDetailModal({
   const { t } = useI18n();
 
   return (
-    <GlassModal
-      open={open && !!dramaId}
-      onClose={onClose}
-      title={t("dramaDetail")}
-      size="xl"
-    >
+    <GlassModal open={open && !!dramaId} onClose={onClose} title={t("dramaDetail")} size="xl">
       {dramaId ? <ContentDetailPanel id={dramaId} onDeleted={onClose} /> : null}
     </GlassModal>
   );

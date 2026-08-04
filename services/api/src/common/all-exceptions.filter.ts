@@ -7,22 +7,28 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { Response } from 'express';
+import { Request, Response } from 'express';
 import { BizException } from './biz.exception';
 import { ApiResult } from './response';
 import { mapPrismaError } from './prisma-error.util';
+import { localizeMessage, localeFromRequest, t } from './i18n/translate';
 
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
   private readonly logger = new Logger(AllExceptionsFilter.name);
 
   catch(exception: unknown, host: ArgumentsHost) {
-    const res = host.switchToHttp().getResponse<Response>();
+    const ctx = host.switchToHttp();
+    const res = ctx.getResponse<Response>();
+    const req = ctx.getRequest<Request>();
+    const acceptLanguage = req?.headers?.['accept-language'];
+    const locale = localeFromRequest(req?.headers || {});
+
     let code = -1;
-    let message = 'Internal server error';
+    let message = t('common.internalError', locale);
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
 
-    // Prisma 原始错误 → BizException，避免堆栈/字段细节泄露
+    // Prisma → BizException (hide stack / field details)
     if (
       exception instanceof Prisma.PrismaClientKnownRequestError ||
       exception instanceof Prisma.PrismaClientValidationError
@@ -36,23 +42,33 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
     if (exception instanceof BizException) {
       code = exception.bizCode;
-      message = exception.message;
+      message = localizeMessage(exception.message, acceptLanguage, exception.messageParams);
       status = exception.getStatus();
     } else if (exception instanceof HttpException) {
       code = exception.getStatus();
       const resp = exception.getResponse();
       if (typeof resp === 'string') {
-        message = resp;
+        message = localizeMessage(resp, acceptLanguage);
       } else {
-        const m = (resp as any).message;
-        message = Array.isArray(m) ? m.join(', ') : m ?? exception.message;
+        const m = (resp as { message?: unknown }).message;
+        if (Array.isArray(m)) {
+          message = m
+            .map((item) =>
+              typeof item === 'string' ? localizeMessage(item, acceptLanguage) : String(item),
+            )
+            .join(', ');
+        } else if (typeof m === 'string') {
+          message = localizeMessage(m, acceptLanguage);
+        } else {
+          message = localizeMessage(exception.message, acceptLanguage);
+        }
       }
       status = exception.getStatus();
     } else if (exception instanceof Error) {
       this.logger.error(exception.message, exception.stack);
       message =
         process.env.NODE_ENV === 'production'
-          ? 'Internal server error'
+          ? t('common.internalError', locale)
           : exception.message;
     }
 

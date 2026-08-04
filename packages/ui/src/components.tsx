@@ -5,7 +5,7 @@ type Variant = "primary" | "secondary" | "ghost" | "danger";
 type Size = "sm" | "md" | "lg";
 
 const btnBase =
-  "inline-flex items-center justify-center gap-2 font-medium rounded-xl transition-[background-color,transform,box-shadow,color] duration-150 ease-out select-none disabled:opacity-50 disabled:pointer-events-none";
+  "inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl font-medium transition-[background-color,transform,box-shadow,color,filter] duration-150 ease-out select-none hover:-translate-y-0.5 hover:shadow-md active:translate-y-0 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-none disabled:active:scale-100";
 
 const variants: Record<Variant, string> = {
   primary: "bg-brand text-white hover:bg-brand-strong shadow-brand",

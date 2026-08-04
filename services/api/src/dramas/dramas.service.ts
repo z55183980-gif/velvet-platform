@@ -24,7 +24,7 @@ export class DramasService {
     if (opts.tag) where.tags = { has: opts.tag };
     if (opts.q) {
       where.OR = [
-        { titleVi: { contains: opts.q, mode: 'insensitive' } },
+        { titleEn: { contains: opts.q, mode: 'insensitive' } },
         { titleZh: { contains: opts.q, mode: 'insensitive' } },
       ];
     }
@@ -229,7 +229,7 @@ export class DramasService {
     });
     return rows.map((b) => ({
       id: b.id.toString(),
-      titleVi: b.titleVi,
+      titleEn: b.titleEn,
       titleZh: b.titleZh,
       imageUrl: b.imageUrl,
       linkUrl: b.linkUrl,

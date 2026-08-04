@@ -41,9 +41,9 @@ export class NotificationsController {
       rows: rows.map((n) => ({
         id: n.id.toString(),
         type: n.type,
-        titleVi: n.titleVi,
+        titleEn: n.titleEn,
         titleZh: n.titleZh,
-        bodyVi: n.bodyVi,
+        bodyEn: n.bodyEn,
         bodyZh: n.bodyZh,
         payload: n.payload,
         readAt: n.readAt,

@@ -10,17 +10,19 @@ export function mapPrismaError(e: unknown): never {
       case 'P2002': {
         const target = (e.meta?.target as string[] | string | undefined) || '';
         const field = Array.isArray(target) ? target.join(',') : String(target || '');
-        throw new BizException(
-          BizCode.CONFLICT,
-          field ? `Dữ liệu đã tồn tại (${field})` : 'Dữ liệu đã tồn tại',
-        );
+        if (field) {
+          throw new BizException(BizCode.CONFLICT, 'common.recordExistsField', undefined, {
+            field,
+          });
+        }
+        throw new BizException(BizCode.CONFLICT, 'common.recordExists');
       }
       case 'P2003':
-        throw new BizException(BizCode.BAD_REQUEST, 'Tham chiếu không hợp lệ');
+        throw new BizException(BizCode.BAD_REQUEST, 'common.invalidReference');
       case 'P2025':
-        throw new BizException(BizCode.NOT_FOUND, 'Không tìm thấy bản ghi');
+        throw new BizException(BizCode.NOT_FOUND, 'common.recordNotFound');
       default:
-        throw new BizException(BizCode.BAD_REQUEST, 'Thao tác dữ liệu thất bại');
+        throw new BizException(BizCode.BAD_REQUEST, 'common.dataOpFailed');
     }
   }
 
@@ -28,9 +30,11 @@ export function mapPrismaError(e: unknown): never {
     const msg = e.message || '';
     const missing = msg.match(/Argument `(\w+)` is missing/);
     if (missing) {
-      throw new BizException(BizCode.BAD_REQUEST, `缺少必要字段 ${missing[1]}`);
+      throw new BizException(BizCode.BAD_REQUEST, 'common.missingField', undefined, {
+        field: missing[1],
+      });
     }
-    throw new BizException(BizCode.BAD_REQUEST, 'Dữ liệu không hợp lệ');
+    throw new BizException(BizCode.BAD_REQUEST, 'common.invalidData');
   }
 
   throw e;

@@ -68,7 +68,7 @@ export class AdminCreatorsService {
         },
       },
     });
-    if (!creator) throw new BizException(BizCode.NOT_FOUND, 'Không tìm thấy creator');
+    if (!creator) throw new BizException(BizCode.NOT_FOUND, 'creator.notFound');
     const [paidAgg, monthlyAgg, perDrama] = await Promise.all([
       this.prisma.order.aggregate({
         where: { creatorId: creator.id, paymentStatus: 'PAID' },
@@ -95,7 +95,7 @@ export class AdminCreatorsService {
     const dramaMap = new Map(
       (await this.prisma.drama.findMany({
         where: { id: { in: dramaIds } },
-        select: { id: true, titleVi: true, titleZh: true, slug: true },
+        select: { id: true, titleEn: true, titleZh: true, slug: true },
       })).map((d) => [d.id.toString(), d] as const),
     );
     const breakdown = perDrama

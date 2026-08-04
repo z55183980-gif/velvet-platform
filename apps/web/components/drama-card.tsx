@@ -16,14 +16,17 @@ export function DramaCard({
   drama,
   compact,
   variant = "default",
+  reserveTitleLines,
 }: {
   drama: Drama;
   compact?: boolean;
   /** Hongguo-style home grid: episode badge on poster, tags under title */
   variant?: "default" | "grid";
+  /** Keep title block height for N lines so grid rows align (single-line titles included). */
+  reserveTitleLines?: 1 | 2;
 }) {
   const { locale, t } = useLocale();
-  const title = pickContentText(locale, drama.titleVi, drama.titleZh);
+  const title = pickContentText(locale, drama.titleEn, drama.titleZh);
   const cat = categoryName(drama.categorySlug, locale);
   const isFree = drama.freeCount > 0;
   const isGrid = variant === "grid";
@@ -91,6 +94,10 @@ export function DramaCard({
               : compact
                 ? "line-clamp-2 text-body-sm"
                 : "line-clamp-2 text-h4",
+            reserveTitleLines === 2 &&
+              "min-h-[calc(var(--text-body-sm)*var(--text-body-sm--line-height)*2)]",
+            reserveTitleLines === 1 &&
+              "min-h-[calc(var(--text-body-sm)*var(--text-body-sm--line-height))]",
           )}
         >
           {title}

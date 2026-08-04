@@ -4,18 +4,18 @@ import * as crypto from 'crypto';
 const prisma = new PrismaClient();
 
 const categories = [
-  { slug: 'do_thi', nameVi: 'Đô thị', nameZh: '都市', sortOrder: 1 },
-  { slug: 'ngon_tinh', nameVi: 'Ngôn tình', nameZh: '言情', sortOrder: 2 },
-  { slug: 'hanh_dong', nameVi: 'Hành động', nameZh: '动作', sortOrder: 3 },
-  { slug: 'hai_huoc', nameVi: 'Hài hước', nameZh: '喜剧', sortOrder: 4 },
-  { slug: 'tam_ly', nameVi: 'Tâm lý', nameZh: '心理', sortOrder: 5 },
-  { slug: 'co_trang', nameVi: 'Cổ trang', nameZh: '古装', sortOrder: 6 },
+  { slug: 'do_thi', nameEn: 'Urban', nameZh: '都市', sortOrder: 1 },
+  { slug: 'ngon_tinh', nameEn: 'Romance', nameZh: '言情', sortOrder: 2 },
+  { slug: 'hanh_dong', nameEn: 'Action', nameZh: '动作', sortOrder: 3 },
+  { slug: 'hai_huoc', nameEn: 'Comedy', nameZh: '喜剧', sortOrder: 4 },
+  { slug: 'tam_ly', nameEn: 'Psychological', nameZh: '心理', sortOrder: 5 },
+  { slug: 'co_trang', nameEn: 'Costume', nameZh: '古装', sortOrder: 6 },
 ];
 
 interface SeedDrama {
-  titleVi: string;
+  titleEn: string;
   titleZh: string;
-  descVi: string;
+  descEn: string;
   descZh: string;
   category: string;
   episodes: number;
@@ -25,15 +25,15 @@ interface SeedDrama {
 }
 
 const dramas: SeedDrama[] = [
-  { titleVi: 'Tổng tài lạnh lùng', titleZh: '冷面总裁', descVi: 'Cô thư ký bình thường và vị tổng tài lạnh lùng.', descZh: '平凡秘书与冷面总裁的爱情故事。', category: 'ngon_tinh', episodes: 12, cover: 'https://picsum.photos/seed/d01/600/800', official: true, featured: true },
-  { titleVi: 'Yêu sau một đêm', titleZh: '一夜之后', descVi: 'Sau một đêm say, cô mang thai con của tổng tài.', descZh: '一夜醉酒后，她怀上了总裁的孩子。', category: 'ngon_tinh', episodes: 10, cover: 'https://picsum.photos/seed/d02/600/800', featured: true },
-  { titleVi: 'Đại chiến ngầm', titleZh: '暗夜之战', descVi: 'Những thế lực ngầm thao túng thành phố.', descZh: '盘踞城市的地下势力暗战。', category: 'hanh_dong', episodes: 14, cover: 'https://picsum.photos/seed/d03/600/800' },
-  { titleVi: 'Bác sĩ thiên tài', titleZh: '天才医生', descVi: 'Chàng bác sĩ tài năng với quá khứ bí ẩn.', descZh: '拥有神秘过往的天才医生。', category: 'tam_ly', episodes: 11, cover: 'https://picsum.photos/seed/d04/600/800' },
-  { titleVi: 'Cô vợ nhỏ nghịch ngợm', titleZh: '调皮小妻', descVi: 'Cuộc sống dở khóc dở cười của cặp vợ chồng trẻ.', descZh: '年轻夫妻啼笑皆非的日常。', category: 'hai_huoc', episodes: 9, cover: 'https://picsum.photos/seed/d05/600/800', featured: true },
-  { titleVi: 'Vương triều bí mật', titleZh: '秘境王朝', descVi: 'Hành trình tìm lại vương quốc đã mất.', descZh: '寻回失落王国的冒险旅程。', category: 'co_trang', episodes: 13, cover: 'https://picsum.photos/seed/d06/600/800', official: true },
-  { titleVi: 'Giao dịch tỷ đô', titleZh: '亿万交易', descVi: 'Những thương vụ nghìn tỷ trên bàn đàm phán.', descZh: '谈判桌上的千亿级商战。', category: 'do_thi', episodes: 12, cover: 'https://picsum.photos/seed/d07/600/800' },
-  { titleVi: 'Học viện tình yêu', titleZh: '恋爱学院', descVi: 'Những rung động đầu đời trong khuôn viên trường.', descZh: '校园里最初的悸动。', category: 'ngon_tinh', episodes: 10, cover: 'https://picsum.photos/seed/d08/600/800' },
-  { titleVi: 'Sát thủ cô độc', titleZh: '孤影杀手', descVi: 'Một sát thủ tìm kiếm sự chuộc tội.', descZh: '寻求救赎的孤独杀手。', category: 'hanh_dong', episodes: 11, cover: 'https://picsum.photos/seed/d09/600/800' },
+  { titleEn: 'The Cold CEO', titleZh: '冷面总裁', descEn: 'An ordinary secretary and a cold-faced CEO.', descZh: '平凡秘书与冷面总裁的爱情故事。', category: 'ngon_tinh', episodes: 12, cover: 'https://picsum.photos/seed/d01/600/800', official: true, featured: true },
+  { titleEn: 'Love After One Night', titleZh: '一夜之后', descEn: 'After one drunken night, she carries the CEO\'s child.', descZh: '一夜醉酒后，她怀上了总裁的孩子。', category: 'ngon_tinh', episodes: 10, cover: 'https://picsum.photos/seed/d02/600/800', featured: true },
+  { titleEn: 'Battle in the Dark', titleZh: '暗夜之战', descEn: 'Underground forces wage a secret war for the city.', descZh: '盘踞城市的地下势力暗战。', category: 'hanh_dong', episodes: 14, cover: 'https://picsum.photos/seed/d03/600/800' },
+  { titleEn: 'Genius Doctor', titleZh: '天才医生', descEn: 'A gifted doctor with a mysterious past.', descZh: '拥有神秘过往的天才医生。', category: 'tam_ly', episodes: 11, cover: 'https://picsum.photos/seed/d04/600/800' },
+  { titleEn: 'Naughty Little Wife', titleZh: '调皮小妻', descEn: 'The hilarious everyday life of a young couple.', descZh: '年轻夫妻啼笑皆非的日常。', category: 'hai_huoc', episodes: 9, cover: 'https://picsum.photos/seed/d05/600/800', featured: true },
+  { titleEn: 'Secret Dynasty', titleZh: '秘境王朝', descEn: 'A journey to reclaim a lost kingdom.', descZh: '寻回失落王国的冒险旅程。', category: 'co_trang', episodes: 13, cover: 'https://picsum.photos/seed/d06/600/800', official: true },
+  { titleEn: 'Billion-Dollar Deal', titleZh: '亿万交易', descEn: 'Trillion-scale deals negotiated at the table.', descZh: '谈判桌上的千亿级商战。', category: 'do_thi', episodes: 12, cover: 'https://picsum.photos/seed/d07/600/800' },
+  { titleEn: 'Love Academy', titleZh: '恋爱学院', descEn: 'First flutters of love on campus.', descZh: '校园里最初的悸动。', category: 'ngon_tinh', episodes: 10, cover: 'https://picsum.photos/seed/d08/600/800' },
+  { titleEn: 'Lone Assassin', titleZh: '孤影杀手', descEn: 'An assassin seeking redemption.', descZh: '寻求救赎的孤独杀手。', category: 'hanh_dong', episodes: 11, cover: 'https://picsum.photos/seed/d09/600/800' },
 ];
 
 async function main() {
@@ -60,7 +60,7 @@ async function main() {
     data: { userId: (await ensureSystemUser('official@velvet.dev')).id, creatorType: 'OFFICIAL', displayName: 'Velvet Studio', revenueShare: 1.0, kycStatus: 'APPROVED' },
   });
   const indieCreator = await prisma.creator.create({
-    data: { userId: (await ensureSystemUser('indie@velvet.dev')).id, creatorType: 'INDIVIDUAL', displayName: 'Độc lập Films', revenueShare: 0.7, kycStatus: 'APPROVED' },
+    data: { userId: (await ensureSystemUser('indie@velvet.dev')).id, creatorType: 'INDIVIDUAL', displayName: 'Indie Films', revenueShare: 0.7, kycStatus: 'APPROVED' },
   });
 
   for (let i = 0; i < dramas.length; i++) {
@@ -70,9 +70,9 @@ async function main() {
       data: {
         creatorId: creator.id,
         slug: `d${String(i + 1).padStart(2, '0')}`,
-        titleVi: d.titleVi,
+        titleEn: d.titleEn,
         titleZh: d.titleZh,
-        descriptionVi: d.descVi,
+        descriptionEn: d.descEn,
         descriptionZh: d.descZh,
         categorySlug: d.category,
         coverUrl: d.cover,
@@ -93,7 +93,7 @@ async function main() {
         data: {
           dramaId: drama.id,
           episodeNumber: ep,
-          title: `Tập ${ep}`,
+          title: `Episode ${ep}`,
           isFree,
           priceVnd: isFree ? 0n : 10000n,
           priceCredits: isFree ? 0n : 10n,
@@ -105,14 +105,14 @@ async function main() {
       });
     }
     // eslint-disable-next-line no-console
-    console.log(`[seed] drama ${d.titleVi} (${d.episodes} tập)`);
+    console.log(`[seed] drama ${d.titleEn} (${d.episodes} episodes)`);
   }
 
   // Banner
   const now = new Date();
   await prisma.banner.create({
     data: {
-      titleVi: 'Mở khóa tất cả tập với 99K',
+      titleEn: 'Unlock all episodes for 99K',
       titleZh: '99K 解锁全部剧集',
       imageUrl: 'https://picsum.photos/seed/banner1/1200/400',
       linkUrl: '/',
@@ -126,7 +126,7 @@ async function main() {
   const viewer = await prisma.user.create({
     data: {
       phone: '+84901234567',
-      nickname: 'Khán giả thử',
+      nickname: 'Test Viewer',
     },
   });
   await prisma.wallet.create({
@@ -135,6 +135,10 @@ async function main() {
   // eslint-disable-next-line no-console
   console.log(`[seed] viewer phone=+84901234567 wallet=200000 credits`);
 
+  const keepSettingKeys = ['episodeLockMode', 'defaultFreeEpisodes'];
+  await prisma.systemSetting.deleteMany({
+    where: { key: { notIn: keepSettingKeys } },
+  });
   await prisma.systemSetting.upsert({
     where: { key: 'episodeLockMode' },
     create: { key: 'episodeLockMode', value: 'FREE_FIRST_N' },
@@ -144,11 +148,6 @@ async function main() {
     where: { key: 'defaultFreeEpisodes' },
     create: { key: 'defaultFreeEpisodes', value: 3 },
     update: {},
-  });
-  await prisma.systemSetting.upsert({
-    where: { key: 'free_episode_count' },
-    create: { key: 'free_episode_count', value: 3 },
-    update: { value: 3 },
   });
 
   // eslint-disable-next-line no-console
