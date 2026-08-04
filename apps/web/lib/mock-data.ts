@@ -225,7 +225,7 @@ export const featuredDramas: Drama[] = dramas.slice(0, 5);
 export function mockHome(
   page = 1,
   pageSize = 12,
-  opts?: { category?: string; q?: string },
+  opts?: { category?: string; q?: string; sort?: "latest" | "hot" },
 ): { rows: Drama[]; total: number } {
   let list = dramas;
   if (opts?.category) list = list.filter((d) => d.categorySlug === opts.category);
@@ -237,6 +237,11 @@ export function mockHome(
         d.titleZh.toLowerCase().includes(q) ||
         d.descVi.toLowerCase().includes(q),
     );
+  }
+  if (opts?.sort === "latest") {
+    list = [...list].sort((a, b) => Number(b.id) - Number(a.id));
+  } else if (opts?.sort === "hot") {
+    list = [...list].sort((a, b) => b.rating - a.rating || b.episodesCount - a.episodesCount);
   }
   const total = list.length;
   const start = (page - 1) * pageSize;
