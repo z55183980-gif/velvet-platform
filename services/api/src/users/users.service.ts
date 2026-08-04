@@ -93,6 +93,17 @@ export class UsersService {
     return groups.map((g) => g.group).filter(Boolean) as string[];
   }
 
+  async isFavorited(userId: bigint, dramaId: string) {
+    if (!/^\d+$/.test(dramaId)) {
+      return { favorited: false };
+    }
+    const row = await this.prisma.favorite.findUnique({
+      where: { userId_dramaId: { userId, dramaId: BigInt(dramaId) } },
+      select: { id: true },
+    });
+    return { favorited: !!row };
+  }
+
   async addFavorite(userId: bigint, dramaId: string, dto?: { group?: string; note?: string }) {
     const existed = await this.prisma.favorite.findUnique({
       where: { userId_dramaId: { userId, dramaId: BigInt(dramaId) } },

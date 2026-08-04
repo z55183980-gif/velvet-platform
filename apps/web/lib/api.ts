@@ -122,6 +122,11 @@ function cachedGet<T>(
 // ---- 字段映射：API 响应 → 前端模型 ----
 function mapDrama(d: any): Drama {
   const cover = d.coverUrl || "";
+  const favRaw = d.favoriteCount;
+  const favoriteCount =
+    favRaw == null || favRaw === ""
+      ? undefined
+      : Math.max(0, Number(favRaw) || 0);
   return {
     id: d.slug || String(d.id),
     numericId: d.id != null ? String(d.id) : undefined,
@@ -141,6 +146,7 @@ function mapDrama(d: any): Drama {
     freeCount: d.freeEpisodeCount || 0,
     pricePerEp: 0,
     buyoutCredits: d.buyoutCredits != null ? String(d.buyoutCredits) : null,
+    favoriteCount,
     creator: d.creator
       ? {
           displayName: d.creator.displayName || "",
@@ -460,6 +466,10 @@ export async function getFavorites(page = 1, group?: string) {
 }
 export async function getFavoriteGroups() {
   return request<string[]>("/users/me/favorites/groups");
+}
+/** 查询当前用户是否已收藏该剧（需 numeric dramaId） */
+export async function checkFavorite(dramaId: string | number) {
+  return request<{ favorited: boolean }>(`/users/me/favorites/${dramaId}`);
 }
 export async function addFavorite(
   dramaId: string | number,

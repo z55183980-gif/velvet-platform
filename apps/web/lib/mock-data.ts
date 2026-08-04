@@ -37,6 +37,8 @@ export interface Drama {
   pricePerEp: number;
   /** 整剧买断积分价；null/undefined = 不支持 */
   buyoutCredits?: string | null;
+  /** 真实收藏数（来自 API favoriteCount） */
+  favoriteCount?: number;
   creator?: { displayName: string; avatarUrl?: string | null };
   episodes: Episode[];
 }

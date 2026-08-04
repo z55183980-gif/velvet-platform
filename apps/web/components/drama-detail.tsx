@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import {
   Play,
   ChevronLeft,
@@ -28,6 +29,7 @@ import {
   loadHome,
   getPlayUrl,
   getWatchHistory,
+  checkFavorite,
   addFavorite,
   removeFavorite,
 } from "@/lib/api";
@@ -45,6 +47,7 @@ function isHls(url: string) {
   return /\.m3u8(\?|$)/i.test(url);
 }
 
+/** Fake like counts until like API ships; favorite uses real favoriteCount. */
 function socialCounts(id: string) {
   let h = 2166136261;
   for (let i = 0; i < id.length; i++) {
@@ -53,7 +56,6 @@ function socialCounts(id: string) {
   }
   const u = h >>> 0;
   return {
-    favorite: 80_000 + (u % 3_200_000),
     like: 40_000 + ((u >> 3) % 1_200_000),
   };
 }
@@ -80,6 +82,7 @@ const PLAY_GRAD_HOVER =
 const WATCH_BAR_H = 52;
 
 export function DramaDetail({ id }: { id: string }) {
+  const router = useRouter();
   const { locale, t } = useLocale();
   const { user, openLogin, openVip, ready: authReady } = useAuth();
   const { mobile: isMobile, ready: mobileReady } = useIsMobile();
@@ -104,6 +107,7 @@ export function DramaDetail({ id }: { id: string }) {
   const [descExpanded, setDescExpanded] = useState(false);
   const [related, setRelated] = useState<Drama[]>([]);
   const [favorited, setFavorited] = useState(false);
+  const [favCount, setFavCount] = useState(0);
   const [liked, setLiked] = useState(false);
   const [rate, setRate] = useState(1);
   const [showRate, setShowRate] = useState(false);
@@ -133,11 +137,15 @@ export function DramaDetail({ id }: { id: string }) {
     setDescExpanded(false);
     setRelated([]);
     setNotFound(false);
+    setFavorited(false);
+    setFavCount(0);
+    setLiked(false);
     loadDramaDetail(id, { signal: ac.signal })
       .then((d) => {
         if (ac.signal.aborted) return;
         if (d) {
           setData(d);
+          setFavCount(d.drama.favoriteCount ?? 0);
           const nos = new Set(d.episodes.filter((e) => e.isFree || e.unlocked).map((e) => e.no));
           setUnlockedNos(nos);
           setSelected(null);
@@ -153,11 +161,19 @@ export function DramaDetail({ id }: { id: string }) {
   }, [id]);
 
   useEffect(() => {
-    if (data && !selected) {
-      const freeOrUnlocked = data.episodes.find((e) => e.isFree || e.unlocked) ?? null;
-      setSelected(freeOrUnlocked);
-    }
-  }, [data, selected]);
+    if (!data || selected) return;
+    const pick =
+      data.episodes.find(
+        (e) =>
+          e.isFree ||
+          !!e.unlocked ||
+          unlockedNos.has(e.no) ||
+          !!data.vipActive ||
+          !!data.dramaUnlocked ||
+          !!user?.isVip,
+      ) ?? null;
+    setSelected(pick);
+  }, [data, selected, unlockedNos, user?.isVip]);
 
   useEffect(() => {
     setEpLineExpanded(false);
@@ -230,11 +246,37 @@ export function DramaDetail({ id }: { id: string }) {
     };
   }, [user, data?.drama.numericId, data?.drama.id]);
 
+  useEffect(() => {
+    if (!authReady) return;
+    const dramaId = data?.drama.numericId;
+    if (!user || !dramaId || !/^\d+$/.test(dramaId)) {
+      setFavorited(false);
+      return;
+    }
+    let alive = true;
+    checkFavorite(dramaId)
+      .then((r) => {
+        if (alive) setFavorited(!!r?.favorited);
+      })
+      .catch(() => {
+        if (alive) setFavorited(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [authReady, user, data?.drama.numericId]);
+
   const isUnlocked = (ep: Episode) =>
     ep.isFree || !!ep.unlocked || unlockedNos.has(ep.no) || !!data?.vipActive || !!data?.dramaUnlocked || !!user?.isVip;
   const playerReady = !!(selected && isUnlocked(selected));
   const lockActionLabel =
     selected && !selected.isFree && !isUnlocked(selected) ? t("vip.open") : undefined;
+
+  /** Mobile: skip poster/info landing — go straight into vertical watch. */
+  useEffect(() => {
+    if (!mobileReady || !isMobile || loading || !data) return;
+    setWatching(true);
+  }, [mobileReady, isMobile, loading, data]);
 
   useEffect(() => {
     if (!playerReady || !selected?.id) {
@@ -353,7 +395,14 @@ export function DramaDetail({ id }: { id: string }) {
     };
   }, [playUrl, seekTo, playerReady, user, watching, followVideoAspect]);
 
-  if (loading || !mobileReady) {
+  if (!mobileReady) {
+    return <div className="min-h-[40vh]" aria-busy="true" />;
+  }
+
+  if (loading) {
+    if (isMobile) {
+      return <div className="fixed inset-0 z-[70] bg-black" aria-busy="true" />;
+    }
     return (
       <div className="mx-auto max-w-[1280px] px-4 pb-24 pt-6 md:px-10 md:pt-10">
         <div className="flex gap-4 md:gap-9">
@@ -387,6 +436,25 @@ export function DramaDetail({ id }: { id: string }) {
   const desc = pickContentText(locale, drama.descVi, drama.descZh);
   const cat = categoryName(drama.categorySlug, locale);
   const coverIsImg = isUrl(drama.cover[0]);
+  const favoriteDramaId = drama.numericId || drama.id;
+
+  const toggleFavorite = async () => {
+    if (!user) {
+      openLogin();
+      return;
+    }
+    if (!/^\d+$/.test(String(favoriteDramaId))) return;
+    const next = !favorited;
+    setFavorited(next);
+    setFavCount((c) => Math.max(0, c + (next ? 1 : -1)));
+    try {
+      if (next) await addFavorite(favoriteDramaId);
+      else await removeFavorite(favoriteDramaId);
+    } catch {
+      setFavorited(!next);
+      setFavCount((c) => Math.max(0, c + (next ? -1 : 1)));
+    }
+  };
 
   /** Locked episodes → VIP subscription (no per-episode credit unlock). */
   function openVipGate(_ep?: Episode) {
@@ -466,22 +534,6 @@ export function DramaDetail({ id }: { id: string }) {
       ? `${t("detail.episodeLabel", { n: selected.no })}${epTitle ? ` | ${epTitle}` : ""}`
       : desc;
     const epPreview = epLine.length > 26 ? `${epLine.slice(0, 26)}...` : epLine;
-    const dramaId = drama.numericId || drama.id;
-
-    const toggleFavorite = async () => {
-      if (!user) {
-        openLogin();
-        return;
-      }
-      const next = !favorited;
-      setFavorited(next);
-      try {
-        if (next) await addFavorite(dramaId);
-        else await removeFavorite(dramaId);
-      } catch {
-        setFavorited(!next);
-      }
-    };
 
     const exitImmersiveFs = async () => {
       setUiImmersive(false);
@@ -587,7 +639,11 @@ export function DramaDetail({ id }: { id: string }) {
             type="button"
             onClick={() => {
               void exitImmersiveFs();
-              setWatching(false);
+              if (typeof window !== "undefined" && window.history.length > 1) {
+                router.back();
+              } else {
+                router.push("/");
+              }
             }}
             className="inline-flex items-center gap-0.5 text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
             aria-label="back"
@@ -800,7 +856,7 @@ export function DramaDetail({ id }: { id: string }) {
           >
             <WatchSideAction
               label={favorited ? t("detail.favorited") : t("detail.favorite")}
-              count={formatCount(counts.favorite + (favorited ? 1 : 0), locale)}
+              count={formatCount(favCount, locale)}
               onClick={() => void toggleFavorite()}
             >
               <Star
@@ -1082,28 +1138,18 @@ export function DramaDetail({ id }: { id: string }) {
           onUnlock={openVipGate}
           onSelect={selectEpisode}
           favorited={favorited}
-          onToggleFavorite={async () => {
-            if (!user) {
-              openLogin();
-              return;
-            }
-            const dramaId = drama.numericId || drama.id;
-            const next = !favorited;
-            setFavorited(next);
-            try {
-              if (next) await addFavorite(dramaId);
-              else await removeFavorite(dramaId);
-            } catch {
-              setFavorited(!next);
-            }
-          }}
+          onToggleFavorite={() => void toggleFavorite()}
         />
 
       </div>
     );
   }
 
-  /* ---- Browse: Hongguo detail (mobile + desktop) ---- */
+  /* ---- Browse: Hongguo detail (desktop only; mobile never lands here) ---- */
+  if (isMobile) {
+    return <div className="fixed inset-0 z-[70] bg-black" aria-busy="true" />;
+  }
+
   return (
     <div className="relative overflow-hidden pb-[calc(5.5rem+env(safe-area-inset-bottom))] md:pb-24">
       {/* Desktop backdrop — warm orange glow like hongguo */}

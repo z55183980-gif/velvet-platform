@@ -128,6 +128,11 @@ export class UsersController {
     return ok(await this.users.listFavoriteGroups(user.userId));
   }
 
+  @Get('users/me/favorites/:dramaId')
+  async favStatus(@Param('dramaId') dramaId: string, @CurrentUser() user: AuthUser) {
+    return ok(await this.users.isFavorited(user.userId, dramaId));
+  }
+
   @Post('users/me/favorites/:dramaId')
   async addFav(
     @Param('dramaId') dramaId: string,

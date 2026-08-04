@@ -10,6 +10,7 @@ import { useTheme } from "@/components/theme-provider";
 import { NotificationBell } from "@/components/notification-bell";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { BrandLogo } from "@/components/brand-logo";
+import { useMobileFeedLock } from "@/components/mobile/mobile-feed-lock";
 import { cn } from "@/lib/utils";
 
 /**
@@ -23,6 +24,7 @@ export function Navbar() {
   const searchParams = useSearchParams();
   const { user, ready: authReady, openLogin, openVip } = useAuth();
   const { theme, cycleTheme } = useTheme();
+  const { locked: feedLocked } = useMobileFeedLock();
   const [scrolled, setScrolled] = useState(false);
   const filteredHome =
     !!searchParams.get("cat") || !!searchParams.get("q") || !!searchParams.get("sort");
@@ -32,7 +34,9 @@ export function Navbar() {
 
   const ThemeIcon = theme === "light" ? Sun : theme === "dark" ? Moon : Monitor;
   // Mobile /me has its own Hongguo-style chrome (theme + settings).
+  // Mobile home feed is immersive video; hide shell navbar.
   const hideOnMobileMe = pathname === "/me" || pathname.startsWith("/me/");
+  const hideOnMobileFeed = feedLocked;
 
   const links = [
     { href: "/", label: t("nav.home"), match: (p: string) => p === "/" && !filteredHome },
@@ -68,6 +72,7 @@ export function Navbar() {
         // Mobile: sticky solid chrome (in feed shell the parent is overflow-hidden, so it stays put)
         "sticky top-0 border-b border-line/60 bg-base/70 backdrop-blur-xl",
         hideOnMobileMe && "max-md:hidden",
+        hideOnMobileFeed && "max-md:hidden",
         // Desktop home: fixed overlay until scroll
         isHomeOverlay &&
           cn(

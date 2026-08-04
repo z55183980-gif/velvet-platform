@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   useCallback,
   useEffect,
@@ -14,14 +15,14 @@ import {
   ChevronRight,
   Flame,
   Heart,
-  Play,
+  MessageCircle,
   Star,
 } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { useAuth } from "@/components/auth-context";
 import { VerticalPlayer } from "@/components/mobile/vertical-player";
 import { useMobileFeedLock } from "@/components/mobile/mobile-feed-lock";
-import { getPlayUrl, loadDramaDetail, type DramaDetailPayload } from "@/lib/api";
+import { getPlayUrl, loadDramaDetail, checkFavorite, addFavorite, removeFavorite, type DramaDetailPayload } from "@/lib/api";
 import type { Drama, Episode } from "@/lib/mock-data";
 import { categories } from "@/lib/mock-data";
 import { pickContentText } from "@/lib/languages";
@@ -35,7 +36,7 @@ function isHls(url: string) {
   return /\.m3u8(\?|$)/i.test(url);
 }
 
-/** Stable pseudo social counts from id (no backend metrics yet). */
+/** Fake comment/like counts until those APIs ship; favorite uses real favoriteCount. */
 function socialCounts(id: string) {
   let h = 2166136261;
   for (let i = 0; i < id.length; i++) {
@@ -44,8 +45,8 @@ function socialCounts(id: string) {
   }
   const u = h >>> 0;
   return {
-    favorite: 80_000 + (u % 3_200_000),
-    like: 120_000 + ((u >> 3) % 4_800_000),
+    comment: 1_200 + ((u >> 5) % 48_000),
+    like: 40_000 + ((u >> 3) % 1_200_000),
   };
 }
 
@@ -93,6 +94,7 @@ async function ensureDetail(dramaId: string, signal?: AbortSignal): Promise<Feed
 
 export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
   const { locale, t } = useLocale();
+  const router = useRouter();
   const { user, ready: authReady, openLogin } = useAuth();
   const { setLocked } = useMobileFeedLock();
   const [index, setIndex] = useState(0);
@@ -103,6 +105,7 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
   const [loading, setLoading] = useState(false);
   const [liked, setLiked] = useState(false);
   const [favorited, setFavorited] = useState(false);
+  const [favCount, setFavCount] = useState(0);
   const [descOpen, setDescOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -231,8 +234,29 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
   useEffect(() => {
     setLiked(false);
     setFavorited(false);
+    setFavCount(drama?.favoriteCount ?? 0);
     setDescOpen(false);
   }, [drama?.id]);
+
+  useEffect(() => {
+    if (!authReady || !drama) return;
+    const dramaId = drama.numericId;
+    if (!user || !dramaId || !/^\d+$/.test(dramaId)) {
+      setFavorited(false);
+      return;
+    }
+    let alive = true;
+    checkFavorite(dramaId)
+      .then((r) => {
+        if (alive) setFavorited(!!r?.favorited);
+      })
+      .catch(() => {
+        if (alive) setFavorited(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [authReady, user, drama?.numericId, drama?.id]);
 
   // Load current + prefetch neighbors
   useEffect(() => {
@@ -364,6 +388,25 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
     return { title, desc, counts, tags: tags.slice(0, 4) };
   }, [drama, locale, t]);
 
+  const toggleFavorite = async () => {
+    if (!user) {
+      openLogin();
+      return;
+    }
+    const dramaId = drama?.numericId;
+    if (!dramaId || !/^\d+$/.test(dramaId)) return;
+    const next = !favorited;
+    setFavorited(next);
+    setFavCount((c) => Math.max(0, c + (next ? 1 : -1)));
+    try {
+      if (next) await addFavorite(dramaId);
+      else await removeFavorite(dramaId);
+    } catch {
+      setFavorited(!next);
+      setFavCount((c) => Math.max(0, c + (next ? -1 : 1)));
+    }
+  };
+
   if (dramas.length === 0) {
     return (
       <div className="flex h-full min-h-0 items-center justify-center text-ink-muted">
@@ -448,25 +491,29 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
         onSeekingChange={onSeekingChange}
       />
 
-      {/* Right action column */}
-      <div className="absolute bottom-[10.5rem] right-2.5 z-30 flex flex-col items-center gap-5">
+      {/* Right action column: favorite / comment / like */}
+      <div className="absolute bottom-[9.75rem] right-2.5 z-30 flex flex-col items-center gap-5">
         <SideAction
           label={t("feed.favorite")}
-          count={formatCount(meta.counts.favorite + (favorited ? 1 : 0), locale)}
+          count={formatCount(favCount, locale)}
           active={favorited}
-          onClick={() => {
-            if (!user) {
-              openLogin();
-              return;
-            }
-            setFavorited((v) => !v);
-          }}
+          onClick={() => void toggleFavorite()}
         >
           <Star
             className={cn(
               "h-[30px] w-[30px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]",
               favorited ? "fill-[#ffb000] text-[#ffb000]" : "fill-none text-white",
             )}
+            strokeWidth={1.75}
+          />
+        </SideAction>
+        <SideAction
+          label={t("feed.comment")}
+          count={formatCount(meta.counts.comment, locale)}
+          onClick={() => router.push(`/drama/${drama.id}`)}
+        >
+          <MessageCircle
+            className="h-[30px] w-[30px] text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
             strokeWidth={1.75}
           />
         </SideAction>
@@ -486,12 +533,12 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
         </SideAction>
       </div>
 
-      {/* Bottom info + CTA (above thin progress) */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex flex-col px-3 pb-1 pt-16">
-        <div className="pointer-events-auto max-w-[calc(100%-4.5rem)]">
+      {/* Bottom info stack: title → tags → hot → watch-full → seek reserve */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex flex-col px-3 pb-0">
+        <div className="pointer-events-auto max-w-[calc(100%-4.75rem)]">
           <Link
             href={`/drama/${drama.id}`}
-            className="inline-flex max-w-full items-center gap-0.5 text-[17px] font-semibold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.65)]"
+            className="inline-flex max-w-full items-center gap-0.5 text-[17px] font-semibold leading-snug text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.65)]"
             onClick={(e) => e.stopPropagation()}
           >
             <span className="truncate">{meta.title}</span>
@@ -499,13 +546,11 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
           </Link>
 
           {meta.tags.length > 0 && (
-            <div className="mt-2 flex flex-wrap gap-1.5">
-              {meta.tags.map((tag) => (
-                <span
-                  key={tag.key}
-                  className="inline-flex max-w-full items-center truncate rounded-full bg-black/40 px-2 py-0.5 text-[11px] leading-4 text-white/95 backdrop-blur-[2px]"
-                >
-                  {tag.node}
+            <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] leading-4 text-white/90 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]">
+              {meta.tags.map((tag, i) => (
+                <span key={tag.key} className="inline-flex max-w-full items-center">
+                  {i > 0 ? <span className="mr-1.5 text-white/35">·</span> : null}
+                  <span className="truncate">{tag.node}</span>
                 </span>
               ))}
             </div>
@@ -513,7 +558,7 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
 
           <button
             type="button"
-            className="mt-2 flex w-full items-start gap-1 text-left text-[13px] leading-5 text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
+            className="mt-1.5 flex w-full items-start gap-1 text-left text-[13px] leading-5 text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
             onClick={(e) => {
               e.stopPropagation();
               setDescOpen((v) => !v);
@@ -531,13 +576,10 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
 
         <Link
           href={`/drama/${drama.id}`}
-          className="pointer-events-auto mt-3 flex h-10 items-center gap-2 rounded-full bg-black/45 px-3 text-white backdrop-blur-sm"
+          className="pointer-events-auto mt-2.5 flex h-9 items-center gap-1 rounded-lg bg-black/45 px-3 text-white backdrop-blur-sm"
           onClick={(e) => e.stopPropagation()}
         >
-          <span className="grid h-6 w-6 shrink-0 place-items-center rounded-[6px] bg-white/15">
-            <Play className="ml-0.5 h-3.5 w-3.5 fill-white text-white" />
-          </span>
-          <span className="min-w-0 flex-1 truncate text-[14px] font-medium">
+          <span className="min-w-0 flex-1 truncate text-[13px] font-medium">
             {t("feed.watchFull", { n: drama.episodesCount })}
           </span>
           <ChevronRight className="h-4 w-4 shrink-0 opacity-80" />
