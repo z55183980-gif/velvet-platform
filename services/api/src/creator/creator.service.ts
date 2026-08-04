@@ -355,6 +355,7 @@ export class CreatorService {
           categorySlug: dto.categorySlug,
           coverUrl: dto.coverUrl,
           freeEpisodeCount: dto.freeEpisodeCount ?? 3,
+          // lockMode null = inherit global episodeLockMode
           status: 'DRAFT',
         },
       });

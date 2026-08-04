@@ -243,6 +243,7 @@ export async function adminRetryTranscode(id: string) {
 export async function adminBatchDramas(body: {
   ids: (string | number)[];
   freeEpisodeCount?: number;
+  lockMode?: "FREE_FIRST_N" | "VIP_ALL" | "ALL_FREE" | "INHERIT" | null;
   priceCredits?: number;
   buyoutCredits?: number | null;
 }) {
@@ -633,6 +634,90 @@ export async function adminLocalImport(rootPath?: string, dryRun?: boolean) {
   return adminRequest("/admin/import/local", {
     method: "POST",
     body: JSON.stringify({ rootPath, dryRun }),
+  });
+}
+
+export async function adminCreateOnlineDrama(body: {
+  titleZh: string;
+  titleVi?: string;
+  slug?: string;
+  descriptionZh?: string;
+  descriptionVi?: string;
+  categorySlug: string;
+  coverUrl?: string;
+  freeEpisodeCount?: number;
+  lockMode?: "FREE_FIRST_N" | "VIP_ALL" | "ALL_FREE";
+  status?: "DRAFT" | "LIVE";
+  externalRef?: string;
+  episodes: Array<{
+    sourceUrl: string;
+    title?: string;
+    episodeNumber?: number;
+    isFree?: boolean;
+  }>;
+}) {
+  return adminRequest<{
+    id: string;
+    slug: string;
+    status: string;
+    sourceType: string;
+    totalEpisodes: number;
+    externalRef?: string | null;
+  }>("/admin/dramas/online", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function adminHongguoStatus() {
+  return adminRequest<{ configured: boolean; baseUrl: string; provider: string }>(
+    "/admin/hongguo/status",
+  );
+}
+
+export async function adminHongguoSearch(q: string, page = 1) {
+  return adminRequest<
+    Array<{
+      id: string;
+      title: string;
+      coverUrl?: string;
+      episodeCount?: number;
+      intro?: string;
+    }>
+  >(`/admin/hongguo/search?${toQuery({ q, page })}`);
+}
+
+export async function adminHongguoDetail(id: string) {
+  return adminRequest<{
+    id: string;
+    title: string;
+    coverUrl?: string;
+    intro?: string;
+    episodeCount?: number;
+    episodes: Array<{ videoId: string; episodeNumber: number; title?: string }>;
+  }>(`/admin/hongguo/detail?${toQuery({ id })}`);
+}
+
+export async function adminHongguoImport(body: {
+  id: string;
+  categorySlug: string;
+  titleZh?: string;
+  titleVi?: string;
+  status?: "DRAFT" | "LIVE";
+  maxEpisodes?: number;
+}) {
+  return adminRequest<{
+    id: string;
+    slug: string;
+    status: string;
+    totalEpisodes: number;
+    resolvedEpisodes: number;
+    externalRef: string;
+    hongguoId: string;
+    failedEpisodes: Array<{ episodeNumber: number; videoId: string; error: string }>;
+  }>("/admin/hongguo/import", {
+    method: "POST",
+    body: JSON.stringify(body),
   });
 }
 

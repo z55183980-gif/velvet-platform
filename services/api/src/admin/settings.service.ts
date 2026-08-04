@@ -2,8 +2,16 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit.service';
 import { BizException, BizCode } from '../common/biz.exception';
+import { isLockAccessMode } from '../common/lock-access.service';
 
 const DEFAULT_KEYS: { key: string; value: any; labelVi: string; labelZh: string; type: 'number' | 'boolean' | 'string' | 'json' }[] = [
+  {
+    key: 'episodeLockMode',
+    value: 'FREE_FIRST_N',
+    labelVi: 'Chế độ khóa tập (toàn cục)',
+    labelZh: '剧集加锁策略（全局）',
+    type: 'string',
+  },
   { key: 'defaultFreeEpisodes', value: 3, labelVi: 'Số tập miễn phí mặc định', labelZh: '默认免费集数', type: 'number' },
   { key: 'pitRate', value: 0.05, labelVi: 'Thuế TNCN (PIT)', labelZh: '个人所得税率', type: 'number' },
   { key: 't7Days', value: 7, labelVi: 'T+7 解冻天数', labelZh: 'T+7 解冻天数', type: 'number' },
@@ -69,9 +77,25 @@ export class SettingsService {
         case 'boolean':
           value = value === true || value === 'true' || value === 1 || value === '1';
           break;
+        case 'string':
+          value = String(value ?? '');
+          break;
         default:
           break;
       }
+    }
+    if (key === 'episodeLockMode' && !isLockAccessMode(value)) {
+      throw new BizException(
+        BizCode.BAD_REQUEST,
+        'episodeLockMode must be FREE_FIRST_N | VIP_ALL | ALL_FREE',
+      );
+    }
+    if (key === 'defaultFreeEpisodes') {
+      const n = Math.floor(Number(value));
+      if (!Number.isFinite(n) || n < 0) {
+        throw new BizException(BizCode.BAD_REQUEST, 'defaultFreeEpisodes phải >= 0');
+      }
+      value = n;
     }
     const prev = await this.prisma.systemSetting.findUnique({ where: { key } });
     const row = await this.prisma.systemSetting.upsert({

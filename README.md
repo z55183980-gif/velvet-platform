@@ -100,6 +100,8 @@ npx pnpm dev               # http://localhost:3001
 
 前端通过 `NEXT_PUBLIC_WEB_HOST` / `NEXT_PUBLIC_ADMIN_HOST`（及对应 `*_URL`）配置；API 的 `ALLOWED_ORIGINS` 需同时放行两个源。
 
+**发布到生产**：见完整手册 [docs/11-生产部署手册.md](./docs/11-生产部署手册.md)（SSH 别名、目录、PM2、端口、一键发布与冒烟）。日常只推代码见 [SYNC.md](./SYNC.md)。
+
 ---
 
 ## 💳 关于支付（重要）

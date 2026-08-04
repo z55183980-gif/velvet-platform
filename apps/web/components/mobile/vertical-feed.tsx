@@ -1,14 +1,22 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  ChevronRight,
+  Flame,
+  Heart,
+  Play,
+  Star,
+} from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { useAuth } from "@/components/auth-context";
 import { VerticalPlayer } from "@/components/mobile/vertical-player";
 import { getPlayUrl, loadDramaDetail, type DramaDetailPayload } from "@/lib/api";
 import type { Drama, Episode } from "@/lib/mock-data";
+import { categories } from "@/lib/mock-data";
 import { pickContentText } from "@/lib/languages";
-import { formatCredits } from "@/lib/utils";
+import { cn, formatCredits } from "@/lib/utils";
 
 function isUrl(s: string) {
   return /^https?:\/\//.test(s) || s.startsWith("/");
@@ -16,6 +24,41 @@ function isUrl(s: string) {
 
 function isHls(url: string) {
   return /\.m3u8(\?|$)/i.test(url);
+}
+
+/** Stable pseudo social counts from id (no backend metrics yet). */
+function socialCounts(id: string) {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  const u = h >>> 0;
+  return {
+    favorite: 80_000 + (u % 3_200_000),
+    like: 120_000 + ((u >> 3) % 4_800_000),
+  };
+}
+
+function formatCount(n: number, locale: string) {
+  const zhStyle = locale === "zh" || locale === "vi";
+  if (zhStyle) {
+    if (n >= 10_000) {
+      const w = n / 10_000;
+      const s = w >= 100 ? String(Math.round(w)) : w.toFixed(1).replace(/\.0$/, "");
+      return `${s}万`;
+    }
+    return String(n);
+  }
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, "")}K`;
+  return String(n);
+}
+
+function formatRating(rating: number) {
+  if (!rating || rating <= 0) return null;
+  const score = rating <= 5 ? rating * 2 : rating;
+  return score.toFixed(1);
 }
 
 type FeedEntry = {
@@ -48,6 +91,9 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
   const [playUrl, setPlayUrl] = useState<string | null>(null);
   const [playErr, setPlayErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [liked, setLiked] = useState(false);
+  const [favorited, setFavorited] = useState(false);
+  const [descOpen, setDescOpen] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
   const touchY = useRef<number | null>(null);
 
@@ -74,6 +120,12 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
 
   const drama = dramas[index] ?? null;
 
+  useEffect(() => {
+    setLiked(false);
+    setFavorited(false);
+    setDescOpen(false);
+  }, [drama?.id]);
+
   // Load current + prefetch neighbors
   useEffect(() => {
     if (!drama) return;
@@ -97,7 +149,6 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
         if (!ac.signal.aborted) setLoading(false);
       });
 
-    // Prefetch ±1
     const prevId = dramas[index - 1]?.id;
     const nextId = dramas[index + 1]?.id;
     for (const id of [prevId, nextId]) {
@@ -119,7 +170,6 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
       return;
     }
     const ac = new AbortController();
-    // Keep previous frame while next URL loads — only show spinner if no url yet
     if (!playUrl) setLoading(true);
     setPlayErr(null);
     getPlayUrl(String(episode.id), { signal: ac.signal })
@@ -171,30 +221,61 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
     };
   }, [playUrl]);
 
-  // Clear play URL when drama index changes (new item)
   useEffect(() => {
     setPlayUrl(null);
   }, [drama?.id]);
 
+  const meta = useMemo(() => {
+    if (!drama) return null;
+    const title = pickContentText(locale, drama.titleVi, drama.titleZh);
+    const desc = pickContentText(locale, drama.descVi, drama.descZh);
+    const cat = categories.find((c) => c.slug === drama.categorySlug);
+    const catName = cat ? pickContentText(locale, cat.nameVi, cat.nameZh) : "";
+    const counts = socialCounts(drama.id);
+    const ratingLabel = formatRating(drama.rating);
+    const tags: { key: string; node: ReactNode }[] = [];
+    if (ratingLabel) {
+      tags.push({
+        key: "rating",
+        node: (
+          <span className="inline-flex items-center gap-0.5">
+            <Star className="h-3 w-3 fill-white/90 text-white/90" />
+            {t("feed.ratingScore", { n: ratingLabel })}
+          </span>
+        ),
+      });
+    }
+    tags.push({ key: "season", node: t("feed.season", { n: 1 }) });
+    if (catName) tags.push({ key: "cat", node: catName });
+    const extraTag = (drama.tags || []).find((x) => x && x !== catName);
+    if (extraTag) tags.push({ key: "tag", node: extraTag });
+    const creator = drama.creator?.displayName?.trim();
+    if (creator) {
+      tags.push({ key: "cast", node: t("feed.actors", { names: creator }) });
+    }
+    return { title, desc, counts, tags: tags.slice(0, 4) };
+  }, [drama, locale, t]);
+
   if (dramas.length === 0) {
     return (
-      <div className="flex h-[calc(100dvh-3rem-3.5rem)] items-center justify-center text-ink-muted">
+      <div className="flex h-[calc(100dvh-3rem-3rem)] items-center justify-center text-ink-muted">
         {t("theater.empty")}
       </div>
     );
   }
 
-  if (!drama) return null;
+  if (!drama || !meta) return null;
 
-  const title = pickContentText(locale, drama.titleVi, drama.titleZh);
   const unlocked = !!(episode && (episode.isFree || episode.unlocked));
   const needsLogin = authReady && unlocked && !user;
   const locked = !!episode && !unlocked;
   const cover = isUrl(drama.cover[0]) ? drama.cover[0] : undefined;
+  const hotText = meta.desc.trim() || meta.title;
+  const hotPreview = hotText.length > 22 ? `${hotText.slice(0, 22)}...` : hotText;
 
   return (
     <div
-      className="relative h-[calc(100dvh-3rem-3.5rem-env(safe-area-inset-bottom))] overflow-hidden bg-black"
+      className="relative h-[calc(100dvh-3rem-3rem-env(safe-area-inset-bottom))] overflow-hidden bg-black"
       onTouchStart={(e) => {
         touchY.current = e.touches[0]?.clientY ?? null;
       }}
@@ -214,6 +295,7 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
         key={drama.id}
         videoRef={videoRef}
         active
+        chrome="feed"
         src={playUrl && unlocked && user ? playUrl : null}
         poster={cover}
         autoPlay
@@ -231,24 +313,138 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
         onUnlock={undefined}
         error={playErr}
         loading={loading}
-        title={title}
-        subtitle={t("feed.episodes", { n: drama.episodesCount })}
         onEnded={() => go(1)}
       />
 
-      <Link
-        href={`/drama/${drama.id}`}
-        className="absolute bottom-20 right-4 z-30 rounded-full bg-brand px-4 py-2.5 text-body-sm font-medium text-white shadow-lg"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {t("feed.watch")}
-      </Link>
+      {/* Right action column */}
+      <div className="absolute bottom-[10.5rem] right-2.5 z-30 flex flex-col items-center gap-5">
+        <SideAction
+          label={t("feed.favorite")}
+          count={formatCount(meta.counts.favorite + (favorited ? 1 : 0), locale)}
+          active={favorited}
+          onClick={() => {
+            if (!user) {
+              openLogin();
+              return;
+            }
+            setFavorited((v) => !v);
+          }}
+        >
+          <Star
+            className={cn(
+              "h-[30px] w-[30px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]",
+              favorited ? "fill-[#ffb000] text-[#ffb000]" : "fill-none text-white",
+            )}
+            strokeWidth={1.75}
+          />
+        </SideAction>
+        <SideAction
+          label={t("feed.like")}
+          count={formatCount(meta.counts.like + (liked ? 1 : 0), locale)}
+          active={liked}
+          onClick={() => setLiked((v) => !v)}
+        >
+          <Heart
+            className={cn(
+              "h-[30px] w-[30px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]",
+              liked ? "fill-[#ff4d6d] text-[#ff4d6d]" : "fill-none text-white",
+            )}
+            strokeWidth={1.75}
+          />
+        </SideAction>
+      </div>
 
-      {index < dramas.length - 1 && (
-        <p className="pointer-events-none absolute left-1/2 top-3 z-20 -translate-x-1/2 rounded-full bg-black/35 px-3 py-1 text-caption text-white/80 backdrop-blur">
-          {t("feed.swipeHint")}
-        </p>
-      )}
+      {/* Bottom info + CTA (above thin progress) */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex flex-col px-3 pb-1 pt-16">
+        <div className="pointer-events-auto max-w-[calc(100%-4.5rem)]">
+          <Link
+            href={`/drama/${drama.id}`}
+            className="inline-flex max-w-full items-center gap-0.5 text-[17px] font-semibold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.65)]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <span className="truncate">{meta.title}</span>
+            <ChevronRight className="h-5 w-5 shrink-0 opacity-90" strokeWidth={2.25} />
+          </Link>
+
+          {meta.tags.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {meta.tags.map((tag) => (
+                <span
+                  key={tag.key}
+                  className="inline-flex max-w-full items-center truncate rounded-full bg-black/40 px-2 py-0.5 text-[11px] leading-4 text-white/95 backdrop-blur-[2px]"
+                >
+                  {tag.node}
+                </span>
+              ))}
+            </div>
+          )}
+
+          <button
+            type="button"
+            className="mt-2 flex w-full items-start gap-1 text-left text-[13px] leading-5 text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
+            onClick={(e) => {
+              e.stopPropagation();
+              setDescOpen((v) => !v);
+            }}
+          >
+            <Flame className="mt-0.5 h-3.5 w-3.5 shrink-0 text-white" strokeWidth={2} />
+            <span className="min-w-0 flex-1">
+              <span>{t("feed.hotComment", { text: descOpen ? hotText : hotPreview })}</span>
+              {!descOpen && hotText.length > 22 && (
+                <span className="ml-1 font-medium text-white">{t("feed.expand")}</span>
+              )}
+            </span>
+          </button>
+        </div>
+
+        <Link
+          href={`/drama/${drama.id}`}
+          className="pointer-events-auto mt-3 flex h-10 items-center gap-2 rounded-full bg-black/45 px-3 text-white backdrop-blur-sm"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <span className="grid h-6 w-6 shrink-0 place-items-center rounded-[6px] bg-white/15">
+            <Play className="ml-0.5 h-3.5 w-3.5 fill-white text-white" />
+          </span>
+          <span className="min-w-0 flex-1 truncate text-[14px] font-medium">
+            {t("feed.watchFull", { n: drama.episodesCount })}
+          </span>
+          <ChevronRight className="h-4 w-4 shrink-0 opacity-80" />
+        </Link>
+        {/* Reserve space for feed progress thumb */}
+        <div className="h-3.5 shrink-0" aria-hidden />
+      </div>
     </div>
+  );
+}
+
+function SideAction({
+  children,
+  count,
+  label,
+  onClick,
+  active,
+}: {
+  children: ReactNode;
+  count: string;
+  label: string;
+  onClick: () => void;
+  active?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      aria-pressed={active}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      className="flex w-12 flex-col items-center gap-0.5"
+    >
+      {children}
+      <span className="text-[11px] font-medium tabular-nums text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]">
+        {count}
+      </span>
+    </button>
   );
 }

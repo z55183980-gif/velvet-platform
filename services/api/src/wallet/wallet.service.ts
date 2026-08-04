@@ -7,6 +7,7 @@ import { ExchangeService } from '../exchange/exchange.service';
 import { PackagesService } from '../packages/packages.service';
 import { VipPlansService } from '../vip/vip-plans.service';
 import { StructuredLogger } from '../common/structured-logger.service';
+import { LockAccessService } from '../common/lock-access.service';
 
 const WALLET_RETRY = 3;
 
@@ -18,6 +19,7 @@ export class WalletService {
     private readonly packages: PackagesService,
     private readonly vipPlans: VipPlansService,
     private readonly log: StructuredLogger,
+    private readonly lockAccess: LockAccessService,
   ) {}
 
   // ============ 查询 ============
@@ -373,7 +375,10 @@ export class WalletService {
     });
     if (!episode) throw new BizException(BizCode.NOT_FOUND, 'Tập phim không tồn tại');
 
-    const isFree = episode.isFree || episode.episodeNumber <= episode.drama.freeEpisodeCount;
+    const isFree = this.lockAccess.isFree(
+      episode,
+      await this.lockAccess.resolveForDrama(episode.drama),
+    );
 
     // VIP / 整剧买断：软解锁（不扣积分）
     if (!isFree) {

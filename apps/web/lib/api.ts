@@ -130,6 +130,9 @@ function mapDrama(d: any): Drama {
     descVi: d.descriptionVi || "",
     descZh: d.descriptionZh || "",
     categorySlug: d.categorySlug || "",
+    tags: Array.isArray(d.tags)
+      ? d.tags.map((t: unknown) => String(t).trim()).filter(Boolean)
+      : undefined,
     cover: [cover, cover],
     isVip: !!d.isOfficial,
     rating: 0,

@@ -1,6 +1,7 @@
 import { Global, Module } from '@nestjs/common';
 import { AuditService } from './audit.service';
 import { StructuredLogger } from './structured-logger.service';
+import { LockAccessService } from './lock-access.service';
 
 /**
  * 跨模块共享的服务（审计、结构化日志、限流等）
@@ -8,7 +9,7 @@ import { StructuredLogger } from './structured-logger.service';
  */
 @Global()
 @Module({
-  providers: [AuditService, StructuredLogger],
-  exports: [AuditService, StructuredLogger],
+  providers: [AuditService, StructuredLogger, LockAccessService],
+  exports: [AuditService, StructuredLogger, LockAccessService],
 })
 export class CommonModule {}

@@ -28,7 +28,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       </Suspense>
       <main
         className={cn(
-          !onDrama && "pb-[calc(3.5rem+env(safe-area-inset-bottom))] md:pb-0",
+          !onDrama && "pb-[calc(3rem+env(safe-area-inset-bottom))] md:pb-0",
           onDrama && "max-md:bg-base",
         )}
       >

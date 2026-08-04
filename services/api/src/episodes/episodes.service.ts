@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { DramasService } from '../dramas/dramas.service';
 import { BizException, BizCode } from '../common/biz.exception';
 import { signMediaPath, signCdnEpisode } from '../common/media-sign.util';
+import { LockAccessService } from '../common/lock-access.service';
 
 @Injectable()
 export class EpisodesService {
@@ -11,6 +12,7 @@ export class EpisodesService {
     private readonly prisma: PrismaService,
     private readonly dramas: DramasService,
     private readonly config: ConfigService,
+    private readonly lockAccess: LockAccessService,
   ) {}
 
   /** 生成 HLS/片源短时签名播放地址 */
@@ -21,7 +23,8 @@ export class EpisodesService {
     });
     if (!episode) throw new BizException(BizCode.NOT_FOUND, 'Tập phim không tồn tại');
 
-    const free = episode.isFree || episode.episodeNumber <= episode.drama.freeEpisodeCount;
+    const policy = await this.lockAccess.resolveForDrama(episode.drama);
+    const free = this.lockAccess.isFree(episode, policy);
     let unlocked = free;
     if (!free) {
       const [u, user, dramaUnlock] = await Promise.all([
@@ -57,10 +60,21 @@ export class EpisodesService {
       };
     }
 
-    // CDN 绝对 URL：mock 签名（生产替换为 CloudFront/OSS）
+    // 第三方在线直链：原样返回，避免追加签名参数破坏外链
+    const isOwnCdn = Boolean(base) && raw.startsWith(base);
+    if (!isOwnCdn || episode.drama?.sourceType === 'ONLINE') {
+      return {
+        playUrl: raw,
+        expiresAt: new Date(exp * 1000).toISOString(),
+        durationSec: episode.durationSec,
+      };
+    }
+
+    // 自有 CDN 绝对 URL：mock 签名（生产替换为 CloudFront/OSS）
     const sig = signCdnEpisode(episodeId, exp, key);
+    const sep = raw.includes('?') ? '&' : '?';
     return {
-      playUrl: `${raw}?sig=${sig}&exp=${exp}`,
+      playUrl: `${raw}${sep}sig=${sig}&exp=${exp}`,
       expiresAt: new Date(exp * 1000).toISOString(),
       durationSec: episode.durationSec,
     };

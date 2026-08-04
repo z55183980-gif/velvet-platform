@@ -1,9 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { LockAccessService } from '../common/lock-access.service';
 
 @Injectable()
 export class DramasService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly lockAccess: LockAccessService,
+  ) {}
 
   async listDramas(opts: {
     category?: string;
@@ -108,7 +112,13 @@ export class DramasService {
   async getEpisodes(dramaId: string, userId?: bigint) {
     const drama = await this.prisma.drama.findUnique({
       where: this.resolveDramaWhere(dramaId),
-      select: { id: true, freeEpisodeCount: true, creatorId: true, buyoutCredits: true },
+      select: {
+        id: true,
+        freeEpisodeCount: true,
+        lockMode: true,
+        creatorId: true,
+        buyoutCredits: true,
+      },
     });
     if (!drama) return null;
     const episodes = await this.prisma.episode.findMany({
@@ -133,8 +143,9 @@ export class DramasService {
       vipActive = !!(user?.vipExpireAt && user.vipExpireAt.getTime() > Date.now());
       dramaUnlocked = !!dUnlock;
     }
+    const policy = await this.lockAccess.resolveForDrama(drama);
     const rows = episodes.map((ep) => {
-      const free = ep.isFree || ep.episodeNumber <= drama.freeEpisodeCount;
+      const free = this.lockAccess.isFree(ep, policy);
       return {
         id: ep.id.toString(),
         episodeNumber: ep.episodeNumber,
@@ -151,6 +162,9 @@ export class DramasService {
     return {
       dramaId,
       freeEpisodeCount: drama.freeEpisodeCount,
+      lockMode: drama.lockMode,
+      effectiveLockMode: policy.mode,
+      lockModeInherited: policy.inherited,
       buyoutCredits: drama.buyoutCredits?.toString() ?? null,
       vipActive,
       dramaUnlocked,

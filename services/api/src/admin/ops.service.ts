@@ -116,6 +116,7 @@ export class AdminOpsService {
     dto: {
       ids: (string | number)[];
       freeEpisodeCount?: number;
+      lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE' | 'INHERIT' | null;
       priceCredits?: number | string;
       buyoutCredits?: number | string | null;
     },
@@ -131,6 +132,19 @@ export class AdminOpsService {
         throw new BizException(BizCode.BAD_REQUEST, 'freeEpisodeCount không hợp lệ');
       }
       data.freeEpisodeCount = n;
+    }
+    if (dto.lockMode !== undefined) {
+      if (dto.lockMode === null || dto.lockMode === 'INHERIT') {
+        data.lockMode = null;
+      } else if (
+        dto.lockMode === 'FREE_FIRST_N' ||
+        dto.lockMode === 'VIP_ALL' ||
+        dto.lockMode === 'ALL_FREE'
+      ) {
+        data.lockMode = dto.lockMode;
+      } else {
+        throw new BizException(BizCode.BAD_REQUEST, 'lockMode không hợp lệ');
+      }
     }
     if (dto.buyoutCredits !== undefined) {
       if (dto.buyoutCredits === null || dto.buyoutCredits === '' || Number(dto.buyoutCredits) === 0) {
@@ -169,6 +183,7 @@ export class AdminOpsService {
       payload: {
         ids: ids.map((i) => i.toString()),
         freeEpisodeCount: dto.freeEpisodeCount,
+        lockMode: dto.lockMode,
         priceCredits: dto.priceCredits != null ? String(dto.priceCredits) : undefined,
         buyoutCredits: dto.buyoutCredits != null ? String(dto.buyoutCredits) : undefined,
         dramasUpdated,

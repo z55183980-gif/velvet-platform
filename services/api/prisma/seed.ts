@@ -136,6 +136,16 @@ async function main() {
   console.log(`[seed] viewer phone=+84901234567 wallet=200000 credits`);
 
   await prisma.systemSetting.upsert({
+    where: { key: 'episodeLockMode' },
+    create: { key: 'episodeLockMode', value: 'FREE_FIRST_N' },
+    update: {},
+  });
+  await prisma.systemSetting.upsert({
+    where: { key: 'defaultFreeEpisodes' },
+    create: { key: 'defaultFreeEpisodes', value: 3 },
+    update: {},
+  });
+  await prisma.systemSetting.upsert({
     where: { key: 'free_episode_count' },
     create: { key: 'free_episode_count', value: 3 },
     update: { value: 3 },

@@ -163,13 +163,19 @@ model Drama {
 
   coverUrl        String?
 
+  /// 外部来源去重键，如 hongguo:{bookId}
+  externalRef     String?     @unique
+
   totalEpisodes   Int         @default(0)
   freeEpisodeCount Int        @default(3)
-  // 免费判定优先级（播放/解锁前校验，见 00 F6）：
+  /// 锁集策略；null = 跟随全局 system_settings.episodeLockMode
+  lockMode        DramaLockMode?
+  // 免费判定优先级（播放/解锁前校验）：
   //   1) episode.isFree == true            → 免费
-  //   2) episodeNumber <= freeEpisodeCount → 免费
-  //   3) 用户 VIP 有效 / 整剧买断          → 可播
-  //   否则为付费集
+  //   2) effectiveMode == ALL_FREE        → 免费
+  //   3) effectiveMode == FREE_FIRST_N && episodeNumber <= freeEpisodeCount → 免费
+  //   4) 用户 VIP 有效 / 整剧买断          → 可播
+  //   否则为付费/需会员集
   /// 整剧买断积分价；null 或 0 = 不提供整剧购买
   buyoutCredits   BigInt?
 
@@ -178,6 +184,8 @@ model Drama {
   favoriteCount   BigInt      @default(0)
 
   status          DramaStatus @default(DRAFT)
+  /// 内容来源：本地媒资 / 外链转播
+  sourceType      DramaSourceType @default(LOCAL)
   isOfficial      Boolean     @default(false)
   isFeatured      Boolean     @default(false)
   /// 排序权重（越大越靠前；与 isFeatured/官方/上架时间配合决定展示顺序）
@@ -210,6 +218,18 @@ enum DramaStatus {
   LIVE
   OFFLINE
   REJECTED
+}
+
+enum DramaSourceType {
+  LOCAL
+  ONLINE
+}
+
+/// 剧集加锁策略（全局默认见 system_settings.episodeLockMode）
+enum DramaLockMode {
+  FREE_FIRST_N
+  VIP_ALL
+  ALL_FREE
 }
 
 // ========== 剧集 ==========

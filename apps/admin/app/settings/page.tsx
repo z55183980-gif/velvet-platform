@@ -231,7 +231,19 @@ export default function AdminSettingsPage() {
                 ) : null}
               </div>
               <div className="flex items-center gap-2">
-                {item.type === "boolean" ? (
+                {item.key === "episodeLockMode" ? (
+                  <Select
+                    className="w-52"
+                    value={drafts[item.key] ?? String(item.value ?? "FREE_FIRST_N")}
+                    onChange={(e) =>
+                      setDrafts((d) => ({ ...d, [item.key]: e.target.value }))
+                    }
+                  >
+                    <option value="FREE_FIRST_N">{t("lockModeFreeFirstN")}</option>
+                    <option value="VIP_ALL">{t("lockModeVipAll")}</option>
+                    <option value="ALL_FREE">{t("lockModeAllFree")}</option>
+                  </Select>
+                ) : item.type === "boolean" ? (
                   <Select
                     className="w-28"
                     value={drafts[item.key] ?? String(item.value)}

@@ -206,10 +206,21 @@ git push --force origin main
 
 ---
 
-## 7. 一句话总结
+## 7. 推完代码之后（生产发布）
+
+`git push origin main` **不会**自动更新线上。生产机、SSH、PM2、端口与一键发布脚本见：
+
+**[docs/11-生产部署手册.md](./docs/11-生产部署手册.md)**
+
+摘要：SSH `starnexus-s4` → `/www/wwwroot/velvet-platform` → `git reset --hard origin/main` → build → `pm2 restart velvet-api velvet-web velvet-admin`。
+
+---
+
+## 8. 一句话总结
 
 ```bash
 # 登录一次（只做一次）→ 之后随便推
 gh auth login -h github.com --web --scopes repo
 git add -A && git commit -m "msg" && git push origin main
+# 需要上线时再按 docs/11-生产部署手册.md 发布到 starnexus-s4
 ```

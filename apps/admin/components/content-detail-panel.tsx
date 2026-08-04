@@ -18,7 +18,7 @@ import {
   adminUpdateDrama,
   adminUpdateEpisode,
 } from "@velvet/api-client";
-import { Button, DataTable, Input, StatCard, fmtNum, type Column } from "@velvet/ui";
+import { Button, DataTable, Input, Select, StatCard, fmtNum, type Column } from "@velvet/ui";
 import { ConfirmModal } from "@/components/glass-modal";
 import { useI18n, statusLabel } from "@/lib/i18n";
 
@@ -44,6 +44,7 @@ type Drama = {
   isOfficial?: boolean;
   sortWeight?: number;
   freeEpisodeCount?: number;
+  lockMode?: "FREE_FIRST_N" | "VIP_ALL" | "ALL_FREE" | null;
   viewCount?: number;
   unlockCount?: number;
   favoriteCount?: number;
@@ -65,6 +66,7 @@ export function ContentDetailPanel({
   const [reason, setReason] = useState("");
   const [weight, setWeight] = useState(0);
   const [freeEpisodes, setFreeEpisodes] = useState(3);
+  const [lockMode, setLockMode] = useState<string>("INHERIT");
   const [error, setError] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
@@ -77,6 +79,7 @@ export function ContentDetailPanel({
     if (!detailQ.data) return;
     setWeight(detailQ.data.sortWeight ?? 0);
     setFreeEpisodes(detailQ.data.freeEpisodeCount ?? 3);
+    setLockMode(detailQ.data.lockMode || "INHERIT");
   }, [detailQ.data]);
 
   const actionMut = useMutation({
@@ -286,18 +289,40 @@ export function ContentDetailPanel({
             <Button size="sm" variant="secondary" onClick={() => act(() => adminSetSortWeight(id, weight))}>
               {t("saveSortWeight")}
             </Button>
+            <label className="text-caption text-ink-muted">
+              {t("lockMode")}
+              <Select
+                className="mt-1 w-44"
+                value={lockMode}
+                onChange={(e) => setLockMode(e.target.value)}
+              >
+                <option value="INHERIT">{t("lockModeInherit")}</option>
+                <option value="FREE_FIRST_N">{t("lockModeFreeFirstN")}</option>
+                <option value="VIP_ALL">{t("lockModeVipAll")}</option>
+                <option value="ALL_FREE">{t("lockModeAllFree")}</option>
+              </Select>
+            </label>
             <Input
               type="number"
               className="w-24"
               value={freeEpisodes}
+              disabled={lockMode === "VIP_ALL" || lockMode === "ALL_FREE"}
               onChange={(e) => setFreeEpisodes(Number(e.target.value))}
+              title={t("freeEpisodes")}
             />
             <Button
               size="sm"
               variant="secondary"
-              onClick={() => act(() => adminUpdateDrama(id, { freeEpisodeCount: freeEpisodes }))}
+              onClick={() =>
+                act(() =>
+                  adminUpdateDrama(id, {
+                    lockMode: lockMode === "INHERIT" ? null : lockMode,
+                    freeEpisodeCount: freeEpisodes,
+                  }),
+                )
+              }
             >
-              {t("saveFreeEpisodes")}
+              {t("saveLockPolicy")}
             </Button>
           </div>
         </div>

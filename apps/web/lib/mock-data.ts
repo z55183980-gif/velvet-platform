@@ -26,6 +26,8 @@ export interface Drama {
   descVi: string;
   descZh: string;
   categorySlug: string;
+  /** Theme/genre tags (Hongguo-style chips under title) */
+  tags?: string[];
   cover: [string, string];
   isVip: boolean;
   rating: number;

@@ -12,15 +12,31 @@ import {
   Pause,
   Volume2,
   VolumeX,
-  Lock,
+  Crown,
   ListVideo,
+  SkipForward,
+  Gauge,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useLocale } from "@/lib/i18n";
 import { buttonVariants } from "@/components/ui/button";
 
+const ACCENT = "#ff7e0d";
+export const PLAYER_RATES = [0.75, 1, 1.25, 1.5, 2] as const;
+const RATES = PLAYER_RATES;
+
+/** full = desktop-style chrome; feed = 首页流; watch = 剧集内观看 */
+export type VerticalPlayerChrome = "full" | "feed" | "watch";
+
 function isImg(s: string) {
   return /^https?:\/\//.test(s) || s.startsWith("/");
+}
+
+function fmtTime(sec: number) {
+  if (!Number.isFinite(sec) || sec < 0) return "0:00";
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
 }
 
 export function VerticalPlayer({
@@ -30,6 +46,8 @@ export function VerticalPlayer({
   muted: mutedProp,
   onMutedChange,
   onEnded,
+  onNext,
+  hasNext,
   locked,
   lockLabel,
   lockActionLabel,
@@ -44,6 +62,10 @@ export function VerticalPlayer({
   subtitle,
   onOpenEpisodes,
   active = true,
+  chrome = "full",
+  bottomInset = 0,
+  playbackRate,
+  onPlaybackRateChange,
 }: {
   src?: string | null;
   poster?: string;
@@ -51,6 +73,8 @@ export function VerticalPlayer({
   muted?: boolean;
   onMutedChange?: (m: boolean) => void;
   onEnded?: () => void;
+  onNext?: () => void;
+  hasNext?: boolean;
   locked?: boolean;
   lockLabel?: string;
   lockActionLabel?: string;
@@ -65,24 +89,46 @@ export function VerticalPlayer({
   subtitle?: string;
   onOpenEpisodes?: () => void;
   active?: boolean;
+  chrome?: VerticalPlayerChrome;
+  /** Extra space below thin progress (watch page action bar) */
+  bottomInset?: number;
+  playbackRate?: number;
+  onPlaybackRateChange?: (rate: number) => void;
 }) {
   const { t } = useLocale();
   const innerRef = useRef<HTMLVideoElement>(null);
   const videoRef = externalRef ?? innerRef;
+  const seekRef = useRef<HTMLDivElement>(null);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(mutedProp ?? true);
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [buffered, setBuffered] = useState(0);
   const [showChrome, setShowChrome] = useState(true);
+  const [rate, setRate] = useState(playbackRate ?? 1);
+  const [showRate, setShowRate] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (playbackRate != null && playbackRate !== rate) setRate(playbackRate);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playbackRate]);
+
+  const applyRate = (r: number) => {
+    setRate(r);
+    onPlaybackRateChange?.(r);
+  };
 
   const bumpChrome = useCallback(() => {
     setShowChrome(true);
     if (hideTimer.current) clearTimeout(hideTimer.current);
     hideTimer.current = setTimeout(() => {
-      if (videoRef.current && !videoRef.current.paused) setShowChrome(false);
-    }, 2400);
-  }, [videoRef]);
+      if (videoRef.current && !videoRef.current.paused && !showRate && !dragging) {
+        setShowChrome(false);
+      }
+    }, 2600);
+  }, [videoRef, showRate, dragging]);
 
   useEffect(() => {
     return () => {
@@ -119,17 +165,28 @@ export function VerticalPlayer({
     const onPause = () => setPlaying(false);
     const onTime = () => setCurrent(v.currentTime);
     const onMeta = () => setDuration(v.duration || 0);
+    const onProg = () => {
+      try {
+        if (v.buffered.length > 0 && v.duration > 0) {
+          setBuffered(v.buffered.end(v.buffered.length - 1) / v.duration);
+        }
+      } catch {
+        /* ignore */
+      }
+    };
     const onEnd = () => onEnded?.();
     v.addEventListener("play", onPlay);
     v.addEventListener("pause", onPause);
     v.addEventListener("timeupdate", onTime);
     v.addEventListener("loadedmetadata", onMeta);
+    v.addEventListener("progress", onProg);
     v.addEventListener("ended", onEnd);
     return () => {
       v.removeEventListener("play", onPlay);
       v.removeEventListener("pause", onPause);
       v.removeEventListener("timeupdate", onTime);
       v.removeEventListener("loadedmetadata", onMeta);
+      v.removeEventListener("progress", onProg);
       v.removeEventListener("ended", onEnd);
     };
   }, [src, onEnded, videoRef]);
@@ -148,6 +205,12 @@ export function VerticalPlayer({
     else v.addEventListener("loadedmetadata", apply, { once: true });
   }, [seekTo, src, videoRef]);
 
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    v.playbackRate = rate;
+  }, [rate, videoRef, src]);
+
   const togglePlay = () => {
     const v = videoRef.current;
     if (!v || !src || locked || loginRequired) return;
@@ -163,18 +226,41 @@ export function VerticalPlayer({
     bumpChrome();
   };
 
-  const seek = (ratio: number) => {
+  const seekToRatio = (ratio: number) => {
     const v = videoRef.current;
     if (!v || !duration) return;
     v.currentTime = Math.max(0, Math.min(duration, ratio * duration));
   };
 
+  const ratioFromEvent = (clientX: number) => {
+    const el = seekRef.current;
+    if (!el) return 0;
+    const rect = el.getBoundingClientRect();
+    return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+  };
+
+  useEffect(() => {
+    if (!dragging) return;
+    const onMove = (e: PointerEvent) => seekToRatio(ratioFromEvent(e.clientX));
+    const onUp = () => setDragging(false);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, [dragging, duration]);
+
   let overlay: ReactNode = null;
   if (loginRequired) {
     overlay = (
       <Overlay>
-        <p className="text-h4 font-semibold text-white">{t("nav.login")}</p>
-        <button className={buttonVariants({ variant: "primary", size: "lg" })} onClick={onLogin}>
+        <p className="text-[18px] font-medium text-white">{t("player.loginToWatch")}</p>
+        <button
+          className={buttonVariants({ variant: "primary", size: "lg" })}
+          onClick={onLogin}
+          style={{ background: `linear-gradient(92.27deg, ${ACCENT} 0.32%, #ff9233)` }}
+        >
           {t("nav.login")}
         </button>
       </Overlay>
@@ -188,13 +274,18 @@ export function VerticalPlayer({
         ) : null}
         <div className="absolute inset-0 bg-gradient-to-t from-black via-black/60 to-black/30" />
         <div className="relative flex flex-col items-center gap-4 px-6 text-center">
-          <span className="grid h-14 w-14 place-items-center rounded-full bg-white/10 text-white backdrop-blur">
-            <Lock className="h-6 w-6" />
+          <span className="grid h-14 w-14 place-items-center rounded-full bg-gold/15 text-gold backdrop-blur">
+            <Crown className="h-6 w-6" />
           </span>
-          <p className="text-h4 font-semibold text-white">{lockLabel}</p>
+          <p className="text-[18px] font-medium text-white">{lockLabel}</p>
+          <p className="max-w-xs text-[13px] leading-5 text-white/55">{t("vip.inactiveHint")}</p>
           {onUnlock && (
-            <button className={buttonVariants({ variant: "primary", size: "lg" })} onClick={onUnlock}>
-              {lockActionLabel}
+            <button
+              className={buttonVariants({ variant: "primary", size: "lg" })}
+              onClick={onUnlock}
+              style={{ background: `linear-gradient(92.27deg, ${ACCENT} 0.32%, #ff9233)` }}
+            >
+              {lockActionLabel || t("vip.open")}
             </button>
           )}
         </div>
@@ -215,12 +306,14 @@ export function VerticalPlayer({
   }
 
   const progress = duration > 0 ? current / duration : 0;
+  const isMinimal = chrome === "feed" || chrome === "watch";
+  const chromeVisible = isMinimal || showChrome || !playing || showRate || dragging;
 
   return (
     <div
       className="relative h-full w-full overflow-hidden bg-black"
       onClick={togglePlay}
-      onPointerDown={bumpChrome}
+      onPointerDown={isMinimal ? undefined : bumpChrome}
     >
       {src && !locked && !loginRequired ? (
         <video
@@ -246,43 +339,161 @@ export function VerticalPlayer({
 
       {overlay}
 
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/90 via-black/40 to-transparent px-4 pb-6 pt-24">
-        <div className="pointer-events-auto max-w-[85%]">
-          {title && <h2 className="text-h4 font-bold text-white drop-shadow">{title}</h2>}
-          {subtitle && <p className="mt-1 text-body-sm text-white/80">{subtitle}</p>}
-        </div>
-      </div>
+      {src && !locked && !loginRequired && !error && !playing && !loading && (
+        <button
+          type="button"
+          aria-label={t("player.play")}
+          onClick={(e) => {
+            e.stopPropagation();
+            togglePlay();
+          }}
+          className="absolute left-1/2 top-1/2 z-[6] grid h-16 w-16 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-black/45 text-white backdrop-blur-sm"
+        >
+          <Play className="ml-0.5 h-7 w-7 fill-white" />
+        </button>
+      )}
 
-      {src && !locked && !loginRequired && !error && (
+      {!isMinimal && (title || subtitle) && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-black/90 via-black/35 to-transparent px-4 pb-20 pt-28">
+          <div className="pointer-events-auto max-w-[85%]">
+            {title && <h2 className="text-[17px] font-semibold text-white drop-shadow">{title}</h2>}
+            {subtitle && <p className="mt-1 text-[13px] text-white/75">{subtitle}</p>}
+          </div>
+        </div>
+      )}
+
+      {src && !locked && !loginRequired && !error && isMinimal && (
+        <div
+          className="absolute inset-x-0 z-20 px-3 pb-1.5 pt-4"
+          style={{ bottom: bottomInset }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div
+            ref={seekRef}
+            className="relative h-4 cursor-pointer"
+            onPointerDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setDragging(true);
+              seekToRatio(ratioFromEvent(e.clientX));
+            }}
+          >
+            <div className="absolute inset-x-0 top-1/2 h-[2px] -translate-y-1/2 overflow-visible rounded-full bg-white/30">
+              <div
+                className="absolute inset-y-0 left-0 rounded-full bg-white/35"
+                style={{ width: `${buffered * 100}%` }}
+              />
+              <div
+                className="absolute inset-y-0 left-0 rounded-full bg-white"
+                style={{ width: `${progress * 100}%` }}
+              />
+            </div>
+            <div
+              className={cn(
+                "absolute top-1/2 h-2.5 w-2.5 -translate-y-1/2 rounded-full bg-white shadow",
+                dragging ? "scale-110" : "",
+              )}
+              style={{ left: `calc(${progress * 100}% - 5px)` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {src && !locked && !loginRequired && !error && !isMinimal && (
         <div
           className={cn(
-            "absolute inset-x-0 bottom-0 z-20 px-3 pb-3 pt-8 transition-opacity",
-            showChrome || !playing ? "opacity-100" : "opacity-0 pointer-events-none",
+            "absolute inset-x-0 bottom-0 z-20 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-8 transition-opacity",
+            chromeVisible ? "opacity-100" : "pointer-events-none opacity-0",
           )}
           onClick={(e) => e.stopPropagation()}
         >
           <div
-            className="mb-3 h-1 cursor-pointer rounded-full bg-white/25"
-            onClick={(e) => {
-              const rect = e.currentTarget.getBoundingClientRect();
-              seek((e.clientX - rect.left) / rect.width);
+            ref={seekRef}
+            className="group/seek relative mb-2 h-5 cursor-pointer"
+            onPointerDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setDragging(true);
+              seekToRatio(ratioFromEvent(e.clientX));
+              bumpChrome();
             }}
           >
+            <div className="absolute inset-x-0 top-1/2 h-[3px] -translate-y-1/2 overflow-hidden rounded-full bg-white/25">
+              <div
+                className="absolute inset-y-0 left-0 rounded-full bg-white/30"
+                style={{ width: `${buffered * 100}%` }}
+              />
+              <div
+                className="absolute inset-y-0 left-0 rounded-full"
+                style={{ width: `${progress * 100}%`, background: ACCENT }}
+              />
+            </div>
             <div
-              className="h-full rounded-full bg-brand"
-              style={{ width: `${progress * 100}%` }}
+              className={cn(
+                "absolute top-1/2 h-3 w-3 -translate-y-1/2 rounded-full shadow",
+                dragging ? "opacity-100" : "opacity-90",
+              )}
+              style={{ left: `calc(${progress * 100}% - 6px)`, background: ACCENT }}
             />
           </div>
-          <div className="flex items-center gap-2 text-white">
-            <IconBtn onClick={togglePlay} label={playing ? "Pause" : "Play"}>
-              {playing ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
+
+          <div className="mb-1 flex items-center justify-between text-[11px] tabular-nums text-white/65">
+            <span>{fmtTime(current)}</span>
+            <span>{fmtTime(duration)}</span>
+          </div>
+
+          <div className="flex items-center gap-1 text-white">
+            <IconBtn onClick={togglePlay} label={playing ? t("player.pause") : t("player.play")}>
+              {playing ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5 fill-white" />}
             </IconBtn>
-            <IconBtn onClick={toggleMute} label="Mute">
+            {hasNext && (
+              <IconBtn onClick={() => onNext?.()} label={t("player.next")}>
+                <SkipForward className="h-5 w-5" />
+              </IconBtn>
+            )}
+            <IconBtn onClick={toggleMute} label={muted ? t("player.unmute") : t("player.mute")}>
               {muted ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
             </IconBtn>
+
+            <div className="relative">
+              <IconBtn
+                onClick={() => {
+                  setShowRate((v) => !v);
+                  bumpChrome();
+                }}
+                label={t("player.speed")}
+              >
+                <span className="flex items-center gap-0.5 text-[12px] font-medium">
+                  <Gauge className="h-4 w-4" />
+                  {rate === 1 ? "1x" : `${rate}x`}
+                </span>
+              </IconBtn>
+              {showRate && (
+                <div className="absolute bottom-full left-0 mb-2 min-w-[84px] overflow-hidden rounded-lg bg-[#1c1e1e] py-1 shadow-lg ring-1 ring-white/10">
+                  {RATES.map((r) => (
+                    <button
+                      key={r}
+                      type="button"
+                      onClick={() => {
+                        applyRate(r);
+                        setShowRate(false);
+                        bumpChrome();
+                      }}
+                      className={cn(
+                        "flex w-full items-center justify-center px-3 py-2 text-[13px]",
+                        r === rate ? "text-[#ff7e0d]" : "text-white/80",
+                      )}
+                    >
+                      {r === 1 ? t("player.speedNormal") : `${r}x`}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <div className="flex-1" />
             {onOpenEpisodes && (
-              <IconBtn onClick={onOpenEpisodes} label="Episodes">
+              <IconBtn onClick={onOpenEpisodes} label={t("player.episodes")}>
                 <ListVideo className="h-5 w-5" />
               </IconBtn>
             )}
@@ -328,7 +539,7 @@ function IconBtn({
       type="button"
       aria-label={label}
       onClick={onClick}
-      className="grid h-10 w-10 place-items-center rounded-full text-white/90 transition-colors hover:bg-white/10"
+      className="grid h-10 min-w-10 place-items-center rounded-md px-1.5 text-white/90 transition-colors hover:bg-white/10"
     >
       {children}
     </button>

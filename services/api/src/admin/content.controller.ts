@@ -13,7 +13,19 @@ import {
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { Transform, Type } from 'class-transformer';
-import { IsBoolean, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import {
+  ArrayMinSize,
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Min,
+  ValidateIf,
+  ValidateNested,
+} from 'class-validator';
 import { memoryStorage } from 'multer';
 import { BizCode, BizException } from '../common/biz.exception';
 import { ok } from '../common/response';
@@ -23,6 +35,8 @@ import { AdminService } from './admin.service';
 import { ContentService } from './content.service';
 import { AdminEpisodesService } from './episodes.service';
 import { AdminOpsService } from './ops.service';
+import { HongguoImportService } from './hongguo-import.service';
+import { HongguoProvider } from './hongguo.provider';
 
 function getActor(req: any): bigint | undefined {
   return req?.adminId as bigint | undefined;
@@ -74,6 +88,10 @@ class DramaUpdateDto {
   @IsOptional() @IsString() categorySlug?: string;
   @IsOptional() @IsString() coverUrl?: string;
   @IsOptional() @Type(() => Number) @IsNumber() freeEpisodeCount?: number;
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== '')
+  @IsIn(['FREE_FIRST_N', 'VIP_ALL', 'ALL_FREE', 'INHERIT'])
+  lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE' | 'INHERIT' | null;
   @IsOptional() @Type(() => Number) @IsNumber() sortWeight?: number;
   @IsOptional() buyoutCredits?: number | string | null;
   @IsOptional()
@@ -89,6 +107,10 @@ class DramaUpdateDto {
 class BatchDramasDto {
   @IsNotEmpty() ids!: (string | number)[];
   @IsOptional() @Type(() => Number) @IsNumber() freeEpisodeCount?: number;
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== '')
+  @IsIn(['FREE_FIRST_N', 'VIP_ALL', 'ALL_FREE', 'INHERIT'])
+  lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE' | 'INHERIT' | null;
   @IsOptional() priceCredits?: number | string;
   @IsOptional() buyoutCredits?: number | string | null;
 }
@@ -109,6 +131,47 @@ class ReorderDto {
   @IsNotEmpty() ids!: string[];
 }
 
+class OnlineEpisodeDto {
+  @IsNotEmpty() @IsString() sourceUrl!: string;
+  @IsOptional() @IsString() title?: string;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) episodeNumber?: number;
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true' || value === 1)
+  @IsBoolean()
+  isFree?: boolean;
+}
+
+class CreateOnlineDramaDto {
+  @IsNotEmpty() @IsString() titleZh!: string;
+  @IsOptional() @IsString() titleVi?: string;
+  @IsOptional() @IsString() slug?: string;
+  @IsOptional() @IsString() descriptionZh?: string;
+  @IsOptional() @IsString() descriptionVi?: string;
+  @IsNotEmpty() @IsString() categorySlug!: string;
+  @IsOptional() @IsString() coverUrl?: string;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) freeEpisodeCount?: number;
+  @IsOptional() @IsIn(['FREE_FIRST_N', 'VIP_ALL', 'ALL_FREE'])
+  lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE';
+  @IsOptional() @IsIn(['DRAFT', 'LIVE'])
+  status?: 'DRAFT' | 'LIVE';
+  @IsOptional() @IsString() externalRef?: string;
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => OnlineEpisodeDto)
+  episodes!: OnlineEpisodeDto[];
+}
+
+class HongguoImportDto {
+  @IsNotEmpty() @IsString() id!: string;
+  @IsNotEmpty() @IsString() categorySlug!: string;
+  @IsOptional() @IsString() titleZh?: string;
+  @IsOptional() @IsString() titleVi?: string;
+  @IsOptional() @IsIn(['DRAFT', 'LIVE'])
+  status?: 'DRAFT' | 'LIVE';
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) maxEpisodes?: number;
+}
+
 @Controller('v1/admin')
 @UseGuards(AdminGuard, AdminRoleGuard)
 export class ContentController {
@@ -117,6 +180,7 @@ export class ContentController {
     private readonly content: ContentService,
     private readonly episodes: AdminEpisodesService,
     private readonly ops: AdminOpsService,
+    private readonly hongguo: HongguoImportService,
   ) {}
 
   @Get('dramas')
@@ -156,6 +220,39 @@ export class ContentController {
   @AdminRoles('SUPER_ADMIN', 'OPS')
   async listHottest() {
     return ok(await this.content.listHottest());
+  }
+
+  @Post('dramas/online')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async createOnlineDrama(@Body() dto: CreateOnlineDramaDto, @Req() req: any) {
+    if (!Array.isArray(dto?.episodes) || dto.episodes.length === 0) {
+      throw new BizException(BizCode.BAD_REQUEST, '至少填写一集播放链接');
+    }
+    return ok(await this.admin.createOnlineDrama(dto as any, getActor(req)));
+  }
+
+  @Get('hongguo/status')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async hongguoStatus() {
+    return ok(this.hongguo.status());
+  }
+
+  @Get('hongguo/search')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async hongguoSearch(@Query('q') q?: string, @Query('page') page?: string) {
+    return ok(await this.hongguo.search(q || '', page ? Number(page) : 1));
+  }
+
+  @Get('hongguo/detail')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async hongguoDetail(@Query('id') id?: string) {
+    return ok(await this.hongguo.detail(id || ''));
+  }
+
+  @Post('hongguo/import')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async hongguoImport(@Body() dto: HongguoImportDto, @Req() req: any) {
+    return ok(await this.hongguo.importDrama(dto, getActor(req)));
   }
 
   @Post('dramas/hottest/reorder')

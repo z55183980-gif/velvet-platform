@@ -29,6 +29,7 @@ import {
   LogOut,
   Menu,
   Package,
+  PlusCircle,
   Scale,
   Settings2,
   ShieldCheck,
@@ -71,6 +72,7 @@ const NAV_GROUPS: NavGroup[] = [
     id: "content",
     titleKey: "navContent",
     items: [
+      { href: "/content/add", key: "contentAdd", icon: PlusCircle, end: true },
       { href: "/content", key: "content", icon: Clapperboard, end: true },
       { href: "/content?status=PENDING_REVIEW", key: "contentPending", icon: ShieldCheck, end: true },
       { href: "/categories", key: "categories", icon: FolderTree },
@@ -151,6 +153,10 @@ function isActive(pathname: string, searchParams: URLSearchParams, item: NavItem
 
   if (path === "/content") {
     return pathname === "/content" && !searchParams.get("status");
+  }
+
+  if (path === "/content/add") {
+    return pathname === "/content/add";
   }
 
   if (path === "/users") {

@@ -43,7 +43,12 @@ function AdminContentInner() {
   const [applied, setApplied] = useState(filters);
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [batch, setBatch] = useState({ freeEpisodeCount: 3, priceCredits: 10, buyoutCredits: 0 });
+  const [batch, setBatch] = useState({
+    freeEpisodeCount: 3,
+    priceCredits: 10,
+    buyoutCredits: 0,
+    lockMode: "" as "" | "INHERIT" | "FREE_FIRST_N" | "VIP_ALL" | "ALL_FREE",
+  });
   const [error, setError] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
@@ -90,6 +95,7 @@ function AdminContentInner() {
         freeEpisodeCount: batch.freeEpisodeCount,
         priceCredits: batch.priceCredits,
         buyoutCredits: batch.buyoutCredits > 0 ? batch.buyoutCredits : null,
+        ...(batch.lockMode ? { lockMode: batch.lockMode } : {}),
       }),
     onSuccess: async () => {
       setSelected(new Set());
@@ -228,6 +234,25 @@ function AdminContentInner() {
 
       <div className="mb-4 flex flex-wrap items-end gap-2 card glass-card p-3">
         <span className="text-caption text-ink-muted">{t("selectedCount", { n: selected.size })}</span>
+        <label className="text-caption text-ink-muted">
+          {t("lockMode")}
+          <Select
+            className="mt-1 w-44"
+            value={batch.lockMode}
+            onChange={(e) =>
+              setBatch((value) => ({
+                ...value,
+                lockMode: e.target.value as typeof batch.lockMode,
+              }))
+            }
+          >
+            <option value="">{t("lockModeBatchKeep")}</option>
+            <option value="INHERIT">{t("lockModeInherit")}</option>
+            <option value="FREE_FIRST_N">{t("lockModeFreeFirstN")}</option>
+            <option value="VIP_ALL">{t("lockModeVipAll")}</option>
+            <option value="ALL_FREE">{t("lockModeAllFree")}</option>
+          </Select>
+        </label>
         {(
           [
             ["freeEpisodeCount", t("freeEpisodes")],

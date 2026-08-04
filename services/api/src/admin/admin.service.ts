@@ -15,6 +15,7 @@ import {
   resolveDramaDef,
   normName,
 } from './local-import.util';
+import { convertExternalPlayUrl, slugifyTitle } from './online-drama.util';
 import { AuditService } from '../common/audit.service';
 
 export interface LocalImportOptions {
@@ -32,6 +33,32 @@ export interface LocalImportItemResult {
   reason?: string;
   episodes?: number;
   dramaId?: string;
+}
+
+export interface OnlineEpisodeInput {
+  sourceUrl: string;
+  title?: string;
+  episodeNumber?: number;
+  isFree?: boolean;
+}
+
+export interface CreateOnlineDramaInput {
+  titleZh: string;
+  titleVi?: string;
+  slug?: string;
+  descriptionZh?: string;
+  descriptionVi?: string;
+  categorySlug: string;
+  coverUrl?: string;
+  freeEpisodeCount?: number;
+  lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE';
+  status?: 'DRAFT' | 'LIVE';
+  /** 外部来源去重键，如 hongguo:{id} */
+  externalRef?: string;
+  sourceTags?: string[];
+  /** 第三方解析结果允许非扩展名直链 */
+  relaxedPlayUrl?: boolean;
+  episodes: OnlineEpisodeInput[];
 }
 
 @Injectable()
@@ -586,6 +613,7 @@ export class AdminService {
             isOfficial: !!def.isOfficial,
             isFeatured: !!def.isFeatured,
             status: 'LIVE',
+            sourceType: 'LOCAL',
             publishedAt: new Date(),
             totalEpisodes: videos.length,
             viewCount: BigInt(Math.floor(Math.random() * 5000) + 500),
@@ -848,6 +876,22 @@ export class AdminService {
     if (dto.categorySlug != null) data.categorySlug = dto.categorySlug;
     if (dto.coverUrl != null) data.coverUrl = dto.coverUrl;
     if (dto.freeEpisodeCount != null) data.freeEpisodeCount = Number(dto.freeEpisodeCount);
+    if (dto.lockMode !== undefined) {
+      if (dto.lockMode === null || dto.lockMode === '' || dto.lockMode === 'INHERIT') {
+        data.lockMode = null;
+      } else if (
+        dto.lockMode === 'FREE_FIRST_N' ||
+        dto.lockMode === 'VIP_ALL' ||
+        dto.lockMode === 'ALL_FREE'
+      ) {
+        data.lockMode = dto.lockMode;
+      } else {
+        throw new BizException(
+          BizCode.BAD_REQUEST,
+          'lockMode must be INHERIT | FREE_FIRST_N | VIP_ALL | ALL_FREE',
+        );
+      }
+    }
     if (dto.buyoutCredits !== undefined) {
       if (dto.buyoutCredits === null || dto.buyoutCredits === '' || Number(dto.buyoutCredits) === 0) {
         data.buyoutCredits = null;
@@ -910,6 +954,183 @@ export class AdminService {
       payload: { reason: String(reason).trim() },
     });
     return { id: drama.id.toString(), status: drama.status };
+  }
+
+  /**
+   * 管理员创建在线剧集：填写外链/平台跳转链，转换为可播放地址后入库。
+   */
+  async createOnlineDrama(dto: CreateOnlineDramaInput, actorId?: bigint) {
+    const titleZh = String(dto.titleZh || '').trim();
+    if (!titleZh) {
+      throw new BizException(BizCode.BAD_REQUEST, '中文标题必填');
+    }
+    const categorySlug = String(dto.categorySlug || '').trim();
+    if (!categorySlug) {
+      throw new BizException(BizCode.BAD_REQUEST, '分类必填');
+    }
+    const category = await this.prisma.category.findUnique({ where: { slug: categorySlug } });
+    if (!category) {
+      throw new BizException(BizCode.BAD_REQUEST, `分类不存在: ${categorySlug}`);
+    }
+    if (!Array.isArray(dto.episodes) || dto.episodes.length === 0) {
+      throw new BizException(BizCode.BAD_REQUEST, '至少填写一集播放链接');
+    }
+
+    const titleVi = String(dto.titleVi || titleZh).trim();
+    let slug = String(dto.slug || slugifyTitle(titleZh)).trim();
+    if (!slug) slug = slugifyTitle(titleZh);
+
+    const existing = await this.prisma.drama.findUnique({ where: { slug } });
+    if (existing) {
+      throw new BizException(BizCode.CONFLICT, `slug 已存在: ${slug}`);
+    }
+
+    const externalRef = dto.externalRef?.trim() || null;
+    if (externalRef) {
+      const byRef = await this.prisma.drama.findFirst({
+        where: { externalRef } as any,
+      });
+      if (byRef) {
+        throw new BizException(BizCode.CONFLICT, `externalRef 已存在: ${externalRef}`);
+      }
+    }
+
+    const converted: Array<{
+      episodeNumber: number;
+      title: string | null;
+      playUrl: string;
+      originalUrl: string;
+      isFree: boolean;
+    }> = [];
+
+    for (let i = 0; i < dto.episodes.length; i++) {
+      const ep = dto.episodes[i];
+      const episodeNumber = Number(ep.episodeNumber ?? i + 1);
+      if (!Number.isFinite(episodeNumber) || episodeNumber < 1) {
+        throw new BizException(BizCode.BAD_REQUEST, `第 ${i + 1} 集集号无效`);
+      }
+      try {
+        const { playUrl, originalUrl } = convertExternalPlayUrl(ep.sourceUrl, {
+          relaxed: !!dto.relaxedPlayUrl,
+        });
+        converted.push({
+          episodeNumber,
+          title: ep.title?.trim() || null,
+          playUrl,
+          originalUrl,
+          isFree: ep.isFree !== false,
+        });
+      } catch (e: any) {
+        throw new BizException(
+          BizCode.BAD_REQUEST,
+          `第 ${episodeNumber} 集: ${e?.message || '链接转换失败'}`,
+        );
+      }
+    }
+
+    const epNums = new Set(converted.map((e) => e.episodeNumber));
+    if (epNums.size !== converted.length) {
+      throw new BizException(BizCode.BAD_REQUEST, '集号不能重复');
+    }
+
+    let creator = await this.prisma.creator.findFirst({
+      where: { kycStatus: 'APPROVED' },
+      orderBy: { id: 'asc' },
+    });
+    if (!creator) {
+      creator = await this.prisma.creator.findFirst();
+    }
+    if (!creator) {
+      const u = await this.prisma.user.upsert({
+        where: { email: 'sample@velvet.dev' },
+        create: { email: 'sample@velvet.dev', nickname: 'Sample Studio' },
+        update: {},
+      });
+      creator = await this.prisma.creator.create({
+        data: {
+          userId: u.id,
+          creatorType: 'INDIVIDUAL',
+          displayName: 'Sample Studio',
+          revenueShare: 0.7,
+          kycStatus: 'APPROVED',
+        },
+      });
+    }
+
+    const freeEpisodeCount = Math.max(0, Math.floor(Number(dto.freeEpisodeCount ?? converted.length)));
+    const lockMode = dto.lockMode || 'ALL_FREE';
+    const status = dto.status === 'DRAFT' ? 'DRAFT' : 'LIVE';
+
+    const drama = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.drama.create({
+        data: {
+          creatorId: creator!.id,
+          slug,
+          titleVi,
+          titleZh,
+          descriptionVi: dto.descriptionVi?.trim() || null,
+          descriptionZh: dto.descriptionZh?.trim() || null,
+          categorySlug,
+          coverUrl: dto.coverUrl?.trim() || null,
+          freeEpisodeCount,
+          lockMode,
+          isOfficial: true,
+          sourceType: 'ONLINE',
+          externalRef,
+          tags: Array.isArray(dto.sourceTags)
+            ? dto.sourceTags.map(String).filter(Boolean)
+            : [],
+          status,
+          publishedAt: status === 'LIVE' ? new Date() : null,
+          totalEpisodes: converted.length,
+        } as any,
+      });
+
+      for (const ep of converted) {
+        const isFree = lockMode === 'ALL_FREE' || ep.isFree || ep.episodeNumber <= freeEpisodeCount;
+        await tx.episode.create({
+          data: {
+            dramaId: created.id,
+            episodeNumber: ep.episodeNumber,
+            title: ep.title || `第 ${ep.episodeNumber} 集`,
+            isFree,
+            priceCredits: isFree ? 0n : 10n,
+            priceVnd: isFree ? 0n : 10000n,
+            hlsUrl: ep.playUrl,
+            originalUrl: ep.originalUrl,
+            uploadStatus: 'COMPLETED',
+            transcodeStatus: 'COMPLETED',
+          },
+        });
+      }
+      return created;
+    });
+
+    await this.audit.write({
+      actorId,
+      action: 'drama.createOnline',
+      targetType: 'drama',
+      targetId: drama.id.toString(),
+      payload: {
+        slug: drama.slug,
+        episodeCount: converted.length,
+        status,
+      },
+    });
+
+    return {
+      id: drama.id.toString(),
+      slug: drama.slug,
+      status: drama.status,
+      sourceType: drama.sourceType,
+      externalRef: (drama as any).externalRef ?? externalRef,
+      totalEpisodes: converted.length,
+      episodes: converted.map((e) => ({
+        episodeNumber: e.episodeNumber,
+        playUrl: e.playUrl,
+        originalUrl: e.originalUrl,
+      })),
+    };
   }
 
   /** 软删除：清空关联、保留订单收益记录 */
