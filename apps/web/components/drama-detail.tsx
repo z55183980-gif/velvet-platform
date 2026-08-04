@@ -1,12 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import { Star, Play, ChevronLeft, ListVideo } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { useAuth } from "@/components/auth-context";
-import { Badge } from "@/components/ui/badge";
-import { buttonVariants } from "@/components/ui/button";
 import { EpisodeList } from "@/components/episode-list";
 import { UnlockSheet } from "@/components/unlock-sheet";
 import { VideoPlayer } from "@/components/video-player";
@@ -15,6 +12,7 @@ import { EpisodeDrawer } from "@/components/mobile/episode-drawer";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import {
   loadDramaDetail,
+  loadHome,
   getPlayUrl,
   addFavorite,
   removeFavorite,
@@ -24,7 +22,8 @@ import {
 } from "@/lib/api";
 import { categoryName, type Drama, type Episode } from "@/lib/mock-data";
 import { pickContentText } from "@/lib/languages";
-import { formatCredits, mediaUrl } from "@/lib/utils";
+import { formatCredits, mediaUrl, cn } from "@/lib/utils";
+import { DramaCard } from "@/components/drama-card";
 
 function isUrl(s: string) {
   return /^https?:\/\//.test(s) || s.startsWith("/");
@@ -37,7 +36,7 @@ function isHls(url: string) {
 export function DramaDetail({ id }: { id: string }) {
   const { locale, t } = useLocale();
   const { user, unlock, openLogin, ready: authReady } = useAuth();
-  const isMobile = useIsMobile();
+  const { mobile: isMobile, ready: mobileReady } = useIsMobile();
   const [data, setData] = useState<{
     drama: Drama;
     episodes: Episode[];
@@ -59,25 +58,35 @@ export function DramaDetail({ id }: { id: string }) {
   const [seekTo, setSeekTo] = useState<number | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [muted, setMuted] = useState(false);
+  const [watching, setWatching] = useState(false);
+  const [related, setRelated] = useState<Drama[]>([]);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const playerSectionRef = useRef<HTMLDivElement>(null);
   const resumeApplied = useRef(false);
 
   useEffect(() => {
-    let alive = true;
+    const ac = new AbortController();
     setLoading(true);
-    loadDramaDetail(id)
+    setWatching(false);
+    setRelated([]);
+    setNotFound(false);
+    loadDramaDetail(id, { signal: ac.signal })
       .then((d) => {
-        if (!alive) return;
+        if (ac.signal.aborted) return;
         if (d) {
           setData(d);
           const nos = new Set(d.episodes.filter((e) => e.isFree || e.unlocked).map((e) => e.no));
           setUnlockedNos(nos);
+          setSelected(null);
         } else setNotFound(true);
       })
-      .finally(() => alive && setLoading(false));
-    return () => {
-      alive = false;
-    };
+      .catch(() => {
+        if (!ac.signal.aborted) setNotFound(true);
+      })
+      .finally(() => {
+        if (!ac.signal.aborted) setLoading(false);
+      });
+    return () => ac.abort();
   }, [id]);
 
   useEffect(() => {
@@ -173,30 +182,40 @@ export function DramaDetail({ id }: { id: string }) {
       setPlayErr(null);
       return;
     }
-    if (!authReady) {
+    if (!authReady || !user) {
       setPlayUrl(null);
       setPlayErr(null);
       return;
     }
-    if (!user) {
-      setPlayUrl(null);
-      setPlayErr(null);
-      return;
-    }
-    let alive = true;
+    const ac = new AbortController();
     setPlayUrl(null);
     setPlayErr(null);
-    getPlayUrl(String(selected.id))
-      .then((r) => alive && setPlayUrl(r.playUrl))
+    getPlayUrl(String(selected.id), { signal: ac.signal })
+      .then((r) => {
+        if (ac.signal.aborted) return;
+        setPlayUrl(r.playUrl);
+      })
       .catch((e) => {
-        if (!alive) return;
+        if (ac.signal.aborted) return;
         if (e?.status === 401) setPlayErr(t("errors.loginRequired"));
         else setPlayErr(e?.message || t("player.error"));
       });
-    return () => {
-      alive = false;
-    };
-  }, [playerReady, selected?.id, user, authReady, locale]);
+    return () => ac.abort();
+  }, [playerReady, selected?.id, user, authReady, t]);
+
+  useEffect(() => {
+    if (!data?.drama.categorySlug) return;
+    const ac = new AbortController();
+    loadHome(1, 12, { category: data.drama.categorySlug, sort: "hot", signal: ac.signal })
+      .then((r) => {
+        if (ac.signal.aborted) return;
+        setRelated((r.rows || []).filter((d) => d.id !== data.drama.id).slice(0, 8));
+      })
+      .catch(() => {
+        if (!ac.signal.aborted) setRelated([]);
+      });
+    return () => ac.abort();
+  }, [data?.drama.categorySlug, data?.drama.id]);
 
   // HLS attach
   useEffect(() => {
@@ -247,10 +266,18 @@ export function DramaDetail({ id }: { id: string }) {
     };
   }, [playUrl, seekTo, playerReady, user]);
 
-  if (loading) {
+  if (loading || !mobileReady) {
     return (
-      <div className="mx-auto max-w-[1200px] px-4 py-24 text-center text-ink-subtle md:px-6">
-        {t("common.loading")}
+      <div className="mx-auto max-w-[1200px] px-4 py-6 md:px-6 md:py-10">
+        <div className="flex flex-col gap-6 md:flex-row md:gap-10">
+          <div className="aspect-[2/3] w-full max-w-[280px] animate-pulse rounded-lg bg-surface-2" />
+          <div className="flex-1 space-y-4">
+            <div className="h-8 w-2/3 animate-pulse rounded bg-surface-2" />
+            <div className="h-4 w-1/3 animate-pulse rounded bg-surface-2" />
+            <div className="h-24 w-full animate-pulse rounded bg-surface-2" />
+            <div className="h-10 w-40 animate-pulse rounded-full bg-surface-2" />
+          </div>
+        </div>
       </div>
     );
   }
@@ -292,6 +319,7 @@ export function DramaDetail({ id }: { id: string }) {
           : prev,
       );
       setSelected(ep);
+      if (isMobile) setWatching(true);
     }
     return r;
   }
@@ -328,6 +356,13 @@ export function DramaDetail({ id }: { id: string }) {
     }
     const f = data!.episodes.find((e) => e.isFree || e.unlocked);
     if (f) setSelected(f);
+    if (isMobile) {
+      setWatching(true);
+      return;
+    }
+    requestAnimationFrame(() => {
+      playerSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
   }
 
   function playNext() {
@@ -360,68 +395,212 @@ export function DramaDetail({ id }: { id: string }) {
       else {
         setSelected(ep);
         setDrawerOpen(false);
+        if (isMobile) setWatching(true);
       }
     } else openUnlock(ep);
   };
 
+  const tags = [
+    cat,
+    drama.isVip ? t("card.vip") : null,
+    drama.freeCount > 0 ? t("card.free") : null,
+    `${drama.episodesCount} ${t("card.episodes")}`,
+  ].filter(Boolean) as string[];
+
   if (isMobile) {
+    if (watching) {
+      return (
+        <div className="fixed inset-0 z-[70] bg-black">
+          <div className="absolute left-0 right-0 top-0 z-30 flex items-center justify-between px-3 pb-2 pt-[max(0.5rem,env(safe-area-inset-top))]">
+            <button
+              type="button"
+              onClick={() => setWatching(false)}
+              className="grid h-10 w-10 place-items-center rounded-full bg-black/40 text-white backdrop-blur"
+              aria-label="back"
+            >
+              <ChevronLeft className="h-6 w-6" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setDrawerOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-full bg-black/40 px-3 py-2 text-body-sm text-white backdrop-blur"
+            >
+              <ListVideo className="h-4 w-4" />
+              {selected ? `${selected.no}/${drama.episodesCount}` : t("detail.episodeList")}
+            </button>
+          </div>
+
+          <VerticalPlayer
+            videoRef={videoRef}
+            active
+            src={playerReady && user && playUrl ? playUrl : null}
+            poster={coverIsImg ? drama.cover[0] : undefined}
+            autoPlay
+            muted={muted}
+            onMutedChange={setMuted}
+            seekTo={resumeApplied.current ? null : seekTo}
+            loginRequired={needsLogin}
+            onLogin={() => openLogin()}
+            locked={locked}
+            lockLabel={
+              selected
+                ? `${t("detail.episodeList")} ${selected.no}`
+                : t("player.empty")
+            }
+            lockActionLabel={lockActionLabel}
+            onUnlock={selected && !isUnlocked(selected) ? () => openUnlock(selected) : undefined}
+            error={playErr}
+            loading={playLoading}
+            title={title}
+            subtitle={selected ? `${t("detail.episodeList")} ${selected.no}` : cat}
+            onOpenEpisodes={() => setDrawerOpen(true)}
+            onEnded={playNext}
+          />
+
+          <EpisodeDrawer
+            open={drawerOpen}
+            onClose={() => setDrawerOpen(false)}
+            episodes={data.episodes}
+            episodesCount={drama.episodesCount}
+            selectedNo={selected?.no}
+            isUnlocked={isUnlocked}
+            onUnlock={openUnlock}
+            onSelect={selectEpisode}
+          />
+
+          <UnlockSheet
+            open={sheetOpen}
+            episode={sheetEp}
+            onClose={() => setSheetOpen(false)}
+            onConfirmed={onConfirmed}
+            buyoutCredits={
+              data?.dramaUnlocked
+                ? null
+                : data?.buyoutCredits
+                  ? Number(data.buyoutCredits)
+                  : null
+            }
+            onBuyDrama={onBuyDrama}
+            vipActive={!!data?.vipActive || !!user?.isVip}
+          />
+        </div>
+      );
+    }
+
     return (
-      <div className="relative h-dvh overflow-hidden bg-black">
-        <div className="absolute left-0 right-0 top-0 z-30 flex items-center justify-between px-3 pb-2 pt-[max(0.5rem,env(safe-area-inset-top))]">
-          <Link
-            href="/"
-            className="grid h-10 w-10 place-items-center rounded-full bg-black/40 text-white backdrop-blur"
-            aria-label="back"
-          >
-            <ChevronLeft className="h-6 w-6" />
-          </Link>
-          <button
-            type="button"
-            onClick={() => setDrawerOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-full bg-black/40 px-3 py-2 text-body-sm text-white backdrop-blur"
-          >
-            <ListVideo className="h-4 w-4" />
-            {selected ? `${selected.no}/${drama.episodesCount}` : t("detail.episodeList")}
-          </button>
+      <div className="relative pb-[calc(5.5rem+env(safe-area-inset-bottom))]">
+        <div className="px-4 pt-4">
+          <div className="flex gap-4">
+            <div className="relative h-[138px] w-[98px] shrink-0 overflow-hidden rounded-xl bg-surface-2">
+              {coverIsImg ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={drama.cover[0]} alt="" className="h-full w-full object-cover" />
+              ) : (
+                <div
+                  className="h-full w-full"
+                  style={{
+                    background: `linear-gradient(150deg, ${drama.cover[0]}, ${drama.cover[1]})`,
+                  }}
+                />
+              )}
+            </div>
+
+            <div className="min-w-0 flex-1">
+              <h1 className="text-[20px] font-medium leading-7 text-white">{title}</h1>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {tags.map((tag) => (
+                  <span
+                    key={tag}
+                    className="inline-flex max-w-[6.5rem] items-center truncate rounded bg-white/[0.06] px-2 py-1.5 text-[12px] leading-none text-white/70"
+                  >
+                    {tag}
+                  </span>
+                ))}
+              </div>
+              {resumeHint && resumeHint.progressSec > 5 && (
+                <p className="mt-2 text-caption text-white/40">
+                  {t("detail.resumeHint", {
+                    n: resumeHint.epNo,
+                    time: `${Math.floor(resumeHint.progressSec / 60)}:${String(resumeHint.progressSec % 60).padStart(2, "0")}`,
+                  })}
+                </p>
+              )}
+            </div>
+          </div>
+
+          <section className="mt-6">
+            <h2 className="text-[16px] font-medium text-white">{t("detail.basicInfo")}</h2>
+            {desc ? (
+              <p className="mt-3 text-[14px] leading-6 text-white/40 line-clamp-4">{desc}</p>
+            ) : null}
+
+            {drama.creator?.displayName && (
+              <div className="mt-4 flex gap-3 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                <div className="flex min-w-[72px] flex-col items-center">
+                  <div className="grid h-14 w-14 place-items-center overflow-hidden rounded-full bg-white/10 text-body-sm font-medium text-white/80">
+                    {mediaUrl(drama.creator.avatarUrl) ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={mediaUrl(drama.creator.avatarUrl)!}
+                        alt=""
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      drama.creator.displayName.slice(0, 1).toUpperCase()
+                    )}
+                  </div>
+                  <p className="mt-2 max-w-[72px] truncate text-center text-[14px] text-white/90">
+                    {drama.creator.displayName}
+                  </p>
+                </div>
+              </div>
+            )}
+          </section>
+
+          <div className="mt-8">
+            <EpisodeList
+              episodes={data.episodes}
+              episodesCount={drama.episodesCount}
+              selectedNo={selected?.no}
+              layout="grid"
+              isUnlocked={isUnlocked}
+              onUnlock={openUnlock}
+              onSelect={selectEpisode}
+            />
+          </div>
+
+          {related.length > 0 && (
+            <section className="mt-10">
+              <h2 className="mb-4 text-[16px] font-medium text-white">{t("detail.related")}</h2>
+              <div
+                className={cn(
+                  "flex gap-3 overflow-x-auto pb-2",
+                  "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+                )}
+              >
+                {related.map((d) => (
+                  <div key={d.id} className="w-[108px] shrink-0">
+                    <DramaCard drama={d} compact variant="grid" />
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
         </div>
 
-        <VerticalPlayer
-          videoRef={videoRef}
-          active
-          src={playerReady && user && playUrl ? playUrl : null}
-          poster={coverIsImg ? drama.cover[0] : undefined}
-          autoPlay
-          muted={muted}
-          onMutedChange={setMuted}
-          seekTo={resumeApplied.current ? null : seekTo}
-          loginRequired={needsLogin}
-          onLogin={() => openLogin()}
-          locked={locked}
-          lockLabel={
-            selected
-              ? `${t("detail.episodeList")} ${selected.no}`
-              : t("player.empty")
-          }
-          lockActionLabel={lockActionLabel}
-          onUnlock={selected && !isUnlocked(selected) ? () => openUnlock(selected) : undefined}
-          error={playErr}
-          loading={playLoading}
-          title={title}
-          subtitle={selected ? `${t("detail.episodeList")} ${selected.no}` : cat}
-          onOpenEpisodes={() => setDrawerOpen(true)}
-          onEnded={playNext}
-        />
-
-        <EpisodeDrawer
-          open={drawerOpen}
-          onClose={() => setDrawerOpen(false)}
-          episodes={data.episodes}
-          episodesCount={drama.episodesCount}
-          selectedNo={selected?.no}
-          isUnlocked={isUnlocked}
-          onUnlock={openUnlock}
-          onSelect={selectEpisode}
-        />
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/5 bg-[#1a1a1a]/95 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur-xl">
+          <button
+            type="button"
+            onClick={onWatchFree}
+            className="flex h-12 w-full items-center justify-center gap-2 rounded-full text-[16px] font-medium text-white"
+            style={{
+              background: "linear-gradient(92.27deg, #c81038 0.32%, #e83a58)",
+            }}
+          >
+            <Play className="h-5 w-5 fill-white" />
+            {t("detail.playPrimary")}
+          </button>
+        </div>
 
         <UnlockSheet
           open={sheetOpen}
@@ -443,10 +622,114 @@ export function DramaDetail({ id }: { id: string }) {
   }
 
   return (
-    <div className="pb-16 md:pb-24">
-      {/* Player-first billboard */}
-      <div className="relative bg-black">
-        <div className="mx-auto max-w-[1200px]">
+    <div className="relative overflow-hidden pb-16 md:pb-24">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-[min(920px,100%)] overflow-hidden">
+        {coverIsImg ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={drama.cover[0]}
+            alt=""
+            className="absolute left-1/2 top-0 h-full w-[1920px] max-w-none -translate-x-1/2 object-cover opacity-40 blur-2xl scale-110"
+          />
+        ) : (
+          <div
+            className="absolute inset-0 opacity-50"
+            style={{
+              background: `linear-gradient(150deg, ${drama.cover[0]}, ${drama.cover[1]})`,
+            }}
+          />
+        )}
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              "radial-gradient(ellipse 80% 64% at 51% -3%, rgba(200,16,56,0.12) 0%, transparent 100%), linear-gradient(180deg, rgba(11,13,18,0.55) 0%, var(--color-base) 78%)",
+          }}
+        />
+      </div>
+
+      <div className="relative z-10 mx-auto max-w-[1280px] px-6 pt-8 md:px-10 md:pt-10">
+        <div className="flex w-full flex-col gap-8 sm:flex-row sm:items-stretch">
+          <div className="relative h-[238px] w-[168px] shrink-0 overflow-hidden rounded-2xl bg-surface-2 shadow-[0_12px_40px_rgba(0,0,0,0.45)]">
+            {coverIsImg ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={drama.cover[0]} alt="" className="h-full w-full object-cover" />
+            ) : (
+              <div
+                className="h-full w-full"
+                style={{
+                  background: `linear-gradient(150deg, ${drama.cover[0]}, ${drama.cover[1]})`,
+                }}
+              />
+            )}
+          </div>
+
+          <div className="flex min-h-[238px] min-w-0 max-w-[800px] flex-1 flex-col">
+            <h1 className="mb-4 text-[28px] font-medium leading-[44px] text-white/95">
+              {title}
+            </h1>
+
+            <div className="flex flex-wrap gap-x-3 gap-y-3 overflow-hidden">
+              {tags.map((tag) => (
+                <span
+                  key={tag}
+                  className="inline-flex h-8 max-w-[150px] items-center truncate rounded-md bg-white/[0.08] px-2.5 text-[16px] leading-none text-white/80"
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
+
+            {resumeHint && resumeHint.progressSec > 5 && (
+              <p className="mt-3 text-caption text-white/45">
+                {t("detail.resumeHint", {
+                  n: resumeHint.epNo,
+                  time: `${Math.floor(resumeHint.progressSec / 60)}:${String(resumeHint.progressSec % 60).padStart(2, "0")}`,
+                })}
+              </p>
+            )}
+
+            <div className="mt-auto flex flex-wrap items-center gap-3 pt-6">
+              <button
+                type="button"
+                onClick={onWatchFree}
+                className="group relative z-0 inline-flex h-[45px] w-[162px] items-center justify-center rounded-xl text-white/95 transition-opacity duration-150 hover:opacity-95"
+                style={{
+                  background: "linear-gradient(92.27deg, #c81038 0.32%, #e83a58)",
+                }}
+              >
+                <span
+                  aria-hidden
+                  className="pointer-events-none absolute inset-0 rounded-xl opacity-0 transition-opacity duration-150 group-hover:opacity-100"
+                  style={{
+                    background: "linear-gradient(92.27deg, #9a0c2a 0.32%, #c01838)",
+                  }}
+                />
+                <Play className="relative z-[1] h-[18px] w-[18px] fill-white" />
+                <span className="relative z-[1] ml-2 text-[18px] font-medium leading-none">
+                  {t("detail.playPrimary")}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={toggleFavorite}
+                disabled={favBusy}
+                className={cn(
+                  "inline-flex h-[45px] items-center gap-2 rounded-xl px-4 text-[15px] font-medium transition-colors",
+                  favorited
+                    ? "bg-gold/15 text-gold"
+                    : "bg-white/[0.08] text-white/80 hover:bg-white/[0.14] hover:text-white",
+                )}
+              >
+                <Star className={`h-4 w-4 ${favorited ? "fill-gold text-gold" : ""}`} />
+                {favorited ? t("detail.favorited") : t("detail.favorite")}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div ref={playerSectionRef} className="mt-10 scroll-mt-20 overflow-hidden rounded-xl bg-black">
           <VideoPlayer
             videoRef={videoRef}
             src={playerReady && user && playUrl ? playUrl : null}
@@ -470,78 +753,42 @@ export function DramaDetail({ id }: { id: string }) {
             onEnded={playNext}
           />
         </div>
-      </div>
 
-      <div className="mx-auto max-w-[1200px] px-4 pt-8 md:px-6 md:pt-10">
-        <div className="flex flex-wrap items-start justify-between gap-6">
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-3">
-              <Badge variant="default">{cat}</Badge>
-              <span className="inline-flex items-center gap-1 text-body-sm text-ink-muted">
-                <Star className="h-4 w-4 fill-gold text-gold" />
-                {drama.rating > 0 ? drama.rating.toFixed(1) : "—"}
-              </span>
-              <span className="text-body-sm text-ink-subtle">{drama.year}</span>
-              {selected && (
-                <span className="text-body-sm text-brand">
-                  {t("detail.episodeList")} {selected.no}
-                </span>
-              )}
-            </div>
-            <h1 className="mt-3 text-h2 font-bold text-ink md:text-h1">{title}</h1>
-            {resumeHint && resumeHint.progressSec > 5 && (
-              <p className="mt-2 text-caption text-ink-subtle">
-                {t("detail.resumeHint", {
-                  n: resumeHint.epNo,
-                  time: `${Math.floor(resumeHint.progressSec / 60)}:${String(resumeHint.progressSec % 60).padStart(2, "0")}`,
-                })}
-              </p>
-            )}
-            <div className="mt-5 flex flex-wrap gap-3">
-              <button
-                className={buttonVariants({ variant: "primary", size: "lg" })}
-                onClick={onWatchFree}
-              >
-                <Play className="h-4 w-4" /> {t("detail.watchFree")}
-              </button>
-              <button
-                className={buttonVariants({ variant: "secondary", size: "lg" })}
-                onClick={toggleFavorite}
-                disabled={favBusy}
-              >
-                <Star className={`h-4 w-4 ${favorited ? "fill-gold text-gold" : ""}`} />
-                {favorited ? t("detail.favorited") : t("detail.favorite")}
-              </button>
-            </div>
-          </div>
+        <section className="mt-[72px]">
+          <h2 className="text-[20px] font-medium text-white/90">{t("detail.basicInfo")}</h2>
+          {desc ? (
+            <p className="mt-4 max-w-[1080px] text-[16px] leading-8 text-white/40">{desc}</p>
+          ) : null}
 
           {drama.creator?.displayName && (
-            <div className="flex items-center gap-2.5">
-              <div className="grid h-10 w-10 place-items-center overflow-hidden rounded-full bg-surface-2 text-caption font-semibold text-ink-muted">
-                {mediaUrl(drama.creator.avatarUrl) ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={mediaUrl(drama.creator.avatarUrl)!}
-                    alt=""
-                    className="h-full w-full object-cover"
-                  />
-                ) : (
-                  drama.creator.displayName.slice(0, 1).toUpperCase()
-                )}
+            <div className="mt-7 flex flex-wrap gap-x-7 gap-y-5">
+              <div className="flex min-w-[72px] flex-col items-center">
+                <div className="grid h-14 w-14 place-items-center overflow-hidden rounded-full bg-white/10 text-body-sm font-medium text-white/80">
+                  {mediaUrl(drama.creator.avatarUrl) ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={mediaUrl(drama.creator.avatarUrl)!}
+                      alt=""
+                      className="h-full w-full object-cover"
+                    />
+                  ) : (
+                    drama.creator.displayName.slice(0, 1).toUpperCase()
+                  )}
+                </div>
+                <p className="mt-2 max-w-[98px] truncate text-center text-[14px] font-medium leading-5 text-white/95">
+                  {drama.creator.displayName}
+                </p>
               </div>
-              <span className="text-body-sm text-ink-muted">{drama.creator.displayName}</span>
             </div>
           )}
-        </div>
+        </section>
 
-        <p className="mt-8 max-w-3xl text-body text-ink-muted">{desc}</p>
-
-        <div className="mt-12 md:mt-16">
+        <div className="mt-[60px]">
           <EpisodeList
             episodes={data.episodes}
             episodesCount={drama.episodesCount}
             selectedNo={selected?.no}
-            layout="rail"
+            layout="grid"
             isUnlocked={isUnlocked}
             onUnlock={openUnlock}
             onSelect={selectEpisode}

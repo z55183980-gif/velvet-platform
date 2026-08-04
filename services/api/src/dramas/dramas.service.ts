@@ -172,6 +172,34 @@ export class DramasService {
     });
   }
 
+  async getHottest(limit = 48) {
+    const rows = await this.prisma.drama.findMany({
+      where: { status: 'LIVE', isHottest: true },
+      orderBy: [{ hottestSortOrder: 'asc' }, { publishedAt: 'desc' }],
+      take: limit,
+      include: {
+        creator: {
+          select: {
+            displayName: true,
+            creatorType: true,
+            user: { select: { avatarUrl: true } },
+          },
+        },
+        category: true,
+      },
+    });
+    return rows.map((d) => ({
+      ...d,
+      creator: d.creator
+        ? {
+            displayName: d.creator.displayName,
+            creatorType: d.creator.creatorType,
+            avatarUrl: d.creator.user?.avatarUrl ?? null,
+          }
+        : null,
+    }));
+  }
+
   async listCategories() {
     return this.prisma.category.findMany({
       where: { isActive: true },
@@ -181,10 +209,21 @@ export class DramasService {
 
   async listBanners() {
     const now = new Date();
-    return this.prisma.banner.findMany({
+    const rows = await this.prisma.banner.findMany({
       where: { isActive: true, startAt: { lte: now }, endAt: { gte: now } },
       orderBy: { sortOrder: 'asc' },
     });
+    return rows.map((b) => ({
+      id: b.id.toString(),
+      titleVi: b.titleVi,
+      titleZh: b.titleZh,
+      imageUrl: b.imageUrl,
+      linkUrl: b.linkUrl,
+      dramaId: b.dramaId != null ? b.dramaId.toString() : null,
+      sortOrder: b.sortOrder,
+      startAt: b.startAt,
+      endAt: b.endAt,
+    }));
   }
 
   async incView(dramaId: string) {

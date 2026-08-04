@@ -1,12 +1,12 @@
-"use client";
+﻿"use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminCreatePackage, adminListPackages, adminUpdatePackage, asRows } from "@velvet/api-client";
 import { topupPackageSchema } from "@velvet/validators";
 import { AdminShell } from "@/components/admin-shell";
-import { t } from "@/lib/i18n";
+import { useI18n } from "@/lib/i18n";
 import { Badge, Button, DataTable, Input, type Column } from "@velvet/ui";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 type Row = {
   id: string | number;
@@ -18,6 +18,7 @@ type Row = {
 };
 
 export default function AdminPackagesPage() {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const [name, setName] = useState("");
   const [credits, setCredits] = useState(10);
@@ -39,7 +40,7 @@ export default function AdminPackagesPage() {
         sortOrder,
         active: true,
       });
-      if (!parsed.success) throw new Error(parsed.error.issues[0]?.message || "校验失败");
+      if (!parsed.success) throw new Error(parsed.error.issues[0]?.message || t("validateFailed"));
       return adminCreatePackage(parsed.data);
     },
     onSuccess: async () => {
@@ -58,43 +59,44 @@ export default function AdminPackagesPage() {
     onError: (e: Error) => setErr(e.message),
   });
 
-  const columns: Column<Row>[] = [
-    { key: "name", header: "名称", cell: (r) => r.name || "—" },
-    { key: "credits", header: "积分", cell: (r) => String(r.credits), className: "tabular-nums" },
-    { key: "price", header: "人民币价", cell: (r) => String(r.basePrice), className: "tabular-nums" },
-    { key: "sort", header: "排序", cell: (r) => String(r.sortOrder ?? 0), className: "tabular-nums" },
-    {
-      key: "active",
-      header: "状态",
-      cell: (r) => <Badge tone={r.active ? "success" : "default"}>{r.active ? "启用" : "停用"}</Badge>,
-    },
-    {
-      key: "actions",
-      header: t("actions"),
-      cell: (r) => (
-        <Button size="sm" variant="secondary" onClick={() => toggleMut.mutate(r)}>
-          {r.active ? "停用" : "启用"}
-        </Button>
-      ),
-    },
-  ];
+  const columns: Column<Row>[] = useMemo(
+    () => [
+      { key: "name", header: t("colName"), cell: (r) => r.name || "—" },
+      { key: "credits", header: t("colCredits"), cell: (r) => String(r.credits), className: "tabular-nums" },
+      { key: "price", header: t("colPriceCny"), cell: (r) => String(r.basePrice), className: "tabular-nums" },
+      { key: "sort", header: t("colSort"), cell: (r) => String(r.sortOrder ?? 0), className: "tabular-nums" },
+      {
+        key: "active",
+        header: t("status"),
+        cell: (r) => <Badge tone={r.active ? "success" : "default"}>{r.active ? t("enable") : t("disable")}</Badge>,
+      },
+      {
+        key: "actions",
+        header: t("actions"),
+        cell: (r) => (
+          <Button size="sm" variant="secondary" onClick={() => toggleMut.mutate(r)}>
+            {r.active ? t("disable") : t("enable")}
+          </Button>
+        ),
+      },
+    ],
+    [t, toggleMut],
+  );
 
   return (
     <AdminShell title={t("packages")}>
-      <p className="mb-4 text-body-sm text-ink-muted">
-        套餐以人民币定价；用户选其它币种时按「法币汇率」自动折算，到账积分不变。
-      </p>
+      <p className="mb-4 text-body-sm text-ink-muted">{t("packagePriceHint")}</p>
       {err || listQ.error ? (
         <p className="mb-3 text-body-sm text-danger">{err || (listQ.error as Error).message}</p>
       ) : null}
 
-      <div className="mb-6 flex flex-wrap items-end gap-2 rounded-lg border border-line bg-surface p-4">
+      <div className="mb-6 flex flex-wrap items-end gap-2 card glass-card p-4">
         <label className="text-caption text-ink-muted">
-          名称
-          <Input className="mt-1 w-32" value={name} onChange={(e) => setName(e.target.value)} placeholder="超值" />
+          {t("colName")}
+          <Input className="mt-1 w-32" value={name} onChange={(e) => setName(e.target.value)} placeholder={t("packageName")} />
         </label>
         <label className="text-caption text-ink-muted">
-          积分
+          {t("colCredits")}
           <Input
             type="number"
             className="mt-1 w-28"
@@ -103,7 +105,7 @@ export default function AdminPackagesPage() {
           />
         </label>
         <label className="text-caption text-ink-muted">
-          人民币价
+          {t("colPriceCny")}
           <Input
             type="number"
             step="0.01"
@@ -113,7 +115,7 @@ export default function AdminPackagesPage() {
           />
         </label>
         <label className="text-caption text-ink-muted">
-          排序
+          {t("colSort")}
           <Input
             type="number"
             className="mt-1 w-20"

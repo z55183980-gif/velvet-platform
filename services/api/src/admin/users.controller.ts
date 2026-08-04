@@ -25,6 +25,15 @@ class SetUserVipDto {
 export class UsersController {
   constructor(private readonly users: AdminUsersService) {}
 
+  @Get('users/statistics/overview')
+  async userStatisticsOverview(
+    @Query('range') range?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+  ) {
+    return ok(await this.users.statisticsOverview({ range, startDate, endDate }));
+  }
+
   @Get('users')
   async listUsers(
     @Query('q') q?: string,

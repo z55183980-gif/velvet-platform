@@ -50,11 +50,36 @@ export class AdminUsersService {
           wallet: {
             select: { balanceCredits: true, totalRechargedCredits: true, totalSpentCredits: true },
           },
+          sessions: {
+            orderBy: { createdAt: 'desc' },
+            take: 1,
+            select: { ipAddress: true, country: true, city: true, createdAt: true },
+          },
         },
       }),
       this.prisma.user.count({ where }),
     ]);
-    return { rows, total, page, pageSize };
+
+    return {
+      rows: rows.map((row) => {
+        const last = row.sessions[0];
+        const { sessions: _sessions, ...rest } = row;
+        return {
+          ...rest,
+          region: last
+            ? {
+                ipAddress: last.ipAddress,
+                country: last.country,
+                city: last.city,
+                at: last.createdAt,
+              }
+            : null,
+        };
+      }),
+      total,
+      page,
+      pageSize,
+    };
   }
 
   async detail(id: string) {
@@ -209,4 +234,186 @@ export class AdminUsersService {
       isVip: !!(updated.vipExpireAt && updated.vipExpireAt.getTime() > Date.now()),
     };
   }
+
+  /** 用户概览：总量、登录、新增、付费用户、付费总额/消费、注册趋势、语言分布 */
+  async statisticsOverview(input: { range?: string; startDate?: string; endDate?: string }) {
+    const { periodStart, periodEnd, prevStart, prevEnd, trendDays } = this.resolveStatsWindow(input);
+    const baseWhere = { deletedAt: null } as const;
+
+    const [
+      totalUsers,
+      paidUserRows,
+      paidOrderAgg,
+      newUsers,
+      newPreviousPeriod,
+      activeLoginRows,
+      walletAgg,
+      trendRows,
+      localeRows,
+    ] = await Promise.all([
+      this.prisma.user.count({ where: baseWhere }),
+      // Paid user: any recharge/spend on wallet, VIP history, or a PAID order.
+      this.prisma.$queryRaw<Array<{ cnt: bigint }>>`
+        SELECT COUNT(DISTINCT u.id)::bigint AS cnt
+          FROM users u
+          LEFT JOIN wallets w ON w."userId" = u.id
+         WHERE u."deletedAt" IS NULL
+           AND (
+             COALESCE(w."totalRechargedCredits", 0) > 0
+             OR COALESCE(w."totalSpentCredits", 0) > 0
+             OR u."vipExpireAt" IS NOT NULL
+             OR EXISTS (
+               SELECT 1 FROM orders o
+                WHERE o."userId" = u.id AND o."paymentStatus" = 'PAID'
+             )
+           )
+      `,
+      // Lifetime cumulative payment: sum Order.amountVnd for successful PAID orders (all-time).
+      this.prisma.order.aggregate({
+        where: { paymentStatus: 'PAID' },
+        _sum: { amountVnd: true },
+      }),
+      this.prisma.user.count({
+        where: { ...baseWhere, createdAt: { gte: periodStart, lt: periodEnd } },
+      }),
+      this.prisma.user.count({
+        where: { ...baseWhere, createdAt: { gte: prevStart, lt: prevEnd } },
+      }),
+      this.prisma.$queryRaw<Array<{ cnt: bigint }>>`
+        SELECT COUNT(DISTINCT "userId")::bigint AS cnt
+          FROM sessions
+         WHERE "createdAt" >= ${periodStart}
+           AND "createdAt" < ${periodEnd}
+      `,
+      this.prisma.wallet.aggregate({
+        _sum: {
+          totalSpentCredits: true,
+          totalRechargedCredits: true,
+        },
+      }),
+      this.prisma.$queryRaw<Array<{ day: Date; cnt: bigint }>>`
+        SELECT date_trunc('day', "createdAt") AS day,
+               COUNT(*)::bigint AS cnt
+          FROM users
+         WHERE "deletedAt" IS NULL
+           AND "createdAt" >= ${periodStart}
+           AND "createdAt" < ${periodEnd}
+         GROUP BY day
+         ORDER BY day ASC
+      `,
+      this.prisma.user.groupBy({
+        by: ['locale'],
+        where: baseWhere,
+        _count: { id: true },
+        orderBy: { _count: { id: 'desc' } },
+      }),
+    ]);
+
+    const activeUsers = Number(activeLoginRows[0]?.cnt ?? 0n);
+    const paidUsers = Number(paidUserRows[0]?.cnt ?? 0n);
+    const userMap = new Map<string, number>();
+    for (const r of trendRows) userMap.set(statsDayKey(r.day), Number(r.cnt));
+
+    const registrationTrend: Array<{ date: string; count: number }> = [];
+    const cursor = new Date(periodStart);
+    cursor.setHours(0, 0, 0, 0);
+    for (let i = 0; i < trendDays; i++) {
+      const k = statsDayKey(cursor);
+      registrationTrend.push({ date: k, count: userMap.get(k) ?? 0 });
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    const localeDistribution = localeRows.map((r) => ({
+      locale: r.locale,
+      count: r._count.id,
+    }));
+
+    return {
+      range: input.range ?? (input.startDate && input.endDate ? 'custom' : '7d'),
+      period: {
+        start: statsDayKey(periodStart),
+        end: statsDayKey(new Date(periodEnd.getTime() - 1)),
+      },
+      summary: {
+        totalUsers,
+        activeUsers,
+        newUsers,
+        newPreviousPeriod,
+        paidUsers,
+        totalPaidAmountVnd: (paidOrderAgg._sum.amountVnd ?? 0n).toString(),
+        totalSpentCredits: (walletAgg._sum.totalSpentCredits ?? 0n).toString(),
+        totalRechargedCredits: (walletAgg._sum.totalRechargedCredits ?? 0n).toString(),
+        activeVipUsers: await this.prisma.user.count({
+          where: { ...baseWhere, vipExpireAt: { gt: new Date() } },
+        }),
+      },
+      registrationTrend,
+      localeDistribution,
+    };
+  }
+
+  private resolveStatsWindow(input: { range?: string; startDate?: string; endDate?: string }) {
+    const now = new Date();
+    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const dayEnd = new Date(dayStart);
+    dayEnd.setDate(dayEnd.getDate() + 1);
+
+    if (input.startDate && input.endDate) {
+      const periodStart = parseStatsDate(input.startDate);
+      const periodEnd = new Date(parseStatsDate(input.endDate));
+      periodEnd.setDate(periodEnd.getDate() + 1);
+      if (periodEnd <= periodStart) {
+        throw new BizException(BizCode.BAD_REQUEST, '日期范围无效');
+      }
+      const days = Math.min(
+        365,
+        Math.ceil((periodEnd.getTime() - periodStart.getTime()) / (24 * 60 * 60 * 1000)),
+      );
+      const prevEnd = new Date(periodStart);
+      const prevStart = new Date(periodStart);
+      prevStart.setDate(prevStart.getDate() - days);
+      return { periodStart, periodEnd, prevStart, prevEnd, trendDays: days };
+    }
+
+    const range =
+      input.range === 'today' || input.range === '7d' || input.range === '30d'
+        ? input.range
+        : '7d';
+
+    if (range === 'today') {
+      const prevStart = new Date(dayStart);
+      prevStart.setDate(prevStart.getDate() - 1);
+      return {
+        periodStart: dayStart,
+        periodEnd: dayEnd,
+        prevStart,
+        prevEnd: dayStart,
+        trendDays: 1,
+      };
+    }
+
+    const days = range === '7d' ? 7 : 30;
+    const periodStart = new Date(dayStart);
+    periodStart.setDate(periodStart.getDate() - (days - 1));
+    const prevEnd = new Date(periodStart);
+    const prevStart = new Date(periodStart);
+    prevStart.setDate(prevStart.getDate() - days);
+
+    return { periodStart, periodEnd: dayEnd, prevStart, prevEnd, trendDays: days };
+  }
+}
+
+function statsDayKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function parseStatsDate(raw: string): Date {
+  const d = new Date(`${raw}T00:00:00`);
+  if (Number.isNaN(d.getTime())) {
+    throw new BizException(BizCode.BAD_REQUEST, '日期格式无效');
+  }
+  return d;
 }

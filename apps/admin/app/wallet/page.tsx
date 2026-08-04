@@ -1,12 +1,12 @@
-"use client";
+﻿"use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminWalletAdjust, adminWalletLedger, asRows } from "@velvet/api-client";
 import { walletAdjustSchema } from "@velvet/validators";
 import { AdminShell } from "@/components/admin-shell";
-import { t } from "@/lib/i18n";
+import { useI18n } from "@/lib/i18n";
 import { Button, DataTable, Input, Select, fmtDate, fmtNum, type Column } from "@velvet/ui";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 type Row = {
   id: string | number;
@@ -19,6 +19,7 @@ type Row = {
 };
 
 export default function AdminWalletPage() {
+  const { t, locale } = useI18n();
   const qc = useQueryClient();
   const [userId, setUserId] = useState("");
   const [type, setType] = useState("ALL");
@@ -43,8 +44,8 @@ export default function AdminWalletPage() {
   const adjustMut = useMutation({
     mutationFn: async () => {
       const parsed = walletAdjustSchema.safeParse({ deltaCredits: delta, reason });
-      if (!parsed.success) throw new Error(parsed.error.issues[0]?.message || "校验失败");
-      if (!userId.trim()) throw new Error("请填写 userId");
+      if (!parsed.success) throw new Error(parsed.error.issues[0]?.message || t("validateFailed"));
+      if (!userId.trim()) throw new Error(t("userIdRequired"));
       return adminWalletAdjust(userId.trim(), parsed.data.deltaCredits, parsed.data.reason);
     },
     onSuccess: async () => {
@@ -54,30 +55,38 @@ export default function AdminWalletPage() {
     onError: (e: Error) => setErr(e.message),
   });
 
-  const columns: Column<Row>[] = [
-    { key: "id", header: "ID", cell: (r) => String(r.id) },
-    { key: "user", header: "User", cell: (r) => String(r.walletUserId ?? "—") },
-    { key: "type", header: "Type", cell: (r) => r.type || "—" },
-    {
-      key: "delta",
-      header: "Δ",
-      cell: (r) => fmtNum(r.amountCredits),
-      className: "tabular-nums",
-    },
-    {
-      key: "after",
-      header: "After",
-      cell: (r) => fmtNum(r.balanceAfter),
-      className: "tabular-nums",
-    },
-    {
-      key: "remark",
-      header: "Remark",
-      cell: (r) => r.remark || "—",
-      className: "max-w-xs truncate text-caption",
-    },
-    { key: "time", header: "Time", cell: (r) => fmtDate(r.createdAt), className: "text-caption" },
-  ];
+  const columns: Column<Row>[] = useMemo(
+    () => [
+      { key: "id", header: t("colId"), cell: (r) => String(r.id) },
+      { key: "user", header: t("colUser"), cell: (r) => String(r.walletUserId ?? "—") },
+      { key: "type", header: t("colType"), cell: (r) => r.type || "—" },
+      {
+        key: "delta",
+        header: "Δ",
+        cell: (r) => fmtNum(r.amountCredits),
+        className: "tabular-nums",
+      },
+      {
+        key: "after",
+        header: t("colAfter"),
+        cell: (r) => fmtNum(r.balanceAfter),
+        className: "tabular-nums",
+      },
+      {
+        key: "remark",
+        header: t("colRemark"),
+        cell: (r) => r.remark || "—",
+        className: "max-w-xs truncate text-caption",
+      },
+      {
+        key: "time",
+        header: t("time"),
+        cell: (r) => fmtDate(r.createdAt, locale === "en" ? "en-US" : "zh-CN"),
+        className: "text-caption",
+      },
+    ],
+    [t, locale],
+  );
 
   return (
     <AdminShell title={t("wallet")}>
@@ -87,11 +96,11 @@ export default function AdminWalletPage() {
 
       <div className="mb-4 flex flex-wrap items-end gap-2">
         <label className="text-caption text-ink-muted">
-          userId
+          {t("walletUserId")}
           <Input className="mt-1 w-40" value={userId} onChange={(e) => setUserId(e.target.value)} />
         </label>
         <label className="text-caption text-ink-muted">
-          type
+          {t("colType")}
           <Select className="mt-1 w-36" value={type} onChange={(e) => setType(e.target.value)}>
             {["ALL", "TOPUP", "UNLOCK", "REFUND", "ADJUST"].map((x) => (
               <option key={x} value={x}>
@@ -101,15 +110,15 @@ export default function AdminWalletPage() {
           </Select>
         </label>
         <Button size="sm" onClick={() => setApplied({ userId, type })}>
-          查询
+          {t("query")}
         </Button>
       </div>
 
-      <div className="mb-6 flex flex-wrap items-end gap-2 rounded-lg border border-line bg-surface p-4">
-        <p className="w-full text-body-sm font-medium">人工调账（SUPER_ADMIN）</p>
+      <div className="mb-6 flex flex-wrap items-end gap-2 card glass-card p-4">
+        <p className="w-full text-body-sm font-medium">{t("manualAdjustSuper")}</p>
         <Input
           className="w-32"
-          placeholder="userId"
+          placeholder={t("walletUserId")}
           value={userId}
           onChange={(e) => setUserId(e.target.value)}
         />
@@ -121,12 +130,12 @@ export default function AdminWalletPage() {
         />
         <Input
           className="w-56"
-          placeholder="理由"
+          placeholder={t("reasonPlaceholder")}
           value={reason}
           onChange={(e) => setReason(e.target.value)}
         />
         <Button size="sm" disabled={adjustMut.isPending} onClick={() => adjustMut.mutate()}>
-          提交调账
+          {t("submitAdjust")}
         </Button>
       </div>
 

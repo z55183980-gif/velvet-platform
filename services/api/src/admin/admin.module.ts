@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { AdminService } from './admin.service';
 import { AdminAuthController } from './admin-auth.controller';
 import { AdminAuthService } from './admin-auth.service';
+import { AdminCaptchaService } from './admin-captcha.service';
 import { AdminGuard } from './admin.guard';
 import { AdminRoleGuard } from './admin-role.guard';
 import { AdminAuditController } from './audit.controller';
@@ -32,6 +33,7 @@ import { FinanceController } from './finance.controller';
 import { CreatorsController } from './creators.controller';
 import { OpsController } from './ops.controller';
 import { SettingsController } from './settings.controller';
+import { AdminNotificationsController } from './notifications.controller';
 
 @Module({
   imports: [WalletModule, ExchangeModule, ReconcileModule, AuthModule, RedeemModule],
@@ -46,10 +48,12 @@ import { SettingsController } from './settings.controller';
     CreatorsController,
     OpsController,
     SettingsController,
+    AdminNotificationsController,
   ],
   providers: [
     AdminService,
     AdminAuthService,
+    AdminCaptchaService,
     AdminGuard,
     AdminRoleGuard,
     DashboardService,

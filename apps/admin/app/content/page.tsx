@@ -1,12 +1,14 @@
-"use client";
+﻿"use client";
 
-import Link from "next/link";
-import { useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminBatchDramas, adminListCategories, adminListDramas, asRows } from "@velvet/api-client";
 import { Button, DataTable, Input, Select, fmtNum, type Column } from "@velvet/ui";
 import { AdminShell } from "@/components/admin-shell";
-import { t } from "@/lib/i18n";
+import { ContentDetailModal } from "@/components/content-detail-modal";
+import { ContentImportModal } from "@/components/content-import-modal";
+import { useI18n, statusLabel } from "@/lib/i18n";
 
 type Drama = {
   id: string | number;
@@ -26,11 +28,14 @@ type Category = { slug: string; nameZh?: string; nameVi?: string };
 const statuses = ["ALL", "DRAFT", "PENDING_REVIEW", "LIVE", "OFFLINE", "REJECTED"];
 const pageSize = 20;
 
-export default function AdminContentPage() {
+function AdminContentInner() {
+  const { t } = useI18n();
   const qc = useQueryClient();
+  const searchParams = useSearchParams();
+  const statusFromUrl = searchParams.get("status") || "ALL";
   const [filters, setFilters] = useState({
     q: "",
-    status: "ALL",
+    status: statusFromUrl,
     categorySlug: "",
     isOfficial: "",
     isFeatured: "",
@@ -40,6 +45,21 @@ export default function AdminContentPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [batch, setBatch] = useState({ freeEpisodeCount: 3, priceCredits: 10, buyoutCredits: 0 });
   const [error, setError] = useState<string | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
+
+  useEffect(() => {
+    const next = {
+      q: "",
+      status: statusFromUrl,
+      categorySlug: "",
+      isOfficial: "",
+      isFeatured: "",
+    };
+    setFilters(next);
+    setApplied(next);
+    setPage(1);
+  }, [statusFromUrl]);
 
   const categoriesQ = useQuery({
     queryKey: ["admin", "categories"],
@@ -80,61 +100,71 @@ export default function AdminContentPage() {
   });
 
   const rows = dramasQ.data?.rows ?? [];
-  const columns: Column<Drama>[] = [
-    {
-      key: "select",
-      header: "",
-      cell: (row) => (
-        <input
-          type="checkbox"
-          checked={selected.has(String(row.id))}
-          onChange={(e) =>
-            setSelected((previous) => {
-              const next = new Set(previous);
-              e.target.checked ? next.add(String(row.id)) : next.delete(String(row.id));
-              return next;
-            })
-          }
-        />
-      ),
-    },
-    { key: "id", header: "ID", cell: (row) => String(row.id), className: "tabular-nums" },
-    {
-      key: "title",
-      header: "标题",
-      cell: (row) => (
-        <div>
-          <div className="font-medium">{row.titleZh || row.titleVi || "—"}</div>
-          <div className="text-caption text-ink-muted">{row.slug}</div>
-        </div>
-      ),
-    },
-    { key: "status", header: t("status"), cell: (row) => row.status || "—" },
-    { key: "creator", header: "创作者", cell: (row) => row.creator?.displayName || "—" },
-    {
-      key: "metrics",
-      header: "浏览 / 解锁",
-      cell: (row) => `${fmtNum(row.viewCount)} / ${fmtNum(row.unlockCount)}`,
-    },
-    {
-      key: "flags",
-      header: "标记",
-      cell: (row) =>
-        `${row.isOfficial ? "官方 " : ""}${row.isFeatured ? "推荐 " : ""}权重 ${row.sortWeight ?? 0}`,
-    },
-    {
-      key: "actions",
-      header: "",
-      cell: (row) => (
-        <Link className="text-brand hover:underline" href={`/content/${row.id}`}>
-          详情
-        </Link>
-      ),
-    },
-  ];
+  const columns: Column<Drama>[] = useMemo(
+    () => [
+      {
+        key: "select",
+        header: "",
+        cell: (row) => (
+          <input
+            type="checkbox"
+            checked={selected.has(String(row.id))}
+            onChange={(e) =>
+              setSelected((previous) => {
+                const next = new Set(previous);
+                e.target.checked ? next.add(String(row.id)) : next.delete(String(row.id));
+                return next;
+              })
+            }
+          />
+        ),
+      },
+      { key: "id", header: t("colId"), cell: (row) => String(row.id), className: "tabular-nums" },
+      {
+        key: "title",
+        header: t("colTitle"),
+        cell: (row) => (
+          <div>
+            <div className="font-medium">{row.titleZh || row.titleVi || "—"}</div>
+            <div className="text-caption text-ink-muted">{row.slug}</div>
+          </div>
+        ),
+      },
+      { key: "status", header: t("status"), cell: (row) => statusLabel(t, row.status) },
+      { key: "creator", header: t("colCreator"), cell: (row) => row.creator?.displayName || "—" },
+      {
+        key: "metrics",
+        header: t("colViewsUnlocks"),
+        cell: (row) => `${fmtNum(row.viewCount)} / ${fmtNum(row.unlockCount)}`,
+      },
+      {
+        key: "flags",
+        header: t("colHomeFlags"),
+        cell: (row) =>
+          `${row.isOfficial ? `${t("official")} ` : ""}${row.isFeatured ? `${t("featuredFlag")} ` : ""}${t("weightLabel")} ${row.sortWeight ?? 0}`,
+      },
+      {
+        key: "actions",
+        header: "",
+        cell: (row) => (
+          <button
+            type="button"
+            className="text-brand hover:underline"
+            onClick={() => setDetailId(String(row.id))}
+          >
+            {t("details")}
+          </button>
+        ),
+      },
+    ],
+    [t, selected],
+  );
+
+  const title =
+    statusFromUrl === "PENDING_REVIEW" ? t("contentPending") : t("content");
 
   return (
-    <AdminShell title={t("content")}>
+    <AdminShell title={title}>
       {error || dramasQ.error || categoriesQ.error ? (
         <p className="mb-3 text-body-sm text-danger">
           {error || (dramasQ.error as Error)?.message || (categoriesQ.error as Error)?.message}
@@ -143,7 +173,7 @@ export default function AdminContentPage() {
       <div className="mb-4 flex flex-wrap items-end gap-2">
         <Input
           className="w-52"
-          placeholder="标题 / slug / 创作者"
+          placeholder={t("searchTitleSlugCreator")}
           value={filters.q}
           onChange={(e) => setFilters((f) => ({ ...f, q: e.target.value }))}
         />
@@ -152,16 +182,20 @@ export default function AdminContentPage() {
           value={filters.status}
           onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value }))}
         >
-          {statuses.map((status) => <option key={status}>{status}</option>)}
+          {statuses.map((status) => (
+            <option key={status}>{status}</option>
+          ))}
         </Select>
         <Select
           className="w-40"
           value={filters.categorySlug}
           onChange={(e) => setFilters((f) => ({ ...f, categorySlug: e.target.value }))}
         >
-          <option value="">全部分类</option>
+          <option value="">{t("allCategories")}</option>
           {(categoriesQ.data ?? []).map((category) => (
-            <option key={category.slug} value={category.slug}>{category.nameZh || category.nameVi}</option>
+            <option key={category.slug} value={category.slug}>
+              {category.nameZh || category.nameVi}
+            </option>
           ))}
         </Select>
         {(["isOfficial", "isFeatured"] as const).map((key) => (
@@ -171,21 +205,36 @@ export default function AdminContentPage() {
             value={filters[key]}
             onChange={(e) => setFilters((f) => ({ ...f, [key]: e.target.value }))}
           >
-            <option value="">{key === "isOfficial" ? "官方" : "推荐"}：全部</option>
-            <option value="1">是</option>
-            <option value="0">否</option>
+            <option value="">{t(key === "isOfficial" ? "official" : "featuredFlag")}: {t("all")}</option>
+            <option value="1">{t("yes")}</option>
+            <option value="0">{t("no")}</option>
           </Select>
         ))}
-        <Button size="sm" onClick={() => { setPage(1); setApplied(filters); }}>查询</Button>
+        <Button
+          size="sm"
+          onClick={() => {
+            setPage(1);
+            setApplied(filters);
+          }}
+        >
+          {t("query")}
+        </Button>
+        {statusFromUrl !== "PENDING_REVIEW" ? (
+          <Button size="sm" variant="secondary" onClick={() => setImportOpen(true)}>
+            {t("contentImport")}
+          </Button>
+        ) : null}
       </div>
 
-      <div className="mb-4 flex flex-wrap items-end gap-2 rounded-lg border border-line bg-surface p-3">
-        <span className="text-caption text-ink-muted">已选 {selected.size}</span>
-        {([
-          ["freeEpisodeCount", "免费集数"],
-          ["priceCredits", "单集积分"],
-          ["buyoutCredits", "买断积分（0=关闭）"],
-        ] as const).map(([key, label]) => (
+      <div className="mb-4 flex flex-wrap items-end gap-2 card glass-card p-3">
+        <span className="text-caption text-ink-muted">{t("selectedCount", { n: selected.size })}</span>
+        {(
+          [
+            ["freeEpisodeCount", t("freeEpisodes")],
+            ["priceCredits", t("priceCreditsPerEpisode")],
+            ["buyoutCredits", t("buyoutCreditsLabel")],
+          ] as const
+        ).map(([key, label]) => (
           <label key={key} className="text-caption text-ink-muted">
             {label}
             <Input
@@ -197,7 +246,7 @@ export default function AdminContentPage() {
           </label>
         ))}
         <Button size="sm" disabled={!selected.size || batchMut.isPending} onClick={() => batchMut.mutate()}>
-          批量应用
+          {t("batchApply")}
         </Button>
         <Button
           size="sm"
@@ -210,24 +259,48 @@ export default function AdminContentPage() {
             )
           }
         >
-          全选本页
+          {t("selectAllPage")}
         </Button>
       </div>
 
       <DataTable columns={columns} rows={rows} loading={dramasQ.isFetching} emptyTitle={t("empty")} />
       <div className="mt-3 flex items-center gap-3 text-body-sm text-ink-muted">
-        <span>共 {dramasQ.data?.total ?? 0}</span>
-        <Button size="sm" variant="secondary" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>上一页</Button>
-        <span>第 {page} 页</span>
+        <span>{t("totalCount", { n: dramasQ.data?.total ?? 0 })}</span>
+        <Button size="sm" variant="secondary" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
+          {t("prevPage")}
+        </Button>
+        <span>{t("pageNumber", { n: page })}</span>
         <Button
           size="sm"
           variant="secondary"
           disabled={page * pageSize >= (dramasQ.data?.total ?? 0)}
           onClick={() => setPage((p) => p + 1)}
         >
-          下一页
+          {t("nextPage")}
         </Button>
       </div>
+
+      <ContentDetailModal
+        open={!!detailId}
+        dramaId={detailId}
+        onClose={() => setDetailId(null)}
+      />
+      <ContentImportModal open={importOpen} onClose={() => setImportOpen(false)} />
     </AdminShell>
+  );
+}
+
+export default function AdminContentPage() {
+  const { t } = useI18n();
+  return (
+    <Suspense
+      fallback={
+        <AdminShell title={t("content")}>
+          <p className="text-ink-muted">{t("loading")}</p>
+        </AdminShell>
+      }
+    >
+      <AdminContentInner />
+    </Suspense>
   );
 }

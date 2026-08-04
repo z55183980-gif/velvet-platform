@@ -5,6 +5,7 @@ import { SessionService } from './session.service';
 import { MailerService } from '../common/mailer.service';
 import { ConfigService } from '@nestjs/config';
 import { BizException, BizCode } from '../common/biz.exception';
+import { ClientMeta, enrichClientMeta } from '../common/request-meta';
 import * as crypto from 'crypto';
 
 export interface LoginResult {
@@ -99,6 +100,7 @@ export class AuthService {
     phone: string,
     code: string,
     purpose: OtpPurpose = 'login',
+    meta?: ClientMeta | null,
   ): Promise<LoginResult> {
     if (!this.phoneOtpEnabled) {
       throw new BizException(
@@ -110,7 +112,7 @@ export class AuthService {
       throw new BizException(BizCode.INVALID_OTP, 'Mã OTP không đúng hoặc đã hết hạn');
     }
     const user = await this.upsertUserByPhone(phone);
-    return this.issueSession(user);
+    return this.issueSession(user, meta);
   }
 
   /** @deprecated 请用 sendPhoneOtp；保留兼容旧调用 */
@@ -181,7 +183,11 @@ export class AuthService {
     };
   }
 
-  async verifyEmailOtp(email: string, code: string): Promise<LoginResult> {
+  async verifyEmailOtp(
+    email: string,
+    code: string,
+    meta?: ClientMeta | null,
+  ): Promise<LoginResult> {
     if (!this.emailOtpEnabled) {
       throw new BizException(
         BizCode.BAD_REQUEST,
@@ -196,20 +202,23 @@ export class AuthService {
       throw new BizException(BizCode.INVALID_OTP, 'Mã OTP không đúng hoặc đã hết hạn');
     }
     const user = await this.upsertUserByEmail(normalized);
-    return this.issueSession(user);
+    return this.issueSession(user, meta);
   }
 
   /**
    * 内测注册：邮箱 + 账号 + 密码（无需验证码）。
    * 公测：打开 AUTH_EMAIL_OTP_ENABLED 后必须传 code。
    */
-  async registerEmail(opts: {
-    email: string;
-    password: string;
-    username: string;
-    code?: string;
-    nickname?: string;
-  }): Promise<LoginResult> {
+  async registerEmail(
+    opts: {
+      email: string;
+      password: string;
+      username: string;
+      code?: string;
+      nickname?: string;
+    },
+    meta?: ClientMeta | null,
+  ): Promise<LoginResult> {
     const normalized = this.normalizeEmail(opts.email);
     if (!normalized) {
       throw new BizException(BizCode.BAD_REQUEST, 'Email không hợp lệ');
@@ -276,11 +285,15 @@ export class AuthService {
       });
     }
 
-    return this.issueSession(user);
+    return this.issueSession(user, meta);
   }
 
   /** 账号或邮箱 + 密码登录 */
-  async loginWithPassword(account: string, password: string): Promise<LoginResult> {
+  async loginWithPassword(
+    account: string,
+    password: string,
+    meta?: ClientMeta | null,
+  ): Promise<LoginResult> {
     const raw = String(account || '').trim();
     if (!raw || !password) {
       throw new BizException(BizCode.UNAUTHORIZED, 'Tài khoản hoặc mật khẩu không đúng');
@@ -299,7 +312,7 @@ export class AuthService {
     if (!this.verifyPassword(password, user.passwordHash)) {
       throw new BizException(BizCode.UNAUTHORIZED, 'Tài khoản hoặc mật khẩu không đúng');
     }
-    return this.issueSession(user);
+    return this.issueSession(user, meta);
   }
 
   /** 发送找回密码验证码 */
@@ -308,11 +321,14 @@ export class AuthService {
   }
 
   /** 验证码 + 新密码重置 */
-  async resetPassword(opts: {
-    email: string;
-    code: string;
-    password: string;
-  }): Promise<LoginResult> {
+  async resetPassword(
+    opts: {
+      email: string;
+      code: string;
+      password: string;
+    },
+    meta?: ClientMeta | null,
+  ): Promise<LoginResult> {
     const normalized = this.normalizeEmail(opts.email);
     if (!normalized) {
       throw new BizException(BizCode.BAD_REQUEST, 'Email không hợp lệ');
@@ -338,7 +354,7 @@ export class AuthService {
 
     // 重置后踢掉旧会话
     await this.prisma.session.deleteMany({ where: { userId: user.id } });
-    return this.issueSession(updated);
+    return this.issueSession(updated, meta);
   }
 
   async getSession(userId: bigint) {
@@ -425,16 +441,28 @@ export class AuthService {
     return user;
   }
 
-  private async issueSession(user: {
-    id: bigint;
-    phone: string | null;
-    email?: string | null;
-    locale: string;
-  }): Promise<LoginResult> {
+  private async issueSession(
+    user: {
+      id: bigint;
+      phone: string | null;
+      email?: string | null;
+      locale: string;
+    },
+    meta?: ClientMeta | null,
+  ): Promise<LoginResult> {
     const sessionId = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + 30 * 24 * 3600 * 1000);
+    const geo = meta ? await enrichClientMeta(meta) : null;
     await this.prisma.session.create({
-      data: { id: sessionId, userId: user.id, expiresAt },
+      data: {
+        id: sessionId,
+        userId: user.id,
+        expiresAt,
+        ipAddress: geo?.ipAddress ?? null,
+        country: geo?.country ?? null,
+        city: geo?.city ?? null,
+        userAgent: geo?.userAgent ?? null,
+      },
     });
     const token = this.session.sign({
       userId: user.id.toString(),

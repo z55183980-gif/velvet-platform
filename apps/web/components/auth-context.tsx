@@ -39,6 +39,7 @@ export type AuthUser = {
   email: string | null;
   username?: string | null;
   nickname?: string | null;
+  avatarUrl?: string | null;
   locale: string;
   label: string;
   hasPassword?: boolean;
@@ -105,6 +106,7 @@ function toUser(s: any, fallback?: string): AuthUser {
     email,
     username,
     nickname,
+    avatarUrl: s?.avatarUrl ?? null,
     locale: s?.locale || "vi",
     label,
     hasPassword: !!s?.hasPassword,

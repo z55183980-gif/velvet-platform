@@ -9,6 +9,7 @@ export interface DramaListFilter {
   categorySlug?: string;
   isOfficial?: '1' | '0';
   isFeatured?: '1' | '0';
+  isHottest?: '1' | '0';
   page?: number;
   pageSize?: number;
 }
@@ -30,6 +31,8 @@ export class ContentService {
     if (filter.isOfficial === '0') where.isOfficial = false;
     if (filter.isFeatured === '1') where.isFeatured = true;
     if (filter.isFeatured === '0') where.isFeatured = false;
+    if (filter.isHottest === '1') where.isHottest = true;
+    if (filter.isHottest === '0') where.isHottest = false;
     if (filter.q) {
       where.OR = [
         { titleVi: { contains: filter.q, mode: 'insensitive' } },
@@ -38,10 +41,14 @@ export class ContentService {
         { creator: { displayName: { contains: filter.q, mode: 'insensitive' } } },
       ];
     }
+    const orderBy =
+      filter.isHottest === '1'
+        ? [{ hottestSortOrder: 'asc' as const }, { updatedAt: 'desc' as const }]
+        : [{ sortWeight: 'desc' as const }, { updatedAt: 'desc' as const }];
     const [rows, total] = await Promise.all([
       this.prisma.drama.findMany({
         where,
-        orderBy: [{ sortWeight: 'desc' }, { updatedAt: 'desc' }],
+        orderBy,
         skip: (page - 1) * pageSize,
         take: pageSize,
         include: {
@@ -129,6 +136,82 @@ export class ContentService {
       payload: { sortWeight: drama.sortWeight },
     });
     return { id: drama.id.toString(), sortWeight: drama.sortWeight };
+  }
+
+  async listHottest() {
+    return this.prisma.drama.findMany({
+      where: { isHottest: true },
+      orderBy: [{ hottestSortOrder: 'asc' }, { updatedAt: 'desc' }],
+      take: 200,
+      include: {
+        category: true,
+        creator: { select: { id: true, displayName: true } },
+        _count: { select: { episodes: true } },
+      },
+    });
+  }
+
+  async setHottest(id: string, value: boolean, actorId?: bigint) {
+    const dramaId = BigInt(id);
+    let hottestSortOrder = 0;
+    if (value) {
+      const agg = await this.prisma.drama.aggregate({
+        where: { isHottest: true },
+        _max: { hottestSortOrder: true },
+      });
+      hottestSortOrder = (agg._max.hottestSortOrder ?? -1) + 1;
+    }
+    const drama = await this.prisma.drama.update({
+      where: { id: dramaId },
+      data: { isHottest: value, hottestSortOrder: value ? hottestSortOrder : 0 },
+    });
+    await this.audit.write({
+      actorId,
+      action: 'drama.setHottest',
+      targetType: 'drama',
+      targetId: id,
+      payload: { isHottest: value, hottestSortOrder: drama.hottestSortOrder },
+    });
+    return {
+      id: drama.id.toString(),
+      isHottest: drama.isHottest,
+      hottestSortOrder: drama.hottestSortOrder,
+    };
+  }
+
+  async setHottestSortOrder(id: string, sortOrder: number, actorId?: bigint) {
+    const drama = await this.prisma.drama.update({
+      where: { id: BigInt(id) },
+      data: { hottestSortOrder: Math.floor(sortOrder) },
+    });
+    await this.audit.write({
+      actorId,
+      action: 'drama.setHottestSortOrder',
+      targetType: 'drama',
+      targetId: id,
+      payload: { hottestSortOrder: drama.hottestSortOrder },
+    });
+    return { id: drama.id.toString(), hottestSortOrder: drama.hottestSortOrder };
+  }
+
+  async reorderHottest(ids: string[], actorId?: bigint) {
+    const unique = [...new Set(ids.map(String).filter((x) => /^\d+$/.test(x)))];
+    await this.prisma.$transaction(
+      unique.map((id, index) =>
+        this.prisma.drama.update({
+          where: { id: BigInt(id) },
+          data: { isHottest: true, hottestSortOrder: index },
+        }),
+      ),
+    );
+    await this.audit.write({
+      actorId,
+      action: 'drama.reorderHottest',
+      targetType: 'drama',
+      targetId: 'hottest',
+      payload: { ids: unique },
+    });
+    return { ok: true, count: unique.length };
   }
 
   /** 一页式的官方/精选/排序概览 */

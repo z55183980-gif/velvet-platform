@@ -101,7 +101,18 @@ export class AdminService {
   }
 
   async pendingCreators() {
-    return this.prisma.creator.findMany({ where: { kycStatus: 'PENDING' } });
+    const rows = await this.prisma.creator.findMany({
+      where: { kycStatus: 'PENDING' },
+      include: { user: { select: { email: true, phone: true } } },
+      orderBy: { id: 'asc' },
+    });
+    return rows.map((c) => ({
+      id: c.id.toString(),
+      displayName: c.displayName,
+      kycStatus: c.kycStatus,
+      user: c.user,
+      userId: c.userId.toString(),
+    }));
   }
 
   async approveKyc(creatorId: string, actorId?: bigint | null) {

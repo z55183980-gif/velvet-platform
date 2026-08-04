@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "sessions" ADD COLUMN IF NOT EXISTS "country" TEXT;
+ALTER TABLE "sessions" ADD COLUMN IF NOT EXISTS "city" TEXT;

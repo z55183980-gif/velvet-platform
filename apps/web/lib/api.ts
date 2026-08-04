@@ -60,6 +60,65 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return json.data;
 }
 
+function isAbortError(err: unknown) {
+  return (
+    (typeof DOMException !== "undefined" && err instanceof DOMException && err.name === "AbortError") ||
+    (err instanceof Error && err.name === "AbortError")
+  );
+}
+
+/** Short-lived GET cache + in-flight dedupe (client navigations / Strict Mode). */
+const getCache = new Map<string, { exp: number; value: unknown }>();
+const getInflight = new Map<string, Promise<unknown>>();
+
+function cachedGet<T>(
+  key: string,
+  ttlMs: number,
+  loader: () => Promise<T>,
+  signal?: AbortSignal,
+): Promise<T> {
+  if (signal?.aborted) return Promise.reject(new DOMException("Aborted", "AbortError"));
+
+  const hit = getCache.get(key);
+  if (hit && hit.exp > Date.now()) {
+    return Promise.resolve(hit.value as T);
+  }
+
+  let pending = getInflight.get(key) as Promise<T> | undefined;
+  if (!pending) {
+    pending = loader().then(
+      (value) => {
+        getCache.set(key, { exp: Date.now() + ttlMs, value });
+        getInflight.delete(key);
+        return value;
+      },
+      (err) => {
+        getInflight.delete(key);
+        throw err;
+      },
+    );
+    getInflight.set(key, pending);
+  }
+
+  if (!signal) return pending;
+
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new DOMException("Aborted", "AbortError"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    pending!.then(
+      (v) => {
+        signal.removeEventListener("abort", onAbort);
+        if (signal.aborted) reject(new DOMException("Aborted", "AbortError"));
+        else resolve(v);
+      },
+      (e) => {
+        signal.removeEventListener("abort", onAbort);
+        reject(e);
+      },
+    );
+  });
+}
+
 // ---- 字段映射：API 响应 → 前端模型 ----
 function mapDrama(d: any): Drama {
   const cover = d.coverUrl || "";
@@ -103,76 +162,162 @@ function mapEpisode(e: any): Episode {
 }
 
 // ---- 对外数据加载（带 mock 兜底）----
-export async function loadCategories(): Promise<Category[]> {
-  try {
-    return await request<Category[]>("/categories");
-  } catch {
-    const { categories } = await import("./mock-data");
-    return categories;
-  }
+export async function loadCategories(opts?: { signal?: AbortSignal }): Promise<Category[]> {
+  return cachedGet(
+    "categories",
+    60_000,
+    async () => {
+      try {
+        return await request<Category[]>("/categories");
+      } catch (err) {
+        if (isAbortError(err)) throw err;
+        const { categories } = await import("./mock-data");
+        return categories;
+      }
+    },
+    opts?.signal,
+  );
 }
 
 export async function loadHome(
   page = 1,
   pageSize = 12,
-  opts?: { category?: string; q?: string; sort?: "latest" | "hot" },
+  opts?: { category?: string; q?: string; sort?: "latest" | "hot"; signal?: AbortSignal },
 ): Promise<{ rows: Drama[]; total: number }> {
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   if (opts?.category) params.set("category", opts.category);
   if (opts?.q) params.set("q", opts.q);
   if (opts?.sort) params.set("sort", opts.sort);
-  try {
-    const r = await request<{ rows: any[]; total: number }>(`/dramas?${params.toString()}`);
-    return { rows: r.rows.map(mapDrama), total: r.total };
-  } catch {
-    const { mockHome } = await import("./mock-data");
-    return mockHome(page, pageSize, opts);
-  }
+  const cacheKey = `dramas?${params.toString()}`;
+  return cachedGet(
+    cacheKey,
+    20_000,
+    async () => {
+      try {
+        const r = await request<{ rows: any[]; total: number }>(`/dramas?${params.toString()}`);
+        return { rows: r.rows.map(mapDrama), total: r.total };
+      } catch (err) {
+        if (isAbortError(err)) throw err;
+        const { mockHome } = await import("./mock-data");
+        return mockHome(page, pageSize, opts);
+      }
+    },
+    opts?.signal,
+  );
 }
 
-export async function loadFeatured(): Promise<Drama[]> {
-  try {
-    // /dramas/featured 返回 { code, data: Drama[] }；request 已解开 data 为数组
-    const list = await request<any[]>("/dramas/featured");
-    return list.map(mapDrama);
-  } catch {
-    const { featuredDramas } = await import("./mock-data");
-    return featuredDramas;
-  }
+export async function loadFeatured(opts?: { signal?: AbortSignal }): Promise<Drama[]> {
+  return cachedGet(
+    "featured",
+    30_000,
+    async () => {
+      try {
+        const list = await request<any[]>("/dramas/featured");
+        return list.map(mapDrama);
+      } catch (err) {
+        if (isAbortError(err)) throw err;
+        const { featuredDramas } = await import("./mock-data");
+        return featuredDramas;
+      }
+    },
+    opts?.signal,
+  );
 }
 
-export async function loadDramaDetail(slug: string): Promise<{
+export async function loadHottest(opts?: { signal?: AbortSignal }): Promise<Drama[]> {
+  return cachedGet(
+    "hottest",
+    20_000,
+    async () => {
+      try {
+        const list = await request<any[]>("/dramas/hottest");
+        return (Array.isArray(list) ? list : []).map(mapDrama);
+      } catch (err) {
+        if (isAbortError(err)) throw err;
+        const { mockHome } = await import("./mock-data");
+        return (await mockHome(1, 24, { sort: "hot" })).rows;
+      }
+    },
+    opts?.signal,
+  );
+}
+
+export type HomeBanner = {
+  id: string;
+  titleVi: string;
+  titleZh?: string | null;
+  imageUrl: string;
+  linkUrl?: string | null;
+  dramaId?: string | null;
+  sortOrder?: number;
+};
+
+export async function loadBanners(opts?: { signal?: AbortSignal }): Promise<HomeBanner[]> {
+  return cachedGet(
+    "banners",
+    30_000,
+    async () => {
+      try {
+        const list = await request<any[]>("/banners");
+        return (Array.isArray(list) ? list : []).map((b) => ({
+          id: String(b.id),
+          titleVi: b.titleVi || "",
+          titleZh: b.titleZh || "",
+          imageUrl: b.imageUrl || "",
+          linkUrl: b.linkUrl || null,
+          dramaId: b.dramaId != null ? String(b.dramaId) : null,
+          sortOrder: b.sortOrder ?? 0,
+        }));
+      } catch (err) {
+        if (isAbortError(err)) throw err;
+        return [];
+      }
+    },
+    opts?.signal,
+  );
+}
+
+export type DramaDetailPayload = {
   drama: Drama;
   episodes: Episode[];
   buyoutCredits?: string | null;
   vipActive?: boolean;
   dramaUnlocked?: boolean;
-} | null> {
+};
+
+export async function loadDramaDetail(
+  slug: string,
+  opts?: { signal?: AbortSignal },
+): Promise<DramaDetailPayload | null> {
   try {
-    const d = await request<any>(`/dramas/${slug}`);
-    // 详情里的 episodes 不含 unlocked；再拉一次带用户态的剧集列表
-    let episodes = (d.episodes || []).map(mapEpisode);
-    let buyoutCredits: string | null = d.buyoutCredits != null ? String(d.buyoutCredits) : null;
-    let vipActive = false;
-    let dramaUnlocked = false;
-    try {
-      const eps = await request<{
+    // Parallel: public detail + user-scoped episodes (unlock flags)
+    const [d, eps] = await Promise.all([
+      request<any>(`/dramas/${slug}`, { signal: opts?.signal }),
+      request<{
         rows: any[];
         buyoutCredits?: string | null;
         vipActive?: boolean;
         dramaUnlocked?: boolean;
-      }>(`/dramas/${slug}/episodes`);
-      if (eps?.rows?.length) episodes = eps.rows.map(mapEpisode);
-      if (eps?.buyoutCredits != null) buyoutCredits = String(eps.buyoutCredits);
-      vipActive = !!eps?.vipActive;
-      dramaUnlocked = !!eps?.dramaUnlocked;
-    } catch {
-      /* 未登录时仍用详情集列表 */
-    }
+      }>(`/dramas/${slug}/episodes`, { signal: opts?.signal }).catch((err) => {
+        if (isAbortError(err)) throw err;
+        return null;
+      }),
+    ]);
+
+    let episodes = (d.episodes || []).map(mapEpisode);
+    let buyoutCredits: string | null = d.buyoutCredits != null ? String(d.buyoutCredits) : null;
+    let vipActive = false;
+    let dramaUnlocked = false;
+    if (eps?.rows?.length) episodes = eps.rows.map(mapEpisode);
+    if (eps?.buyoutCredits != null) buyoutCredits = String(eps.buyoutCredits);
+    vipActive = !!eps?.vipActive;
+    dramaUnlocked = !!eps?.dramaUnlocked;
+
     const drama = mapDrama(d);
     drama.buyoutCredits = buyoutCredits;
     return { drama, episodes, buyoutCredits, vipActive, dramaUnlocked };
-  } catch {
+  } catch (err) {
+    if (opts?.signal?.aborted || isAbortError(err)) throw err;
     const { mockDramaDetail } = await import("./mock-data");
     return mockDramaDetail(slug);
   }
@@ -495,9 +640,10 @@ export async function unlockEpisode(episodeId: string | number) {
   }
 }
 
-export async function getPlayUrl(episodeId: string | number) {
+export async function getPlayUrl(episodeId: string | number, opts?: { signal?: AbortSignal }) {
   return request<{ playUrl: string; expiresAt: string; durationSec: number }>(
     `/episodes/${episodeId}/play`,
+    { signal: opts?.signal },
   );
 }
 

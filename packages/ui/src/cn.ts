@@ -12,11 +12,11 @@ export function fmtNum(v: string | number | bigint | null | undefined) {
   return n.toLocaleString();
 }
 
-export function fmtDate(v: string | Date | null | undefined) {
+export function fmtDate(v: string | Date | null | undefined, locale?: string) {
   if (!v) return "—";
   const d = typeof v === "string" ? new Date(v) : v;
   if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleString();
+  return locale ? d.toLocaleString(locale) : d.toLocaleString();
 }
 
 export function hoursAgo(v: string | Date | null | undefined) {

@@ -15,6 +15,7 @@ import { SessionService } from './session.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CurrentUser, AuthUser } from '../common/current-user.decorator';
 import { ok } from '../common/response';
+import { enrichClientMeta, getClientMeta } from '../common/request-meta';
 import {
   IsEmail,
   IsIn,
@@ -166,12 +167,13 @@ export class AuthController {
   @Post('phone-number/verify')
   async verifyOtp(
     @Body() body: any,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
     const phone = String(body?.phone || body?.phoneNumber || '').trim();
     const code = String(body?.code || '').trim();
     const purpose = (body?.purpose || 'login') as OtpPurpose;
-    const result = await this.auth.verifyPhoneOtp(phone, code, purpose);
+    const result = await this.auth.verifyPhoneOtp(phone, code, purpose, getClientMeta(req));
     this.setSessionCookie(res, result.token);
     return ok(result, 'Đăng nhập thành công');
   }
@@ -194,9 +196,10 @@ export class AuthController {
   @Post('email/verify')
   async verifyEmailOtp(
     @Body() dto: VerifyEmailOtpDto,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const result = await this.auth.verifyEmailOtp(dto.email, dto.code);
+    const result = await this.auth.verifyEmailOtp(dto.email, dto.code, getClientMeta(req));
     this.setSessionCookie(res, result.token);
     return ok(result, 'Đăng nhập thành công');
   }
@@ -205,9 +208,10 @@ export class AuthController {
   @Post('email/register')
   async registerEmail(
     @Body() dto: RegisterEmailDto,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const result = await this.auth.registerEmail(dto);
+    const result = await this.auth.registerEmail(dto, getClientMeta(req));
     this.setSessionCookie(res, result.token);
     return ok(result, 'Đăng ký thành công');
   }
@@ -216,10 +220,11 @@ export class AuthController {
   @Post('email/login')
   async loginPassword(
     @Body() dto: LoginPasswordDto,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
     const account = String(dto.account || dto.email || '').trim();
-    const result = await this.auth.loginWithPassword(account, dto.password);
+    const result = await this.auth.loginWithPassword(account, dto.password, getClientMeta(req));
     this.setSessionCookie(res, result.token);
     return ok(result, 'Đăng nhập thành công');
   }
@@ -240,9 +245,10 @@ export class AuthController {
   @Post('email/reset')
   async resetPassword(
     @Body() dto: ResetPasswordDto,
+    @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const result = await this.auth.resetPassword(dto);
+    const result = await this.auth.resetPassword(dto, getClientMeta(req));
     this.setSessionCookie(res, result.token);
     return ok(result, 'Đặt lại mật khẩu thành công');
   }
@@ -268,6 +274,23 @@ export class AuthController {
     if (!payload) return ok(null);
     const sess = await this.prisma.session.findUnique({ where: { id: payload.sessionId } });
     if (!sess || sess.expiresAt < new Date()) return ok(null);
+
+    // Backfill geo on older sessions that were created before IP capture
+    if (!sess.ipAddress || !sess.country) {
+      const geo = await enrichClientMeta(getClientMeta(req));
+      if (geo.ipAddress || geo.country || geo.city) {
+        await this.prisma.session.update({
+          where: { id: sess.id },
+          data: {
+            ipAddress: sess.ipAddress || geo.ipAddress,
+            country: sess.country || geo.country,
+            city: sess.city || geo.city,
+            userAgent: sess.userAgent || geo.userAgent,
+          },
+        });
+      }
+    }
+
     const profile = await this.auth.getSession(BigInt(payload.userId));
     return ok(profile);
   }

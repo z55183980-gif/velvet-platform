@@ -5,45 +5,41 @@ import { usePathname } from "next/navigation";
 import { Navbar } from "@/components/navbar";
 import { Footer } from "@/components/footer";
 import { BottomTabBar } from "@/components/mobile/bottom-tab-bar";
-import { useIsMobile } from "@/hooks/use-is-mobile";
 import { cn } from "@/lib/utils";
 
-function isImmersivePlay(pathname: string | null) {
+function isDramaPath(pathname: string | null) {
   if (!pathname) return false;
   return pathname === "/drama" || pathname.startsWith("/drama/");
 }
 
-/** Consumer chrome (Navbar/Footer/BottomTab). */
+/** Consumer chrome (Navbar/Footer/BottomTab). CSS-responsive — no JS breakpoint flash. */
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const isMobile = useIsMobile();
-
-  const immersive = isMobile && isImmersivePlay(pathname);
-  const showBottomTab = isMobile && !immersive;
-  const showFooter = !isMobile;
-  const showNavbar = !immersive;
+  const onDrama = isDramaPath(pathname);
 
   return (
     <>
-      {showNavbar && (
-        <Suspense
-          fallback={
-            <header className="sticky top-0 z-50 h-12 bg-base/70 backdrop-blur-xl md:h-16" />
-          }
-        >
-          <Navbar variant={isMobile ? "mobile" : "desktop"} />
-        </Suspense>
-      )}
+      <Suspense
+        fallback={
+          <header className="sticky top-0 z-50 h-12 bg-base/70 backdrop-blur-xl md:h-16" />
+        }
+      >
+        <Navbar />
+      </Suspense>
       <main
         className={cn(
-          showBottomTab && "pb-[calc(3.5rem+env(safe-area-inset-bottom))]",
-          immersive && "min-h-dvh bg-black",
+          !onDrama && "pb-[calc(3.5rem+env(safe-area-inset-bottom))] md:pb-0",
+          onDrama && "max-md:bg-base",
         )}
       >
         {children}
       </main>
-      {showFooter && <Footer />}
-      {showBottomTab && <BottomTabBar />}
+      {/* Footer desktop-only via CSS — always mounted to avoid hydration layout jump */}
+      <div className="hidden md:block">
+        <Footer />
+      </div>
+      {/* Bottom tabs mobile-only; already has md:hidden. Hidden on drama detail. */}
+      {!onDrama && <BottomTabBar />}
     </>
   );
 }

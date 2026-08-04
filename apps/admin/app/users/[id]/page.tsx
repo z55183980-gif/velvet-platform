@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { adminForceLogout, adminGetUser, adminSetUserStatus, adminSetUserVip, adminWalletAdjust } from "@velvet/api-client";
 import { Button, DataTable, Input, StatCard, fmtDate, fmtNum, type Column } from "@velvet/ui";
 import { AdminShell } from "@/components/admin-shell";
+import { useI18n, statusLabel, type LabelKey } from "@/lib/i18n";
 
 type RecordRow = { id?: string | number; [key: string]: unknown };
 type User = {
@@ -17,13 +18,43 @@ type User = {
 };
 type Detail = { user?: User; transactions?: RecordRow[]; orders?: RecordRow[] };
 
-function Section({ title, rows, fields }: { title: string; rows?: RecordRow[]; fields: string[] }) {
+const FIELD_LABEL_KEYS: Record<string, LabelKey> = {
+  id: "colId",
+  type: "colType",
+  amountCredits: "colCredits",
+  balanceAfter: "colAfter",
+  remark: "colRemark",
+  createdAt: "colCreated",
+  orderNo: "colOrderNo",
+  orderType: "colType",
+  paymentStatus: "status",
+  amountVnd: "colAmount",
+  ipAddress: "ipAddress",
+  country: "colCountry",
+  city: "colCity",
+  expiresAt: "colExpires",
+};
+
+function Section({
+  title,
+  rows,
+  fields,
+  t,
+  locale,
+}: {
+  title: string;
+  rows?: RecordRow[];
+  fields: string[];
+  t: ReturnType<typeof useI18n>["t"];
+  locale: string;
+}) {
   const columns: Column<RecordRow>[] = fields.map((field) => ({
     key: field,
-    header: field,
+    header: FIELD_LABEL_KEYS[field] ? t(FIELD_LABEL_KEYS[field]) : field,
     cell: (row) => {
       const value = row[field];
-      if (field.includes("At") || field === "expiresAt") return fmtDate(value as string);
+      if (field === "paymentStatus" && typeof value === "string") return statusLabel(t, value);
+      if (field.includes("At") || field === "expiresAt") return fmtDate(value as string, locale === "en" ? "en-US" : "zh-CN");
       if (/amount|balance|Credits|Vnd/i.test(field)) return fmtNum(value as number);
       return String(value ?? "—");
     },
@@ -33,6 +64,7 @@ function Section({ title, rows, fields }: { title: string; rows?: RecordRow[]; f
 }
 
 export default function AdminUserDetailPage() {
+  const { t, locale } = useI18n();
   const id = String(useParams().id);
   const qc = useQueryClient();
   const [reason, setReason] = useState("");
@@ -53,46 +85,49 @@ export default function AdminUserDetailPage() {
   });
   const act = (action: () => Promise<unknown>) => actionMut.mutate(action);
   const user = detailQ.data?.user;
+  const dateLocale = locale === "en" ? "en-US" : "zh-CN";
+
+  const sectionsProps = useMemo(() => ({ t, locale }), [t, locale]);
 
   return (
-    <AdminShell title={user?.nickname || user?.email || "用户详情"}>
-      <Link href="/users" className="mb-4 inline-block text-body-sm text-ink-muted hover:text-ink">← 返回用户列表</Link>
+    <AdminShell title={user?.nickname || user?.email || t("userDetail")}>
+      <Link href="/users" className="mb-4 inline-block text-body-sm text-ink-muted hover:text-ink">← {t("backToUsers")}</Link>
       {error || detailQ.error ? <p className="mb-3 text-body-sm text-danger">{error || (detailQ.error as Error).message}</p> : null}
-      {detailQ.isLoading ? <p className="text-ink-muted">加载中…</p> : null}
+      {detailQ.isLoading ? <p className="text-ink-muted">{t("loading")}</p> : null}
       {user ? (
         <>
           <div className="mb-6 grid gap-3 sm:grid-cols-3">
-            <StatCard label="积分余额" value={fmtNum(user.wallet?.balanceCredits)} />
-            <StatCard label="累计充值" value={fmtNum(user.wallet?.totalRechargedCredits)} />
-            <StatCard label="累计消费" value={fmtNum(user.wallet?.totalSpentCredits)} />
+            <StatCard label={t("creditBalance")} value={fmtNum(user.wallet?.balanceCredits)} />
+            <StatCard label={t("totalRecharged")} value={fmtNum(user.wallet?.totalRechargedCredits)} />
+            <StatCard label={t("totalSpent")} value={fmtNum(user.wallet?.totalSpentCredits)} />
           </div>
-          <div className="mb-6 space-y-3 rounded-lg border border-line bg-surface p-4 text-body-sm">
-            <p>ID {String(user.id)} · {user.email || "—"} · {user.phone || "—"} · {user.locale || "—"} · <strong>{user.status}</strong></p>
-            <p className="text-caption text-ink-muted">注册时间 {fmtDate(user.createdAt)}</p>
+          <div className="mb-6 space-y-3 card glass-card p-4 text-body-sm">
+            <p>ID {String(user.id)} · {user.email || "—"} · {user.phone || "—"} · {user.locale || "—"} · <strong>{statusLabel(t, user.status)}</strong></p>
+            <p className="text-caption text-ink-muted">{t("registeredAt")} {fmtDate(user.createdAt, dateLocale)}</p>
             <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3">
-              <Input className="w-56" placeholder="状态变更理由" value={reason} onChange={(e) => setReason(e.target.value)} />
+              <Input className="w-56" placeholder={t("statusChangeReason")} value={reason} onChange={(e) => setReason(e.target.value)} />
               {(["ACTIVE", "SUSPENDED", "BANNED"] as const).map((status) => (
-                <Button key={status} size="sm" variant={status === "ACTIVE" ? "primary" : "danger"} disabled={actionMut.isPending} onClick={() => act(() => adminSetUserStatus(id, status, reason || (status === "ACTIVE" ? "restore" : "")))}>{status}</Button>
+                <Button key={status} size="sm" variant={status === "ACTIVE" ? "primary" : "danger"} disabled={actionMut.isPending} onClick={() => act(() => adminSetUserStatus(id, status, reason || (status === "ACTIVE" ? "restore" : "")))}>{statusLabel(t, status)}</Button>
               ))}
-              <Button size="sm" variant="secondary" disabled={actionMut.isPending} onClick={() => act(() => adminForceLogout(id))}>强制登出</Button>
+              <Button size="sm" variant="secondary" disabled={actionMut.isPending} onClick={() => act(() => adminForceLogout(id))}>{t("forceLogout")}</Button>
             </div>
             <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3">
-              <span>VIP 到期：{user.vipExpireAt ? fmtDate(user.vipExpireAt) : "未开通"}</span>
+              <span>{t("vipExpiry")}：{user.vipExpireAt ? fmtDate(user.vipExpireAt, dateLocale) : t("notActivated")}</span>
               <Input type="number" className="w-28" value={extendDays} onChange={(e) => setExtendDays(Number(e.target.value))} />
-              <Button size="sm" disabled={actionMut.isPending} onClick={() => act(() => adminSetUserVip(id, { extendDays }))}>延长 VIP</Button>
+              <Button size="sm" disabled={actionMut.isPending} onClick={() => act(() => adminSetUserVip(id, { extendDays }))}>{t("extendVip")}</Button>
               <Input type="datetime-local" className="w-52" value={vipDate} onChange={(e) => setVipDate(e.target.value)} />
-              <Button size="sm" variant="secondary" disabled={actionMut.isPending} onClick={() => act(() => adminSetUserVip(id, { vipExpireAt: vipDate ? new Date(vipDate).toISOString() : null }))}>设置到期</Button>
-              <Button size="sm" variant="ghost" disabled={actionMut.isPending} onClick={() => act(() => adminSetUserVip(id, { vipExpireAt: null }))}>清空 VIP</Button>
+              <Button size="sm" variant="secondary" disabled={actionMut.isPending} onClick={() => act(() => adminSetUserVip(id, { vipExpireAt: vipDate ? new Date(vipDate).toISOString() : null }))}>{t("setExpire")}</Button>
+              <Button size="sm" variant="ghost" disabled={actionMut.isPending} onClick={() => act(() => adminSetUserVip(id, { vipExpireAt: null }))}>{t("clearVip")}</Button>
             </div>
             <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3">
-              <Input type="number" className="w-28" value={delta} onChange={(e) => setDelta(Number(e.target.value))} placeholder="±积分" />
-              <Input className="w-48" value={adjustReason} onChange={(e) => setAdjustReason(e.target.value)} placeholder="调账理由" />
-              <Button size="sm" disabled={actionMut.isPending} onClick={() => act(() => adminWalletAdjust(id, delta, adjustReason))}>调整余额</Button>
+              <Input type="number" className="w-28" value={delta} onChange={(e) => setDelta(Number(e.target.value))} placeholder={t("adjustCreditsPlaceholder")} />
+              <Input className="w-48" value={adjustReason} onChange={(e) => setAdjustReason(e.target.value)} placeholder={t("adjustReasonPlaceholder")} />
+              <Button size="sm" disabled={actionMut.isPending} onClick={() => act(() => adminWalletAdjust(id, delta, adjustReason))}>{t("adjustBalance")}</Button>
             </div>
           </div>
-          <Section title="近期流水" rows={detailQ.data?.transactions} fields={["type", "amountCredits", "balanceAfter", "remark", "createdAt"]} />
-          <Section title="订单" rows={detailQ.data?.orders} fields={["orderNo", "orderType", "paymentStatus", "amountVnd", "createdAt"]} />
-          <Section title="会话" rows={user.sessions} fields={["id", "ipAddress", "createdAt", "expiresAt"]} />
+          <Section title={t("recentTransactions")} rows={detailQ.data?.transactions} fields={["type", "amountCredits", "balanceAfter", "remark", "createdAt"]} {...sectionsProps} />
+          <Section title={t("ordersSection")} rows={detailQ.data?.orders} fields={["orderNo", "orderType", "paymentStatus", "amountVnd", "createdAt"]} {...sectionsProps} />
+          <Section title={t("sessions")} rows={user.sessions} fields={["id", "ipAddress", "country", "city", "createdAt", "expiresAt"]} {...sectionsProps} />
         </>
       ) : null}
     </AdminShell>

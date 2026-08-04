@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocale } from "@/lib/i18n";
 import { useAuth } from "@/components/auth-context";
 import { VerticalPlayer } from "@/components/mobile/vertical-player";
-import { getPlayUrl, loadDramaDetail } from "@/lib/api";
+import { getPlayUrl, loadDramaDetail, type DramaDetailPayload } from "@/lib/api";
 import type { Drama, Episode } from "@/lib/mock-data";
 import { pickContentText } from "@/lib/languages";
 import { formatCredits } from "@/lib/utils";
@@ -16,6 +16,27 @@ function isUrl(s: string) {
 
 function isHls(url: string) {
   return /\.m3u8(\?|$)/i.test(url);
+}
+
+type FeedEntry = {
+  detail: DramaDetailPayload;
+  episode: Episode | null;
+};
+
+const detailCache = new Map<string, FeedEntry>();
+
+function pickEpisode(detail: DramaDetailPayload): Episode | null {
+  return detail.episodes.find((e) => e.isFree || e.unlocked) ?? detail.episodes[0] ?? null;
+}
+
+async function ensureDetail(dramaId: string, signal?: AbortSignal): Promise<FeedEntry | null> {
+  const hit = detailCache.get(dramaId);
+  if (hit) return hit;
+  const detail = await loadDramaDetail(dramaId, { signal });
+  if (!detail) return null;
+  const entry: FeedEntry = { detail, episode: pickEpisode(detail) };
+  detailCache.set(dramaId, entry);
+  return entry;
 }
 
 export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
@@ -53,35 +74,40 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
 
   const drama = dramas[index] ?? null;
 
+  // Load current + prefetch neighbors
   useEffect(() => {
     if (!drama) return;
-    let cancelled = false;
-    setEpisode(null);
-    setPlayUrl(null);
+    const ac = new AbortController();
+    const cached = detailCache.get(drama.id);
+    if (cached) {
+      setEpisode(cached.episode);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     setPlayErr(null);
-    setLoading(true);
 
-    void loadDramaDetail(drama.id)
-      .then((detail) => {
-        if (cancelled || !detail) {
-          if (!cancelled) setLoading(false);
-          return;
-        }
-        const ep =
-          detail.episodes.find((e) => e.isFree || e.unlocked) ??
-          detail.episodes[0] ??
-          null;
-        setEpisode(ep);
+    void ensureDetail(drama.id, ac.signal)
+      .then((entry) => {
+        if (ac.signal.aborted || !entry) return;
+        setEpisode(entry.episode);
         setLoading(false);
       })
       .catch(() => {
-        if (!cancelled) setLoading(false);
+        if (!ac.signal.aborted) setLoading(false);
       });
 
-    return () => {
-      cancelled = true;
-    };
-  }, [drama?.id]);
+    // Prefetch ±1
+    const prevId = dramas[index - 1]?.id;
+    const nextId = dramas[index + 1]?.id;
+    for (const id of [prevId, nextId]) {
+      if (id && !detailCache.has(id)) {
+        void ensureDetail(id).catch(() => {});
+      }
+    }
+
+    return () => ac.abort();
+  }, [drama?.id, index, dramas]);
 
   useEffect(() => {
     if (!episode || !(episode.isFree || episode.unlocked)) {
@@ -92,25 +118,24 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
       setPlayUrl(null);
       return;
     }
-    let alive = true;
-    setPlayUrl(null);
+    const ac = new AbortController();
+    // Keep previous frame while next URL loads — only show spinner if no url yet
+    if (!playUrl) setLoading(true);
     setPlayErr(null);
-    setLoading(true);
-    getPlayUrl(String(episode.id))
+    getPlayUrl(String(episode.id), { signal: ac.signal })
       .then((r) => {
-        if (!alive) return;
+        if (ac.signal.aborted) return;
         setPlayUrl(r.playUrl);
         setLoading(false);
       })
       .catch((e) => {
-        if (!alive) return;
+        if (ac.signal.aborted) return;
         setPlayErr(e?.message || t("player.error"));
         setLoading(false);
       });
-    return () => {
-      alive = false;
-    };
-  }, [episode?.id, episode?.isFree, episode?.unlocked, authReady, user, locale]);
+    return () => ac.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [episode?.id, episode?.isFree, episode?.unlocked, authReady, user]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -145,6 +170,11 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
       hls?.destroy();
     };
   }, [playUrl]);
+
+  // Clear play URL when drama index changes (new item)
+  useEffect(() => {
+    setPlayUrl(null);
+  }, [drama?.id]);
 
   if (dramas.length === 0) {
     return (

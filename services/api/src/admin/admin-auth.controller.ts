@@ -11,6 +11,7 @@ import {
 import { Response } from 'express';
 import { IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
 import { AdminAuthService } from './admin-auth.service';
+import { AdminCaptchaService } from './admin-captcha.service';
 import { AdminGuard } from './admin.guard';
 import { ok } from '../common/response';
 import { BizException, BizCode } from '../common/biz.exception';
@@ -32,6 +33,14 @@ class LoginDto {
   @IsNotEmpty()
   @IsString()
   password!: string;
+
+  @IsOptional()
+  @IsString()
+  captchaId?: string;
+
+  @IsOptional()
+  @IsString()
+  captchaCode?: string;
 }
 
 class BootstrapDto {
@@ -76,10 +85,19 @@ class ProfileDto {
 
 @Controller('v1/admin/auth')
 export class AdminAuthController {
-  constructor(private readonly auth: AdminAuthService) {}
+  constructor(
+    private readonly auth: AdminAuthService,
+    private readonly captcha: AdminCaptchaService,
+  ) {}
+
+  @Get('captcha')
+  async captchaChallenge() {
+    return ok(this.captcha.issue());
+  }
 
   @Post('login')
   async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
+    this.captcha.verify(dto.captchaId || '', dto.captchaCode || '');
     const account = dto.account || dto.email || dto.username || '';
     const result = await this.auth.login(account, dto.password);
     this.setCookie(res, result.token);

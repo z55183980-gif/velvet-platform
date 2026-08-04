@@ -1,11 +1,14 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import { Lock, Play } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import type { Episode } from "@/lib/mock-data";
 import { pickContentText } from "@/lib/languages";
 import { formatCredits } from "@/lib/utils";
 import { cn } from "@/lib/utils";
+
+const SEG_SIZE = 30;
 
 export function EpisodeList({
   episodes,
@@ -22,23 +25,101 @@ export function EpisodeList({
   onSelect?: (ep: Episode) => void;
   isUnlocked?: (ep: Episode) => boolean;
   selectedNo?: number;
-  layout?: "list" | "rail";
+  layout?: "list" | "rail" | "grid";
 }) {
   const { locale, t } = useLocale();
   const epTitle = (ep: Episode) => pickContentText(locale, ep.titleVi, ep.titleZh);
   const unlocked = (ep: Episode) =>
     isUnlocked?.(ep) ?? !!(ep.isFree || ep.unlocked);
 
+  const segments = useMemo(() => {
+    const total = episodesCount ?? episodes.length;
+    const count = Math.max(1, Math.ceil(total / SEG_SIZE));
+    return Array.from({ length: count }, (_, i) => {
+      const start = i * SEG_SIZE + 1;
+      const end = Math.min((i + 1) * SEG_SIZE, total);
+      return { start, end, label: `${start}-${end}` };
+    });
+  }, [episodes.length, episodesCount]);
+
+  const [segIndex, setSegIndex] = useState(0);
+  const activeSeg = segments[Math.min(segIndex, segments.length - 1)] ?? segments[0];
+  const gridEpisodes =
+    layout === "grid" && activeSeg
+      ? episodes.filter((ep) => ep.no >= activeSeg.start && ep.no <= activeSeg.end)
+      : episodes;
+
   return (
     <section>
-      <div className="mb-5 flex items-baseline justify-between">
-        <h2 className="text-h3 font-semibold text-ink">{t("detail.episodeList")}</h2>
+      <div className="mb-4 flex items-baseline justify-between">
+        <h2 className="text-[20px] font-medium text-ink/95">{t("detail.episodeList")}</h2>
         <span className="text-caption text-ink-muted">
           {episodesCount ?? episodes.length} {t("card.episodes")}
         </span>
       </div>
 
-      {layout === "rail" ? (
+      {layout === "grid" ? (
+        <>
+          {segments.length > 1 && (
+            <div
+              className={cn(
+                "mb-3 flex gap-1 overflow-x-auto",
+                "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+              )}
+            >
+              {segments.map((seg, i) => (
+                <button
+                  key={seg.label}
+                  type="button"
+                  onClick={() => setSegIndex(i)}
+                  className={cn(
+                    "flex h-10 min-w-[4.5rem] shrink-0 items-center justify-center px-3 text-[14px] font-medium transition-colors",
+                    i === segIndex ? "text-white" : "text-white/40",
+                  )}
+                >
+                  {seg.label}
+                </button>
+              ))}
+            </div>
+          )}
+          <ul
+            className={cn(
+              "grid max-h-[420px] grid-cols-5 gap-2 overflow-y-auto sm:grid-cols-6 md:flex md:max-h-[700px] md:flex-wrap md:gap-x-[17px] md:gap-y-4",
+              "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+            )}
+          >
+            {gridEpisodes.map((ep) => {
+              const canPlay = unlocked(ep);
+              const active = selectedNo === ep.no;
+              return (
+                <li key={ep.no} className="md:w-auto">
+                  <button
+                    type="button"
+                    onClick={() => (canPlay ? onSelect?.(ep) : onUnlock(ep))}
+                    className={cn(
+                      "relative flex aspect-square w-full items-center justify-center rounded-lg text-[14px] transition-colors duration-150 md:aspect-auto md:h-12 md:w-[120px] md:text-[16px] md:tracking-wide",
+                      active
+                        ? "bg-white/20 text-white"
+                        : "bg-white/[0.06] text-white/90 hover:bg-white/20",
+                    )}
+                    title={canPlay ? undefined : formatCredits(ep.price, t("card.credits"))}
+                  >
+                    {!canPlay && (
+                      <span className="absolute right-0 top-0 flex h-4 w-5 items-center justify-center rounded-bl-lg rounded-tr-lg bg-white/[0.07] md:left-0 md:right-auto md:rounded-br-lg md:rounded-tl-lg md:rounded-tr-none">
+                        <Lock className="h-2.5 w-2.5 text-white/70" />
+                      </span>
+                    )}
+                    <span className="opacity-90 md:hidden">{ep.no}</span>
+                    <span className="hidden opacity-90 md:inline">
+                      {t("detail.episodeLabel", { n: ep.no })}
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      ) : layout === "rail" ? (
         <ul
           className={cn(
             "flex gap-2.5 overflow-x-auto pb-2",

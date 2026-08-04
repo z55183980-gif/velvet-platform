@@ -1,110 +1,148 @@
 @import "tailwindcss";
 
 /* ============================================================
-   Velvet Design Tokens — sourced from docs/05-UI设计系统.md
-   Dark cinematic-first. All values flow from tokens; no magic
-   numbers in components.
+   Ops Velvet — visual language aligned with local zai admin
+   Light frosted-glass console, iOS blue accent.
    ============================================================ */
 @theme {
-  /* ---- Color (OKLCH, stable contrast) ---- */
-  --color-base: oklch(0.16 0.005 250);          /* page background  #0B0D12 */
-  --color-surface: oklch(0.20 0.006 250);       /* card / panel     #15171C */
-  --color-surface-2: oklch(0.25 0.007 250);     /* hover / nested   #1C1F26 */
-  --color-surface-3: oklch(0.31 0.008 250);     /* input / divider  #282C34 */
+  --color-base: #e4ecf4;
+  --color-surface: #ffffff;
+  --color-surface-2: #f1f5f9;
+  --color-surface-3: #e2e8f0;
 
-  --color-ink: oklch(0.97 0.003 250);           /* primary text     #F5F6F8 */
-  --color-ink-muted: oklch(0.72 0.006 250);     /* secondary text   #B6BAC2 */
-  --color-ink-subtle: oklch(0.56 0.007 250);    /* hint / placeholder */
+  --color-ink: #0f1419;
+  --color-ink-muted: #475569;
+  --color-ink-subtle: #64748b;
 
-  --color-brand: oklch(0.68 0.19 18);           /* coral-red CTA    */
-  --color-brand-strong: oklch(0.62 0.20 18);    /* hover / pressed  */
-  --color-brand-soft: oklch(0.68 0.19 18 / 0.14);
+  --color-brand: #007aff;
+  --color-brand-strong: #0062cc;
+  --color-brand-soft: rgba(0, 122, 255, 0.15);
 
-  --color-gold: oklch(0.82 0.12 85);            /* VIP / premium only */
-  --color-gold-soft: oklch(0.82 0.12 85 / 0.16);
+  --color-accent: #007aff;
+  --color-accent-hover: #0062cc;
+  --color-accent-light: rgba(0, 122, 255, 0.15);
+  --color-accent-glow: rgba(0, 122, 255, 0.25);
 
-  --color-success: oklch(0.72 0.15 150);
-  --color-warning: oklch(0.78 0.14 75);
-  --color-danger: oklch(0.62 0.20 25);
-  --color-info: oklch(0.70 0.12 230);
+  --color-panel: #f1f5f9;
 
-  --color-line: oklch(1 0 0 / 0.08);            /* border / divider */
-  --color-line-strong: oklch(1 0 0 / 0.16);
+  --color-gold: #b45309;
+  --color-gold-soft: rgba(180, 83, 9, 0.12);
 
-  /* ---- Font ---- */
-  --font-sans: "Plus Jakarta Sans", "Inter", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+  --color-success: #047857;
+  --color-warning: #b45309;
+  --color-danger: #be123c;
+  --color-info: #0369a1;
 
-  /* ---- Type scale (size + leading + tracking baked in) ---- */
-  --text-display: 3.5rem;        --text-display--line-height: 1.1;   --text-display--letter-spacing: -0.02em; --text-display--font-weight: 700;
-  --text-h1: 2.5rem;             --text-h1--line-height: 1.1;        --text-h1--letter-spacing: -0.02em;      --text-h1--font-weight: 700;
-  --text-h2: 2rem;               --text-h2--line-height: 1.15;       --text-h2--letter-spacing: -0.01em;      --text-h2--font-weight: 700;
-  --text-h3: 1.5rem;             --text-h3--line-height: 1.2;        --text-h3--letter-spacing: -0.01em;      --text-h3--font-weight: 600;
-  --text-h4: 1.25rem;            --text-h4--line-height: 1.3;        --text-h4--letter-spacing: 0;            --text-h4--font-weight: 600;
-  --text-body-lg: 1.125rem;      --text-body-lg--line-height: 1.7;   --text-body-lg--font-weight: 400;
-  --text-body: 1rem;             --text-body--line-height: 1.65;     --text-body--font-weight: 400;
-  --text-body-sm: 0.875rem;      --text-body-sm--line-height: 1.6;   --text-body-sm--font-weight: 400;
-  --text-caption: 0.75rem;       --text-caption--line-height: 1.5;   --text-caption--font-weight: 500;
-  --text-overline: 0.75rem;      --text-overline--line-height: 1.4;  --text-overline--letter-spacing: 0.1em;  --text-overline--font-weight: 600;
+  --color-line: rgba(15, 20, 25, 0.08);
+  --color-line-strong: rgba(15, 20, 25, 0.16);
 
-  /* ---- Radius ---- */
+  --font-sans: -apple-system, BlinkMacSystemFont, Inter, ui-sans-serif, system-ui, "Segoe UI",
+    "PingFang SC", "Noto Sans SC", sans-serif;
+
+  --text-display: 3.5rem;
+  --text-display--line-height: 1.1;
+  --text-display--letter-spacing: -0.02em;
+  --text-display--font-weight: 700;
+  --text-h1: 2.5rem;
+  --text-h1--line-height: 1.1;
+  --text-h1--letter-spacing: -0.02em;
+  --text-h1--font-weight: 700;
+  --text-h2: 2rem;
+  --text-h2--line-height: 1.15;
+  --text-h2--letter-spacing: -0.01em;
+  --text-h2--font-weight: 700;
+  --text-h3: 1.5rem;
+  --text-h3--line-height: 1.2;
+  --text-h3--letter-spacing: -0.01em;
+  --text-h3--font-weight: 600;
+  --text-h4: 1.25rem;
+  --text-h4--line-height: 1.3;
+  --text-h4--letter-spacing: 0;
+  --text-h4--font-weight: 600;
+  --text-body-lg: 1.125rem;
+  --text-body-lg--line-height: 1.7;
+  --text-body-lg--font-weight: 400;
+  --text-body: 1rem;
+  --text-body--line-height: 1.65;
+  --text-body--font-weight: 400;
+  --text-body-sm: 0.875rem;
+  --text-body-sm--line-height: 1.6;
+  --text-body-sm--font-weight: 400;
+  --text-caption: 0.75rem;
+  --text-caption--line-height: 1.5;
+  --text-caption--font-weight: 500;
+  --text-overline: 0.75rem;
+  --text-overline--line-height: 1.4;
+  --text-overline--letter-spacing: 0.1em;
+  --text-overline--font-weight: 600;
+
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
-  --radius-xl: 20px;
+  --radius-xl: 0.875rem;
+  --radius-2xl: 1rem;
+  --radius-3xl: 1.25rem;
   --radius-full: 999px;
 
-  /* ---- Shadow (soft, layered — the "premium" depth) ---- */
-  --shadow-1: 0 1px 2px oklch(0 0 0 / 0.06), 0 1px 3px oklch(0 0 0 / 0.10);
-  --shadow-2: 0 4px 12px oklch(0 0 0 / 0.10), 0 2px 4px oklch(0 0 0 / 0.06);
-  --shadow-3: 0 12px 32px oklch(0 0 0 / 0.16), 0 4px 8px oklch(0 0 0 / 0.08);
-  --shadow-brand: 0 8px 24px oklch(0.68 0.19 18 / 0.35);
+  --shadow-1: 0 1px 2px rgba(15, 20, 25, 0.04), 0 1px 3px rgba(15, 20, 25, 0.06);
+  --shadow-2: 0 4px 24px rgba(15, 20, 25, 0.06);
+  --shadow-3: 0 12px 32px rgba(15, 20, 25, 0.08);
+  --shadow-brand: 0 2px 8px rgba(0, 122, 255, 0.28);
 
-  /* ---- Spacing semantic scale (docs §4.2) ----
-     Use --space-* NOT --spacing-*: in Tailwind v4, --spacing-xl/md/…
-     collide with max-w-xl / max-w-md (they resolve to those tokens). */
-  --space-xs: 0.25rem;   /* 4px */
-  --space-sm: 0.5rem;    /* 8px */
-  --space-md: 1rem;      /* 16px */
-  --space-lg: 1.5rem;    /* 24px */
-  --space-xl: 2.5rem;    /* 40px */
-  --space-2xl: 4rem;     /* 64px — section rhythm */
-  --space-3xl: 6rem;     /* 96px — hero breathing */
+  --space-xs: 0.25rem;
+  --space-sm: 0.5rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2.5rem;
+  --space-2xl: 4rem;
+  --space-3xl: 6rem;
 
-  /* ---- Motion ---- */
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
   --dur-fast: 150ms;
   --dur-base: 220ms;
   --dur-slow: 320ms;
 }
 
-@layer base {
-  :root {
-    color-scheme: dark;
-    text-rendering: optimizeLegibility;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    /* Vietnamese diacritics: keep ligatures + kerning on */
-    font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
-  }
+:root {
+  color-scheme: light;
+  color: #0f1419;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
 
+  --glass-fill: rgba(255, 255, 255, 0.68);
+  --glass-fill-strong: rgba(255, 255, 255, 0.78);
+  --glass-blur: 20px;
+  --glass-saturate: 160%;
+  --glass-border: rgba(255, 255, 255, 0.72);
+  --glass-divider: rgba(255, 255, 255, 0.5);
+  --glass-shadow: 0 4px 24px rgba(15, 20, 25, 0.06);
+  --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.88);
+}
+
+@layer base {
   * {
     border-color: var(--color-line);
   }
 
   body {
-    background: var(--color-base);
+    margin: 0;
+    min-width: 320px;
+    background: transparent;
     color: var(--color-ink);
     font-family: var(--font-sans);
     line-height: 1.65;
     font-size: 16px;
   }
 
-  /* International feel + diacritic safety: any uppercase label gets tracking */
-  .uppercase {
-    letter-spacing: 0.1em;
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
   }
 
-  /* Focus ring is mandatory — keyboard users must see where they are */
   :focus-visible {
     outline: 2px solid var(--color-brand);
     outline-offset: 2px;
@@ -112,23 +150,218 @@
   }
 }
 
-/* Light theme — same coral brand, cooler ink on soft slate surface */
-html.light,
-html[data-theme="light"] {
-  color-scheme: light;
-  --color-base: oklch(0.97 0.004 250);
-  --color-surface: oklch(1 0.002 250);
-  --color-surface-2: oklch(0.95 0.005 250);
-  --color-surface-3: oklch(0.92 0.006 250);
-  --color-ink: oklch(0.22 0.02 250);
-  --color-ink-muted: oklch(0.42 0.015 250);
-  --color-ink-subtle: oklch(0.55 0.01 250);
-  --color-line: oklch(0.2 0.01 250 / 0.12);
-  --color-line-strong: oklch(0.2 0.01 250 / 0.22);
-  --color-brand-soft: oklch(0.68 0.19 18 / 0.12);
-  --shadow-1: 0 1px 2px oklch(0 0 0 / 0.04), 0 1px 3px oklch(0 0 0 / 0.06);
-  --shadow-2: 0 4px 12px oklch(0 0 0 / 0.06), 0 2px 4px oklch(0 0 0 / 0.04);
-  --shadow-3: 0 12px 32px oklch(0 0 0 / 0.08), 0 4px 8px oklch(0 0 0 / 0.04);
+@layer components {
+  .glass-bg {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(ellipse 70% 55% at 15% 18%, rgba(147, 180, 255, 0.2), transparent 58%),
+      radial-gradient(ellipse 60% 50% at 85% 82%, rgba(180, 160, 255, 0.14), transparent 55%),
+      linear-gradient(160deg, #e4ecf4 0%, #ece8f2 48%, #e2edf6 100%);
+  }
+
+  .glass {
+    background: var(--glass-fill);
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow), var(--glass-highlight);
+  }
+
+  .glass-sidebar {
+    position: relative;
+    isolation: isolate;
+    border-right: 1px solid var(--glass-divider);
+  }
+
+  .glass-sidebar::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background: var(--glass-fill);
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+    box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.45);
+  }
+
+  .glass-sidebar > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  .glass-sidebar-content {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  .glass-header {
+    position: relative;
+    isolation: isolate;
+  }
+
+  .glass-header::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background: var(--glass-fill);
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+    border-bottom: 1px solid var(--glass-divider);
+    box-shadow: var(--glass-highlight);
+  }
+
+  .glass-header > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  .glass-card {
+    position: relative;
+    isolation: isolate;
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--glass-shadow), var(--glass-highlight);
+  }
+
+  .glass-card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    border-radius: inherit;
+    background: var(--glass-fill);
+    backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturate));
+  }
+
+  .glass-card > * {
+    position: relative;
+    z-index: 1;
+  }
+
+  .glass-modal {
+    background: var(--glass-fill-strong);
+    backdrop-filter: blur(calc(var(--glass-blur) + 4px)) saturate(var(--glass-saturate));
+    -webkit-backdrop-filter: blur(calc(var(--glass-blur) + 4px)) saturate(var(--glass-saturate));
+    border: 1px solid var(--glass-border);
+    box-shadow: 0 24px 80px rgba(15, 20, 25, 0.12), var(--glass-highlight);
+  }
+
+  .glass-nav-hover {
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+
+  .glass-nav-hover:hover {
+    background: rgba(255, 255, 255, 0.42);
+  }
+
+  .glass-nav-active {
+    background: rgba(255, 255, 255, 0.55);
+    color: #007aff;
+    box-shadow: inset 0 0 0 1px rgba(0, 122, 255, 0.2);
+  }
+
+  .btn-primary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border-radius: 0.875rem;
+    background: var(--color-brand);
+    padding: 0 1rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: #fff;
+    transition: background 0.15s ease;
+    box-shadow: 0 2px 8px rgba(0, 122, 255, 0.28);
+  }
+
+  .btn-primary:hover {
+    background: var(--color-brand-strong);
+  }
+
+  .btn-primary:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
+  .input-field,
+  .input-field-lg {
+    width: 100%;
+    border-radius: 0.875rem;
+    border: 1px solid var(--glass-border);
+    padding: 0 0.75rem;
+    font-size: 0.875rem;
+    color: var(--color-ink);
+    outline: none;
+    transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+    background: rgba(255, 255, 255, 0.52);
+    backdrop-filter: blur(12px) saturate(var(--glass-saturate));
+    -webkit-backdrop-filter: blur(12px) saturate(var(--glass-saturate));
+    box-shadow: inset 0 1px 2px rgba(15, 20, 25, 0.04);
+  }
+
+  .input-field {
+    height: 2.5rem;
+  }
+
+  .input-field-lg {
+    height: 2.75rem;
+  }
+
+  .input-field::placeholder,
+  .input-field-lg::placeholder {
+    color: #94a3b8;
+  }
+
+  .input-field:focus,
+  .input-field-lg:focus {
+    border-color: rgba(0, 122, 255, 0.45);
+    background: rgba(255, 255, 255, 0.68);
+    box-shadow: 0 0 0 2px var(--color-accent-light);
+  }
+
+  .card {
+    border-radius: 1rem;
+  }
+
+  /*
+   * List pages: stretch DataTable (loading / empty / table) to fill remaining
+   * viewport height. Only direct .admin-fill children of .admin-main grow —
+   * nested cards on dashboard / detail pages are unaffected.
+   */
+  .admin-main > .admin-fill {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(0, 0, 0, 0.15) transparent;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 5px;
+    height: 5px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: rgba(0, 0, 0, 0.15);
+    border-radius: 999px;
+  }
+
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -139,44 +372,5 @@ html[data-theme="light"] {
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
-  }
-}
-
-/* ---- Shared entrance / hero motion ---- */
-@keyframes rise-in {
-  from {
-    opacity: 0;
-    transform: translateY(16px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes hero-ken {
-  from {
-    transform: scale(1.06);
-  }
-  to {
-    transform: scale(1);
-  }
-}
-
-@keyframes fade-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes hero-fade {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
   }
 }

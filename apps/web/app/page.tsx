@@ -1,18 +1,47 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useLocale } from "@/lib/i18n";
-import { Hero } from "@/components/hero";
+import { dramaToHeroSlide, Hero, type HeroSlide } from "@/components/hero";
 import { DramaCard } from "@/components/drama-card";
 import { VerticalFeed } from "@/components/mobile/vertical-feed";
 import { useIsMobile } from "@/hooks/use-is-mobile";
-import { loadFeatured, loadHome } from "@/lib/api";
+import { loadBanners, loadFeatured, loadHome, type HomeBanner } from "@/lib/api";
 import type { Drama } from "@/lib/mock-data";
+import { cn } from "@/lib/utils";
+
+function bannerToSlide(banner: HomeBanner): HeroSlide {
+  const href =
+    banner.linkUrl ||
+    (banner.dramaId ? `/drama/${banner.dramaId}` : "/");
+  const cover = banner.imageUrl || "#1a1a1a";
+  return {
+    id: `banner-${banner.id}`,
+    titleVi: banner.titleVi,
+    titleZh: banner.titleZh || banner.titleVi,
+    cover: [cover, cover],
+    href,
+    tags: [],
+  };
+}
+
+type HomeCache = {
+  heroSlides: HeroSlide[];
+  hot: Drama[];
+  rows: Drama[];
+  total: number;
+  banners: HomeBanner[];
+  featured: Drama[];
+};
+
+function homeKey(category?: string, q?: string, sort?: string) {
+  return `${category || ""}|${q || ""}|${sort || ""}`;
+}
 
 function HomeInner() {
-  const { t } = useLocale();
-  const isMobile = useIsMobile();
+  const { locale, t } = useLocale();
+  const { mobile: isMobile, ready: mobileReady } = useIsMobile();
   const params = useSearchParams();
   const category = params.get("cat") || undefined;
   const q = params.get("q") || undefined;
@@ -20,67 +49,125 @@ function HomeInner() {
   const sort = sortParam === "hot" || sortParam === "latest" ? sortParam : undefined;
   const filtered = !!(category || q || sort);
 
-  const [featuredList, setFeaturedList] = useState<Drama[]>([]);
+  const [heroSlides, setHeroSlides] = useState<HeroSlide[]>([]);
   const [hot, setHot] = useState<Drama[]>([]);
-  const [latest, setLatest] = useState<Drama[]>([]);
   const [rows, setRows] = useState<Drama[]>([]);
   const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
+  const [banners, setBanners] = useState<HomeBanner[]>([]);
+  const [featured, setFeatured] = useState<Drama[]>([]);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const cacheRef = useRef<Map<string, HomeCache>>(new Map());
+  const hasContentRef = useRef(false);
 
   useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
+    const key = homeKey(category, q, sort);
+    const cached = cacheRef.current.get(key);
+    const ac = new AbortController();
+
+    if (cached) {
+      setHeroSlides(cached.heroSlides);
+      setHot(cached.hot);
+      setRows(cached.rows);
+      setTotal(cached.total);
+      setBanners(cached.banners);
+      setFeatured(cached.featured);
+      hasContentRef.current = true;
+      setInitialLoading(false);
+      setRefreshing(false);
+    } else if (!hasContentRef.current) {
+      setInitialLoading(true);
+    } else {
+      setRefreshing(true);
+    }
 
     const run = async () => {
       try {
         if (filtered) {
           const [f, h] = await Promise.all([
-            loadFeatured(),
-            loadHome(1, 24, { category, q, sort }),
+            loadFeatured({ signal: ac.signal }),
+            loadHome(1, 24, { category, q, sort, signal: ac.signal }),
           ]);
-          if (cancelled) return;
-          setFeaturedList(f.length ? f : h.rows.slice(0, 5));
+          if (ac.signal.aborted) return;
+          const feat = f.length ? f : h.rows.slice(0, 5);
+          const slides = feat.map((d) => dramaToHeroSlide(d, locale, t));
+          const next: HomeCache = {
+            heroSlides: slides,
+            hot: [],
+            rows: h.rows,
+            total: h.total,
+            banners: [],
+            featured: feat,
+          };
+          cacheRef.current.set(key, next);
+          hasContentRef.current = true;
+          setHeroSlides(slides);
+          setHot([]);
           setRows(h.rows);
           setTotal(h.total);
-          setHot([]);
-          setLatest([]);
+          setBanners([]);
+          setFeatured(feat);
         } else {
-          const [f, hHot, hLatest, hAll] = await Promise.all([
-            loadFeatured(),
-            loadHome(1, 30, { sort: "hot" }),
-            loadHome(1, 16, { sort: "latest" }),
-            loadHome(1, 30),
+          const [b, f, hHot] = await Promise.all([
+            loadBanners({ signal: ac.signal }),
+            loadFeatured({ signal: ac.signal }),
+            loadHome(1, 30, { sort: "hot", signal: ac.signal }),
           ]);
-          if (cancelled) return;
-          const featured =
-            f.length > 0
-              ? f
-              : hHot.rows.length > 0
-                ? hHot.rows.slice(0, 5)
-                : hAll.rows.slice(0, 5);
-          setFeaturedList(featured);
+          if (ac.signal.aborted) return;
+          const feat = f.length > 0 ? f : hHot.rows.slice(0, 5);
+          const slides =
+            b.length > 0
+              ? b.slice(0, 5).map(bannerToSlide)
+              : feat.map((d) => dramaToHeroSlide(d, locale, t));
+          const next: HomeCache = {
+            heroSlides: slides,
+            hot: hHot.rows,
+            rows: hHot.rows,
+            total: hHot.total,
+            banners: b,
+            featured: feat,
+          };
+          cacheRef.current.set(key, next);
+          hasContentRef.current = true;
+          setHeroSlides(slides);
           setHot(hHot.rows);
-          setLatest(hLatest.rows);
-          setRows(hAll.rows);
-          setTotal(hAll.total);
+          setRows(hHot.rows);
+          setTotal(hHot.total);
+          setBanners(b);
+          setFeatured(feat);
         }
       } catch {
-        if (cancelled) return;
-        setFeaturedList([]);
-        setHot([]);
-        setLatest([]);
-        setRows([]);
-        setTotal(0);
+        if (ac.signal.aborted) return;
+        if (!cacheRef.current.has(key)) {
+          hasContentRef.current = false;
+          setHeroSlides([]);
+          setHot([]);
+          setRows([]);
+          setTotal(0);
+          setBanners([]);
+          setFeatured([]);
+        }
       } finally {
-        setLoading(false);
+        if (ac.signal.aborted) return;
+        setInitialLoading(false);
+        setRefreshing(false);
       }
     };
 
     void run();
-    return () => {
-      cancelled = true;
-    };
+    return () => ac.abort();
+    // locale/t only affect labels — remapped in separate effect
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [category, q, sort, filtered]);
+
+  // Remap hero titles when locale changes without refetching
+  useEffect(() => {
+    if (banners.length > 0) {
+      setHeroSlides(banners.slice(0, 5).map(bannerToSlide));
+    } else if (featured.length > 0) {
+      setHeroSlides(featured.map((d) => dramaToHeroSlide(d, locale, t)));
+    }
+  }, [locale, t, banners, featured]);
 
   const filterTitle = useMemo(() => {
     if (q) return `“${q}”`;
@@ -93,9 +180,22 @@ function HomeInner() {
   const feedDramas = hot.length > 0 ? hot : rows;
   const gridDramas = hot.length > 0 ? hot : rows;
 
+  // Wait for breakpoint before choosing mobile feed vs desktop grid (avoids layout flash)
+  if (!mobileReady) {
+    return (
+      <div className="mx-auto max-w-[1280px] px-4 py-10 md:px-10">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
+          {Array.from({ length: 12 }).map((_, i) => (
+            <div key={i} className="aspect-[2/3] animate-pulse rounded-lg bg-surface-2" />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   // Mobile home: Hongguo-style vertical feed (unfiltered)
   if (isMobile && !filtered) {
-    if (loading && feedDramas.length === 0) {
+    if (initialLoading && feedDramas.length === 0) {
       return (
         <div className="flex h-[calc(100dvh-3rem-3.5rem)] items-center justify-center bg-black text-white/60">
           …
@@ -105,9 +205,11 @@ function HomeInner() {
     return <VerticalFeed dramas={feedDramas} />;
   }
 
+  const showSkeleton = initialLoading && gridDramas.length === 0 && rows.length === 0;
+
   return (
     <>
-      {!filtered && featuredList.length > 0 && <Hero featured={featuredList} />}
+      {!filtered && heroSlides.length > 0 && <Hero slides={heroSlides} />}
 
       {filtered ? (
         <div className="mx-auto max-w-[1280px] px-4 py-10 md:px-10 md:py-16">
@@ -116,7 +218,7 @@ function HomeInner() {
               <h2 className="text-h2 font-bold text-ink">{filterTitle}</h2>
               <span className="text-body-sm text-ink-subtle">{total}</span>
             </div>
-            {loading ? (
+            {showSkeleton ? (
               <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
                 {Array.from({ length: 12 }).map((_, i) => (
                   <div key={i} className="aspect-[2/3] animate-pulse rounded-lg bg-surface-2" />
@@ -125,7 +227,13 @@ function HomeInner() {
             ) : rows.length === 0 ? (
               <p className="py-16 text-center text-ink-muted">{t("theater.empty")}</p>
             ) : (
-              <div className="grid grid-cols-2 gap-x-4 gap-y-7 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
+              <div
+                className={cn(
+                  "grid grid-cols-2 gap-x-4 gap-y-7 transition-opacity duration-200 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6",
+                  refreshing && "pointer-events-none opacity-60",
+                )}
+                aria-busy={refreshing}
+              >
                 {rows.map((d) => (
                   <DramaCard key={d.id} drama={d} variant="grid" />
                 ))}
@@ -139,33 +247,26 @@ function HomeInner() {
             <h2 className="mb-6 text-[22px] font-bold text-ink md:mb-8 md:text-[26px]">
               {t("sections.hotDramas")}
             </h2>
-            {loading ? (
+            {showSkeleton ? (
               <div className="grid grid-cols-2 gap-x-4 gap-y-7 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
                 {Array.from({ length: 12 }).map((_, i) => (
                   <div key={i} className="aspect-[2/3] animate-pulse rounded-lg bg-surface-2" />
                 ))}
               </div>
             ) : (
-              <div className="grid grid-cols-2 gap-x-4 gap-y-7 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
+              <div
+                className={cn(
+                  "grid grid-cols-2 gap-x-4 gap-y-7 transition-opacity duration-200 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6",
+                  refreshing && "pointer-events-none opacity-60",
+                )}
+                aria-busy={refreshing}
+              >
                 {gridDramas.map((d) => (
                   <DramaCard key={d.id} drama={d} variant="grid" />
                 ))}
               </div>
             )}
           </section>
-
-          {latest.length > 0 && (
-            <section className="mx-auto mt-14 max-w-[1280px] px-4 md:mt-20 md:px-10">
-              <h2 className="mb-6 text-[22px] font-bold text-ink md:mb-8 md:text-[26px]">
-                {t("sections.newReleases")}
-              </h2>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-7 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
-                {latest.map((d) => (
-                  <DramaCard key={d.id} drama={d} variant="grid" />
-                ))}
-              </div>
-            </section>
-          )}
         </div>
       )}
     </>
@@ -176,8 +277,12 @@ export default function HomePage() {
   return (
     <Suspense
       fallback={
-        <div className="mx-auto max-w-[1280px] px-4 py-24 text-center text-ink-subtle md:px-10">
-          …
+        <div className="mx-auto max-w-[1280px] px-4 py-10 md:px-10">
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
+            {Array.from({ length: 12 }).map((_, i) => (
+              <div key={i} className="aspect-[2/3] animate-pulse rounded-lg bg-surface-2" />
+            ))}
+          </div>
         </div>
       }
     >

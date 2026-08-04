@@ -3,9 +3,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { asRows, adminListAuditLogs } from "@velvet/api-client";
 import { AdminShell } from "@/components/admin-shell";
-import { t } from "@/lib/i18n";
+import { useI18n } from "@/lib/i18n";
 import { Button, DataTable, Input, fmtDate, type Column } from "@velvet/ui";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 type Row = {
   id: string | number;
@@ -19,6 +19,7 @@ type Row = {
 };
 
 export default function AdminAuditPage() {
+  const { t, locale } = useI18n();
   const [action, setAction] = useState("");
   const [targetType, setTargetType] = useState("");
   const [actorId, setActorId] = useState("");
@@ -38,29 +39,32 @@ export default function AdminAuditPage() {
     },
   });
 
-  const columns: Column<Row>[] = [
-    { key: "time", header: t("time"), cell: (r) => fmtDate(r.createdAt) },
-    {
-      key: "actor",
-      header: "Actor",
-      cell: (r) => (r.actorId != null ? String(r.actorId) : "system"),
-    },
-    { key: "action", header: "Action", cell: (r) => r.action || "—" },
-    {
-      key: "target",
-      header: "Target",
-      cell: (r) => `${r.targetType || "—"}/${r.targetId || "—"}`,
-      className: "text-caption",
-    },
-    { key: "result", header: "Result", cell: (r) => r.result || "—" },
-    {
-      key: "payload",
-      header: "Payload",
-      cell: (r) => (
-        <span className="max-w-md truncate font-mono text-caption">{JSON.stringify(r.payload)}</span>
-      ),
-    },
-  ];
+  const columns: Column<Row>[] = useMemo(
+    () => [
+      { key: "time", header: t("time"), cell: (r) => fmtDate(r.createdAt, locale === "en" ? "en-US" : "zh-CN") },
+      {
+        key: "actor",
+        header: t("colActor"),
+        cell: (r) => (r.actorId != null ? String(r.actorId) : "system"),
+      },
+      { key: "action", header: t("colAction"), cell: (r) => r.action || "—" },
+      {
+        key: "target",
+        header: t("colTarget"),
+        cell: (r) => `${r.targetType || "—"}/${r.targetId || "—"}`,
+        className: "text-caption",
+      },
+      { key: "result", header: t("colResult"), cell: (r) => r.result || "—" },
+      {
+        key: "payload",
+        header: t("colPayload"),
+        cell: (r) => (
+          <span className="max-w-md truncate font-mono text-caption">{JSON.stringify(r.payload)}</span>
+        ),
+      },
+    ],
+    [t, locale],
+  );
 
   return (
     <AdminShell title={t("audit")}>

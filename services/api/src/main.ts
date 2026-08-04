@@ -7,6 +7,8 @@ import { AllExceptionsFilter } from './common/all-exceptions.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
+  // Behind Cloudflare / nginx so req.ip uses X-Forwarded-For
+  app.getHttpAdapter().getInstance().set('trust proxy', 1);
 
   app.setGlobalPrefix('api'); // → /api/auth/*, /api/v1/*
 

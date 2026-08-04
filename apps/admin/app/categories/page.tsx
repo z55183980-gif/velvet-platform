@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -8,9 +8,9 @@ import {
   adminUpdateCategory,
 } from "@velvet/api-client";
 import { AdminShell } from "@/components/admin-shell";
-import { t } from "@/lib/i18n";
+import { useI18n } from "@/lib/i18n";
 import { Badge, Button, DataTable, Input, type Column } from "@velvet/ui";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 type Row = {
   slug: string;
@@ -23,6 +23,7 @@ type Row = {
 const emptyForm = { slug: "", nameVi: "", nameZh: "", sortOrder: 0, isActive: true };
 
 export default function AdminCategoriesPage() {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const [form, setForm] = useState(emptyForm);
   const [editSlug, setEditSlug] = useState<string | null>(null);
@@ -43,7 +44,7 @@ export default function AdminCategoriesPage() {
           isActive: form.isActive,
         });
       }
-      if (!form.slug.trim()) throw new Error("slug 必填");
+      if (!form.slug.trim()) throw new Error(t("slugRequired"));
       return adminCreateCategory(form);
     },
     onSuccess: async () => {
@@ -63,44 +64,47 @@ export default function AdminCategoriesPage() {
     onError: (e: Error) => setErr(e.message),
   });
 
-  const columns: Column<Row>[] = [
-    { key: "slug", header: "slug", cell: (r) => r.slug },
-    { key: "vi", header: "nameVi", cell: (r) => r.nameVi || "—" },
-    { key: "zh", header: "nameZh", cell: (r) => r.nameZh || "—" },
-    { key: "sort", header: "sort", cell: (r) => String(r.sortOrder ?? 0), className: "tabular-nums" },
-    {
-      key: "active",
-      header: "状态",
-      cell: (r) => <Badge tone={r.isActive ? "success" : "default"}>{r.isActive ? "启用" : "停用"}</Badge>,
-    },
-    {
-      key: "actions",
-      header: t("actions"),
-      cell: (r) => (
-        <div className="flex gap-1">
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => {
-              setEditSlug(r.slug);
-              setForm({
-                slug: r.slug,
-                nameVi: r.nameVi || "",
-                nameZh: r.nameZh || "",
-                sortOrder: r.sortOrder ?? 0,
-                isActive: !!r.isActive,
-              });
-            }}
-          >
-            {t("edit")}
-          </Button>
-          <Button size="sm" variant="danger" onClick={() => deleteMut.mutate(r.slug)}>
-            {t("delete")}
-          </Button>
-        </div>
-      ),
-    },
-  ];
+  const columns: Column<Row>[] = useMemo(
+    () => [
+      { key: "slug", header: t("colSlug"), cell: (r) => r.slug },
+      { key: "vi", header: t("colNameVi"), cell: (r) => r.nameVi || "—" },
+      { key: "zh", header: t("colNameZh"), cell: (r) => r.nameZh || "—" },
+      { key: "sort", header: t("colSort"), cell: (r) => String(r.sortOrder ?? 0), className: "tabular-nums" },
+      {
+        key: "active",
+        header: t("status"),
+        cell: (r) => <Badge tone={r.isActive ? "success" : "default"}>{r.isActive ? t("enable") : t("disable")}</Badge>,
+      },
+      {
+        key: "actions",
+        header: t("actions"),
+        cell: (r) => (
+          <div className="flex gap-1">
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                setEditSlug(r.slug);
+                setForm({
+                  slug: r.slug,
+                  nameVi: r.nameVi || "",
+                  nameZh: r.nameZh || "",
+                  sortOrder: r.sortOrder ?? 0,
+                  isActive: !!r.isActive,
+                });
+              }}
+            >
+              {t("edit")}
+            </Button>
+            <Button size="sm" variant="danger" onClick={() => deleteMut.mutate(r.slug)}>
+              {t("delete")}
+            </Button>
+          </div>
+        ),
+      },
+    ],
+    [t, deleteMut],
+  );
 
   return (
     <AdminShell title={t("categories")}>
@@ -108,9 +112,9 @@ export default function AdminCategoriesPage() {
         <p className="mb-3 text-body-sm text-danger">{err || (listQ.error as Error).message}</p>
       ) : null}
 
-      <div className="mb-6 grid gap-3 rounded-lg border border-line bg-surface p-4 md:grid-cols-3">
+      <div className="mb-6 grid gap-3 card glass-card p-4 md:grid-cols-3">
         <label className="text-caption text-ink-muted">
-          slug
+          {t("colSlug")}
           <Input
             className="mt-1"
             disabled={!!editSlug}
@@ -119,7 +123,7 @@ export default function AdminCategoriesPage() {
           />
         </label>
         <label className="text-caption text-ink-muted">
-          nameVi
+          {t("colNameVi")}
           <Input
             className="mt-1"
             value={form.nameVi}
@@ -127,7 +131,7 @@ export default function AdminCategoriesPage() {
           />
         </label>
         <label className="text-caption text-ink-muted">
-          nameZh
+          {t("colNameZh")}
           <Input
             className="mt-1"
             value={form.nameZh}
@@ -135,7 +139,7 @@ export default function AdminCategoriesPage() {
           />
         </label>
         <label className="text-caption text-ink-muted">
-          sortOrder
+          {t("colSort")}
           <Input
             type="number"
             className="mt-1"
@@ -149,7 +153,7 @@ export default function AdminCategoriesPage() {
             checked={form.isActive}
             onChange={(e) => setForm((f) => ({ ...f, isActive: e.target.checked }))}
           />
-          isActive
+          {t("isActive")}
         </label>
         <div className="flex items-end gap-2">
           <Button size="sm" onClick={() => saveMut.mutate()} disabled={saveMut.isPending}>

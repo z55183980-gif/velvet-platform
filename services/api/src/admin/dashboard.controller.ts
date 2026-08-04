@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
 import { ok } from '../common/response';
 import { AdminGuard } from './admin.guard';
 import { AdminRoleGuard } from './admin-role.guard';
@@ -10,12 +10,12 @@ export class DashboardController {
   constructor(private readonly dashboard: DashboardService) {}
 
   @Get('dashboard/overview')
-  async dashboardOverview() {
-    return ok(await this.dashboard.overview());
+  async dashboardOverview(@Query('range') range?: string) {
+    return ok(await this.dashboard.overview(range));
   }
 
   @Get('stats/overview')
-  async stats() {
-    return ok(await this.dashboard.overview());
+  async stats(@Query('range') range?: string) {
+    return ok(await this.dashboard.overview(range));
   }
 }

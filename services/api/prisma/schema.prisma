@@ -118,6 +118,9 @@ model Session {
   userId        BigInt
   expiresAt     DateTime
   ipAddress     String?
+  /// ISO country code (e.g. VN/CN) or LOCAL for private IPs
+  country       String?
+  city          String?
   userAgent     String?
   createdAt     DateTime    @default(now())
 
@@ -179,6 +182,10 @@ model Drama {
   isFeatured      Boolean     @default(false)
   /// 排序权重（越大越靠前；与 isFeatured/官方/上架时间配合决定展示顺序）
   sortWeight      Int         @default(0)
+  /// 剧场「最热」运营位；独立于推荐位/算法热度
+  isHottest       Boolean     @default(false)
+  /// 最热排序（越小越靠前）
+  hottestSortOrder Int        @default(0)
 
   createdAt       DateTime    @default(now()) @db.Timestamptz
   updatedAt       DateTime    @updatedAt
@@ -193,6 +200,7 @@ model Drama {
   @@index([categorySlug, status])
   @@index([creatorId])
   @@index([isOfficial, isFeatured, status])
+  @@index([isHottest, hottestSortOrder])
   @@map("dramas")
 }
 

@@ -35,6 +35,11 @@ export class DramasController {
     return ok(await this.dramas.getFeatured());
   }
 
+  @Get('dramas/hottest')
+  async hottest() {
+    return ok(await this.dramas.getHottest());
+  }
+
   @Get('categories')
   async categories() {
     return ok(await this.dramas.listCategories());

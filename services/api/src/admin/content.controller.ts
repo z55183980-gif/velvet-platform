@@ -126,6 +126,7 @@ export class ContentController {
     @Query('categorySlug') categorySlug?: string,
     @Query('isOfficial') isOfficial?: string,
     @Query('isFeatured') isFeatured?: string,
+    @Query('isHottest') isHottest?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
   ) {
@@ -135,6 +136,7 @@ export class ContentController {
       categorySlug,
       isOfficial: isOfficial as any,
       isFeatured: isFeatured as any,
+      isHottest: isHottest as any,
       page: page ? Number(page) : 1,
       pageSize: pageSize ? Number(pageSize) : 20,
     }));
@@ -148,6 +150,19 @@ export class ContentController {
   @Get('dramas/ranking')
   async ranking() {
     return ok(await this.content.ranking());
+  }
+
+  @Get('dramas/hottest')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async listHottest() {
+    return ok(await this.content.listHottest());
+  }
+
+  @Post('dramas/hottest/reorder')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async reorderHottest(@Body() dto: ReorderDto, @Req() req: any) {
+    const ids = Array.isArray(dto?.ids) ? dto.ids.map(String) : [];
+    return ok(await this.content.reorderHottest(ids, getActor(req)));
   }
 
   @Patch('dramas/batch')
@@ -203,6 +218,24 @@ export class ContentController {
     @Req() req: any,
   ) {
     return ok(await this.content.setSortWeight(id, Number(body?.weight ?? 0), getActor(req)));
+  }
+
+  @Post('dramas/:id/hottest')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async setHottest(@Param('id') id: string, @Body() body: { value: boolean }, @Req() req: any) {
+    return ok(await this.content.setHottest(id, !!body?.value, getActor(req)));
+  }
+
+  @Post('dramas/:id/hottest-sort')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async setHottestSort(
+    @Param('id') id: string,
+    @Body() body: { sortOrder: number },
+    @Req() req: any,
+  ) {
+    return ok(
+      await this.content.setHottestSortOrder(id, Number(body?.sortOrder ?? 0), getActor(req)),
+    );
   }
 
   @Post('dramas/:id/delete')

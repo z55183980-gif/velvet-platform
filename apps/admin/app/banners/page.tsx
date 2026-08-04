@@ -1,6 +1,6 @@
-"use client";
+﻿"use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   adminCreateBanner,
@@ -10,7 +10,7 @@ import {
 } from "@velvet/api-client";
 import { Button, DataTable, Input, fmtDate, type Column } from "@velvet/ui";
 import { AdminShell } from "@/components/admin-shell";
-import { t } from "@/lib/i18n";
+import { useI18n } from "@/lib/i18n";
 
 type Banner = {
   id: string | number;
@@ -37,6 +37,7 @@ const makeEmpty = () => ({
 });
 
 export default function AdminBannersPage() {
+  const { t, locale } = useI18n();
   const qc = useQueryClient();
   const [form, setForm] = useState(makeEmpty);
   const [editId, setEditId] = useState<string | null>(null);
@@ -71,75 +72,86 @@ export default function AdminBannersPage() {
     onError: (e: Error) => setError(e.message),
   });
 
-  const columns: Column<Banner>[] = [
-    { key: "id", header: "ID", cell: (row) => String(row.id) },
-    {
-      key: "title",
-      header: "标题",
-      cell: (row) => (
-        <div className="flex items-center gap-2">
-          {row.imageUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={row.imageUrl} alt="" className="h-8 w-12 rounded object-cover" />
-          ) : null}
-          {row.titleZh || row.titleVi || "—"}
-        </div>
-      ),
-    },
-    { key: "schedule", header: "投放时间", cell: (row) => `${fmtDate(row.startAt)} → ${fmtDate(row.endAt)}` },
-    { key: "sort", header: "排序", cell: (row) => String(row.sortOrder ?? 0) },
-    { key: "active", header: "状态", cell: (row) => (row.isActive ? "启用" : "停用") },
-    {
-      key: "actions",
-      header: t("actions"),
-      cell: (row) => (
-        <div className="flex gap-1">
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => {
-              setEditId(String(row.id));
-              setForm({
-                titleVi: row.titleVi || "",
-                titleZh: row.titleZh || "",
-                imageUrl: row.imageUrl || "",
-                linkUrl: row.linkUrl || "",
-                dramaId: row.dramaId ? String(row.dramaId) : "",
-                startAt: new Date(row.startAt).toISOString().slice(0, 16),
-                endAt: new Date(row.endAt).toISOString().slice(0, 16),
-                sortOrder: row.sortOrder ?? 0,
-                isActive: !!row.isActive,
-              });
-            }}
-          >
-            {t("edit")}
-          </Button>
-          <Button
-            size="sm"
-            variant="danger"
-            disabled={deleteMut.isPending}
-            onClick={() => confirm("确定删除此横幅？") && deleteMut.mutate(String(row.id))}
-          >
-            {t("delete")}
-          </Button>
-        </div>
-      ),
-    },
-  ];
+  const columns: Column<Banner>[] = useMemo(
+    () => [
+      { key: "id", header: t("colId"), cell: (row) => String(row.id) },
+      {
+        key: "title",
+        header: t("colTitle"),
+        cell: (row) => (
+          <div className="flex items-center gap-2">
+            {row.imageUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={row.imageUrl} alt="" className="h-8 w-12 rounded object-cover" />
+            ) : null}
+            {row.titleZh || row.titleVi || "—"}
+          </div>
+        ),
+      },
+      {
+        key: "schedule",
+        header: t("scheduleLabel"),
+        cell: (row) => {
+          const dateLocale = locale === "en" ? "en-US" : "zh-CN";
+          return `${fmtDate(row.startAt, dateLocale)} → ${fmtDate(row.endAt, dateLocale)}`;
+        },
+      },
+      { key: "sort", header: t("colSort"), cell: (row) => String(row.sortOrder ?? 0) },
+      { key: "active", header: t("status"), cell: (row) => (row.isActive ? t("enable") : t("disable")) },
+      {
+        key: "actions",
+        header: t("actions"),
+        cell: (row) => (
+          <div className="flex gap-1">
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                setEditId(String(row.id));
+                setForm({
+                  titleVi: row.titleVi || "",
+                  titleZh: row.titleZh || "",
+                  imageUrl: row.imageUrl || "",
+                  linkUrl: row.linkUrl || "",
+                  dramaId: row.dramaId ? String(row.dramaId) : "",
+                  startAt: new Date(row.startAt).toISOString().slice(0, 16),
+                  endAt: new Date(row.endAt).toISOString().slice(0, 16),
+                  sortOrder: row.sortOrder ?? 0,
+                  isActive: !!row.isActive,
+                });
+              }}
+            >
+              {t("edit")}
+            </Button>
+            <Button
+              size="sm"
+              variant="danger"
+              disabled={deleteMut.isPending}
+              onClick={() => confirm(t("confirmDeleteBanner")) && deleteMut.mutate(String(row.id))}
+            >
+              {t("delete")}
+            </Button>
+          </div>
+        ),
+      },
+    ],
+    [t, locale, deleteMut],
+  );
 
   return (
     <AdminShell title={t("banners")}>
+      <p className="mb-4 text-body-sm text-ink-muted">{t("heroHintBanners")}</p>
       {error || listQ.error ? (
         <p className="mb-3 text-body-sm text-danger">{error || (listQ.error as Error).message}</p>
       ) : null}
-      <div className="mb-6 grid gap-3 rounded-lg border border-line bg-surface p-4 md:grid-cols-2">
+      <div className="mb-6 grid gap-3 card glass-card p-4 md:grid-cols-2">
         {([
-          ["titleVi", "越南语标题"],
-          ["titleZh", "中文标题"],
-          ["imageUrl", "图片 URL"],
-          ["linkUrl", "链接 URL"],
-          ["dramaId", "短剧 ID"],
-          ["sortOrder", "排序"],
+          ["titleVi", t("bannerTitleVi")],
+          ["titleZh", t("bannerTitleZh")],
+          ["imageUrl", t("imageUrlLabel")],
+          ["linkUrl", t("linkUrlLabel")],
+          ["dramaId", t("dramaIdLabel")],
+          ["sortOrder", t("colSort")],
         ] as const).map(([key, label]) => (
           <label key={key} className="text-caption text-ink-muted">
             {label}
@@ -158,7 +170,7 @@ export default function AdminBannersPage() {
         ))}
         {(["startAt", "endAt"] as const).map((key) => (
           <label key={key} className="text-caption text-ink-muted">
-            {key === "startAt" ? "开始时间" : "结束时间"}
+            {key === "startAt" ? t("startAtLabel") : t("endAtLabel")}
             <Input
               type="datetime-local"
               className="mt-1"
@@ -173,7 +185,7 @@ export default function AdminBannersPage() {
             checked={form.isActive}
             onChange={(e) => setForm((value) => ({ ...value, isActive: e.target.checked }))}
           />
-          启用
+          {t("enable")}
         </label>
         <div className="flex gap-2">
           <Button size="sm" disabled={saveMut.isPending} onClick={() => saveMut.mutate()}>

@@ -14,6 +14,17 @@ function isImg(s: string) {
 
 const AUTO_MS = 5500;
 
+export type HeroSlide = {
+  id: string;
+  titleVi: string;
+  titleZh: string;
+  descVi?: string;
+  descZh?: string;
+  cover: [string, string];
+  href: string;
+  tags?: string[];
+};
+
 function dramaTags(drama: Drama, locale: Locale, t: (k: string) => string): string[] {
   const cat = categoryName(drama.categorySlug, locale);
   const tags = [cat];
@@ -23,10 +34,27 @@ function dramaTags(drama: Drama, locale: Locale, t: (k: string) => string): stri
   return tags.slice(0, 4);
 }
 
-export function Hero({ featured }: { featured: Drama[] }) {
+export function dramaToHeroSlide(
+  drama: Drama,
+  locale: Locale,
+  t: (k: string) => string,
+): HeroSlide {
+  return {
+    id: drama.id,
+    titleVi: drama.titleVi,
+    titleZh: drama.titleZh,
+    descVi: drama.descVi,
+    descZh: drama.descZh,
+    cover: drama.cover,
+    href: `/drama/${drama.id}`,
+    tags: dramaTags(drama, locale, t),
+  };
+}
+
+export function Hero({ slides }: { slides: HeroSlide[] }) {
   const { locale, t } = useLocale();
-  const slides = useMemo(() => featured.slice(0, 5), [featured]);
-  const slideKey = slides.map((s) => s.id).join("|");
+  const items = useMemo(() => slides.slice(0, 5), [slides]);
+  const slideKey = items.map((s) => s.id).join("|");
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
   const [fadeKey, setFadeKey] = useState(0);
@@ -34,39 +62,39 @@ export function Hero({ featured }: { featured: Drama[] }) {
 
   const goTo = useCallback(
     (i: number) => {
-      if (slides.length === 0) return;
+      if (items.length === 0) return;
       setIndex((prev) => {
-        const next = ((i % slides.length) + slides.length) % slides.length;
+        const next = ((i % items.length) + items.length) % items.length;
         if (next !== prev) setFadeKey((k) => k + 1);
         return next;
       });
     },
-    [slides.length],
+    [items.length],
   );
 
   useEffect(() => {
-    if (slides.length <= 1 || paused) return;
+    if (items.length <= 1 || paused) return;
     const id = window.setInterval(() => {
       setIndex((prev) => {
-        const next = (prev + 1) % slides.length;
+        const next = (prev + 1) % items.length;
         setFadeKey((k) => k + 1);
         return next;
       });
     }, AUTO_MS);
     return () => window.clearInterval(id);
-  }, [paused, slides.length]);
+  }, [paused, items.length]);
 
   useEffect(() => {
     setIndex(0);
     setFadeKey((k) => k + 1);
   }, [slideKey]);
 
-  if (slides.length === 0) return null;
+  if (items.length === 0) return null;
 
-  const current = slides[index] ?? slides[0];
+  const current = items[index] ?? items[0];
   const title = pickContentText(locale, current.titleVi, current.titleZh);
-  const desc = pickContentText(locale, current.descVi, current.descZh);
-  const tags = dramaTags(current, locale, t);
+  const desc = pickContentText(locale, current.descVi || "", current.descZh || "");
+  const tags = current.tags ?? [];
   const cover = current.cover[0];
 
   const onTouchStart = (e: React.TouchEvent) => {
@@ -121,8 +149,8 @@ export function Hero({ featured }: { featured: Drama[] }) {
         />
       </div>
 
-      <div className="relative z-10 mx-auto flex h-full w-full max-w-[1280px] flex-col px-6 pb-10 pt-24 md:px-10 md:pb-14 md:pt-28">
-        <div className="flex flex-1 flex-col justify-center pb-28 md:pb-36">
+      <div className="relative z-10 mx-auto h-full w-full max-w-[1280px] px-6 md:px-10">
+        <div className="absolute inset-x-6 bottom-[9.5rem] z-10 md:inset-x-10 md:bottom-[10.5rem]">
           <div
             key={`copy-${fadeKey}`}
             className="max-w-[36rem] animate-[rise-in_0.55s_var(--ease-out)_both]"
@@ -131,11 +159,11 @@ export function Hero({ featured }: { featured: Drama[] }) {
               {title}
             </h1>
 
-            <div className="mt-4 flex flex-wrap gap-2">
+            <div className="mt-4 flex flex-wrap gap-3">
               {tags.map((tag) => (
                 <span
                   key={tag}
-                  className="rounded-md bg-white/12 px-2.5 py-1 text-[12px] leading-none text-white/90 backdrop-blur-sm"
+                  className="inline-flex h-8 max-w-[10.5rem] items-center truncate rounded-md bg-white/[0.08] px-3 text-[14px] leading-none text-white/80"
                 >
                   {tag}
                 </span>
@@ -143,63 +171,75 @@ export function Hero({ featured }: { featured: Drama[] }) {
             </div>
 
             {desc ? (
-              <p className="mt-4 max-w-[28rem] text-[14px] leading-relaxed text-white/72 line-clamp-2 md:text-[15px]">
+              <p className="mt-5 max-w-[35rem] text-[14px] leading-relaxed text-white/50 line-clamp-2 md:text-[15px]">
                 {desc}
               </p>
             ) : null}
-
-            <div className="mt-8">
-              <Link
-                href={`/drama/${current.id}`}
-                className="inline-flex h-12 items-center gap-2.5 rounded-full bg-brand px-8 text-[15px] font-semibold text-white shadow-[0_8px_28px_oklch(0.68_0.19_18_/_0.45)] transition-[transform,opacity,box-shadow] duration-200 hover:opacity-95 hover:shadow-[0_10px_32px_oklch(0.68_0.19_18_/_0.55)] active:translate-y-px md:h-[52px] md:px-10 md:text-base"
-              >
-                <Play className="h-5 w-5 fill-white" />
-                {t("hero.ctaPrimary")}
-              </Link>
-            </div>
           </div>
         </div>
 
-        {slides.length > 1 && (
-          <div className="absolute bottom-20 right-6 z-20 hidden gap-3 sm:flex md:bottom-24 md:right-10">
-            {slides.map((d, i) => {
-              const active = i === index;
-              const thumb = d.cover[0];
-              const tip = pickContentText(locale, d.titleVi, d.titleZh);
-              return (
-                <button
-                  key={d.id}
-                  type="button"
-                  onClick={() => goTo(i)}
-                  aria-label={tip}
-                  aria-current={active ? "true" : undefined}
-                  className={cn(
-                    "relative h-[88px] w-[62px] overflow-hidden rounded-lg transition-[transform,box-shadow,opacity] duration-300 ease-[var(--ease-out)] md:h-[104px] md:w-[72px]",
-                    active
-                      ? "scale-110 opacity-100 shadow-[0_8px_24px_rgba(0,0,0,0.55)] ring-2 ring-white"
-                      : "opacity-70 ring-1 ring-white/20 hover:opacity-100 hover:ring-white/50",
-                  )}
-                >
-                  {isImg(thumb) ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={thumb} alt="" className="h-full w-full object-cover" />
-                  ) : (
-                    <div
-                      className="h-full w-full"
-                      style={{
-                        background: `linear-gradient(150deg, ${d.cover[0]}, ${d.cover[1]})`,
-                      }}
-                    />
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        )}
+        <div className="absolute inset-x-6 bottom-[4.5rem] z-20 flex items-end justify-between gap-6 md:inset-x-10 md:bottom-[4.5rem]">
+          <Link
+            href={current.href}
+            className="group relative z-0 inline-flex h-[52px] w-[192px] shrink-0 items-center justify-center rounded-xl text-white transition-[transform,opacity] duration-150 hover:opacity-95 active:translate-y-px"
+            style={{
+              background: "linear-gradient(92.27deg, #c81038 0.32%, #e83a58)",
+            }}
+          >
+            <span
+              aria-hidden
+              className="pointer-events-none absolute inset-0 rounded-xl opacity-0 transition-opacity duration-150 group-hover:opacity-100"
+              style={{
+                background: "linear-gradient(92.27deg, #9a0c2a 0.32%, #c01838)",
+              }}
+            />
+            <Play className="relative z-[1] h-5 w-5 fill-white" />
+            <span className="relative z-[1] ml-3 text-[20px] font-medium leading-none tracking-normal">
+              {t("hero.ctaPrimary")}
+            </span>
+          </Link>
 
-        {slides.length > 1 && (
+          {items.length > 1 && (
+            <div className="hidden items-end gap-4 sm:flex">
+              {items.map((d, i) => {
+                const active = i === index;
+                const thumb = d.cover[0];
+                const tip = pickContentText(locale, d.titleVi, d.titleZh);
+                return (
+                  <button
+                    key={d.id}
+                    type="button"
+                    onClick={() => goTo(i)}
+                    aria-label={tip}
+                    aria-current={active ? "true" : undefined}
+                    className={cn(
+                      "relative h-[88px] w-[62px] overflow-hidden rounded-xl transition-[transform,box-shadow,opacity] duration-300 ease-[var(--ease-out)] md:h-[104px] md:w-[72px]",
+                      active
+                        ? "origin-bottom scale-105 opacity-100 shadow-[0_8px_24px_rgba(0,0,0,0.55)] ring-2 ring-white"
+                        : "opacity-70 ring-1 ring-white/20 hover:opacity-100 hover:ring-white/50",
+                    )}
+                  >
+                    {isImg(thumb) ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={thumb} alt="" className="h-full w-full object-cover" />
+                    ) : (
+                      <div
+                        className="h-full w-full"
+                        style={{
+                          background: `linear-gradient(150deg, ${d.cover[0]}, ${d.cover[1]})`,
+                        }}
+                      />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {items.length > 1 && (
           <div className="absolute bottom-20 left-1/2 z-20 flex -translate-x-1/2 gap-1.5 sm:hidden">
-            {slides.map((d, i) => (
+            {items.map((d, i) => (
               <button
                 key={d.id}
                 type="button"
@@ -207,7 +247,7 @@ export function Hero({ featured }: { featured: Drama[] }) {
                 onClick={() => goTo(i)}
                 className={cn(
                   "h-1.5 rounded-full transition-all duration-300",
-                  i === index ? "w-5 bg-brand" : "w-1.5 bg-white/40",
+                  i === index ? "w-5 bg-[#d22e49]" : "w-1.5 bg-white/40",
                 )}
               />
             ))}

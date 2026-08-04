@@ -2,10 +2,27 @@ import { asRows, toQuery } from "../types";
 import { adminDownloadBlob, adminRequest, type AdminProfile } from "./http";
 import { clearAdminToken, setAdminToken } from "./http";
 
-export async function adminLogin(account: string, password: string) {
+export async function adminFetchCaptcha() {
+  return adminRequest<{
+    captchaId: string;
+    imageSvg: string;
+    captchaRequired: boolean;
+  }>("/admin/auth/captcha");
+}
+
+export async function adminLogin(
+  account: string,
+  password: string,
+  captcha?: { captchaId: string; captchaCode: string },
+) {
   const data = await adminRequest<{ token: string; admin: AdminProfile }>("/admin/auth/login", {
     method: "POST",
-    body: JSON.stringify({ account, password }),
+    body: JSON.stringify({
+      account,
+      password,
+      captchaId: captcha?.captchaId ?? "",
+      captchaCode: captcha?.captchaCode ?? "",
+    }),
   });
   setAdminToken(data.token);
   return data;
@@ -42,8 +59,80 @@ export async function adminUpdateProfile(input: {
   });
 }
 
-export async function adminDashboard() {
-  return adminRequest("/admin/dashboard/overview");
+export type DashboardRange = "today" | "7d" | "30d";
+
+export type DashboardKpi = {
+  newUsers: number;
+  gmvVnd: string;
+  unlockCount: number;
+  platformRevenueVnd: string;
+  paidOrders: number;
+};
+
+export type DashboardOverview = {
+  range: DashboardRange;
+  period: DashboardKpi;
+  previous: DashboardKpi;
+  deltas: {
+    newUsersPct: number | null;
+    gmvPct: number | null;
+    unlockPct: number | null;
+    revenuePct: number | null;
+    ordersPct: number | null;
+  };
+  trends: Array<{
+    date: string;
+    newUsers: number;
+    gmvVnd: string;
+    unlockCount: number;
+    paidOrders: number;
+  }>;
+  todos: {
+    pendingDramas: number;
+    pendingKyc: number;
+    pendingWithdraws: number;
+    overdueWithdraws: number;
+    reconcileMismatch: number;
+    transcodeFailed: number;
+  };
+  rankings: {
+    topByView: Array<{
+      id: string;
+      titleZh: string | null;
+      titleVi: string | null;
+      slug: string | null;
+      viewCount: number;
+      unlockCount: number;
+    }>;
+    topByUnlock: Array<{
+      id: string;
+      titleZh: string | null;
+      titleVi: string | null;
+      slug: string | null;
+      viewCount: number;
+      unlockCount: number;
+    }>;
+    topBySales: Array<{
+      dramaId: string;
+      titleZh: string | null;
+      titleVi: string | null;
+      slug: string | null;
+      orderCount: number;
+      credits: string;
+      amountVnd: string;
+    }>;
+  };
+  bizBreakdown: {
+    activeVipUsers: number;
+    topup: { count: number; credits: string; amountVnd: string };
+    vip: { count: number; amountVnd: string };
+    unlock: { count: number; credits: string; amountVnd: string };
+    dramaBuyout: { count: number; credits: string; amountVnd: string };
+  };
+};
+
+export async function adminDashboard(range: DashboardRange = "7d") {
+  return adminRequest<DashboardOverview>(`/admin/dashboard/overview${toQuery({ range })}`);
 }
 
 export async function adminListDramas(params: Record<string, string | number | undefined> = {}) {
@@ -101,6 +190,31 @@ export async function adminSetSortWeight(id: string, weight: number) {
   return adminRequest(`/admin/dramas/${id}/sort-weight`, {
     method: "POST",
     body: JSON.stringify({ weight }),
+  });
+}
+
+export async function adminListHottest() {
+  return adminRequest(`/admin/dramas/hottest`);
+}
+
+export async function adminSetHottest(id: string, value: boolean) {
+  return adminRequest(`/admin/dramas/${id}/hottest`, {
+    method: "POST",
+    body: JSON.stringify({ value }),
+  });
+}
+
+export async function adminSetHottestSort(id: string, sortOrder: number) {
+  return adminRequest(`/admin/dramas/${id}/hottest-sort`, {
+    method: "POST",
+    body: JSON.stringify({ sortOrder }),
+  });
+}
+
+export async function adminReorderHottest(ids: string[]) {
+  return adminRequest(`/admin/dramas/hottest/reorder`, {
+    method: "POST",
+    body: JSON.stringify({ ids }),
   });
 }
 
@@ -167,6 +281,34 @@ export async function adminUpdateCategory(slug: string, body: Record<string, unk
 
 export async function adminDeleteCategory(slug: string) {
   return adminRequest(`/admin/categories/${slug}/delete`, { method: "POST", body: "{}" });
+}
+
+export type UserStatsRange = "today" | "7d" | "30d" | "custom";
+
+export type UserStatisticsOverview = {
+  range: UserStatsRange | string;
+  period: { start: string; end: string };
+  summary: {
+    totalUsers: number;
+    activeUsers: number;
+    newUsers: number;
+    newPreviousPeriod: number;
+    paidUsers: number;
+    totalPaidAmountVnd: string;
+    totalSpentCredits: string;
+    totalRechargedCredits: string;
+    activeVipUsers: number;
+  };
+  registrationTrend: Array<{ date: string; count: number }>;
+  localeDistribution: Array<{ locale: string; count: number }>;
+};
+
+export async function adminUserStatistics(
+  params: { range?: UserStatsRange; startDate?: string; endDate?: string } = {},
+) {
+  return adminRequest<UserStatisticsOverview>(
+    `/admin/users/statistics/overview${toQuery(params)}`,
+  );
 }
 
 export async function adminListUsers(params: Record<string, string | number | undefined> = {}) {
@@ -439,6 +581,38 @@ export async function adminSetAdminRole(id: string, role: "SUPER_ADMIN" | "OPS")
   return adminRequest(`/admin/admins/${id}/role`, {
     method: "POST",
     body: JSON.stringify({ role }),
+  });
+}
+
+export async function adminSetAdminStatus(id: string, status: "ACTIVE" | "DISABLED") {
+  return adminRequest(`/admin/admins/${id}/status`, {
+    method: "POST",
+    body: JSON.stringify({ status }),
+  });
+}
+
+export async function adminDeleteDrama(id: string, reason?: string) {
+  return adminRequest(`/admin/dramas/${id}/delete`, {
+    method: "POST",
+    body: JSON.stringify({ reason: reason || "" }),
+  });
+}
+
+export async function adminPendingCreators() {
+  return adminRequest("/admin/creators/pending");
+}
+
+export async function adminBroadcastNotification(body: {
+  titleVi: string;
+  titleZh?: string;
+  bodyVi: string;
+  bodyZh?: string;
+  userId?: string;
+  broadcast?: boolean;
+}) {
+  return adminRequest("/admin/notifications/broadcast", {
+    method: "POST",
+    body: JSON.stringify(body),
   });
 }
 
