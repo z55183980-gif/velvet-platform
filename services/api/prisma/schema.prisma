@@ -41,6 +41,7 @@ model User {
   unlocks       UserUnlock[]
   dramaUnlocks  UserDramaUnlock[]
   favorites     Favorite[]
+  likes         Like[]
   watchHistory  WatchHistory[]
   notifications Notification[]
   sessions      Session[]
@@ -182,6 +183,7 @@ model Drama {
   viewCount       BigInt      @default(0)
   unlockCount     BigInt      @default(0)
   favoriteCount   BigInt      @default(0)
+  likeCount       BigInt      @default(0)
 
   status          DramaStatus @default(DRAFT)
   /// 内容来源：本地媒资 / 外链转播
@@ -202,6 +204,7 @@ model Drama {
   creator         Creator     @relation(fields: [creatorId], references: [id])
   episodes        Episode[]
   favorites       Favorite[]
+  likes           Like[]
   dramaUnlocks    UserDramaUnlock[]
 
   @@index([status, publishedAt(sort: Desc)])
@@ -333,6 +336,21 @@ model Favorite {
   @@index([userId, createdAt(sort: Desc)])
   @@index([userId, group])
   @@map("favorites")
+}
+
+// ========== 点赞 ==========
+model Like {
+  id            BigInt      @id @default(autoincrement())
+  userId        BigInt
+  dramaId       BigInt
+  createdAt     DateTime    @default(now()) @db.Timestamptz
+
+  user          User        @relation(fields: [userId], references: [id])
+  drama         Drama       @relation(fields: [dramaId], references: [id])
+
+  @@unique([userId, dramaId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("likes")
 }
 
 // ========== 观看历史 ==========

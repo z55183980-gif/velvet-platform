@@ -22,10 +22,12 @@ import {
   getFavoriteGroups,
   getWatchHistory,
   clearWatchHistory,
+  getLikes,
   getMyOrders,
   requestRefund,
   updateMe,
   removeFavorite,
+  removeLike,
   updateFavorite,
   uploadAvatar,
   redeemCode,
@@ -49,6 +51,7 @@ export default function AccountPage() {
   const [favGroups, setFavGroups] = useState<string[]>([]);
   const [favGroup, setFavGroup] = useState("");
   const [history, setHistory] = useState<any[]>([]);
+  const [likes, setLikes] = useState<any[]>([]);
   const [orders, setOrders] = useState<any[]>([]);
   const [initialLoading, setInitialLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -65,7 +68,10 @@ export default function AccountPage() {
   const listRef = useRef<HTMLDivElement>(null);
   const nicknameRef = useRef<HTMLDivElement>(null);
   const cacheRef = useRef<
-    Map<string, { favorites?: any[]; favGroups?: string[]; history?: any[]; orders?: any[] }>
+    Map<
+      string,
+      { favorites?: any[]; favGroups?: string[]; history?: any[]; likes?: any[]; orders?: any[] }
+    >
   >(new Map());
 
   useEffect(() => {
@@ -74,13 +80,14 @@ export default function AccountPage() {
   }, [user]);
 
   const loadKind = useCallback(
-    async (kind: "favorites" | "history" | "orders", opts?: { force?: boolean }) => {
+    async (kind: "favorites" | "history" | "likes" | "orders", opts?: { force?: boolean }) => {
       if (!user) return;
       const key = `${kind}|${kind === "favorites" ? favGroup : ""}`;
       const cached = cacheRef.current.get(key);
       const hasCached =
         (kind === "favorites" && cached?.favorites) ||
         (kind === "history" && cached?.history) ||
+        (kind === "likes" && cached?.likes) ||
         (kind === "orders" && cached?.orders);
 
       if (hasCached && !opts?.force) {
@@ -88,6 +95,7 @@ export default function AccountPage() {
           setFavorites(cached!.favorites || []);
           if (cached!.favGroups) setFavGroups(cached!.favGroups);
         } else if (kind === "history") setHistory(cached!.history || []);
+        else if (kind === "likes") setLikes(cached!.likes || []);
         else setOrders(cached!.orders || []);
         return;
       }
@@ -108,6 +116,11 @@ export default function AccountPage() {
           const rows = r?.rows || [];
           cacheRef.current.set(key, { history: rows });
           setHistory(rows);
+        } else if (kind === "likes") {
+          const r = await getLikes(1);
+          const rows = r?.rows || [];
+          cacheRef.current.set(key, { likes: rows });
+          setLikes(rows);
         } else {
           const r = await getMyOrders(1);
           const rows = r?.rows || [];
@@ -117,6 +130,7 @@ export default function AccountPage() {
       } catch {
         if (kind === "favorites") setFavorites([]);
         else if (kind === "history") setHistory([]);
+        else if (kind === "likes") setLikes([]);
         else setOrders([]);
       }
     },
@@ -129,13 +143,17 @@ export default function AccountPage() {
     let cancelled = false;
     const run = async () => {
       const needsSkeleton =
-        favorites.length === 0 && history.length === 0 && orders.length === 0;
+        favorites.length === 0 &&
+        history.length === 0 &&
+        likes.length === 0 &&
+        orders.length === 0;
       if (needsSkeleton) setInitialLoading(true);
       else setRefreshing(true);
       try {
         await Promise.all([
           loadKind("favorites"),
           loadKind("history"),
+          loadKind("likes"),
           loadKind("orders"),
         ]);
       } finally {
@@ -273,15 +291,23 @@ export default function AccountPage() {
         favGroup={favGroup}
         setFavGroup={setFavGroup}
         history={history}
+        likes={likes}
         orders={orders}
-        loading={loading && (mobileTab === "history" || mobileTab === "favorites")}
-        refreshing={refreshing && (mobileTab === "history" || mobileTab === "favorites")}
+        loading={
+          loading &&
+          (mobileTab === "history" || mobileTab === "favorites" || mobileTab === "liked")
+        }
+        refreshing={
+          refreshing &&
+          (mobileTab === "history" || mobileTab === "favorites" || mobileTab === "liked")
+        }
         onRefresh={(opts) => {
-          if (mobileTab === "liked") return;
+          const kind =
+            mobileTab === "liked" ? "likes" : (mobileTab as "favorites" | "history");
           void (async () => {
             setRefreshing(true);
             try {
-              await loadKind(mobileTab, opts);
+              await loadKind(kind, opts);
             } finally {
               setRefreshing(false);
             }
@@ -289,6 +315,11 @@ export default function AccountPage() {
         }}
         onRemoveFavorite={async (dramaId) => {
           await removeFavorite(dramaId);
+        }}
+        onRemoveLike={async (dramaId) => {
+          await removeLike(dramaId);
+          setLikes((prev) => prev.filter((r) => String(r.dramaId ?? r.drama?.id) !== String(dramaId)));
+          cacheRef.current.delete("likes|");
         }}
         onClearHistory={async () => {
           await clearWatchHistory();

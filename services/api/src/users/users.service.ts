@@ -190,16 +190,70 @@ export class UsersService {
         where.dramaId = drama.id;
       }
     }
-    const [rows, total] = await Promise.all([
-      this.prisma.watchHistory.findMany({
-        where,
-        orderBy: { watchedAt: 'desc' },
+
+    // 我的页：按剧去重（最近一集）；resume 传 dramaId 时仍按集返回
+    let rows: Array<{
+      id: bigint;
+      episodeId: bigint;
+      dramaId: bigint;
+      progressSec: number;
+      watchedAt: Date;
+    }>;
+    let total: number;
+
+    if (!dramaId) {
+      const groups = await this.prisma.watchHistory.groupBy({
+        by: ['dramaId'],
+        where: { userId },
+        _max: { watchedAt: true },
+        orderBy: { _max: { watchedAt: 'desc' } },
         skip: (page - 1) * pageSize,
         take: pageSize,
-        select: { id: true, episodeId: true, dramaId: true, progressSec: true, watchedAt: true },
-      }),
-      this.prisma.watchHistory.count({ where }),
-    ]);
+      });
+      const totalGroups = await this.prisma.watchHistory.groupBy({
+        by: ['dramaId'],
+        where: { userId },
+      });
+      total = totalGroups.length;
+      const fetched = await Promise.all(
+        groups.map((g) =>
+          this.prisma.watchHistory.findFirst({
+            where: {
+              userId,
+              dramaId: g.dramaId,
+              watchedAt: g._max.watchedAt ?? undefined,
+            },
+            select: {
+              id: true,
+              episodeId: true,
+              dramaId: true,
+              progressSec: true,
+              watchedAt: true,
+            },
+          }),
+        ),
+      );
+      rows = fetched.filter(Boolean) as typeof rows;
+    } else {
+      const [listed, cnt] = await Promise.all([
+        this.prisma.watchHistory.findMany({
+          where,
+          orderBy: { watchedAt: 'desc' },
+          skip: (page - 1) * pageSize,
+          take: pageSize,
+          select: {
+            id: true,
+            episodeId: true,
+            dramaId: true,
+            progressSec: true,
+            watchedAt: true,
+          },
+        }),
+        this.prisma.watchHistory.count({ where }),
+      ]);
+      rows = listed;
+      total = cnt;
+    }
 
     const dramaIds = [...new Set(rows.map((r) => r.dramaId))];
     const episodeIds = [...new Set(rows.map((r) => r.episodeId))];
@@ -252,6 +306,87 @@ export class UsersService {
       page,
       pageSize,
     };
+  }
+
+  async listLikes(userId: bigint, page = 1, pageSize = 20) {
+    const [rows, total] = await Promise.all([
+      this.prisma.like.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+        include: { drama: { include: { creator: { select: { displayName: true } } } } },
+      }),
+      this.prisma.like.count({ where: { userId } }),
+    ]);
+    return {
+      rows: rows.map((r) => ({
+        id: r.id.toString(),
+        dramaId: r.dramaId.toString(),
+        createdAt: r.createdAt,
+        drama: r.drama
+          ? {
+              id: r.drama.id.toString(),
+              slug: r.drama.slug,
+              titleVi: r.drama.titleVi,
+              titleZh: r.drama.titleZh,
+              coverUrl: r.drama.coverUrl,
+              creator: r.drama.creator,
+            }
+          : null,
+      })),
+      total,
+      page,
+      pageSize,
+    };
+  }
+
+  async isLiked(userId: bigint, dramaId: string) {
+    if (!/^\d+$/.test(dramaId)) {
+      return { liked: false };
+    }
+    const row = await this.prisma.like.findUnique({
+      where: { userId_dramaId: { userId, dramaId: BigInt(dramaId) } },
+      select: { id: true },
+    });
+    return { liked: !!row };
+  }
+
+  async addLike(userId: bigint, dramaId: string) {
+    if (!/^\d+$/.test(dramaId)) {
+      throw new BizException(BizCode.BAD_REQUEST, 'dramaId không hợp lệ');
+    }
+    const existed = await this.prisma.like.findUnique({
+      where: { userId_dramaId: { userId, dramaId: BigInt(dramaId) } },
+    });
+    await this.prisma.like.upsert({
+      where: { userId_dramaId: { userId, dramaId: BigInt(dramaId) } },
+      create: { userId, dramaId: BigInt(dramaId) },
+      update: {},
+    });
+    if (!existed) {
+      await this.prisma.drama.update({
+        where: { id: BigInt(dramaId) },
+        data: { likeCount: { increment: 1 } },
+      });
+    }
+    return { success: true };
+  }
+
+  async removeLike(userId: bigint, dramaId: string) {
+    if (!/^\d+$/.test(dramaId)) {
+      throw new BizException(BizCode.BAD_REQUEST, 'dramaId không hợp lệ');
+    }
+    const deleted = await this.prisma.like.deleteMany({
+      where: { userId, dramaId: BigInt(dramaId) },
+    });
+    if (deleted.count > 0) {
+      await this.prisma.drama.update({
+        where: { id: BigInt(dramaId) },
+        data: { likeCount: { decrement: 1 } },
+      });
+    }
+    return { success: true };
   }
 
   async clearHistory(userId: bigint) {

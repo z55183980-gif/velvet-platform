@@ -22,7 +22,7 @@ import { useLocale } from "@/lib/i18n";
 import { useAuth } from "@/components/auth-context";
 import { VerticalPlayer } from "@/components/mobile/vertical-player";
 import { useMobileFeedLock } from "@/components/mobile/mobile-feed-lock";
-import { getPlayUrl, loadDramaDetail, checkFavorite, addFavorite, removeFavorite, type DramaDetailPayload } from "@/lib/api";
+import { getPlayUrl, loadDramaDetail, checkFavorite, addFavorite, removeFavorite, checkLike, addLike, removeLike, reportProgress, type DramaDetailPayload } from "@/lib/api";
 import type { Drama, Episode } from "@/lib/mock-data";
 import { categories } from "@/lib/mock-data";
 import { pickContentText } from "@/lib/languages";
@@ -36,7 +36,7 @@ function isHls(url: string) {
   return /\.m3u8(\?|$)/i.test(url);
 }
 
-/** Fake comment/like counts until those APIs ship; favorite uses real favoriteCount. */
+/** Fake comment counts until comments ship; favorite/like use real API counts. */
 function socialCounts(id: string) {
   let h = 2166136261;
   for (let i = 0; i < id.length; i++) {
@@ -46,7 +46,6 @@ function socialCounts(id: string) {
   const u = h >>> 0;
   return {
     comment: 1_200 + ((u >> 5) % 48_000),
-    like: 40_000 + ((u >> 3) % 1_200_000),
   };
 }
 
@@ -104,6 +103,7 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
   const [playErr, setPlayErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [liked, setLiked] = useState(false);
+  const [likeCount, setLikeCount] = useState(0);
   const [favorited, setFavorited] = useState(false);
   const [favCount, setFavCount] = useState(0);
   const [descOpen, setDescOpen] = useState(false);
@@ -233,6 +233,7 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
 
   useEffect(() => {
     setLiked(false);
+    setLikeCount(drama?.likeCount ?? 0);
     setFavorited(false);
     setFavCount(drama?.favoriteCount ?? 0);
     setDescOpen(false);
@@ -243,6 +244,7 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
     const dramaId = drama.numericId;
     if (!user || !dramaId || !/^\d+$/.test(dramaId)) {
       setFavorited(false);
+      setLiked(false);
       return;
     }
     let alive = true;
@@ -252,6 +254,13 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
       })
       .catch(() => {
         if (alive) setFavorited(false);
+      });
+    checkLike(dramaId)
+      .then((r) => {
+        if (alive) setLiked(!!r?.liked);
+      })
+      .catch(() => {
+        if (alive) setLiked(false);
       });
     return () => {
       alive = false;
@@ -318,6 +327,40 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
     return () => ac.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [episode?.id, episode?.isFree, episode?.unlocked, authReady, user]);
+
+  useEffect(() => {
+    if (!user || !episode?.id || !playUrl) return;
+    const episodeId = String(episode.id);
+    if (!/^\d+$/.test(episodeId)) return;
+
+    let lastSent = -1;
+    const flush = (force = false) => {
+      const video = videoRef.current;
+      if (!video) return;
+      const sec = Math.floor(video.currentTime || 0);
+      if (sec < 0) return;
+      if (!force && lastSent >= 0 && Math.abs(sec - lastSent) < 8) return;
+      lastSent = sec;
+      void reportProgress(episodeId, sec).catch(() => {});
+    };
+
+    const interval = window.setInterval(() => {
+      const video = videoRef.current;
+      if (video && !video.paused && !video.ended) flush();
+    }, 10_000);
+    const onVis = () => {
+      if (document.hidden) flush(true);
+    };
+    document.addEventListener("visibilitychange", onVis);
+    const seed = window.setTimeout(() => flush(true), 1500);
+
+    return () => {
+      window.clearInterval(interval);
+      window.clearTimeout(seed);
+      flush(true);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [user, episode?.id, playUrl]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -404,6 +447,25 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
     } catch {
       setFavorited(!next);
       setFavCount((c) => Math.max(0, c + (next ? -1 : 1)));
+    }
+  };
+
+  const toggleLike = async () => {
+    if (!user) {
+      openLogin();
+      return;
+    }
+    const dramaId = drama?.numericId;
+    if (!dramaId || !/^\d+$/.test(dramaId)) return;
+    const next = !liked;
+    setLiked(next);
+    setLikeCount((c) => Math.max(0, c + (next ? 1 : -1)));
+    try {
+      if (next) await addLike(dramaId);
+      else await removeLike(dramaId);
+    } catch {
+      setLiked(!next);
+      setLikeCount((c) => Math.max(0, c + (next ? -1 : 1)));
     }
   };
 
@@ -519,9 +581,9 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
         </SideAction>
         <SideAction
           label={t("feed.like")}
-          count={formatCount(meta.counts.like + (liked ? 1 : 0), locale)}
+          count={formatCount(likeCount, locale)}
           active={liked}
-          onClick={() => setLiked((v) => !v)}
+          onClick={() => void toggleLike()}
         >
           <Heart
             className={cn(

@@ -39,6 +39,8 @@ export interface Drama {
   buyoutCredits?: string | null;
   /** 真实收藏数（来自 API favoriteCount） */
   favoriteCount?: number;
+  /** 真实点赞数（来自 API likeCount） */
+  likeCount?: number;
   creator?: { displayName: string; avatarUrl?: string | null };
   episodes: Episode[];
 }

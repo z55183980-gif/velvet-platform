@@ -101,29 +101,31 @@ export class EpisodesService {
     if (!ep) throw new BizException(BizCode.NOT_FOUND, 'Tập phim không tồn tại');
     const duration = Math.max(0, ep.durationSec || 0);
     const raw = Number(progressSec);
-    if (!Number.isFinite(raw)) {
+    if (!Number.isFinite(raw) || raw < 0) {
       throw new BizException(BizCode.BAD_REQUEST, 'progressSec không hợp lệ');
     }
-    if (raw < 0 || (duration > 0 && raw > duration)) {
-      throw new BizException(
-        BizCode.BAD_REQUEST,
-        `progressSec phải trong khoảng [0, ${duration}]`,
-      );
-    }
-    // durationSec 未知时仍禁止负数，上限放宽到合理最大值
-    if (duration === 0 && raw > 86400) {
+    // 播放器 currentTime 常略超 durationSec；未知时长再放宽到 24h
+    let clamped = Math.floor(raw);
+    if (duration > 0) clamped = Math.min(clamped, duration);
+    else if (clamped > 86400) {
       throw new BizException(BizCode.BAD_REQUEST, 'progressSec vượt quá giới hạn');
     }
-    const clamped = Math.floor(raw);
+    const existing = await this.prisma.watchHistory.findUnique({
+      where: { userId_episodeId: { userId, episodeId } },
+      select: { id: true },
+    });
     await this.prisma.watchHistory.upsert({
       where: { userId_episodeId: { userId, episodeId } },
       create: { userId, episodeId, dramaId: ep.dramaId, progressSec: clamped },
       update: { progressSec: clamped, watchedAt: new Date(), dramaId: ep.dramaId },
     });
-    await this.prisma.episode.update({
-      where: { id: episodeId },
-      data: { viewCount: { increment: 1 } },
-    });
+    // 仅首次写入历史时计一次播放，避免进度心跳刷爆 viewCount
+    if (!existing) {
+      await this.prisma.episode.update({
+        where: { id: episodeId },
+        data: { viewCount: { increment: 1 } },
+      });
+    }
     return { success: true };
   }
 }

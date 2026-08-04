@@ -58,11 +58,13 @@ type Props = {
   favGroup: string;
   setFavGroup: (g: string) => void;
   history: any[];
+  likes: any[];
   orders: any[];
   loading: boolean;
   refreshing: boolean;
   onRefresh: (opts?: { force?: boolean }) => void;
   onRemoveFavorite: (dramaId: string | number) => Promise<void>;
+  onRemoveLike: (dramaId: string | number) => Promise<void>;
   onClearHistory: () => Promise<void>;
   code: string;
   setCode: (v: string) => void;
@@ -111,11 +113,13 @@ export function MobileMe(props: Props) {
     favGroup,
     setFavGroup,
     history,
+    likes,
     orders,
     loading,
     refreshing,
     onRefresh,
     onRemoveFavorite,
+    onRemoveLike,
     onClearHistory,
     code,
     setCode,
@@ -166,6 +170,16 @@ export function MobileMe(props: Props) {
     [favorites, query, locale],
   );
 
+  const likedRows = useMemo(
+    () =>
+      likes.filter((row) => {
+        const d = row.drama || row;
+        return matchesQuery(titleOf(d));
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [likes, query, locale],
+  );
+
   const toggleSelect = (id: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -190,6 +204,15 @@ export function MobileMe(props: Props) {
     const ids = [...selected];
     for (const id of ids) {
       await onRemoveFavorite(id);
+    }
+    exitEdit();
+    onRefresh({ force: true });
+  };
+
+  const deleteSelectedLikes = async () => {
+    const ids = [...selected];
+    for (const id of ids) {
+      await onRemoveLike(id);
     }
     exitEdit();
     onRefresh({ force: true });
@@ -408,7 +431,7 @@ export function MobileMe(props: Props) {
               {t("account.filterAction")}
             </button>
           )}
-          {(tab === "history" || tab === "favorites") && (
+          {(tab === "history" || tab === "favorites" || tab === "liked") && (
             <button
               type="button"
               onClick={() => {
@@ -474,6 +497,18 @@ export function MobileMe(props: Props) {
           <button
             type="button"
             onClick={() => void deleteSelectedFavorites()}
+            className="text-caption text-danger"
+          >
+            {t("account.deleteSelected")} ({selected.size})
+          </button>
+        </div>
+      )}
+
+      {editing && tab === "liked" && selected.size > 0 && (
+        <div className="mt-2 flex justify-end px-4">
+          <button
+            type="button"
+            onClick={() => void deleteSelectedLikes()}
             className="text-caption text-danger"
           >
             {t("account.deleteSelected")} ({selected.size})
@@ -604,11 +639,72 @@ export function MobileMe(props: Props) {
         )}
 
         {(!loading || refreshing) && tab === "liked" && (
-          <div className="py-12 text-center">
-            <Heart className="mx-auto h-8 w-8 text-ink-subtle" />
-            <p className="mt-3 text-body-sm text-ink-muted">{t("account.emptyLiked")}</p>
-            <p className="mt-1 text-caption text-ink-subtle">{t("account.likedHint")}</p>
-          </div>
+          <>
+            {likedRows.length === 0 ? (
+              <div className="py-12 text-center">
+                <Heart className="mx-auto h-8 w-8 text-ink-subtle" />
+                <p className="mt-3 text-body-sm text-ink-muted">{t("account.emptyLiked")}</p>
+                <Link
+                  href="/theater"
+                  className="mt-3 inline-flex rounded-full bg-surface-2 px-4 py-2 text-body-sm text-ink"
+                >
+                  {t("account.goTheater")}
+                </Link>
+              </div>
+            ) : (
+              <div className="grid grid-cols-3 gap-x-2 gap-y-4">
+                {likedRows.map((row) => {
+                  const d = row.drama || row;
+                  const slug = d.slug || d.id;
+                  const dramaId = String(row.dramaId ?? d.id);
+                  const isSelected = selected.has(dramaId);
+                  return (
+                    <div key={row.id || slug} className="relative min-w-0">
+                      {editing && (
+                        <button
+                          type="button"
+                          onClick={() => toggleSelect(dramaId)}
+                          className={cn(
+                            "absolute left-1.5 top-1.5 z-10 grid h-6 w-6 place-items-center rounded-full border",
+                            isSelected
+                              ? "border-brand bg-brand text-white"
+                              : "border-white/70 bg-black/40 text-transparent",
+                          )}
+                          aria-pressed={isSelected}
+                        >
+                          <Check className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                      <Link
+                        href={editing ? "#" : `/drama/${slug}`}
+                        onClick={(e) => {
+                          if (editing) {
+                            e.preventDefault();
+                            toggleSelect(dramaId);
+                          }
+                        }}
+                        className="block"
+                      >
+                        <div className="relative aspect-[2/3] overflow-hidden rounded-lg bg-surface-2">
+                          {d.coverUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={d.coverUrl}
+                              alt=""
+                              className="absolute inset-0 h-full w-full object-cover"
+                            />
+                          ) : null}
+                        </div>
+                        <p className="mt-1.5 line-clamp-2 text-[13px] leading-snug text-ink">
+                          {titleOf(d)}
+                        </p>
+                      </Link>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </>
         )}
       </div>
 

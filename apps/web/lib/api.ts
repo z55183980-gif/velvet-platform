@@ -127,6 +127,11 @@ function mapDrama(d: any): Drama {
     favRaw == null || favRaw === ""
       ? undefined
       : Math.max(0, Number(favRaw) || 0);
+  const likeRaw = d.likeCount;
+  const likeCount =
+    likeRaw == null || likeRaw === ""
+      ? undefined
+      : Math.max(0, Number(likeRaw) || 0);
   return {
     id: d.slug || String(d.id),
     numericId: d.id != null ? String(d.id) : undefined,
@@ -147,6 +152,7 @@ function mapDrama(d: any): Drama {
     pricePerEp: 0,
     buyoutCredits: d.buyoutCredits != null ? String(d.buyoutCredits) : null,
     favoriteCount,
+    likeCount,
     creator: d.creator
       ? {
           displayName: d.creator.displayName || "",
@@ -492,6 +498,20 @@ export async function updateFavorite(
 export async function removeFavorite(dramaId: string | number) {
   return request<any>(`/users/me/favorites/${dramaId}`, { method: "DELETE" });
 }
+export async function getLikes(page = 1) {
+  return request<{ rows: any[]; total: number; page: number; pageSize: number }>(
+    `/users/me/likes?page=${page}`,
+  );
+}
+export async function checkLike(dramaId: string | number) {
+  return request<{ liked: boolean }>(`/users/me/likes/${dramaId}`);
+}
+export async function addLike(dramaId: string | number) {
+  return request<any>(`/users/me/likes/${dramaId}`, { method: "POST", body: "{}" });
+}
+export async function removeLike(dramaId: string | number) {
+  return request<any>(`/users/me/likes/${dramaId}`, { method: "DELETE" });
+}
 export async function getWatchHistory(page = 1, dramaId?: string) {
   const qs = new URLSearchParams({ page: String(page) });
   if (dramaId) qs.set("dramaId", String(dramaId));
@@ -501,6 +521,12 @@ export async function getWatchHistory(page = 1, dramaId?: string) {
 }
 export async function clearWatchHistory() {
   return request<any>("/users/me/history", { method: "DELETE" });
+}
+export async function reportProgress(episodeId: string | number, progressSec: number) {
+  return request<{ success: boolean }>(`/episodes/${episodeId}/progress`, {
+    method: "POST",
+    body: JSON.stringify({ progressSec: Math.max(0, Math.floor(progressSec)) }),
+  });
 }
 export async function uploadAvatar(file: File) {
   const fd = new FormData();

@@ -156,6 +156,27 @@ export class UsersController {
     return ok(await this.users.removeFavorite(user.userId, dramaId));
   }
 
+  @Get('users/me/likes')
+  async likes(@CurrentUser() user: AuthUser, @Query('page') page?: string) {
+    const p = Math.max(1, parseInt(page || '1', 10) || 1);
+    return ok(await this.users.listLikes(user.userId, p));
+  }
+
+  @Get('users/me/likes/:dramaId')
+  async likeStatus(@Param('dramaId') dramaId: string, @CurrentUser() user: AuthUser) {
+    return ok(await this.users.isLiked(user.userId, dramaId));
+  }
+
+  @Post('users/me/likes/:dramaId')
+  async addLike(@Param('dramaId') dramaId: string, @CurrentUser() user: AuthUser) {
+    return ok(await this.users.addLike(user.userId, dramaId));
+  }
+
+  @Delete('users/me/likes/:dramaId')
+  async delLike(@Param('dramaId') dramaId: string, @CurrentUser() user: AuthUser) {
+    return ok(await this.users.removeLike(user.userId, dramaId));
+  }
+
   @Get('users/me/history')
   async history(
     @CurrentUser() user: AuthUser,

@@ -29,9 +29,13 @@ import {
   loadHome,
   getPlayUrl,
   getWatchHistory,
+  reportProgress,
   checkFavorite,
   addFavorite,
   removeFavorite,
+  checkLike,
+  addLike,
+  removeLike,
 } from "@/lib/api";
 import { categoryName, type Drama, type Episode } from "@/lib/mock-data";
 import { pickContentText } from "@/lib/languages";
@@ -45,19 +49,6 @@ function isUrl(s: string) {
 
 function isHls(url: string) {
   return /\.m3u8(\?|$)/i.test(url);
-}
-
-/** Fake like counts until like API ships; favorite uses real favoriteCount. */
-function socialCounts(id: string) {
-  let h = 2166136261;
-  for (let i = 0; i < id.length; i++) {
-    h ^= id.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  const u = h >>> 0;
-  return {
-    like: 40_000 + ((u >> 3) % 1_200_000),
-  };
 }
 
 function formatCount(n: number, locale: string) {
@@ -109,6 +100,7 @@ export function DramaDetail({ id }: { id: string }) {
   const [favorited, setFavorited] = useState(false);
   const [favCount, setFavCount] = useState(0);
   const [liked, setLiked] = useState(false);
+  const [likeCount, setLikeCount] = useState(0);
   const [rate, setRate] = useState(1);
   const [showRate, setShowRate] = useState(false);
   const [showMore, setShowMore] = useState(false);
@@ -140,12 +132,14 @@ export function DramaDetail({ id }: { id: string }) {
     setFavorited(false);
     setFavCount(0);
     setLiked(false);
+    setLikeCount(0);
     loadDramaDetail(id, { signal: ac.signal })
       .then((d) => {
         if (ac.signal.aborted) return;
         if (d) {
           setData(d);
           setFavCount(d.drama.favoriteCount ?? 0);
+          setLikeCount(d.drama.likeCount ?? 0);
           const nos = new Set(d.episodes.filter((e) => e.isFree || e.unlocked).map((e) => e.no));
           setUnlockedNos(nos);
           setSelected(null);
@@ -251,6 +245,7 @@ export function DramaDetail({ id }: { id: string }) {
     const dramaId = data?.drama.numericId;
     if (!user || !dramaId || !/^\d+$/.test(dramaId)) {
       setFavorited(false);
+      setLiked(false);
       return;
     }
     let alive = true;
@@ -260,6 +255,13 @@ export function DramaDetail({ id }: { id: string }) {
       })
       .catch(() => {
         if (alive) setFavorited(false);
+      });
+    checkLike(dramaId)
+      .then((r) => {
+        if (alive) setLiked(!!r?.liked);
+      })
+      .catch(() => {
+        if (alive) setLiked(false);
       });
     return () => {
       alive = false;
@@ -318,6 +320,41 @@ export function DramaDetail({ id }: { id: string }) {
       });
     return () => ac.abort();
   }, [data?.drama.categorySlug, data?.drama.id]);
+
+  // Report watch progress so Me history + resume keep working
+  useEffect(() => {
+    if (!user || !selected?.id || !playUrl || !watching) return;
+    const episodeId = String(selected.id);
+    if (!/^\d+$/.test(episodeId)) return;
+
+    let lastSent = -1;
+    const flush = (force = false) => {
+      const video = videoRef.current;
+      if (!video) return;
+      const sec = Math.floor(video.currentTime || 0);
+      if (sec < 0) return;
+      if (!force && lastSent >= 0 && Math.abs(sec - lastSent) < 8) return;
+      lastSent = sec;
+      void reportProgress(episodeId, sec).catch(() => {});
+    };
+
+    const interval = window.setInterval(() => {
+      const video = videoRef.current;
+      if (video && !video.paused && !video.ended) flush();
+    }, 10_000);
+    const onVis = () => {
+      if (document.hidden) flush(true);
+    };
+    document.addEventListener("visibilitychange", onVis);
+    const seed = window.setTimeout(() => flush(true), 1500);
+
+    return () => {
+      window.clearInterval(interval);
+      window.clearTimeout(seed);
+      flush(true);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [user, selected?.id, playUrl, watching]);
 
   // HLS attach + quality levels + 横竖检测
   useEffect(() => {
@@ -456,6 +493,24 @@ export function DramaDetail({ id }: { id: string }) {
     }
   };
 
+  const toggleLike = async () => {
+    if (!user) {
+      openLogin();
+      return;
+    }
+    if (!/^\d+$/.test(String(favoriteDramaId))) return;
+    const next = !liked;
+    setLiked(next);
+    setLikeCount((c) => Math.max(0, c + (next ? 1 : -1)));
+    try {
+      if (next) await addLike(favoriteDramaId);
+      else await removeLike(favoriteDramaId);
+    } catch {
+      setLiked(!next);
+      setLikeCount((c) => Math.max(0, c + (next ? -1 : 1)));
+    }
+  };
+
   /** Locked episodes → VIP subscription (no per-episode credit unlock). */
   function openVipGate(_ep?: Episode) {
     if (!authReady) return;
@@ -526,7 +581,6 @@ export function DramaDetail({ id }: { id: string }) {
 
   /* ---- Watching: mobile vertical ---- */
   if (watching && isMobile) {
-    const counts = socialCounts(drama.id);
     const epTitle = selected
       ? pickContentText(locale, selected.titleVi, selected.titleZh)
       : "";
@@ -869,8 +923,8 @@ export function DramaDetail({ id }: { id: string }) {
             </WatchSideAction>
             <WatchSideAction
               label={t("feed.like")}
-              count={formatCount(counts.like + (liked ? 1 : 0), locale)}
-              onClick={() => setLiked((v) => !v)}
+              count={formatCount(likeCount, locale)}
+              onClick={() => void toggleLike()}
             >
               <Heart
                 className={cn(
