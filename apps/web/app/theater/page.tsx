@@ -125,32 +125,38 @@ export default function TheaterPage() {
   }
 
   return (
-    <div className="mx-auto max-w-[1200px] px-4 py-6 md:px-6 md:py-10">
+    <div className="mx-auto w-full max-w-[1200px] overflow-x-clip px-4 py-6 md:px-6 md:py-10">
       <div className="mb-6 flex items-end justify-between gap-4 md:mb-8">
         <h1 className="text-h2 font-bold text-ink md:text-h1">{t("theater.title")}</h1>
       </div>
 
-      <div className="-mx-4 mb-6 flex gap-2 overflow-x-auto px-4 pb-1 md:mx-0 md:flex-wrap md:overflow-visible md:px-0">
-        <Chip active={!cat && sort === "hot"} onClick={selectAll}>
-          {t("theater.all")}
-        </Chip>
-        <Chip active={!cat && sort === "latest"} onClick={selectLatest}>
-          {t("theater.latest")}
-        </Chip>
-        <Chip active={!cat && sort === "hottest"} onClick={selectHottest}>
-          {t("theater.hottest")}
-        </Chip>
-        {categories.map((c) => (
-          <Chip key={c.slug} active={cat === c.slug} onClick={() => selectCat(c.slug)}>
-            {pickContentText(locale, c.nameVi, c.nameZh)}
+      {/*
+        Edge-bleed chip scroller: negative margin stays inside overflow-x-clip parent so
+        shrink-0 chips scroll in-place instead of widening the document (mobile shrink-to-fit).
+      */}
+      <div className="-mx-4 mb-6 min-w-0 md:mx-0">
+        <div className="flex gap-2 overflow-x-auto overscroll-x-contain px-4 pb-1 [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:flex-wrap md:overflow-visible md:px-0">
+          <Chip active={!cat && sort === "hot"} onClick={selectAll}>
+            {t("theater.all")}
           </Chip>
-        ))}
+          <Chip active={!cat && sort === "latest"} onClick={selectLatest}>
+            {t("theater.latest")}
+          </Chip>
+          <Chip active={!cat && sort === "hottest"} onClick={selectHottest}>
+            {t("theater.hottest")}
+          </Chip>
+          {categories.map((c) => (
+            <Chip key={c.slug} active={cat === c.slug} onClick={() => selectCat(c.slug)}>
+              {pickContentText(locale, c.nameVi, c.nameZh)}
+            </Chip>
+          ))}
+        </div>
       </div>
 
       {initialLoading ? (
-        <div className="grid grid-cols-3 gap-3 sm:grid-cols-3 md:grid-cols-4 md:gap-5 lg:grid-cols-5 xl:grid-cols-6">
+        <div className="grid min-w-0 grid-cols-3 gap-3 sm:grid-cols-3 md:grid-cols-4 md:gap-5 lg:grid-cols-5 xl:grid-cols-6">
           {Array.from({ length: 12 }).map((_, i) => (
-            <div key={i} className="aspect-[2/3] animate-pulse rounded-md bg-surface-2" />
+            <div key={i} className="aspect-[2/3] min-w-0 animate-pulse rounded-md bg-surface-2" />
           ))}
         </div>
       ) : rows.length === 0 ? (
@@ -158,13 +164,15 @@ export default function TheaterPage() {
       ) : (
         <div
           className={cn(
-            "grid grid-cols-3 gap-x-3 gap-y-5 transition-opacity duration-200 sm:grid-cols-3 md:grid-cols-4 md:gap-x-5 md:gap-y-8 lg:grid-cols-5 xl:grid-cols-6",
+            "grid min-w-0 grid-cols-3 gap-x-3 gap-y-5 transition-opacity duration-200 sm:grid-cols-3 md:grid-cols-4 md:gap-x-5 md:gap-y-8 lg:grid-cols-5 xl:grid-cols-6",
             refreshing && "opacity-60 pointer-events-none",
           )}
           aria-busy={refreshing}
         >
           {rows.map((d) => (
-            <DramaCard key={d.id} drama={d} compact />
+            <div key={d.id} className="min-w-0">
+              <DramaCard drama={d} compact />
+            </div>
           ))}
         </div>
       )}
@@ -187,7 +195,7 @@ function Chip({
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        "shrink-0 rounded-full px-3.5 py-1.5 text-body-sm transition-colors",
+        "shrink-0 touch-manipulation rounded-full px-3.5 py-1.5 text-body-sm transition-colors",
         active
           ? "bg-brand font-medium text-white"
           : "bg-surface-2 text-ink-muted hover:bg-surface-3 hover:text-ink",

@@ -12,6 +12,7 @@ import {
   asRows,
 } from "@velvet/api-client";
 import { AdminShell } from "@/components/admin-shell";
+import { GlassModal } from "@/components/glass-modal";
 import { useI18n, statusLabel } from "@/lib/i18n";
 import { useLocationSearchParams } from "@/lib/use-location-search";
 import { Badge, Button, DataTable, Input, Select, StatCard, fmtDate, fmtNum, type Column } from "@velvet/ui";
@@ -109,51 +110,11 @@ function formatRegion(
   return { ip: region?.ipAddress || "—", place };
 }
 
-function ModalShell({
-  title,
-  subtitle,
-  onClose,
-  t,
-  wide,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  onClose: () => void;
-  t: ReturnType<typeof useI18n>["t"];
-  wide?: boolean;
-  children: ReactNode;
-}) {
+function modalTitle(title: string, subtitle?: string) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <button
-        type="button"
-        className="absolute inset-0 bg-ink/40 backdrop-blur-[2px]"
-        aria-label={t("close")}
-        onClick={onClose}
-      />
-      <div
-        role="dialog"
-        aria-modal="true"
-        className={`relative z-10 max-h-[85vh] w-full overflow-y-auto rounded-2xl border border-white/70 bg-white/95 p-5 shadow-3 backdrop-blur-md ${
-          wide ? "max-w-2xl" : "max-w-lg"
-        }`}
-      >
-        <div className="mb-5 flex items-start justify-between gap-3 border-b border-line pb-3">
-          <div>
-            <h2 className="text-h4 tracking-tight text-ink">{title}</h2>
-            {subtitle ? <p className="mt-0.5 text-caption text-ink-subtle">{subtitle}</p> : null}
-          </div>
-          <button
-            type="button"
-            className="rounded-lg px-2 py-1 text-body-sm text-ink-muted transition hover:bg-panel hover:text-ink"
-            onClick={onClose}
-          >
-            {t("close")}
-          </button>
-        </div>
-        {children}
-      </div>
+    <div>
+      <div>{title}</div>
+      {subtitle ? <p className="mt-0.5 text-caption font-normal text-ink-subtle">{subtitle}</p> : null}
     </div>
   );
 }
@@ -179,7 +140,7 @@ function UserDetailModal({
   const dateLocale = locale === "en" ? "en-US" : "zh-CN";
 
   return (
-    <ModalShell title={t("userDetail")} subtitle={`ID ${userId}`} onClose={onClose} t={t}>
+    <GlassModal open onClose={onClose} title={modalTitle(t("userDetail"), `ID ${userId}`)} size="md">
       {detailQ.isLoading ? <p className="text-ink-muted">{t("loading")}</p> : null}
       {detailQ.error ? (
         <p className="text-body-sm text-danger">{(detailQ.error as Error).message}</p>
@@ -219,7 +180,7 @@ function UserDetailModal({
           </div>
         </div>
       ) : null}
-    </ModalShell>
+    </GlassModal>
   );
 }
 
@@ -261,7 +222,7 @@ function UserEditModal({
   const act = (action: () => Promise<unknown>) => actionMut.mutate(action);
 
   return (
-    <ModalShell title={t("edit")} subtitle={`ID ${userId}`} onClose={onClose} t={t} wide>
+    <GlassModal open onClose={onClose} title={modalTitle(t("edit"), `ID ${userId}`)} size="lg">
       {detailQ.isLoading ? <p className="text-ink-muted">{t("loading")}</p> : null}
       {error || detailQ.error ? (
         <p className="mb-3 text-body-sm text-danger">{error || (detailQ.error as Error).message}</p>
@@ -412,7 +373,7 @@ function UserEditModal({
           </div>
         </div>
       ) : null}
-    </ModalShell>
+    </GlassModal>
   );
 }
 

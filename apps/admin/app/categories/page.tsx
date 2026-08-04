@@ -20,7 +20,7 @@ type Row = {
   isActive?: boolean;
 };
 
-const emptyForm = { slug: "", nameVi: "", nameZh: "", sortOrder: 0, isActive: true };
+const emptyForm = { slug: "", nameZh: "", sortOrder: 0, isActive: true };
 
 export default function AdminCategoriesPage() {
   const { t } = useI18n();
@@ -36,16 +36,25 @@ export default function AdminCategoriesPage() {
 
   const saveMut = useMutation({
     mutationFn: async () => {
+      const nameZh = form.nameZh.trim();
+      if (!nameZh) throw new Error(t("onlineNeedTitle"));
+      const nameVi = nameZh;
       if (editSlug) {
         return adminUpdateCategory(editSlug, {
-          nameVi: form.nameVi,
-          nameZh: form.nameZh,
+          nameVi,
+          nameZh,
           sortOrder: form.sortOrder,
           isActive: form.isActive,
         });
       }
       if (!form.slug.trim()) throw new Error(t("slugRequired"));
-      return adminCreateCategory(form);
+      return adminCreateCategory({
+        slug: form.slug.trim(),
+        nameVi,
+        nameZh,
+        sortOrder: form.sortOrder,
+        isActive: form.isActive,
+      });
     },
     onSuccess: async () => {
       setForm(emptyForm);
@@ -67,8 +76,7 @@ export default function AdminCategoriesPage() {
   const columns: Column<Row>[] = useMemo(
     () => [
       { key: "slug", header: t("colSlug"), cell: (r) => r.slug },
-      { key: "vi", header: t("colNameVi"), cell: (r) => r.nameVi || "—" },
-      { key: "zh", header: t("colNameZh"), cell: (r) => r.nameZh || "—" },
+      { key: "zh", header: t("colName"), cell: (r) => r.nameZh || r.nameVi || "—" },
       { key: "sort", header: t("colSort"), cell: (r) => String(r.sortOrder ?? 0), className: "tabular-nums" },
       {
         key: "active",
@@ -87,8 +95,7 @@ export default function AdminCategoriesPage() {
                 setEditSlug(r.slug);
                 setForm({
                   slug: r.slug,
-                  nameVi: r.nameVi || "",
-                  nameZh: r.nameZh || "",
+                  nameZh: r.nameZh || r.nameVi || "",
                   sortOrder: r.sortOrder ?? 0,
                   isActive: !!r.isActive,
                 });
@@ -123,15 +130,7 @@ export default function AdminCategoriesPage() {
           />
         </label>
         <label className="text-caption text-ink-muted">
-          {t("colNameVi")}
-          <Input
-            className="mt-1"
-            value={form.nameVi}
-            onChange={(e) => setForm((f) => ({ ...f, nameVi: e.target.value }))}
-          />
-        </label>
-        <label className="text-caption text-ink-muted">
-          {t("colNameZh")}
+          {t("colName")}
           <Input
             className="mt-1"
             value={form.nameZh}

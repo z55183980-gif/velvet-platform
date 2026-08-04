@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { LogIn, RefreshCw } from "lucide-react";
 import { ApiError, adminFetchCaptcha, adminLogin, adminMe, getAdminToken } from "@velvet/api-client";
+import { Button, Input } from "@velvet/ui";
 import { useI18n } from "@/lib/i18n";
 
 const WEB_URL = process.env.NEXT_PUBLIC_WEB_URL || "http://localhost:3000";
@@ -95,12 +96,12 @@ export default function AdminLoginPage() {
             width={40}
             height={40}
           />
-          <span className="text-sm font-medium text-ink">Velvet Ops</span>
+          <span className="text-body-sm font-medium text-ink">Velvet Ops</span>
         </div>
       </div>
 
       <div className="absolute right-5 top-5 z-10 sm:right-8 sm:top-8">
-        <a href={WEB_URL} className="glass rounded-xl px-3 py-2 text-sm text-ink-muted transition hover:text-ink">
+        <a href={WEB_URL} className="glass rounded-xl px-3 py-2 text-body-sm text-ink-muted transition hover:text-ink">
           ← {t("backSite")}
         </a>
       </div>
@@ -117,16 +118,16 @@ export default function AdminLoginPage() {
               height={40}
             />
             <div>
-              <h1 className="text-xl font-semibold tracking-tight text-ink">{t("loginTitle")}</h1>
-              <p className="mt-1 text-sm text-ink-muted">{t("loginSubheading")}</p>
+              <h1 className="text-h4 font-semibold tracking-tight text-ink">{t("loginTitle")}</h1>
+              <p className="mt-1 text-body-sm text-ink-muted">{t("loginSubheading")}</p>
             </div>
           </div>
 
           <form onSubmit={onSubmit} className="space-y-4" autoComplete="on">
             <label className="block">
-              <span className="mb-1.5 block text-sm font-medium text-ink">{t("loginAccount")}</span>
-              <input
-                className="input-field-lg"
+              <span className="mb-1.5 block text-body-sm font-medium text-ink">{t("loginAccount")}</span>
+              <Input
+                className="h-11"
                 value={account}
                 onChange={(e) => setAccount(e.target.value)}
                 autoComplete="username"
@@ -136,10 +137,10 @@ export default function AdminLoginPage() {
             </label>
 
             <label className="block">
-              <span className="mb-1.5 block text-sm font-medium text-ink">{t("loginPassword")}</span>
-              <input
+              <span className="mb-1.5 block text-body-sm font-medium text-ink">{t("loginPassword")}</span>
+              <Input
                 type="password"
-                className="input-field-lg"
+                className="h-11"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 autoComplete="current-password"
@@ -150,11 +151,11 @@ export default function AdminLoginPage() {
 
             {captchaRequired ? (
               <label className="block">
-                <span className="mb-1.5 block text-sm font-medium text-ink">{t("loginCaptcha")}</span>
+                <span className="mb-1.5 block text-body-sm font-medium text-ink">{t("loginCaptcha")}</span>
                 <div className="flex items-center gap-3">
-                  <input
+                  <Input
                     autoComplete="off"
-                    className="input-field-lg min-w-0 flex-1"
+                    className="h-11 min-w-0 flex-1"
                     placeholder={t("captchaPlaceholder")}
                     value={captchaCode}
                     onChange={(e) => setCaptchaCode(e.target.value.toUpperCase())}
@@ -182,18 +183,18 @@ export default function AdminLoginPage() {
             ) : null}
 
             {err ? (
-              <div className="rounded-xl border border-rose-300/40 bg-rose-400/10 px-3 py-2.5 text-sm text-rose-700 backdrop-blur-sm">
+              <div className="rounded-xl border border-danger/20 bg-danger-soft px-3 py-2.5 text-body-sm text-danger backdrop-blur-sm">
                 {err}
               </div>
             ) : null}
 
-            <button type="submit" disabled={submitDisabled} className="btn-primary h-11 w-full font-semibold">
+            <Button type="submit" size="lg" disabled={submitDisabled} className="w-full">
               <LogIn size={17} />
               {busy ? t("loggingIn") : t("loginSubmit")}
-            </button>
+            </Button>
           </form>
 
-          <p className="mt-6 text-center text-xs leading-5 text-ink-muted">
+          <p className="mt-6 text-center text-caption leading-5 text-ink-muted">
             {t("loginFooterHint")}
           </p>
         </div>

@@ -85,10 +85,45 @@
     -moz-osx-font-smoothing: grayscale;
     /* Vietnamese diacritics: keep ligatures + kerning on */
     font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
+
+    /*
+      Mobile bottom-tab clearance above the home indicator / gesture bar.
+      - In-browser: typically 0 (browser chrome already owns that edge).
+      - Standalone / PWA: env() is non-zero once viewport-fit=cover is set.
+      Keep tab bar + app-shell main padding on the same token so heights match
+      for both fixed and inline (feed-lock) tab modes.
+    */
+    --mobile-tab-safe-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /*
+    Installed to home screen: no browser toolbar — page sits on the device
+    safe area. Add a hair of extra air so labels don't hug the home indicator,
+    with a small floor if a WebView reports 0 incorrectly.
+  */
+  @media (display-mode: standalone),
+    (display-mode: fullscreen),
+    (display-mode: minimal-ui) {
+    :root {
+      --mobile-tab-safe-bottom: max(
+        0.5rem,
+        calc(env(safe-area-inset-bottom, 0px) + 0.25rem)
+      );
+    }
   }
 
   * {
     border-color: var(--color-line);
+  }
+
+  /*
+    Clip horizontal overflow without creating a scroll container (unlike overflow-x:hidden,
+    which forces overflow-y to auto and can break position:sticky). Prevents mobile
+    browsers from shrink-to-fitting when a tab's content is wider than the viewport.
+  */
+  html,
+  body {
+    overflow-x: clip;
   }
 
   body {

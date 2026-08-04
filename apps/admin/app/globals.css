@@ -2,7 +2,7 @@
 
 /* ============================================================
    Ops Velvet — visual language aligned with local zai admin
-   Light frosted-glass console, iOS blue accent.
+   Light frosted-glass console, iOS blue brand accent.
    ============================================================ */
 @theme {
   --color-base: #e4ecf4;
@@ -17,7 +17,9 @@
   --color-brand: #007aff;
   --color-brand-strong: #0062cc;
   --color-brand-soft: rgba(0, 122, 255, 0.15);
+  --color-brand-glow: rgba(0, 122, 255, 0.25);
 
+  /* Aliases → brand (prefer brand* in new code) */
   --color-accent: #007aff;
   --color-accent-hover: #0062cc;
   --color-accent-light: rgba(0, 122, 255, 0.15);
@@ -29,14 +31,18 @@
   --color-gold-soft: rgba(180, 83, 9, 0.12);
 
   --color-success: #047857;
+  --color-success-soft: rgba(4, 120, 87, 0.12);
   --color-warning: #b45309;
+  --color-warning-soft: rgba(180, 83, 9, 0.12);
   --color-danger: #be123c;
+  --color-danger-soft: rgba(190, 18, 60, 0.12);
   --color-info: #0369a1;
+  --color-info-soft: rgba(3, 105, 161, 0.12);
 
   --color-line: rgba(15, 20, 25, 0.08);
   --color-line-strong: rgba(15, 20, 25, 0.16);
 
-  --font-sans: -apple-system, BlinkMacSystemFont, Inter, ui-sans-serif, system-ui, "Segoe UI",
+  --font-sans: var(--font-inter), -apple-system, BlinkMacSystemFont, ui-sans-serif, system-ui, "Segoe UI",
     "PingFang SC", "Noto Sans SC", sans-serif;
 
   --text-display: 3.5rem;
@@ -79,9 +85,9 @@
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
-  --radius-xl: 0.875rem;
-  --radius-2xl: 1rem;
-  --radius-3xl: 1.25rem;
+  --radius-xl: 1.25rem;
+  --radius-2xl: 1.5rem;
+  --radius-3xl: 1.75rem;
   --radius-full: 999px;
 
   --shadow-1: 0 1px 2px rgba(15, 20, 25, 0.04), 0 1px 3px rgba(15, 20, 25, 0.06);
@@ -252,80 +258,6 @@
     -webkit-backdrop-filter: blur(calc(var(--glass-blur) + 4px)) saturate(var(--glass-saturate));
     border: 1px solid var(--glass-border);
     box-shadow: 0 24px 80px rgba(15, 20, 25, 0.12), var(--glass-highlight);
-  }
-
-  .glass-nav-hover {
-    transition: background 0.15s ease, color 0.15s ease;
-  }
-
-  .glass-nav-hover:hover {
-    background: rgba(255, 255, 255, 0.42);
-  }
-
-  .glass-nav-active {
-    background: rgba(255, 255, 255, 0.55);
-    color: #007aff;
-    box-shadow: inset 0 0 0 1px rgba(0, 122, 255, 0.2);
-  }
-
-  .btn-primary {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.5rem;
-    border-radius: 0.875rem;
-    background: var(--color-brand);
-    padding: 0 1rem;
-    font-size: 0.875rem;
-    font-weight: 500;
-    color: #fff;
-    transition: background 0.15s ease;
-    box-shadow: 0 2px 8px rgba(0, 122, 255, 0.28);
-  }
-
-  .btn-primary:hover {
-    background: var(--color-brand-strong);
-  }
-
-  .btn-primary:disabled {
-    cursor: not-allowed;
-    opacity: 0.5;
-  }
-
-  .input-field,
-  .input-field-lg {
-    width: 100%;
-    border-radius: 0.875rem;
-    border: 1px solid var(--glass-border);
-    padding: 0 0.75rem;
-    font-size: 0.875rem;
-    color: var(--color-ink);
-    outline: none;
-    transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
-    background: rgba(255, 255, 255, 0.52);
-    backdrop-filter: blur(12px) saturate(var(--glass-saturate));
-    -webkit-backdrop-filter: blur(12px) saturate(var(--glass-saturate));
-    box-shadow: inset 0 1px 2px rgba(15, 20, 25, 0.04);
-  }
-
-  .input-field {
-    height: 2.5rem;
-  }
-
-  .input-field-lg {
-    height: 2.75rem;
-  }
-
-  .input-field::placeholder,
-  .input-field-lg::placeholder {
-    color: #94a3b8;
-  }
-
-  .input-field:focus,
-  .input-field-lg:focus {
-    border-color: rgba(0, 122, 255, 0.45);
-    background: rgba(255, 255, 255, 0.68);
-    box-shadow: 0 0 0 2px var(--color-accent-light);
   }
 
   .card {

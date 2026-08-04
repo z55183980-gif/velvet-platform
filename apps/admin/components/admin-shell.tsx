@@ -221,14 +221,14 @@ function NavLink({
       prefetch
       onClick={onNavigate}
       className={[
-        "group relative flex items-center gap-2.5 rounded-md px-2.5 py-2 text-[13px] transition-colors",
+        "group relative flex items-center gap-2.5 rounded-md px-2.5 py-2 text-body-sm transition-colors",
         active
-          ? "bg-accent-light font-semibold text-accent"
+          ? "bg-brand-soft font-semibold text-brand"
           : "font-medium text-ink-muted hover:bg-white/50 hover:text-ink",
       ].join(" ")}
     >
-      {active ? <span className="absolute inset-y-1 left-0 w-0.5 rounded-full bg-accent" /> : null}
-      <Icon size={16} strokeWidth={active ? 2.25 : 2} className={active ? "text-accent" : "text-slate-500"} />
+      {active ? <span className="absolute inset-y-1 left-0 w-0.5 rounded-full bg-brand" /> : null}
+      <Icon size={16} strokeWidth={active ? 2.25 : 2} className={active ? "text-brand" : "text-ink-subtle"} />
       <span className="truncate">{t(item.key)}</span>
     </Link>
   );
@@ -295,7 +295,7 @@ function SidebarNav({
               type="button"
               onClick={() => toggle(group.id)}
               className={[
-                "flex w-full items-center justify-between rounded-lg border px-2.5 py-2 text-[13px] font-medium tracking-wide transition-colors",
+                "flex w-full items-center justify-between rounded-lg border px-2.5 py-2 text-body-sm font-medium tracking-wide transition-colors",
                 open
                   ? "border-line/80 bg-white/55 text-ink shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]"
                   : "border-transparent bg-white/30 text-ink hover:border-line/60 hover:bg-white/50",
@@ -359,12 +359,12 @@ function AccountMenu({
           setOpen((v) => !v);
         }}
       >
-        <span className="grid h-8 w-8 place-items-center rounded-full bg-accent-light text-xs font-semibold text-accent">
+        <span className="grid h-8 w-8 place-items-center rounded-full bg-brand-soft text-caption font-semibold text-brand">
           {account.charAt(0).toUpperCase()}
         </span>
         <span className="hidden min-w-0 text-left sm:block">
-          <span className="block max-w-[120px] truncate text-sm font-semibold text-ink">{account}</span>
-          <span className="block text-[11px] text-ink-muted">{role}</span>
+          <span className="block max-w-[120px] truncate text-body-sm font-semibold text-ink">{account}</span>
+          <span className="block text-caption text-ink-muted">{role}</span>
         </span>
         <ChevronDown size={14} className="hidden text-ink-muted sm:block" />
       </button>
@@ -450,7 +450,7 @@ function AdminShellFrame({ children }: { children: ReactNode }) {
       />
       <span>
         <span className="block text-sm font-semibold text-ink">Velvet Ops</span>
-        <span className="mt-0.5 block text-[11px] text-ink-muted">{t("brandSubtitle")}</span>
+        <span className="mt-0.5 block text-caption text-ink-muted">{t("brandSubtitle")}</span>
       </span>
     </Link>
   );
@@ -511,7 +511,7 @@ function AdminShellFrame({ children }: { children: ReactNode }) {
                   <Menu size={18} />
                 </button>
                 <span className="hidden text-ink-muted sm:inline">{crumb.group}</span>
-                <ChevronRight size={14} className="hidden shrink-0 text-slate-400 sm:block" />
+                <ChevronRight size={14} className="hidden shrink-0 text-ink-subtle sm:block" />
                 <span className="truncate font-semibold text-ink">{pageTitle || crumb.label}</span>
               </div>
               <AccountMenu account={account} role={role} onLogout={() => void logout()} />

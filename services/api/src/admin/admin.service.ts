@@ -749,8 +749,8 @@ export class AdminService {
     if (dto.titleVi != null) data.titleVi = dto.titleVi;
     if (dto.titleZh != null) data.titleZh = dto.titleZh;
     if (dto.imageUrl != null) data.imageUrl = dto.imageUrl;
-    if (dto.linkUrl != null) data.linkUrl = dto.linkUrl;
-    if (dto.dramaId != null) data.dramaId = BigInt(dto.dramaId);
+    if ("linkUrl" in dto) data.linkUrl = dto.linkUrl ? String(dto.linkUrl) : null;
+    if ("dramaId" in dto) data.dramaId = dto.dramaId ? BigInt(dto.dramaId) : null;
     if (dto.startAt != null) data.startAt = new Date(dto.startAt);
     if (dto.endAt != null) data.endAt = new Date(dto.endAt);
     if (dto.sortOrder != null) data.sortOrder = Number(dto.sortOrder);

@@ -197,7 +197,7 @@ function HomeInner() {
   if (isMobile && !filtered) {
     if (initialLoading && feedDramas.length === 0) {
       return (
-        <div className="flex h-[calc(100dvh-3rem-3rem)] items-center justify-center bg-black text-white/60">
+        <div className="flex h-full min-h-[50dvh] items-center justify-center bg-black text-white/60">
           …
         </div>
       );

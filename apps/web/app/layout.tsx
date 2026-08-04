@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { LocaleProvider } from "@/lib/i18n";
 import { AuthProvider } from "@/components/auth-context";
@@ -17,6 +17,27 @@ export const metadata: Metadata = {
     ],
     apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
   },
+  // iOS "Add to Home Screen": fullscreen app chrome (no Safari toolbar).
+  appleWebApp: {
+    capable: true,
+    title: "Velvet",
+    // Opaque bar — content starts below status bar; bottom home-indicator
+    // insets still apply once viewportFit is cover.
+    statusBarStyle: "black",
+  },
+};
+
+/**
+ * Lock pinch/double-tap zoom on mobile (short-video feed).
+ * viewportFit cover is required so env(safe-area-inset-*) is non-zero
+ * in standalone / notch devices (home indicator clearance for bottom nav).
+ */
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

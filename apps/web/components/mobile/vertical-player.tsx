@@ -69,6 +69,7 @@ export function VerticalPlayer({
   showSeek = true,
   playbackRate,
   onPlaybackRateChange,
+  onSeekingChange,
 }: {
   src?: string | null;
   poster?: string;
@@ -99,6 +100,8 @@ export function VerticalPlayer({
   showSeek?: boolean;
   playbackRate?: number;
   onPlaybackRateChange?: (rate: number) => void;
+  /** Fired when the feed/full scrubber drag starts or ends (for parent gesture locking). */
+  onSeekingChange?: (seeking: boolean) => void;
 }) {
   const { t } = useLocale();
   const innerRef = useRef<HTMLVideoElement>(null);
@@ -231,6 +234,14 @@ export function VerticalPlayer({
     bumpChrome();
   };
 
+  const setSeeking = useCallback(
+    (next: boolean) => {
+      setDragging(next);
+      onSeekingChange?.(next);
+    },
+    [onSeekingChange],
+  );
+
   const seekToRatio = (ratio: number) => {
     const v = videoRef.current;
     if (!v || !duration) return;
@@ -247,14 +258,23 @@ export function VerticalPlayer({
   useEffect(() => {
     if (!dragging) return;
     const onMove = (e: PointerEvent) => seekToRatio(ratioFromEvent(e.clientX));
-    const onUp = () => setDragging(false);
+    const onUp = () => setSeeking(false);
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
     return () => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
     };
-  }, [dragging, duration]);
+  }, [dragging, duration, setSeeking]);
+
+  // Always clear parent gesture lock on unmount / callback swap.
+  useEffect(() => {
+    return () => {
+      onSeekingChange?.(false);
+    };
+  }, [onSeekingChange]);
 
   let overlay: ReactNode = null;
   if (loginRequired) {
@@ -383,21 +403,39 @@ export function VerticalPlayer({
 
       {src && !locked && !loginRequired && !error && chrome === "feed" && showSeek && (
         <div
-          className="absolute inset-x-0 z-20 px-3 pb-1.5 pt-4"
+          className="absolute inset-x-0 z-20 px-3 pb-1"
           style={{ bottom: bottomInset }}
           onClick={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+          onTouchEnd={(e) => e.stopPropagation()}
+          onTouchMove={(e) => e.stopPropagation()}
         >
           <div
             ref={seekRef}
-            className="relative h-4 cursor-pointer"
+            className="relative h-11 touch-none select-none cursor-pointer"
             onPointerDown={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              setDragging(true);
+              try {
+                e.currentTarget.setPointerCapture(e.pointerId);
+              } catch {
+                /* ignore */
+              }
+              setSeeking(true);
               seekToRatio(ratioFromEvent(e.clientX));
             }}
           >
-            <div className="absolute inset-x-0 top-1/2 h-[2px] -translate-y-1/2 overflow-visible rounded-full bg-white/30">
+            {dragging ? (
+              <div className="pointer-events-none absolute inset-x-0 bottom-7 text-center text-[11px] tabular-nums text-white/90 drop-shadow-[0_1px_2px_rgba(0,0,0,0.65)]">
+                {fmtTime(current)} / {fmtTime(duration)}
+              </div>
+            ) : null}
+            <div
+              className={cn(
+                "absolute inset-x-0 bottom-[7px] overflow-visible rounded-full bg-white/30 transition-[height] duration-150",
+                dragging ? "h-1.5" : "h-[2px]",
+              )}
+            >
               <div
                 className="absolute inset-y-0 left-0 rounded-full bg-white/35"
                 style={{ width: `${buffered * 100}%` }}
@@ -409,10 +447,14 @@ export function VerticalPlayer({
             </div>
             <div
               className={cn(
-                "absolute top-1/2 h-2.5 w-2.5 -translate-y-1/2 rounded-full bg-white shadow",
-                dragging ? "scale-110" : "",
+                "absolute bottom-[3px] rounded-full bg-white shadow transition-transform duration-150",
+                dragging ? "h-3.5 w-3.5 scale-110" : "h-2.5 w-2.5",
               )}
-              style={{ left: `calc(${progress * 100}% - 5px)` }}
+              style={{
+                left: dragging
+                  ? `calc(${progress * 100}% - 7px)`
+                  : `calc(${progress * 100}% - 5px)`,
+              }}
             />
           </div>
         </div>
@@ -428,11 +470,16 @@ export function VerticalPlayer({
         >
           <div
             ref={seekRef}
-            className="group/seek relative mb-2 h-5 cursor-pointer"
+            className="group/seek relative mb-2 h-5 touch-none select-none cursor-pointer"
             onPointerDown={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              setDragging(true);
+              try {
+                e.currentTarget.setPointerCapture(e.pointerId);
+              } catch {
+                /* ignore */
+              }
+              setSeeking(true);
               seekToRatio(ratioFromEvent(e.clientX));
               bumpChrome();
             }}

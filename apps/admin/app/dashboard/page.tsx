@@ -291,7 +291,7 @@ export default function AdminDashboardPage() {
   return (
     <AdminShell title={t("dashboard")}>
       {error ? (
-        <p className="mb-4 rounded-xl border border-rose-300/40 bg-rose-50/80 px-3 py-2 text-sm text-rose-700">
+        <p className="mb-4 rounded-xl border border-danger/20 bg-danger-soft px-3 py-2 text-body-sm text-danger">
           {(error as Error).message || "failed"}
         </p>
       ) : null}
@@ -349,13 +349,13 @@ export default function AdminDashboardPage() {
             <p className="text-xs font-medium text-ink-muted">{x.label}</p>
             <p
               className={`mt-2 text-2xl font-semibold tabular-nums ${
-                x.n > 0 ? "text-amber-700" : "text-ink"
+                x.n > 0 ? "text-warning" : "text-ink"
               }`}
             >
               {x.n}
             </p>
             {"warn" in x && (x.warn as number) > 0 ? (
-              <p className="mt-1 text-xs font-medium text-rose-700">
+              <p className="mt-1 text-xs font-medium text-danger">
                 {t("overdue")}: {x.warn as number}
               </p>
             ) : null}

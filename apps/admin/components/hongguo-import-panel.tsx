@@ -154,7 +154,7 @@ export function HongguoImportPanel() {
               }}
               className={[
                 "card glass-card flex gap-3 p-3 text-left transition-colors",
-                selectedId === item.id ? "ring-2 ring-accent" : "hover:bg-white/40",
+                selectedId === item.id ? "ring-2 ring-brand" : "hover:bg-white/40",
               ].join(" ")}
             >
               {item.coverUrl ? (

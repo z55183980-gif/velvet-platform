@@ -11,9 +11,7 @@ export default function AdminMessagesPage() {
   const { t } = useI18n();
   const [form, setForm] = useState({
     userId: "",
-    titleVi: "",
     titleZh: "",
-    bodyVi: "",
     bodyZh: "",
     broadcast: false,
   });
@@ -21,28 +19,24 @@ export default function AdminMessagesPage() {
   const [error, setError] = useState<string | null>(null);
 
   const sendMut = useMutation({
-    mutationFn: () =>
-      adminBroadcastNotification({
-        titleVi: form.titleVi,
-        titleZh: form.titleZh || undefined,
-        bodyVi: form.bodyVi,
-        bodyZh: form.bodyZh || undefined,
+    mutationFn: () => {
+      const titleZh = form.titleZh.trim();
+      const bodyZh = form.bodyZh.trim();
+      return adminBroadcastNotification({
+        titleZh,
+        titleVi: titleZh,
+        bodyZh,
+        bodyVi: bodyZh,
         userId: form.broadcast ? undefined : form.userId.trim() || undefined,
         broadcast: form.broadcast,
-      }) as Promise<{ created?: number }>,
+      }) as Promise<{ created?: number }>;
+    },
     onSuccess: (data) => {
       setResult(data);
       setError(null);
     },
     onError: (e: Error) => setError(e.message),
   });
-
-  const fieldLabels: Record<"titleVi" | "titleZh" | "bodyVi" | "bodyZh", string> = {
-    titleVi: t("titleViLabel"),
-    titleZh: t("titleZhLabel"),
-    bodyVi: t("bodyViLabel"),
-    bodyZh: t("bodyZhLabel"),
-  };
 
   return (
     <AdminShell title={t("messages")}>
@@ -69,21 +63,25 @@ export default function AdminMessagesPage() {
             />
           </label>
         ) : null}
-        {(
-          ["titleVi", "titleZh", "bodyVi", "bodyZh"] as const
-        ).map((key) => (
-          <label key={key} className="block text-caption text-ink-muted">
-            {fieldLabels[key]}
-            <Input
-              className="mt-1"
-              value={form[key]}
-              onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
-            />
-          </label>
-        ))}
+        <label className="block text-caption text-ink-muted">
+          {t("titleZhLabel")}
+          <Input
+            className="mt-1"
+            value={form.titleZh}
+            onChange={(e) => setForm((f) => ({ ...f, titleZh: e.target.value }))}
+          />
+        </label>
+        <label className="block text-caption text-ink-muted">
+          {t("bodyZhLabel")}
+          <Input
+            className="mt-1"
+            value={form.bodyZh}
+            onChange={(e) => setForm((f) => ({ ...f, bodyZh: e.target.value }))}
+          />
+        </label>
         <Button
           size="sm"
-          disabled={sendMut.isPending || !form.titleVi.trim() || !form.bodyVi.trim()}
+          disabled={sendMut.isPending || !form.titleZh.trim() || !form.bodyZh.trim()}
           onClick={() => {
             if (form.broadcast && !window.confirm(t("confirmBroadcast"))) return;
             sendMut.mutate();

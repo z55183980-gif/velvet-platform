@@ -29,7 +29,7 @@ export function DramaCard({
   const isGrid = variant === "grid";
 
   return (
-    <Link href={`/drama/${drama.id}`} className="group block">
+    <Link href={`/drama/${drama.id}`} className="group block min-w-0 max-w-full">
       <div
         className={cn(
           "relative aspect-[2/3] overflow-hidden bg-surface-2",

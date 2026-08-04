@@ -229,7 +229,7 @@ export function ContentDetailPanel({
             {t("colCreator")} {drama.creator?.displayName || "—"} · {t("category")}{" "}
             {drama.category?.nameZh || drama.category?.nameVi || "—"}
           </p>
-          <p className="whitespace-pre-wrap text-ink-muted">{drama.descriptionZh || drama.descriptionVi}</p>
+          <p className="whitespace-pre-wrap text-ink-muted">{drama.descriptionZh || drama.descriptionVi || ""}</p>
           <div className="flex flex-wrap items-center gap-2">
             <Input
               className="w-64"

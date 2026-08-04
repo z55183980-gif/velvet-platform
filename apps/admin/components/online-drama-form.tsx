@@ -24,12 +24,10 @@ const emptyEpisode = (n: number): EpisodeRow => ({
 export function OnlineDramaForm() {
   const { t } = useI18n();
   const [titleZh, setTitleZh] = useState("");
-  const [titleVi, setTitleVi] = useState("");
   const [slug, setSlug] = useState("");
   const [categorySlug, setCategorySlug] = useState("");
   const [coverUrl, setCoverUrl] = useState("");
   const [descriptionZh, setDescriptionZh] = useState("");
-  const [descriptionVi, setDescriptionVi] = useState("");
   const [bulk, setBulk] = useState("");
   const [episodes, setEpisodes] = useState<EpisodeRow[]>([emptyEpisode(1)]);
   const [error, setError] = useState<string | null>(null);
@@ -65,12 +63,10 @@ export function OnlineDramaForm() {
       if (!all.length) throw new Error(t("onlineNeedEpisodes"));
       return adminCreateOnlineDrama({
         titleZh: titleZh.trim(),
-        titleVi: titleVi.trim() || undefined,
         slug: slug.trim() || undefined,
         categorySlug,
         coverUrl: coverUrl.trim() || undefined,
         descriptionZh: descriptionZh.trim() || undefined,
-        descriptionVi: descriptionVi.trim() || undefined,
         lockMode: "ALL_FREE",
         freeEpisodeCount: all.length,
         status,
@@ -104,10 +100,6 @@ export function OnlineDramaForm() {
           <Input className="mt-1" value={titleZh} onChange={(e) => setTitleZh(e.target.value)} />
         </label>
         <label className="text-caption text-ink-muted">
-          {t("onlineTitleVi")}
-          <Input className="mt-1" value={titleVi} onChange={(e) => setTitleVi(e.target.value)} />
-        </label>
-        <label className="text-caption text-ink-muted">
           {t("onlineSlug")}
           <Input className="mt-1" value={slug} onChange={(e) => setSlug(e.target.value)} />
         </label>
@@ -126,24 +118,16 @@ export function OnlineDramaForm() {
             ))}
           </Select>
         </label>
-        <label className="text-caption text-ink-muted md:col-span-2">
+        <label className="text-caption text-ink-muted">
           {t("onlineCoverUrl")}
           <Input className="mt-1" value={coverUrl} onChange={(e) => setCoverUrl(e.target.value)} />
         </label>
-        <label className="text-caption text-ink-muted">
+        <label className="text-caption text-ink-muted md:col-span-2">
           {t("onlineDescZh")}
           <textarea
             className="mt-1 min-h-20 w-full rounded-md border border-line bg-surface px-3 py-2 text-body-sm"
             value={descriptionZh}
             onChange={(e) => setDescriptionZh(e.target.value)}
-          />
-        </label>
-        <label className="text-caption text-ink-muted">
-          {t("onlineDescVi")}
-          <textarea
-            className="mt-1 min-h-20 w-full rounded-md border border-line bg-surface px-3 py-2 text-body-sm"
-            value={descriptionVi}
-            onChange={(e) => setDescriptionVi(e.target.value)}
           />
         </label>
       </div>

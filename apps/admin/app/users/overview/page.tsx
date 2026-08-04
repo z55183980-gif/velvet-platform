@@ -278,7 +278,7 @@ export default function UserOverviewPage() {
   return (
     <AdminShell title={t("userOverview")}>
       {error ? (
-        <p className="mb-4 rounded-xl border border-rose-300/40 bg-rose-50/80 px-3 py-2 text-sm text-rose-700">
+        <p className="mb-4 rounded-xl border border-danger/20 bg-danger-soft px-3 py-2 text-body-sm text-danger">
           {(error as Error).message || "failed"}
         </p>
       ) : null}
