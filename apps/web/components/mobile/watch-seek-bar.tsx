@@ -22,8 +22,8 @@ type WatchSeekBarProps = {
 
 /**
  * Hongguo-style scrubber:
- * - idle: thin track
- * - drag: thicken + vertical head + preview thumb + time
+ * - idle: thin full-bleed track + small circular thumb
+ * - drag: thicken track + larger thumb + preview + time
  * - seek throttled for smoother scrubbing on HLS
  */
 export function WatchSeekBar({
@@ -206,8 +206,8 @@ export function WatchSeekBar({
   return (
     <div
       className={cn(
-        "relative px-3",
-        absolute && "absolute inset-x-0 z-40",
+        "relative",
+        absolute && "absolute inset-x-0 z-40 px-0",
         className,
       )}
       style={absolute ? { bottom } : undefined}
@@ -218,7 +218,7 @@ export function WatchSeekBar({
 
       {dragging ? (
         <div
-          className="pointer-events-none absolute bottom-[1.35rem] flex w-[4.5rem] -translate-x-1/2 flex-col items-center"
+          className="pointer-events-none absolute bottom-[1.15rem] flex w-[4.5rem] -translate-x-1/2 flex-col items-center"
           style={{ left: `${previewLeft}%` }}
         >
           <div className="overflow-hidden rounded-md ring-2 ring-white/90 shadow-[0_4px_16px_rgba(0,0,0,0.45)]">
@@ -240,7 +240,7 @@ export function WatchSeekBar({
       <div
         ref={seekRef}
         className={cn(
-          "relative h-6 touch-none select-none",
+          "relative h-5 touch-none select-none",
           disabled ? "pointer-events-none opacity-40" : "cursor-pointer",
         )}
         onPointerDown={(e) => {
@@ -254,29 +254,29 @@ export function WatchSeekBar({
           applyRatioUi(ratioFromEvent(e.clientX));
         }}
       >
+        {/* Track sits near the bottom of the hit area so it hugs the episode dock. */}
         <div
           className={cn(
-            "absolute inset-x-0 top-1/2 -translate-y-1/2 overflow-visible rounded-full transition-[height,background-color] duration-150",
-            dragging ? "h-1.5 bg-white/28" : "h-0.5 bg-white/35",
+            "absolute inset-x-0 bottom-[7px] overflow-visible rounded-full transition-[height,background-color] duration-150",
+            dragging ? "h-[3px] bg-white/30" : "h-px bg-white/45",
           )}
         >
           <div
-            className="absolute inset-y-0 left-0 rounded-full bg-white/40"
+            className="absolute inset-y-0 left-0 rounded-full bg-white/35"
             style={{ width: `${buffered * 100}%` }}
           />
           <div
             className="absolute inset-y-0 left-0 rounded-full bg-white"
             style={{ width: `${progress * 100}%` }}
           />
+          <div
+            className={cn(
+              "absolute top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-[0_0_4px_rgba(0,0,0,0.4)] transition-[width,height] duration-150",
+              dragging ? "h-3.5 w-3.5" : "h-2.5 w-2.5",
+            )}
+            style={{ left: `${progress * 100}%` }}
+          />
         </div>
-        <div
-          className={cn(
-            "absolute top-1/2 w-[2px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-white shadow-[0_0_4px_rgba(0,0,0,0.45)] transition-opacity duration-150",
-            dragging ? "h-4 opacity-100" : "h-2 opacity-0",
-          )}
-          style={{ left: `${progress * 100}%` }}
-          aria-hidden={!dragging}
-        />
       </div>
     </div>
   );

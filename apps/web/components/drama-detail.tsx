@@ -72,8 +72,6 @@ const PLAY_GRAD =
   "linear-gradient(92.27deg, #ff7e0d 0.32%, #ff9233)";
 const PLAY_GRAD_HOVER =
   "linear-gradient(92.27deg, #ed6f00 0.32%, #eb862f)";
-/** Episode picker row (padding + h-11 pill), approx. */
-const WATCH_BAR_H = 52;
 
 export function DramaDetail({ id }: { id: string }) {
   const router = useRouter();
@@ -696,9 +694,11 @@ export function DramaDetail({ id }: { id: string }) {
     };
 
     const immersiveFs = browserFs || uiImmersive || rotateFs;
-    // Hongguo portrait: keep 选集底栏 / title / seek while fullscreen.
-    // Only landscape immersive (rotate or landscape+FS) hides that chrome.
+    // Hongguo: 选集底栏在竖屏全屏也保留；仅横屏沉浸整块清掉。
     const showWatchBottomChrome = !rotateFs && !(landscapeMode && immersiveFs);
+    // 图一：标题+侧栏；图二（竖屏全屏）：清标题/侧栏，只留进度+选集条。
+    const portraitImmersive = !landscapeMode && immersiveFs;
+    const showWatchMetaChrome = showWatchBottomChrome && !portraitImmersive;
     const fillVideo = !landscapeMode || immersiveFs;
     const resumeTimeLabel = resumeHint
       ? `${Math.floor(resumeHint.progressSec / 60)}:${String(Math.floor(resumeHint.progressSec % 60)).padStart(2, "0")}`
@@ -1020,92 +1020,106 @@ export function DramaDetail({ id }: { id: string }) {
           </div>
         ) : null}
 
-        {/* Hongguo bottom chrome: title → seek → episode bar (kept in portrait FS) */}
+        {/* Hongguo bottom chrome — 图一常态 / 图二竖屏全屏清屏 */}
         {showWatchBottomChrome ? (
           <div className="absolute inset-x-0 bottom-0 z-40">
-            <div className="absolute bottom-full right-2.5 mb-3 flex flex-col items-center gap-5">
-              <WatchSideAction
-                label={favorited ? t("detail.favorited") : t("detail.favorite")}
-                count={formatCount(favCount, locale)}
-                onClick={() => void toggleFavorite()}
-              >
-                <Star
-                  className={cn(
-                    "h-[30px] w-[30px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]",
-                    favorited ? "fill-[#ffb000] text-[#ffb000]" : "text-white",
-                  )}
-                  strokeWidth={1.75}
-                />
-              </WatchSideAction>
-              <WatchSideAction
-                label={t("feed.like")}
-                count={formatCount(likeCount, locale)}
-                onClick={() => void toggleLike()}
-              >
-                <Heart
-                  className={cn(
-                    "h-[30px] w-[30px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]",
-                    liked ? "fill-[#ff4d6d] text-[#ff4d6d]" : "text-white",
-                  )}
-                  strokeWidth={1.75}
-                />
-              </WatchSideAction>
-            </div>
+            {showWatchMetaChrome ? (
+              <div className="absolute bottom-full right-3 mb-2.5 flex flex-col items-center gap-5">
+                <WatchSideAction
+                  label={favorited ? t("detail.favorited") : t("detail.favorite")}
+                  count={formatCount(favCount, locale)}
+                  onClick={() => void toggleFavorite()}
+                >
+                  <Star
+                    className={cn(
+                      "h-[30px] w-[30px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]",
+                      favorited ? "fill-[#ffb000] text-[#ffb000]" : "text-white",
+                    )}
+                    strokeWidth={1.75}
+                  />
+                </WatchSideAction>
+                <WatchSideAction
+                  label={t("feed.like")}
+                  count={formatCount(likeCount, locale)}
+                  onClick={() => void toggleLike()}
+                >
+                  <Heart
+                    className={cn(
+                      "h-[30px] w-[30px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]",
+                      liked ? "fill-[#ff4d6d] text-[#ff4d6d]" : "text-white",
+                    )}
+                    strokeWidth={1.75}
+                  />
+                </WatchSideAction>
+              </div>
+            ) : null}
 
             <div className="flex flex-col">
-              <div className="pointer-events-none px-3 pb-2">
-                <div className="pointer-events-auto max-w-[calc(100%-4.5rem)]">
-                  <button
-                    type="button"
-                    className="inline-flex max-w-full items-center gap-0.5 text-[17px] font-semibold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.65)]"
-                    onClick={() => setDrawerOpen(true)}
-                  >
-                    <span className="truncate">{title}</span>
-                    <ChevronRight className="h-5 w-5 shrink-0 opacity-90" strokeWidth={2.25} />
-                  </button>
-                  <button
-                    type="button"
-                    className="mt-1.5 flex w-full items-start text-left text-[13px] leading-5 text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
-                    onClick={() => setEpLineExpanded((v) => !v)}
-                  >
-                    <span className="min-w-0 flex-1">
-                      {epLineExpanded ? epLine : epPreview}
-                      {!epLineExpanded && epLine.length > 26 && (
-                        <span className="ml-1 font-medium text-white">{t("detail.expand")}</span>
-                      )}
-                    </span>
-                  </button>
+              {showWatchMetaChrome ? (
+                <div className="pointer-events-none px-3.5 pb-2">
+                  <div className="pointer-events-auto max-w-[calc(100%-4.5rem)]">
+                    <button
+                      type="button"
+                      className="inline-flex max-w-full items-center gap-0.5 text-[16px] font-semibold leading-snug text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.65)]"
+                      onClick={() => setDrawerOpen(true)}
+                    >
+                      <span className="truncate">{title}</span>
+                      <ChevronRight className="h-5 w-5 shrink-0 opacity-90" strokeWidth={2.25} />
+                    </button>
+                    <button
+                      type="button"
+                      className="mt-1 flex w-full items-start text-left text-[12px] leading-[18px] text-white/90 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
+                      onClick={() => setEpLineExpanded((v) => !v)}
+                    >
+                      <span className="min-w-0 flex-1">
+                        {epLineExpanded ? epLine : epPreview}
+                        {!epLineExpanded && epLine.length > 26 && (
+                          <span className="ml-1 font-medium text-white">{t("detail.expand")}</span>
+                        )}
+                      </span>
+                    </button>
+                  </div>
                 </div>
-              </div>
+              ) : null}
 
               <WatchSeekBar
                 videoRef={videoRef}
                 absolute={false}
                 disabled={!playUrl || needsLogin || locked}
                 onSeekingChange={onSeekingChange}
-                className="pb-0.5"
+                className={cn(portraitImmersive ? "px-0 pb-1" : "px-0")}
               />
 
+              {/* 图一：贴底全宽顶圆角；图二：悬浮圆角条 */}
               <div
-                className="px-2.5 pb-[max(0.35rem,env(safe-area-inset-bottom))] pt-1"
-                style={{ minHeight: WATCH_BAR_H }}
+                className={cn(
+                  portraitImmersive
+                    ? "px-2.5 pb-[max(0.35rem,env(safe-area-inset-bottom))]"
+                    : "pb-[max(0px,env(safe-area-inset-bottom))]",
+                )}
               >
-                <div className="flex h-11 items-stretch overflow-hidden rounded-xl bg-[#2a2c2c]/92 text-white shadow-[0_-2px_16px_rgba(0,0,0,0.25)] ring-1 ring-white/8 backdrop-blur-md">
+                <div
+                  className={cn(
+                    "flex h-11 items-stretch text-white",
+                    portraitImmersive
+                      ? "overflow-hidden rounded-[12px] bg-black/55 shadow-[0_4px_20px_rgba(0,0,0,0.35)] backdrop-blur-md"
+                      : "rounded-t-[12px] bg-[#1a1a1a]/92 backdrop-blur-sm",
+                  )}
+                >
                   <button
                     type="button"
                     onClick={() => setDrawerOpen(true)}
-                    className="flex min-w-0 flex-1 items-center justify-between gap-2 px-3.5"
+                    className="flex min-w-0 flex-1 items-center gap-2 px-3.5"
                   >
-                    <span className="truncate text-[13px] font-medium">
+                    <span className="min-w-0 flex-1 truncate text-left text-[13px] font-medium">
                       {t("detail.pickEpisodesBar", { n: drama.episodesCount })}
                     </span>
                     <ChevronUp className="h-4 w-4 shrink-0 opacity-85" />
                   </button>
-                  <span className="my-2.5 w-px shrink-0 bg-white/15" aria-hidden />
                   <button
                     type="button"
                     onClick={() => {
-                      if (!landscapeMode && immersiveFs) {
+                      if (portraitImmersive) {
                         void exitImmersiveFs();
                       } else if (landscapeMode) {
                         void enterLandscapeFullscreen();
@@ -1115,12 +1129,12 @@ export function DramaDetail({ id }: { id: string }) {
                     }}
                     className="grid w-12 shrink-0 place-items-center"
                     aria-label={
-                      !landscapeMode && immersiveFs
+                      portraitImmersive
                         ? t("player.exitFullscreen")
                         : t("player.fullscreen")
                     }
                   >
-                    {!landscapeMode && immersiveFs ? (
+                    {portraitImmersive ? (
                       <Minimize2 className="h-5 w-5" strokeWidth={1.75} />
                     ) : (
                       <Maximize className="h-5 w-5" strokeWidth={1.75} />
