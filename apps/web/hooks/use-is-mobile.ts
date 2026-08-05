@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 
 /**
  * Matches Tailwind `md` while keeping touch phones mobile after rotation.
@@ -10,6 +10,7 @@ import { useLayoutEffect, useState } from "react";
 export function useIsMobile(breakpointPx = 768): { mobile: boolean; ready: boolean } {
   const [mobile, setMobile] = useState(false);
   const [ready, setReady] = useState(false);
+  const detectedMobileRef = useRef(false);
 
   useLayoutEffect(() => {
     const viewportMq = window.matchMedia(`(max-width: ${breakpointPx - 1}px)`);
@@ -19,7 +20,9 @@ export function useIsMobile(breakpointPx = 768): { mobile: boolean; ready: boole
       const touchPhone =
         screenShortSide < breakpointPx &&
         (navigator.maxTouchPoints > 0 || coarsePointerMq.matches);
-      setMobile(viewportMq.matches || touchPhone);
+      // Device identity must not flip merely because rotation widened the viewport.
+      detectedMobileRef.current ||= viewportMq.matches || touchPhone;
+      setMobile(detectedMobileRef.current);
     };
     apply();
     setReady(true);

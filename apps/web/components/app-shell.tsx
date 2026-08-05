@@ -11,7 +11,9 @@ import {
   useMobileFeedLock,
 } from "@/components/mobile/mobile-feed-lock";
 import { PwaInstallRoot } from "@/components/pwa-install";
+import { useIsMobile } from "@/hooks/use-is-mobile";
 import { cn } from "@/lib/utils";
+import { lockPortraitOrientation } from "@/lib/screen-orientation";
 
 function isDramaPath(pathname: string | null) {
   if (!pathname) return false;
@@ -31,6 +33,7 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const onDrama = isDramaPath(pathname);
   const { locked: lockMobileHome } = useMobileFeedLock();
+  const { mobile: isMobile, ready: mobileReady } = useIsMobile();
 
   // Record that back() has an in-app destination (see lib/nav-history).
   const entryPathRef = useRef(pathname);
@@ -38,42 +41,44 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
     if (pathname !== entryPathRef.current) markInAppNavigation();
   }, [pathname]);
 
+  useEffect(() => {
+    if (!mobileReady || !isMobile) return;
+    const videoControlsOrientation = pathname === "/" || isDramaPath(pathname);
+    if (!videoControlsOrientation) void lockPortraitOrientation();
+  }, [mobileReady, isMobile, pathname]);
+
   return (
     <div
       className={cn(
         // Only while mobile VerticalFeed is mounted: pin entire chrome; main is the video stage.
         // feed-immersive locks dark palette so light theme cannot bleach the home feed.
         lockMobileHome &&
-          "feed-immersive max-md:fixed max-md:inset-0 max-md:flex max-md:h-dvh max-md:flex-col max-md:overflow-hidden max-md:overscroll-none",
+          isMobile &&
+          "feed-immersive fixed inset-0 flex h-dvh flex-col overflow-hidden overscroll-none",
       )}
     >
-      <Suspense
-        fallback={
-          <header className="sticky top-0 z-50 hidden h-16 shrink-0 bg-base/70 backdrop-blur-xl md:block" />
-        }
-      >
-        <Navbar />
-      </Suspense>
+      {mobileReady && !isMobile ? (
+        <Suspense fallback={<header className="sticky top-0 z-50 h-16 shrink-0 bg-base/70 backdrop-blur-xl" />}>
+          <Navbar />
+        </Suspense>
+      ) : null}
       <main
         className={cn(
           // Contain accidental horizontal overflow (chips/grid) without locking vertical scroll.
           "overflow-x-clip",
           // Reserve fixed tab height (h-12) + same safe-bottom token as BottomTabBar.
           // Feed-lock zeroes this: tab is inline in the flex column instead.
-          !onDrama && "pb-[calc(3rem+var(--mobile-tab-safe-bottom))] md:pb-0",
-          onDrama && "max-md:bg-base",
+          !onDrama && isMobile && "pb-[calc(3rem+var(--mobile-tab-safe-bottom))]",
+          onDrama && isMobile && "bg-base",
           lockMobileHome &&
-            "max-md:min-h-0 max-md:flex-1 max-md:overflow-hidden max-md:overscroll-none max-md:pb-0",
+            isMobile &&
+            "min-h-0 flex-1 overflow-hidden overscroll-none pb-0",
         )}
       >
         {children}
       </main>
-      {/* Footer desktop-only via CSS — always mounted to avoid hydration layout jump */}
-      <div className="hidden md:block">
-        <Footer />
-      </div>
-      {/* Bottom tabs mobile-only; already has md:hidden. Hidden on drama detail. */}
-      {!onDrama && <BottomTabBar inline={lockMobileHome} />}
+      {mobileReady && !isMobile ? <Footer /> : null}
+      {mobileReady && isMobile && !onDrama ? <BottomTabBar inline={lockMobileHome} /> : null}
       <PwaInstallRoot />
     </div>
   );

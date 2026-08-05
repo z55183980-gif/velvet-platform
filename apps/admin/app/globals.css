@@ -595,6 +595,31 @@
     opacity: 0.55;
   }
 
+  /* Larger variant for standalone form rows (e.g. the drama cover field),
+     as opposed to the compact table-cell layout used in episode lists. */
+  .content-ep-thumb--form {
+    min-width: 0;
+    gap: 0.75rem;
+  }
+
+  .content-ep-thumb--form .content-ep-thumb__preview {
+    width: 3.5rem;
+    height: 4.6rem;
+    border-radius: 0.7rem;
+  }
+
+  .content-ep-thumb--form .content-ep-thumb__actions {
+    flex-direction: row;
+    flex: 0 0 auto;
+    gap: 0.5rem;
+  }
+
+  .content-ep-thumb--form .content-ep-thumb__btn {
+    padding: 0.44rem 0.75rem;
+    border-radius: 0.6rem;
+    font-size: 0.78rem;
+  }
+
   .content-access-pill {
     display: inline-flex;
     cursor: pointer;

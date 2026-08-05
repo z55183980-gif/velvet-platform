@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ConfirmModal, GlassModal } from "@/components/glass-modal";
-import { ContentDetailPanel } from "@/components/content-detail-panel";
+import { ContentDetailPanel, type ContentDetailPanelHandle } from "@/components/content-detail-panel";
 import { useI18n } from "@/lib/i18n";
 
 export function ContentDetailModal({
@@ -15,8 +15,11 @@ export function ContentDetailModal({
   onClose: () => void;
 }) {
   const { t } = useI18n();
+  const panelRef = useRef<ContentDetailPanelHandle>(null);
   const [dirty, setDirty] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
+  const [savingClose, setSavingClose] = useState(false);
+  const [saveCloseError, setSaveCloseError] = useState<string | null>(null);
 
   // A newly selected drama always starts with a clean edit session. Keeping
   // this reset on disk also prevents the previous drama's close guard from
@@ -24,6 +27,8 @@ export function ContentDetailModal({
   useEffect(() => {
     setDirty(false);
     setConfirmClose(false);
+    setSavingClose(false);
+    setSaveCloseError(null);
   }, [dramaId]);
 
   useEffect(() => {
@@ -31,8 +36,25 @@ export function ContentDetailModal({
   }, [open]);
 
   const requestClose = () => {
-    if (dirty) setConfirmClose(true);
-    else onClose();
+    if (dirty) {
+      setSaveCloseError(null);
+      setConfirmClose(true);
+    } else onClose();
+  };
+
+  const saveAndClose = async () => {
+    setSavingClose(true);
+    setSaveCloseError(null);
+    const result = await panelRef.current?.save();
+    setSavingClose(false);
+    if (result?.ok) {
+      setConfirmClose(false);
+      setDirty(false);
+      onClose();
+    } else if (result?.error) {
+      setSaveCloseError(result.error);
+    }
+    // Stay on the confirm dialog so the user can retry or fall back to discarding.
   };
 
   return (
@@ -45,7 +67,7 @@ export function ContentDetailModal({
         className="content-detail-modal"
       >
         {dramaId ? (
-          <ContentDetailPanel id={dramaId} onDeleted={onClose} onDirtyChange={setDirty} />
+          <ContentDetailPanel ref={panelRef} id={dramaId} onDeleted={onClose} onDirtyChange={setDirty} />
         ) : null}
       </GlassModal>
       <ConfirmModal
@@ -56,8 +78,10 @@ export function ContentDetailModal({
           setDirty(false);
           onClose();
         }}
-        message={t("confirmDiscardChanges")}
+        message={saveCloseError ? `${t("confirmDiscardChanges")} (${saveCloseError})` : t("confirmDiscardChanges")}
         confirmVariant="danger"
+        busy={savingClose}
+        extraAction={{ label: t("saveAndClose"), onClick: () => void saveAndClose(), busy: savingClose }}
       />
     </>
   );

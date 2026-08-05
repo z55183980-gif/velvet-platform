@@ -9,14 +9,12 @@ import {
   useMemo,
   useRef,
   useState,
-  type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
 import {
   ChevronRight,
   Heart,
   Pause,
-  Smartphone,
   Star,
 } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
@@ -32,6 +30,10 @@ import { pickContentText, type Locale } from "@/lib/languages";
 import { cn, formatCredits } from "@/lib/utils";
 import { useGuestWatchQuota } from "@/lib/use-guest-watch-quota";
 import { useDocumentScrollLock } from "@/hooks/use-document-scroll-lock";
+import {
+  lockPortraitOrientation,
+  unlockScreenOrientation,
+} from "@/lib/screen-orientation";
 
 function isUrl(s: string) {
   return /^https?:\/\//.test(s) || s.startsWith("/");
@@ -556,64 +558,6 @@ function FeedPage({
   const [userPaused, setUserPaused] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  const enterLandscapePlayback = useCallback(
-    async (event: ReactMouseEvent<HTMLAnchorElement>) => {
-      event.preventDefault();
-      event.stopPropagation();
-      const href = `/drama/${drama.id}/play?lfs=1`;
-      const root = document.documentElement as HTMLElement & {
-        webkitRequestFullscreen?: () => Promise<void> | void;
-      };
-      let fullscreen = !!(
-        document.fullscreenElement ||
-        (document as Document & { webkitFullscreenElement?: Element | null })
-          .webkitFullscreenElement
-      );
-      try {
-        const request =
-          root.requestFullscreen?.bind(root) ||
-          root.webkitRequestFullscreen?.bind(root);
-        if (!fullscreen && request) {
-          await request();
-          fullscreen = !!(
-            document.fullscreenElement ||
-            (document as Document & { webkitFullscreenElement?: Element | null })
-              .webkitFullscreenElement
-          );
-        }
-      } catch {
-        fullscreen = false;
-      }
-
-      if (fullscreen) {
-        try {
-          const orientation = screen.orientation as ScreenOrientation & {
-            lock?: (orientation: string) => Promise<void>;
-          };
-          await orientation.lock?.("landscape");
-        } catch {
-          /* The detail player will use its visual rotation fallback. */
-        }
-        router.push(href);
-        return;
-      }
-
-      const video = videoRef.current as
-        | (HTMLVideoElement & { webkitEnterFullscreen?: () => void })
-        | null;
-      try {
-        if (video?.webkitEnterFullscreen) {
-          video.webkitEnterFullscreen();
-          return;
-        }
-      } catch {
-        /* Continue to the visual fallback. */
-      }
-      router.push(href);
-    },
-    [drama.id, router],
-  );
-
   const meta = useMemo(() => buildFeedMeta(drama, locale, t), [drama, locale, t]);
 
   useEffect(() => {
@@ -628,6 +572,26 @@ function FeedPage({
   const handleVideoAspectChange = useCallback((isLandscape: boolean) => {
     setLandscape(isLandscape);
   }, []);
+
+  useEffect(() => {
+    if (!active) return;
+    if (landscape) unlockScreenOrientation();
+    else void lockPortraitOrientation();
+  }, [active, landscape]);
+
+  useEffect(() => {
+    if (!active || !landscape) return;
+    const orientation = window.matchMedia("(orientation: landscape)");
+    let navigating = false;
+    const openFullscreenPlayer = () => {
+      if (!orientation.matches || navigating) return;
+      navigating = true;
+      router.push(`/drama/${drama.id}/play?rotate=1`);
+    };
+    openFullscreenPlayer();
+    orientation.addEventListener("change", openFullscreenPlayer);
+    return () => orientation.removeEventListener("change", openFullscreenPlayer);
+  }, [active, landscape, drama.id, router]);
 
   useEffect(() => {
     setLiked(false);
@@ -859,54 +823,12 @@ function FeedPage({
   };
 
   return (
-    <div className={cn("relative h-full min-h-0 overflow-hidden", landscape ? "bg-black" : "bg-base")}>
-      {landscape ? (
-        <div className="absolute inset-x-0 top-[max(3.25rem,calc(env(safe-area-inset-top)+2.75rem))] bottom-[max(7.5rem,calc(var(--mobile-tab-safe-bottom,0px)+6.5rem))] z-10 flex flex-col items-center justify-center">
-          <div className="relative w-full bg-black" style={{ aspectRatio: "16 / 9" }}>
-            <VerticalPlayer
-              videoRef={videoRef}
-              active={active}
-              chrome="feed"
-              objectFit="contain"
-              src={playUrl && canPlay ? playUrl : null}
-              poster={cover}
-              autoPlay={active}
-              muted={muted}
-              onMutedChange={onMutedChange}
-              loginRequired={active && needsLogin}
-              onLogin={() => openLogin("login")}
-              onRegister={() => openLogin("register")}
-              locked={locked}
-              lockLabel={
-                locked && episode
-                  ? `${t("detail.unlockEpisode")} · ${formatCredits(episode.price, t("card.credits"))}`
-                  : undefined
-              }
-              lockActionLabel={t("feed.watch")}
-              onUnlock={undefined}
-              error={active ? playErr : null}
-              loading={active && loading}
-              showSeek={false}
-              tapToToggle={false}
-              onVideoAspectChange={handleVideoAspectChange}
-            />
-          </div>
-          <div className="mt-3.5 flex justify-center px-3">
-            <Link
-              href={`/drama/${drama.id}/play?lfs=1`}
-              className="inline-flex items-center gap-1.5 rounded-full bg-[#2a2c2c]/88 px-4 py-2 text-[13px] font-medium text-white/95 backdrop-blur-sm"
-              onClick={(e) => void enterLandscapePlayback(e)}
-            >
-              <Smartphone className="h-4 w-4 rotate-90" strokeWidth={1.75} />
-              {t("player.watchFullscreen")}
-            </Link>
-          </div>
-        </div>
-      ) : (
-        <VerticalPlayer
+    <div className="relative h-full min-h-0 overflow-hidden bg-base">
+      <VerticalPlayer
           videoRef={videoRef}
           active={active}
           chrome="feed"
+          objectFit={landscape ? "contain" : "cover"}
           src={playUrl && canPlay ? playUrl : null}
           poster={cover}
           autoPlay={active}
@@ -928,8 +850,7 @@ function FeedPage({
           loading={active && loading}
           showSeek={false}
           tapToToggle={false}
-        />
-      )}
+      />
 
       {/* Tap-to-pause affordance on home feed only (sticky until tap-to-play). */}
       {userPaused && active ? (

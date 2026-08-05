@@ -2,25 +2,37 @@
 
 import { useRef, useState } from "react";
 import { adminUploadImage } from "@velvet/api-client";
+import { cn } from "@velvet/ui";
 import { ImageIcon, ImagePlus, LoaderCircle, Video } from "lucide-react";
-import { captureVideoFirstFrame } from "@/lib/capture-video-frame";
+import { captureRemoteVideoFrame, captureVideoFirstFrame } from "@/lib/capture-video-frame";
 
 export function EpisodeThumbnailField({
   url,
   disabled,
   kind = "thumbnail",
+  size = "compact",
   onUploaded,
   onError,
   fromVideoLabel,
   uploadLabel,
+  videoFile,
+  videoSrc,
+  videoIsHls,
 }: {
   url?: string;
   disabled?: boolean;
   kind?: "cover" | "thumbnail" | "image";
+  /** "compact" fits a narrow table cell (episode list); "form" fits a standalone wide form row (e.g. drama cover field). */
+  size?: "compact" | "form";
   onUploaded: (url: string) => void | Promise<void>;
   onError: (message: string) => void;
   fromVideoLabel: string;
   uploadLabel: string;
+  /** A video file already picked/selected locally (e.g. queued for upload) — captured directly, no file dialog. */
+  videoFile?: File;
+  /** URL of a video already hosted on the server (HLS or MP4) — captured directly, no file dialog. Takes effect only when `videoFile` is absent. */
+  videoSrc?: string;
+  videoIsHls?: boolean;
 }) {
   const videoRef = useRef<HTMLInputElement>(null);
   const imageRef = useRef<HTMLInputElement>(null);
@@ -37,8 +49,29 @@ export function EpisodeThumbnailField({
     }
   };
 
+  const uploadFrame = async (blob: Blob, name: string) => {
+    const saved = await adminUploadImage(blob, { kind, filename: `${name}-${kind}.jpg` });
+    await onUploaded(saved.url);
+  };
+
+  // When a video is already selected/hosted, grab the frame straight from it —
+  // no file picker. Only fall back to asking for a local file when neither is set.
+  const captureFromKnownSource = videoFile
+    ? () =>
+        run(async () => {
+          const blob = await captureVideoFirstFrame(videoFile);
+          await uploadFrame(blob, videoFile.name.replace(/\.[^.]+$/, "") || "media");
+        })
+    : videoSrc
+      ? () =>
+          run(async () => {
+            const blob = await captureRemoteVideoFrame(videoSrc, { isHls: videoIsHls });
+            await uploadFrame(blob, "frame");
+          })
+      : null;
+
   return (
-    <div className="content-ep-thumb">
+    <div className={cn("content-ep-thumb", size === "form" && "content-ep-thumb--form")}>
       <div className="content-ep-thumb__preview">
         {busy ? (
           <LoaderCircle className="h-4 w-4 animate-spin text-brand" />
@@ -54,7 +87,7 @@ export function EpisodeThumbnailField({
           className="content-ep-thumb__btn"
           disabled={disabled || busy}
           title={fromVideoLabel}
-          onClick={() => videoRef.current?.click()}
+          onClick={captureFromKnownSource ?? (() => videoRef.current?.click())}
         >
           <Video className="h-3.5 w-3.5" />
           <span>{fromVideoLabel}</span>
@@ -82,11 +115,7 @@ export function EpisodeThumbnailField({
           if (!file) return;
           void run(async () => {
             const blob = await captureVideoFirstFrame(file);
-            const saved = await adminUploadImage(blob, {
-              kind,
-              filename: `${file.name.replace(/\.[^.]+$/, "") || "media"}-${kind}.jpg`,
-            });
-            await onUploaded(saved.url);
+            await uploadFrame(blob, file.name.replace(/\.[^.]+$/, "") || "media");
           });
         }}
       />

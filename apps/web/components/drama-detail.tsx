@@ -15,7 +15,6 @@ import {
   Maximize,
   Minimize2,
   MoreVertical,
-  Smartphone,
   Star,
   Volume2,
   VolumeX,
@@ -48,6 +47,10 @@ import { pickContentText } from "@/lib/languages";
 import { WatchSeekBar } from "@/components/mobile/watch-seek-bar";
 import { mediaUrl, cn } from "@/lib/utils";
 import { DramaCard } from "@/components/drama-card";
+import {
+  lockPortraitOrientation,
+  unlockScreenOrientation,
+} from "@/lib/screen-orientation";
 
 function isUrl(s: string) {
   return /^https?:\/\//.test(s) || s.startsWith("/");
@@ -129,12 +132,15 @@ const PLAY_GRAD_HOVER =
 export function DramaDetail({
   id,
   autoLandscapeFs = false,
+  autoRotateFullscreen = false,
   autoStartWatch = false,
   initialEpisodeNo,
 }: {
   id: string;
   /** Feed「全屏观看」入口：进播放后自动触发真横屏沉浸 */
   autoLandscapeFs?: boolean;
+  /** Device rotation opened this route; portrait rotation returns to the source page. */
+  autoRotateFullscreen?: boolean;
   /** `/drama/[id]/play` — open watch immediately (Hongguo direct-play entry) */
   autoStartWatch?: boolean;
   /** Optional episode from `/play?ep=` */
@@ -190,6 +196,7 @@ export function DramaDetail({
   /** 红果横屏全屏：操作条显隐（点击画面切换，不暂停） */
   const [landChromeVisible, setLandChromeVisible] = useState(true);
   const [screenIsLandscape, setScreenIsLandscape] = useState(false);
+  const [screenOrientationReady, setScreenOrientationReady] = useState(false);
   const [videoPlaying, setVideoPlaying] = useState(true);
   const [qualities, setQualities] = useState<Array<{ index: number; height: number; label: string }>>([]);
   const [qualityIndex, setQualityIndex] = useState(-1); // -1 = auto
@@ -479,11 +486,20 @@ export function DramaDetail({
   useEffect(() => {
     if (typeof window === "undefined") return;
     const mq = window.matchMedia("(orientation: landscape)");
-    const apply = () => setScreenIsLandscape(mq.matches);
+    const apply = () => {
+      setScreenIsLandscape(mq.matches);
+      setScreenOrientationReady(true);
+    };
     apply();
     mq.addEventListener("change", apply);
     return () => mq.removeEventListener("change", apply);
   }, []);
+
+  useEffect(() => {
+    if (!mobileReady || !isMobile) return;
+    if (watching && landscapeMode) unlockScreenOrientation();
+    else void lockPortraitOrientation();
+  }, [mobileReady, isMobile, watching, landscapeMode]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -520,6 +536,25 @@ export function DramaDetail({
     };
   }, [watching, playUrl, landscapeMode, rotateFs]);
 
+  useEffect(() => {
+    const landscapeImmersive = landscapeMode && (rotateFs || browserFs || uiImmersive);
+    const controlsInUse = pagerBlocked || showRate || showMore || showQuality || drawerOpen;
+    if (!landscapeImmersive || !landChromeVisible || controlsInUse) return;
+    const timer = window.setTimeout(() => setLandChromeVisible(false), 4_000);
+    return () => window.clearTimeout(timer);
+  }, [
+    landscapeMode,
+    rotateFs,
+    browserFs,
+    uiImmersive,
+    landChromeVisible,
+    pagerBlocked,
+    showRate,
+    showMore,
+    showQuality,
+    drawerOpen,
+  ]);
+
   const tryEnterLandscapeFs = useCallback(async () => {
     setShowRate(false);
     setShowMore(false);
@@ -529,9 +564,12 @@ export function DramaDetail({
     const el = watchShellRef.current;
     let lockedOrient = false;
     let fsOk = false;
-    let nativeVideoFs = false;
+    const appleTouchDevice =
+      /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
     try {
       const req =
+        !appleTouchDevice &&
         el &&
         (el.requestFullscreen?.bind(el) ||
           (
@@ -550,23 +588,9 @@ export function DramaDetail({
     } catch {
       fsOk = false;
     }
-    if (!fsOk && !document.fullscreenElement) {
-      const video = videoRef.current as
-        | (HTMLVideoElement & { webkitEnterFullscreen?: () => void })
-        | null;
-      try {
-        if (video?.webkitEnterFullscreen) {
-          video.webkitEnterFullscreen();
-          nativeVideoFs = true;
-        }
-      } catch {
-        nativeVideoFs = false;
-      }
-    }
-    if (nativeVideoFs) {
-      setRotateFs(false);
-      return;
-    }
+    // Never fall back to video.webkitEnterFullscreen(). iOS native video
+    // fullscreen owns the entire surface, so our title and controls cannot render.
+    // The fixed immersive shell below is the compatible fallback.
     try {
       const orient = screen.orientation as ScreenOrientation & {
         lock?: (orientation: string) => Promise<void>;
@@ -601,6 +625,34 @@ export function DramaDetail({
     }
   }, []);
 
+  const exitImmersiveFs = useCallback(async () => {
+    setUiImmersive(false);
+    setRotateFs(false);
+    setLandChromeVisible(true);
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+    } catch {
+      /* ignore */
+    }
+    try {
+      const video = videoRef.current as
+        | (HTMLVideoElement & {
+            webkitDisplayingFullscreen?: boolean;
+            webkitExitFullscreen?: () => void;
+          })
+        | null;
+      if (video?.webkitDisplayingFullscreen) video.webkitExitFullscreen?.();
+    } catch {
+      /* ignore */
+    }
+    try {
+      const orient = screen.orientation as ScreenOrientation & { unlock?: () => void };
+      orient.unlock?.();
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   // Route navigation no longer has a user-activation token, so native fullscreen
   // cannot be requested reliably here. Enter the visual fallback directly.
   // Must stay above any conditional returns (Rules of Hooks).
@@ -625,6 +677,50 @@ export function DramaDetail({
     user,
     canGuestWatch,
     screenIsLandscape,
+  ]);
+
+  useEffect(() => {
+    if (!screenOrientationReady || !watching || !isMobile || !landscapeMode) return;
+    if (screenIsLandscape) {
+      if (!browserFs && !uiImmersive && !rotateFs) void tryEnterLandscapeFs();
+      return;
+    }
+    if (browserFs || uiImmersive || rotateFs) void exitImmersiveFs();
+  }, [
+    screenOrientationReady,
+    screenIsLandscape,
+    watching,
+    isMobile,
+    landscapeMode,
+    browserFs,
+    uiImmersive,
+    rotateFs,
+    tryEnterLandscapeFs,
+    exitImmersiveFs,
+  ]);
+
+  const autoRotateReturningRef = useRef(false);
+  useEffect(() => {
+    if (
+      !autoRotateFullscreen ||
+      !screenOrientationReady ||
+      screenIsLandscape ||
+      autoRotateReturningRef.current
+    ) {
+      return;
+    }
+    autoRotateReturningRef.current = true;
+    void exitImmersiveFs().finally(() => {
+      if (canGoBackInApp()) router.back();
+      else router.replace(`/drama/${id}`);
+    });
+  }, [
+    autoRotateFullscreen,
+    screenOrientationReady,
+    screenIsLandscape,
+    exitImmersiveFs,
+    router,
+    id,
   ]);
 
   const applyResumeSeek = (video: HTMLVideoElement) => {
@@ -916,34 +1012,6 @@ export function DramaDetail({
       : desc;
     const epPreview = epLine.length > 26 ? `${epLine.slice(0, 26)}...` : epLine;
 
-    const exitImmersiveFs = async () => {
-      setUiImmersive(false);
-      setRotateFs(false);
-      setLandChromeVisible(true);
-      try {
-        if (document.fullscreenElement) await document.exitFullscreen();
-      } catch {
-        /* ignore */
-      }
-      try {
-        const video = videoRef.current as
-          | (HTMLVideoElement & {
-              webkitDisplayingFullscreen?: boolean;
-              webkitExitFullscreen?: () => void;
-            })
-          | null;
-        if (video?.webkitDisplayingFullscreen) video.webkitExitFullscreen?.();
-      } catch {
-        /* ignore */
-      }
-      try {
-        const orient = screen.orientation as ScreenOrientation & { unlock?: () => void };
-        orient.unlock?.();
-      } catch {
-        /* ignore */
-      }
-    };
-
     /** 竖屏沉浸：隐藏浏览器栏，不 lock、不 rotate */
     const enterPortraitFullscreen = async () => {
       setShowRate(false);
@@ -959,11 +1027,6 @@ export function DramaDetail({
       } catch {
         /* ignore — uiImmersive 已生效 */
       }
-    };
-
-    /** 横屏沉浸：优先 requestFullscreen + orientation.lock；失败则 CSS rotateFs */
-    const enterLandscapeFullscreen = () => {
-      void tryEnterLandscapeFs();
     };
 
     const applyQuality = (index: number) => {
@@ -1227,19 +1290,10 @@ export function DramaDetail({
 
         {/* Keep one media surface mounted while only the stage geometry changes. */}
         <div
-          className={cn(
-            "absolute z-10 flex flex-col items-center justify-center",
-            landscapeMode && !landscapeImmersive
-              ? "inset-x-0 top-[max(3.1rem,calc(env(safe-area-inset-top)+2.5rem))] bottom-[max(6.75rem,calc(env(safe-area-inset-bottom)+5.75rem))]"
-              : "inset-0",
-          )}
+          className="absolute inset-0 z-10 flex flex-col items-center justify-center"
         >
           <div
-            className={cn(
-              "relative w-full bg-black",
-              landscapeMode && !landscapeImmersive ? "shrink-0" : "h-full min-h-0",
-            )}
-            style={landscapeMode && !landscapeImmersive ? { aspectRatio: "16 / 9" } : undefined}
+            className="relative h-full min-h-0 w-full bg-black"
           >
             <VerticalPager
               index={episodeIndex}
@@ -1314,19 +1368,21 @@ export function DramaDetail({
               }}
             </VerticalPager>
           </div>
-          {landscapeMode && !landscapeImmersive ? (
-            <div className="mt-3.5 flex shrink-0 justify-center px-3">
-              <button
-                type="button"
-                onClick={() => void enterLandscapeFullscreen()}
-                className="inline-flex items-center gap-1.5 rounded-full bg-[#2a2c2c]/88 px-4 py-2 text-[13px] font-medium text-white/95 backdrop-blur-sm"
-              >
-                <Smartphone className="h-4 w-4 rotate-90" strokeWidth={1.75} />
-                {t("player.watchFullscreen")}
-              </button>
-            </div>
-          ) : null}
         </div>
+
+        {landscapeImmersive && canPlay && playUrl && !locked && !needsLogin ? (
+          <button
+            type="button"
+            className="absolute inset-0 z-20 cursor-default"
+            aria-label="toggle controls"
+            onClick={() => {
+              setLandChromeVisible((visible) => !visible);
+              setShowRate(false);
+              setShowMore(false);
+              setShowQuality(false);
+            }}
+          />
+        ) : null}
 
         {/* 红果横屏全屏操作条：点击画面显隐，不暂停 */}
         {showLandFsChrome ? (

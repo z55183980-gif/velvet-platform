@@ -69,7 +69,7 @@ export function Navbar() {
     <header
       className={cn(
         // Desktop only — mobile never shows this chrome.
-        "z-50 hidden shrink-0 transition-[background-color,border-color,backdrop-filter] duration-300 md:block",
+        "z-50 block shrink-0 transition-[background-color,border-color,backdrop-filter] duration-300",
         "sticky top-0 border-b border-line/60 bg-base/70 backdrop-blur-xl",
         // Desktop home: fixed overlay until scroll
         isHomeOverlay &&

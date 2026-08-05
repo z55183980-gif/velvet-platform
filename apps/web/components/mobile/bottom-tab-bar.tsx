@@ -28,7 +28,7 @@ export function BottomTabBar({ inline = false }: { inline?: boolean }) {
       className={cn(
         // --mobile-tab-safe-bottom: env(safe-area) in browser; +air in standalone
         // (see globals.css). Works for both fixed overlay and feed-lock inline.
-        "z-50 pb-[var(--mobile-tab-safe-bottom)] md:hidden",
+        "z-50 pb-[var(--mobile-tab-safe-bottom)]",
         // Home feed: solid immersive chrome (parent .feed-immersive forces dark tokens).
         // Other pages: follow the active theme.
         inline

@@ -9,12 +9,10 @@ import {
   adminCreateEpisodeWithUpload,
   adminListCategories,
   adminStorageStatus,
-  adminUploadImage,
 } from "@velvet/api-client";
 import { Badge, Button, Input, Select, cn } from "@velvet/ui";
 import {
   ChevronDown,
-  Clapperboard,
   Cloud,
   HardDrive,
   LoaderCircle,
@@ -23,7 +21,6 @@ import {
   Upload,
 } from "lucide-react";
 import { EpisodeThumbnailField } from "@/components/episode-thumbnail-field";
-import { captureVideoFirstFrame } from "@/lib/capture-video-frame";
 import { useI18n } from "@/lib/i18n";
 
 type Category = { slug: string; nameZh?: string; nameEn?: string };
@@ -75,7 +72,6 @@ export function UploadDramaForm() {
   const [createdCount, setCreatedCount] = useState(0);
   const [createdLocal, setCreatedLocal] = useState(false);
   const [progress, setProgress] = useState<ProgressRow[]>([]);
-  const [coverBusy, setCoverBusy] = useState(false);
   const [mode, setMode] = useState<"sequential" | "oneshot">("sequential");
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -358,7 +354,7 @@ export function UploadDramaForm() {
           </label>
           <label className="text-caption text-ink-muted md:col-span-2">
             {t("onlineCoverUrl")}
-            <div className="mt-1 flex flex-wrap items-start gap-3">
+            <div className="mt-1 flex max-w-2xl flex-wrap items-center gap-3">
               <Input
                 className="min-w-[16rem] flex-1"
                 value={coverUrl}
@@ -369,7 +365,9 @@ export function UploadDramaForm() {
               <EpisodeThumbnailField
                 url={coverUrl || undefined}
                 kind="cover"
+                size="form"
                 disabled={busy}
+                videoFile={sortedFiles[0]}
                 fromVideoLabel={t("thumbFromVideo")}
                 uploadLabel={t("thumbUpload")}
                 onError={setError}
@@ -378,34 +376,6 @@ export function UploadDramaForm() {
                   setError(null);
                 }}
               />
-              {sortedFiles.length ? (
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  type="button"
-                  disabled={coverBusy || busy}
-                  onClick={() => {
-                    const first = sortedFiles[0];
-                    setCoverBusy(true);
-                    void captureVideoFirstFrame(first)
-                      .then((blob) =>
-                        adminUploadImage(blob, {
-                          kind: "cover",
-                          filename: `${first.name.replace(/\.[^.]+$/, "") || "cover"}-cover.jpg`,
-                        }),
-                      )
-                      .then((res) => {
-                        setCoverUrl(res.url);
-                        setError(null);
-                      })
-                      .catch((err: Error) => setError(err.message))
-                      .finally(() => setCoverBusy(false));
-                  }}
-                >
-                  {coverBusy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Clapperboard className="h-4 w-4" />}
-                  {t("uploadCoverFromFirstEpisode")}
-                </Button>
-              ) : null}
             </div>
           </label>
           <label className="text-caption text-ink-muted md:col-span-2">

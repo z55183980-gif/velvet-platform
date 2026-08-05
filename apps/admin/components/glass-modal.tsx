@@ -47,6 +47,7 @@ export function ConfirmModal({
   message,
   confirmVariant = "danger",
   busy,
+  extraAction,
 }: {
   open: boolean;
   onClose: () => void;
@@ -54,6 +55,7 @@ export function ConfirmModal({
   message: string;
   confirmVariant?: "primary" | "danger";
   busy?: boolean;
+  extraAction?: { label: string; onClick: () => void; busy?: boolean; disabled?: boolean };
 }) {
   const { t } = useI18n();
 
@@ -70,6 +72,7 @@ export function ConfirmModal({
       busy={busy}
       closeLabel={t("close")}
       className="glass-modal"
+      extraAction={extraAction}
     />
   );
 }

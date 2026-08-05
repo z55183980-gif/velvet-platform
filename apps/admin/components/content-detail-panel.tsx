@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -175,15 +175,16 @@ function Toggle({ checked, onChange, label, description }: { checked: boolean; o
   );
 }
 
-export function ContentDetailPanel({
-  id,
-  onDeleted,
-  onDirtyChange,
-}: {
+export type ContentDetailPanelHandle = {
+  /** Saves the basic-info draft (title/category/cover/description). */
+  save: () => Promise<{ ok: boolean; error?: string }>;
+};
+
+export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
   id: string;
   onDeleted?: () => void;
   onDirtyChange?: (dirty: boolean) => void;
-}) {
+}>(function ContentDetailPanel({ id, onDeleted, onDirtyChange }, ref) {
   const { t } = useI18n();
   const router = useRouter();
   const qc = useQueryClient();
@@ -253,16 +254,23 @@ export function ContentDetailPanel({
   const drama = detailQ.data;
   const episodes = drama?.episodes ?? [];
 
-  const saveBasicInfo = () => {
+  const saveBasicInfo = async (): Promise<{ ok: boolean; error?: string }> => {
     if (!draft.titleZh.trim() && !draft.titleEn.trim()) {
       setError(t("dramaTitleRequired"));
-      return;
+      return { ok: false, error: t("dramaTitleRequired") };
     }
-    actionMut.mutate(
-      () => adminUpdateDrama(id, { ...draft, titleZh: draft.titleZh.trim(), titleEn: draft.titleEn.trim() }),
-      { onSuccess: () => setSavedDraft(draft) },
-    );
+    try {
+      await actionMut.mutateAsync(() =>
+        adminUpdateDrama(id, { ...draft, titleZh: draft.titleZh.trim(), titleEn: draft.titleEn.trim() }),
+      );
+      setSavedDraft(draft);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
   };
+
+  useImperativeHandle(ref, () => ({ save: saveBasicInfo }));
 
   const moveEpisode = (episodeId: string, dir: -1 | 1) => {
     const list = [...episodes];
@@ -306,6 +314,8 @@ export function ContentDetailPanel({
         <EpisodeThumbnailField
           url={episode.thumbnailUrl}
           disabled={actionMut.isPending}
+          videoSrc={episode.hlsUrl || episode.originalUrl || undefined}
+          videoIsHls={!!episode.hlsUrl}
           fromVideoLabel={t("thumbFromVideo")}
           uploadLabel={t("thumbUpload")}
           onError={setError}
@@ -526,7 +536,10 @@ export function ContentDetailPanel({
                 <EpisodeThumbnailField
                   url={draft.coverUrl || undefined}
                   kind="cover"
+                  size="form"
                   disabled={actionMut.isPending}
+                  videoSrc={episodes[0]?.hlsUrl || episodes[0]?.originalUrl || undefined}
+                  videoIsHls={!!episodes[0]?.hlsUrl}
                   fromVideoLabel={t("thumbFromVideo")}
                   uploadLabel={t("thumbUpload")}
                   onError={setError}
@@ -576,6 +589,7 @@ export function ContentDetailPanel({
                   <EpisodeThumbnailField
                     url={newEp.thumbnailUrl || undefined}
                     disabled={actionMut.isPending}
+                    videoSrc={newEp.sourceUrl || undefined}
                     fromVideoLabel={t("thumbFromVideo")}
                     uploadLabel={t("thumbUpload")}
                     onError={setError}
@@ -732,4 +746,4 @@ export function ContentDetailPanel({
       />
     </div>
   );
-}
+});

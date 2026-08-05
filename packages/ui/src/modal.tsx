@@ -101,6 +101,7 @@ export function ConfirmDialog({
   busy,
   closeLabel,
   className,
+  extraAction,
 }: {
   open: boolean;
   onClose: () => void;
@@ -113,6 +114,8 @@ export function ConfirmDialog({
   busy?: boolean;
   closeLabel?: string;
   className?: string;
+  /** Optional third action rendered between cancel and confirm (e.g. "Save & close"). */
+  extraAction?: { label: string; onClick: () => void; busy?: boolean; disabled?: boolean };
 }) {
   const destructive = confirmVariant === "danger";
 
@@ -163,6 +166,18 @@ export function ConfirmDialog({
         >
           {cancelLabel}
         </Button>
+        {extraAction ? (
+          <Button
+            size="md"
+            variant="primary"
+            className="min-w-24 cursor-pointer hover:-translate-y-0.5 hover:shadow-lg active:translate-y-0 active:scale-[0.97] disabled:cursor-not-allowed"
+            disabled={busy || extraAction.disabled}
+            onClick={extraAction.onClick}
+          >
+            {extraAction.busy ? <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" /> : null}
+            {extraAction.label}
+          </Button>
+        ) : null}
         <Button
           size="md"
           variant={confirmVariant}
