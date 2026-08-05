@@ -28,14 +28,20 @@ function hostOf(originOrHost: string): string {
   return s.split("/")[0].split(":")[0];
 }
 
+/** `www.` is an alias of the apex, not a separate site. */
+function stripWww(hostname: string): string {
+  return hostname.startsWith("www.") ? hostname.slice(4) : hostname;
+}
+
 export function isAdminHost(hostname: string | null | undefined): boolean {
   if (!hostname) return false;
   return hostOf(hostname) === hostOf(ADMIN_HOST);
 }
 
+/** Apex + `www.` alias both count as the consumer site. */
 export function isWebHost(hostname: string | null | undefined): boolean {
   if (!hostname) return false;
-  return hostOf(hostname) === hostOf(WEB_HOST);
+  return stripWww(hostOf(hostname)) === stripWww(hostOf(WEB_HOST));
 }
 
 export function isLocalHost(hostname: string | null | undefined): boolean {

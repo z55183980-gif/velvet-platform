@@ -21,15 +21,29 @@ export async function checkLiveDrama(id: string): Promise<LiveDramaPresence> {
       signal: AbortSignal.timeout(LIVE_DRAMA_PROBE_TIMEOUT_MS),
     });
     if (res.status === 404) return "missing";
-    if (!res.ok) return "unavailable";
+    if (!res.ok) {
+      // Fail-open stays; warn so misconfigured API_PROXY_TARGET surfaces in deploy logs.
+      if (process.env.NODE_ENV === "production") {
+        console.warn(
+          `[checkLiveDrama] probe unavailable (${res.status}) at ${base} id=${id}`,
+        );
+      }
+      return "unavailable";
+    }
     const json = (await res.json().catch(() => null)) as {
       code?: number;
       data?: unknown;
     } | null;
     if (!json || json.code !== 0 || !json.data) return "missing";
     return "exists";
-  } catch {
+  } catch (err) {
     // Network / DNS / timeout / connection failure — not a confirmed missing drama.
+    if (process.env.NODE_ENV === "production") {
+      console.warn(
+        `[checkLiveDrama] probe failed at ${base} id=${id}:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
     return "unavailable";
   }
 }

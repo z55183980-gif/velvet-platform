@@ -206,8 +206,8 @@ export async function loadCategories(opts?: { signal?: AbortSignal }): Promise<C
         return await request<Category[]>("/categories");
       } catch (err) {
         if (isAbortError(err)) throw err;
-        // Never surface mock catalogs in production (fake dramas on API blips).
-        if (process.env.NODE_ENV === "production") return [];
+        // Production: rethrow so cachedGet reject path does not cache empty fallbacks.
+        if (process.env.NODE_ENV === "production") throw err;
         const { categories } = await import("./mock-data");
         return categories;
       }
@@ -235,8 +235,8 @@ export async function loadHome(
         return { rows: r.rows.map(mapDrama), total: r.total };
       } catch (err) {
         if (isAbortError(err)) throw err;
-        // Never surface mock catalogs in production (fake dramas on API blips).
-        if (process.env.NODE_ENV === "production") return { rows: [], total: 0 };
+        // Production: rethrow so cachedGet reject path does not cache empty fallbacks.
+        if (process.env.NODE_ENV === "production") throw err;
         const { mockHome } = await import("./mock-data");
         return mockHome(page, pageSize, opts);
       }
@@ -292,8 +292,8 @@ export async function loadFeatured(opts?: { signal?: AbortSignal }): Promise<Dra
         return list.map(mapDrama);
       } catch (err) {
         if (isAbortError(err)) throw err;
-        // Never surface mock catalogs in production (fake dramas on API blips).
-        if (process.env.NODE_ENV === "production") return [];
+        // Production: rethrow so cachedGet reject path does not cache empty fallbacks.
+        if (process.env.NODE_ENV === "production") throw err;
         const { featuredDramas } = await import("./mock-data");
         return featuredDramas;
       }
@@ -312,8 +312,8 @@ export async function loadHottest(opts?: { signal?: AbortSignal }): Promise<Dram
         return (Array.isArray(list) ? list : []).map(mapDrama);
       } catch (err) {
         if (isAbortError(err)) throw err;
-        // Never surface mock catalogs in production (fake dramas on API blips).
-        if (process.env.NODE_ENV === "production") return [];
+        // Production: rethrow so cachedGet reject path does not cache empty fallbacks.
+        if (process.env.NODE_ENV === "production") throw err;
         const { mockHome } = await import("./mock-data");
         return (await mockHome(1, 24, { sort: "hot" })).rows;
       }

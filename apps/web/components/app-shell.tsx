@@ -1,7 +1,8 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useEffect, useRef } from "react";
 import { usePathname } from "next/navigation";
+import { markInAppNavigation } from "@/lib/nav-history";
 import { Navbar } from "@/components/navbar";
 import { Footer } from "@/components/footer";
 import { BottomTabBar } from "@/components/mobile/bottom-tab-bar";
@@ -30,6 +31,12 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const onDrama = isDramaPath(pathname);
   const { locked: lockMobileHome } = useMobileFeedLock();
+
+  // Record that back() has an in-app destination (see lib/nav-history).
+  const entryPathRef = useRef(pathname);
+  useEffect(() => {
+    if (pathname !== entryPathRef.current) markInAppNavigation();
+  }, [pathname]);
 
   return (
     <div

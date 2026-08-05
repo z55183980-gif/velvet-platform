@@ -43,6 +43,7 @@ import {
 } from "@/lib/api";
 import { categoryName, type Drama, type Episode } from "@/lib/mock-data";
 import { useGuestWatchQuota } from "@/lib/use-guest-watch-quota";
+import { canGoBackInApp } from "@/lib/nav-history";
 import { pickContentText } from "@/lib/languages";
 import { WatchSeekBar } from "@/components/mobile/watch-seek-bar";
 import { mediaUrl, cn } from "@/lib/utils";
@@ -204,6 +205,9 @@ export function DramaDetail({
   seekToRef.current = seekTo;
   const landscapeModeRef = useRef(landscapeMode);
   landscapeModeRef.current = landscapeMode;
+  /** Avoid putting t in the HLS setup effect deps (locale switch would rebuild player). */
+  const tRef = useRef(t);
+  tRef.current = t;
   /** Playhead to restore when landscapeMode remounts the <video> surface. */
   const surfaceTimeRef = useRef(0);
 
@@ -623,7 +627,7 @@ export function DramaDetail({
   }, [landscapeMode]);
 
   // HLS attach + quality levels + 横竖检测
-  // Do not depend on landscapeMode/seekTo — those would destroy+recreate and restart playback.
+  // Do not depend on landscapeMode/seekTo/t — those would destroy+recreate and restart playback.
   useEffect(() => {
     const video = videoRef.current;
     const episodeId = selected?.id ? String(selected.id) : "";
@@ -675,7 +679,7 @@ export function DramaDetail({
         const mod = await import("hls.js");
         const Hls = mod.default;
         if (cancelled || !Hls.isSupported()) {
-          if (!cancelled) setPlayErr(t("player.hlsUnsupported"));
+          if (!cancelled) setPlayErr(tRef.current("player.hlsUnsupported"));
           return;
         }
         // Surface may have remounted while hls.js was loading.
@@ -701,7 +705,7 @@ export function DramaDetail({
           void playTarget.play().catch(() => {});
         });
       } catch {
-        if (!cancelled) setPlayErr(t("player.hlsLoadFailed"));
+        if (!cancelled) setPlayErr(tRef.current("player.hlsLoadFailed"));
       }
     })();
     return () => {
@@ -718,7 +722,6 @@ export function DramaDetail({
     followVideoAspect,
     selected?.id,
     canGuestWatch,
-    t,
   ]);
 
   const selectEpisodeByIndex = useCallback(
@@ -1001,11 +1004,8 @@ export function DramaDetail({
             onClick={() => {
               void exitImmersiveFs();
               if (autoStartWatch) {
-                if (typeof window !== "undefined" && window.history.length > 1) {
-                  router.back();
-                } else {
-                  router.push(`/drama/${id}`);
-                }
+                if (canGoBackInApp()) router.back();
+                else router.push(`/drama/${id}`);
                 return;
               }
               setWatching(false);
@@ -1639,11 +1639,8 @@ export function DramaDetail({
             type="button"
             onClick={() => {
               if (autoStartWatch) {
-                if (typeof window !== "undefined" && window.history.length > 1) {
-                  router.back();
-                } else {
-                  router.push(`/drama/${id}`);
-                }
+                if (canGoBackInApp()) router.back();
+                else router.push(`/drama/${id}`);
                 return;
               }
               setWatching(false);
@@ -1768,7 +1765,7 @@ export function DramaDetail({
   if (isMobile) {
     const heatLabel = formatCount(dramaHeat(drama), locale);
     const goBackBrowse = () => {
-      if (typeof window !== "undefined" && window.history.length > 1) router.back();
+      if (canGoBackInApp()) router.back();
       else router.push("/");
     };
     const onShareMore = async () => {
