@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import { useTheme } from "@/components/theme-provider";
 import { LanguageSwitcher } from "@/components/language-switcher";
-import { cn, mediaUrl } from "@/lib/utils";
+import { cn, formatAmount, mediaUrl } from "@/lib/utils";
 import { isPwaStandalone, openPwaInstallGuide } from "@/lib/pwa";
 
 export type MobileMeTab = "history" | "favorites" | "liked";
@@ -337,7 +337,7 @@ export function MobileMe(props: Props) {
             </p>
           </div>
           <p className="mt-2 truncate text-[1.35rem] font-bold tabular-nums leading-none text-ink">
-            {balance != null ? balance.toLocaleString(locale) : "—"}
+            {balance != null ? formatAmount(balance) : "—"}
           </p>
           <p className="mt-2 text-caption font-medium text-brand">{t("account.recharge")}</p>
         </button>
@@ -581,7 +581,7 @@ export function MobileMe(props: Props) {
                   const slug = d?.slug || row.dramaId;
                   const label = progressLabel(row, t);
                   return (
-                    <Link key={row.id} href={`/drama/${slug}`} className="group min-w-0">
+                    <Link key={row.id} href={`/drama/${slug}/play`} className="group min-w-0">
                       <div className="relative aspect-[2/3] overflow-hidden rounded-lg bg-surface-2">
                         {d?.coverUrl ? (
                           // eslint-disable-next-line @next/next/no-img-element

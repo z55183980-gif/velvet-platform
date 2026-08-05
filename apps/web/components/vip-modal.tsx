@@ -11,7 +11,7 @@ import {
   type VipPlanQuote,
 } from "@/lib/api";
 import { buttonVariants } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { cn, formatUsd } from "@/lib/utils";
 import { track } from "@/lib/track";
 
 const PAY_CURRENCY = "USD";
@@ -194,9 +194,8 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
                         </div>
                         <div className="shrink-0 text-right">
                           <p className="text-h4 font-bold tabular-nums text-gold">
-                            {Number(p.payAmount || 0).toLocaleString()}
+                            {formatUsd(Number(p.payAmount || 0))}
                           </p>
-                          <p className="text-caption text-ink-subtle">{p.payCurrency || PAY_CURRENCY}</p>
                         </div>
                       </button>
                     );
@@ -241,7 +240,7 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
               {isActiveVip ? t("vip.renew") : t("vip.confirm")}
               {selected ? (
                 <span className="ml-1 tabular-nums opacity-90">
-                  · {payAmount.toLocaleString()} {PAY_CURRENCY}
+                  · {formatUsd(payAmount)}
                 </span>
               ) : null}
             </button>

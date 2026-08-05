@@ -1,10 +1,11 @@
-/* PWA installability SW — must not own navigations.
+/* PWA installability SW — must not own requests.
  *
- * Intercepting every fetch with respondWith(fetch()) turns transient network /
- * origin blips into a hard browser interstitial ("This page couldn't load").
- * Leave navigations to the browser; keep a no-op-ish handler for Chromium install checks.
+ * Chromium installability only requires a fetch listener to exist; calling
+ * respondWith(fetch()) for every same-origin asset/API (including Range video
+ * segments) is pure passthrough with Safari Range pitfalls and no benefit.
+ * Leave all requests to the browser; keep this no-op handler for install checks.
  */
-const SW_VERSION = "velvet-sw-2026-08-05-2";
+const SW_VERSION = "velvet-sw-2026-08-05-3";
 
 self.addEventListener("install", (event) => {
   event.waitUntil(self.skipWaiting());
@@ -25,17 +26,9 @@ self.addEventListener("activate", (event) => {
   );
 });
 
-self.addEventListener("fetch", (event) => {
-  const { request } = event;
-  if (request.mode === "navigate") {
-    // Critical: do not wrap navigations. Browser recovery stays intact.
-    return;
-  }
-  // Same-origin asset/API: network only, never cache HTML shell.
-  if (new URL(request.url).origin !== self.location.origin) return;
-  event.respondWith(
-    fetch(request).catch(() => Response.error()),
-  );
+self.addEventListener("fetch", () => {
+  // Intentionally empty: presence of the listener satisfies Chromium PWA checks.
+  // Do not respondWith — navigations, Range media, and APIs stay with the browser.
 });
 
 // Touch version so update() detects the new worker.

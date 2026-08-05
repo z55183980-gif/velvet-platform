@@ -31,8 +31,8 @@
   --color-line: oklch(1 0 0 / 0.08);            /* border / divider */
   --color-line-strong: oklch(1 0 0 / 0.16);
 
-  /* ---- Font ---- */
-  --font-sans: "Plus Jakarta Sans", "Inter", "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+  /* ---- Font (next/font CSS vars from root layout; named fallbacks if vars missing) ---- */
+  --font-sans: var(--font-plus-jakarta, "Plus Jakarta Sans"), var(--font-inter, "Inter"), "PingFang SC", var(--font-noto-sans-sc, "Noto Sans SC"), system-ui, sans-serif;
 
   /* ---- Type scale (size + leading + tracking baked in) ---- */
   --text-display: 3.5rem;        --text-display--line-height: 1.1;   --text-display--letter-spacing: -0.02em; --text-display--font-weight: 700;

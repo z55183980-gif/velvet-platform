@@ -8,6 +8,7 @@ import { buttonVariants } from "@/components/ui/button";
 import { API_BASE, ApiError } from "@/lib/api";
 import { formatApiError, useToast } from "@/components/toast";
 import { track } from "@/lib/track";
+import { categories, categoryName } from "@/lib/mock-data";
 
 async function creatorApi<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
@@ -65,14 +66,10 @@ export default function CreatorPage() {
   const [daily, setDaily] = useState<{ day: string; totalVnd: string; orders: number }[]>([]);
   const [earnDays, setEarnDays] = useState<7 | 30>(7);
 
-  const CATEGORIES = [
-    { slug: "ngon_tinh", label: "ngon_tinh · 言情" },
-    { slug: "do_thi", label: "do_thi · 都市" },
-    { slug: "hanh_dong", label: "hanh_dong · 动作" },
-    { slug: "hai_huoc", label: "hai_huoc · 喜剧" },
-    { slug: "tam_ly", label: "tam_ly · 心理" },
-    { slug: "co_trang", label: "co_trang · 古装" },
-  ];
+  const CATEGORIES = categories.map((c) => ({
+    slug: c.slug,
+    label: categoryName(c.slug, locale),
+  }));
 
   const fail = useCallback(
     (e: unknown, fallback: string) => {

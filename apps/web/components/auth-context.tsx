@@ -115,6 +115,29 @@ function toUser(s: any, fallback?: string): AuthUser {
   };
 }
 
+/** Shallow identity/session equality — keeps React reference stable when content is unchanged. */
+function usersEqual(a: AuthUser | null, b: AuthUser | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.phone === b.phone &&
+    a.email === b.email &&
+    a.username === b.username &&
+    a.nickname === b.nickname &&
+    a.avatarUrl === b.avatarUrl &&
+    a.locale === b.locale &&
+    a.label === b.label &&
+    a.hasPassword === b.hasPassword &&
+    a.isVip === b.isVip &&
+    a.vipExpireAt === b.vipExpireAt
+  );
+}
+
+function nextUser(prev: AuthUser | null, s: any, fallback?: string): AuthUser {
+  const next = toUser(s, fallback);
+  return prev && usersEqual(prev, next) ? prev : next;
+}
+
 const inputCls =
   "w-full rounded-xl border border-line bg-surface-3 px-4 py-3 text-white outline-none transition-colors placeholder:text-ink-subtle focus:border-brand";
 const primaryBtnCls =
@@ -140,7 +163,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (s?: any, fallback?: string) => {
       const session = s || (await getSession());
       if (session && (session.phone || session.email || session.username || session.id)) {
-        setUser(toUser(session, fallback));
+        setUser((prev) => nextUser(prev, session, fallback));
         await refreshWallet();
         return true;
       }
@@ -156,7 +179,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const s = await getSession();
         if (cancelled) return;
         if (s && (s.phone || s.email || s.username || s.id)) {
-          setUser(toUser(s));
+          setUser((prev) => nextUser(prev, s));
           void refreshWallet();
         }
       } finally {
@@ -174,7 +197,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const revalidate = () => {
       void getSession().then((s) => {
         if (s && (s.phone || s.email || s.username || s.id)) {
-          setUser(toUser(s));
+          setUser((prev) => nextUser(prev, s));
           void refreshWallet();
         }
       });

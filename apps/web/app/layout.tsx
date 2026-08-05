@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { cookies } from "next/headers";
+import { Inter, Noto_Sans_SC, Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
 import { LocaleProvider } from "@/lib/i18n";
 import { AuthProvider } from "@/components/auth-context";
@@ -9,7 +10,29 @@ import { AppShell } from "@/components/app-shell";
 import { BrandSplash } from "@/components/brand-splash";
 import { normalizeInterfaceLanguage } from "@/lib/languages";
 
-const BRAND_SPLASH_BOOT_SCRIPT = `(function(){try{var el=document.getElementById("velvet-boot-splash");if(!el)return;var KEY="dv_splash_done";var FADE=340;function dismiss(){try{sessionStorage.setItem(KEY,"1");}catch(e){}var node=document.getElementById("velvet-boot-splash");document.documentElement.classList.remove("velvet-splash-lock");if(!node)return;node.style.transition="opacity "+FADE+"ms ease";node.style.opacity="0";node.style.pointerEvents="none";window.setTimeout(function(){try{node.remove();}catch(e){}},FADE+40);}if(sessionStorage.getItem(KEY)||window.matchMedia("(min-width:768px)").matches){el.dataset.skip="1";el.setAttribute("hidden","");el.style.display="none";document.documentElement.classList.remove("velvet-splash-lock");}else{document.documentElement.classList.add("velvet-splash-lock");window.setTimeout(dismiss,3200);}}catch(e){try{document.documentElement.classList.remove("velvet-splash-lock");}catch(_){}}})();`;
+const plusJakarta = Plus_Jakarta_Sans({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-plus-jakarta",
+  display: "swap",
+});
+
+const inter = Inter({
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
+  variable: "--font-inter",
+  display: "swap",
+});
+
+const notoSansSC = Noto_Sans_SC({
+  subsets: ["latin"],
+  weight: ["400", "500", "700"],
+  variable: "--font-noto-sans-sc",
+  display: "swap",
+});
+
+/** Fail-open: storage / early-script errors must never leave a permanent black overlay. */
+const BRAND_SPLASH_BOOT_SCRIPT = `(function(){function hideSplash(){try{document.documentElement.classList.remove("velvet-splash-lock");}catch(e){}var node=document.getElementById("velvet-boot-splash");if(!node)return;node.dataset.skip="1";node.setAttribute("hidden","");node.style.display="none";try{node.remove();}catch(e){}}try{var el=document.getElementById("velvet-boot-splash");if(!el)return;var KEY="dv_splash_done";var FADE=340;function dismiss(){try{sessionStorage.setItem(KEY,"1");}catch(e){}var node=document.getElementById("velvet-boot-splash");document.documentElement.classList.remove("velvet-splash-lock");if(!node)return;node.style.transition="opacity "+FADE+"ms ease";node.style.opacity="0";node.style.pointerEvents="none";window.setTimeout(function(){try{node.remove();}catch(e){}},FADE+40);}var seen=false;try{seen=!!sessionStorage.getItem(KEY);}catch(e){hideSplash();return;}if(seen||window.matchMedia("(min-width:768px)").matches){el.dataset.skip="1";el.setAttribute("hidden","");el.style.display="none";document.documentElement.classList.remove("velvet-splash-lock");}else{document.documentElement.classList.add("velvet-splash-lock");window.setTimeout(dismiss,3200);}}catch(e){hideSplash();}})();`;
 
 export const metadata: Metadata = {
   title: "Velvet — Spicy Short Dramas",
@@ -57,14 +80,13 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const initialLocale = normalizeInterfaceLanguage(jar.get("dv_locale")?.value);
 
   return (
-    <html lang={initialLocale} className="dark" data-theme="dark" suppressHydrationWarning>
+    <html
+      lang={initialLocale}
+      className={`dark ${plusJakarta.variable} ${inter.variable} ${notoSansSC.variable}`}
+      data-theme="dark"
+      suppressHydrationWarning
+    >
       <head>
-        <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Inter:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;700&display=swap"
-          rel="stylesheet"
-        />
         <script
           dangerouslySetInnerHTML={{
             __html: `(function(){try{var t=localStorage.getItem('dv_theme');var r=(t==='light'||t==='dark')?t:'dark';var d=document.documentElement;d.dataset.theme=r;d.classList.add(r);d.classList.remove(r==='light'?'dark':'light');d.style.colorScheme=r;}catch(e){}})();`,

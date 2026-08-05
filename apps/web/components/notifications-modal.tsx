@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Bell, X } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
+import { pickContentText } from "@/lib/languages";
 import { API_BASE, ApiError } from "@/lib/api";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -171,10 +172,16 @@ export function NotificationsModal({
           ) : (
             <ul className={cn("divide-y divide-line", loading && "opacity-60")}>
               {items.map((n) => {
-                const title =
-                  locale === "en" ? n.titleEn || n.titleZh : n.titleZh || n.titleEn;
-                const body =
-                  locale === "en" ? n.bodyEn || n.bodyZh : n.bodyZh || n.bodyEn;
+                const title = pickContentText(
+                  locale,
+                  n.titleEn || "",
+                  n.titleZh || "",
+                );
+                const body = pickContentText(
+                  locale,
+                  n.bodyEn || "",
+                  n.bodyZh || "",
+                );
                 return (
                   <li
                     key={n.id}

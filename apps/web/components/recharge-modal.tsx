@@ -11,7 +11,7 @@ import {
   type TopupPackageQuote,
 } from "@/lib/api";
 import { buttonVariants } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { cn, formatAmount, formatUsd } from "@/lib/utils";
 import { track } from "@/lib/track";
 
 const PAY_CURRENCY = "USD";
@@ -87,7 +87,7 @@ export function RechargeModal({ open, onClose }: { open: boolean; onClose: () =>
       }
       setErr(t("vip.payPending"));
     } catch (e: any) {
-      setErr(e?.message || "Nạp tiền thất bại");
+      setErr(e?.message || t("recharge.fail"));
     } finally {
       setBusy(false);
     }
@@ -145,11 +145,11 @@ export function RechargeModal({ open, onClose }: { open: boolean; onClose: () =>
                         )}
                       >
                         <span className="text-h2 font-bold tabular-nums text-ink">
-                          {Number(p.credits).toLocaleString()}
+                          {formatAmount(Number(p.credits))}
                         </span>
-                        <span className="mt-0.5 text-caption text-ink-subtle">积分</span>
+                        <span className="mt-0.5 text-caption text-ink-subtle">{t("card.credits")}</span>
                         <span className="mt-3 text-body-sm font-semibold tabular-nums text-gold">
-                          {Number(p.payAmount || 0).toLocaleString()} {PAY_CURRENCY}
+                          {formatUsd(Number(p.payAmount || 0))}
                         </span>
                       </button>
                     );
@@ -186,10 +186,10 @@ export function RechargeModal({ open, onClose }: { open: boolean; onClose: () =>
                 </div>
                 <div className="text-right">
                   <p className="text-h3 font-bold tabular-nums text-gold">
-                    {credits.toLocaleString()}
+                    {formatAmount(credits)}
                   </p>
                   <p className="text-caption text-ink-subtle">
-                    {payAmount.toLocaleString()} {PAY_CURRENCY}
+                    {formatUsd(payAmount)}
                   </p>
                 </div>
               </div>

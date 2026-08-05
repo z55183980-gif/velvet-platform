@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/components/auth-context";
 import { useLocale } from "@/lib/i18n";
+import { pickContentText } from "@/lib/languages";
 import { buttonVariants } from "@/components/ui/button";
 import { API_BASE, ApiError } from "@/lib/api";
 
@@ -142,10 +143,16 @@ export default function NotificationsPage() {
           </li>
         )}
         {items.map((n) => {
-          const title =
-            locale === "en" ? n.titleEn || n.titleZh : n.titleZh || n.titleEn;
-          const body =
-            locale === "en" ? n.bodyEn || n.bodyZh : n.bodyZh || n.bodyEn;
+          const title = pickContentText(
+            locale,
+            n.titleEn || "",
+            n.titleZh || "",
+          );
+          const body = pickContentText(
+            locale,
+            n.bodyEn || "",
+            n.bodyZh || "",
+          );
           return (
             <li
               key={n.id}

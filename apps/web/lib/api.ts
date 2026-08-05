@@ -196,7 +196,7 @@ function mapEpisode(e: any): Episode {
   };
 }
 
-// ---- 对外数据加载（带 mock 兜底）----
+// ---- 对外数据加载（dev 下 mock 兜底；production 永不暴露假目录）----
 export async function loadCategories(opts?: { signal?: AbortSignal }): Promise<Category[]> {
   return cachedGet(
     "categories",
@@ -206,6 +206,8 @@ export async function loadCategories(opts?: { signal?: AbortSignal }): Promise<C
         return await request<Category[]>("/categories");
       } catch (err) {
         if (isAbortError(err)) throw err;
+        // Never surface mock catalogs in production (fake dramas on API blips).
+        if (process.env.NODE_ENV === "production") return [];
         const { categories } = await import("./mock-data");
         return categories;
       }
@@ -233,6 +235,8 @@ export async function loadHome(
         return { rows: r.rows.map(mapDrama), total: r.total };
       } catch (err) {
         if (isAbortError(err)) throw err;
+        // Never surface mock catalogs in production (fake dramas on API blips).
+        if (process.env.NODE_ENV === "production") return { rows: [], total: 0 };
         const { mockHome } = await import("./mock-data");
         return mockHome(page, pageSize, opts);
       }
@@ -288,6 +292,8 @@ export async function loadFeatured(opts?: { signal?: AbortSignal }): Promise<Dra
         return list.map(mapDrama);
       } catch (err) {
         if (isAbortError(err)) throw err;
+        // Never surface mock catalogs in production (fake dramas on API blips).
+        if (process.env.NODE_ENV === "production") return [];
         const { featuredDramas } = await import("./mock-data");
         return featuredDramas;
       }
@@ -306,6 +312,8 @@ export async function loadHottest(opts?: { signal?: AbortSignal }): Promise<Dram
         return (Array.isArray(list) ? list : []).map(mapDrama);
       } catch (err) {
         if (isAbortError(err)) throw err;
+        // Never surface mock catalogs in production (fake dramas on API blips).
+        if (process.env.NODE_ENV === "production") return [];
         const { mockHome } = await import("./mock-data");
         return (await mockHome(1, 24, { sort: "hot" })).rows;
       }
@@ -736,7 +744,9 @@ export async function unlockEpisode(episodeId: string | number) {
   } catch (e) {
     // 真实后端明确拒绝（余额不足等）→ 照常抛错
     if (e instanceof ApiError) throw e;
-    // 后端不可达（如静态预览无后端）→ 本地模拟成功，保证可玩
+    // Production: never forge paid unlock success on network blips.
+    if (process.env.NODE_ENV === "production") throw e;
+    // Dev / static preview without backend → local mock success for UX.
     return { unlocked: true, alreadyUnlocked: false, mock: true };
   }
 }

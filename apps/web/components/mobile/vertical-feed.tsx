@@ -18,7 +18,7 @@ import {
   Star,
 } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
-import { useAuth } from "@/components/auth-context";
+import { useAuth, type AuthUser } from "@/components/auth-context";
 import { VerticalPlayer } from "@/components/mobile/vertical-player";
 import { VerticalPager } from "@/components/mobile/vertical-pager";
 import { FeedEpisodeBar } from "@/components/mobile/feed-episode-bar";
@@ -29,6 +29,7 @@ import { categories } from "@/lib/mock-data";
 import { pickContentText, type Locale } from "@/lib/languages";
 import { cn, formatCredits } from "@/lib/utils";
 import { useGuestWatchQuota } from "@/lib/use-guest-watch-quota";
+import { useDocumentScrollLock } from "@/hooks/use-document-scroll-lock";
 
 function isUrl(s: string) {
   return /^https?:\/\//.test(s) || s.startsWith("/");
@@ -73,6 +74,7 @@ type PlayUrlEntry = {
 const PREFETCH_OFFSETS = [-1, 1, 2] as const;
 const PLAY_URL_REFRESH_MS = 5 * 60_000;
 const PLAY_URL_CACHE_MAX = 24;
+const DETAIL_CACHE_MAX = 24;
 const MEDIA_WARM_HIGH_SEGMENTS = 3;
 const MEDIA_WARM_LOW_SEGMENTS = 2;
 const MEDIA_WARM_HIGH_BYTES = 512 * 1024;
@@ -82,6 +84,22 @@ const detailCache = new Map<string, FeedEntry>();
 const playUrlCache = new Map<string, PlayUrlEntry>();
 const playUrlInflight = new Map<string, Promise<string | null>>();
 const mediaWarmDone = new Set<string>();
+/** Guest / user+VIP / in-session unlocks — detail.episodes[].unlocked is auth-scoped. */
+let detailCacheScope = "guest";
+
+function feedAuthScope(user: AuthUser | null, unlockedCount: number): string {
+  if (!user) return `guest:u${unlockedCount}`;
+  const id = user.username || user.email || user.phone || "user";
+  return `${id}:vip=${user.isVip ? 1 : 0}:u${unlockedCount}`;
+}
+
+function syncDetailCacheScope(scope: string) {
+  if (scope === detailCacheScope) return;
+  detailCacheScope = scope;
+  detailCache.clear();
+  playUrlCache.clear();
+  playUrlInflight.clear();
+}
 
 function pickEpisode(detail: DramaDetailPayload): Episode | null {
   return detail.episodes.find((e) => e.isFree || e.unlocked) ?? detail.episodes[0] ?? null;
@@ -129,6 +147,14 @@ function trimPlayUrlCache() {
   }
 }
 
+function trimDetailCache() {
+  while (detailCache.size > DETAIL_CACHE_MAX) {
+    const oldest = detailCache.keys().next().value;
+    if (oldest == null) break;
+    detailCache.delete(oldest);
+  }
+}
+
 function getCachedPlayUrl(episodeId: string): string | null {
   const hit = playUrlCache.get(episodeId);
   if (!hit) return null;
@@ -142,10 +168,14 @@ function getCachedPlayUrl(episodeId: string): string | null {
 async function ensureDetail(dramaId: string, signal?: AbortSignal): Promise<FeedEntry | null> {
   const hit = detailCache.get(dramaId);
   if (hit) return hit;
+  const scopeAtStart = detailCacheScope;
   const detail = await loadDramaDetail(dramaId, { signal });
-  if (!detail) return null;
+  if (!detail || signal?.aborted) return null;
+  // Drop stale guest/locked payload if auth scope changed mid-flight.
+  if (scopeAtStart !== detailCacheScope) return null;
   const entry: FeedEntry = { detail, episode: pickEpisode(detail) };
   detailCache.set(dramaId, entry);
+  trimDetailCache();
   return entry;
 }
 
@@ -301,6 +331,8 @@ export function VerticalFeed({
   source?: "home";
 }) {
   const { t } = useLocale();
+  const { user, unlocked } = useAuth();
+  const authScope = feedAuthScope(user, unlocked.size);
   const { setLocked } = useMobileFeedLock();
   const [index, setIndex] = useState(0);
   const [muted, setMuted] = useState(true);
@@ -395,87 +427,22 @@ export function VerticalFeed({
   }, [setLocked]);
 
   // Pin the document so iOS can't rubber-band the visual viewport (chrome would appear to drag).
-  useEffect(() => {
-    const html = document.documentElement;
-    const body = document.body;
-    const scrollY = window.scrollY;
-    const prev = {
-      htmlOverflow: html.style.overflow,
-      bodyOverflow: body.style.overflow,
-      htmlOverscroll: html.style.overscrollBehavior,
-      bodyOverscroll: body.style.overscrollBehavior,
-      bodyPosition: body.style.position,
-      bodyTop: body.style.top,
-      bodyLeft: body.style.left,
-      bodyRight: body.style.right,
-      bodyWidth: body.style.width,
-    };
-    html.style.overflow = "hidden";
-    html.style.overscrollBehavior = "none";
-    body.style.overflow = "hidden";
-    body.style.overscrollBehavior = "none";
-    body.style.position = "fixed";
-    body.style.top = `-${scrollY}px`;
-    body.style.left = "0";
-    body.style.right = "0";
-    body.style.width = "100%";
-    return () => {
-      html.style.overflow = prev.htmlOverflow;
-      html.style.overscrollBehavior = prev.htmlOverscroll;
-      body.style.overflow = prev.bodyOverflow;
-      body.style.overscrollBehavior = prev.bodyOverscroll;
-      body.style.position = prev.bodyPosition;
-      body.style.top = prev.bodyTop;
-      body.style.left = prev.bodyLeft;
-      body.style.right = prev.bodyRight;
-      body.style.width = prev.bodyWidth;
-      window.scrollTo(0, scrollY);
-    };
-  }, []);
-
-  // Block document rubber-band outside nested scrollers (modals/drawers).
-  useEffect(() => {
-    const canScrollTouchTarget = (target: EventTarget | null) => {
-      let node = target instanceof Element ? target : null;
-      while (node && node !== document.documentElement) {
-        if (node instanceof HTMLElement) {
-          const style = window.getComputedStyle(node);
-          const oy = style.overflowY;
-          const ox = style.overflowX;
-          const yScrollable =
-            (oy === "auto" || oy === "scroll" || oy === "overlay") &&
-            node.scrollHeight > node.clientHeight + 1;
-          const xScrollable =
-            (ox === "auto" || ox === "scroll" || ox === "overlay") &&
-            node.scrollWidth > node.clientWidth + 1;
-          if (yScrollable || xScrollable) return true;
-        }
-        node = node.parentElement;
-      }
-      return false;
-    };
-
-    const onTouchMove = (e: TouchEvent) => {
-      if (canScrollTouchTarget(e.target)) return;
-      e.preventDefault();
-    };
-
-    document.addEventListener("touchmove", onTouchMove, { passive: false });
-    return () => document.removeEventListener("touchmove", onTouchMove);
-  }, []);
+  useDocumentScrollLock(true);
 
   // Prefetch neighbor details / media around the settled index.
   useEffect(() => {
+    syncDetailCacheScope(authScope);
     const drama = dramas[index];
     if (!drama) return;
     for (const offset of PREFETCH_OFFSETS) {
       const id = dramas[index + offset]?.id;
       if (id && !detailCache.has(id)) void ensureDetail(id).catch(() => {});
     }
-  }, [index, dramas]);
+  }, [index, dramas, authScope]);
 
   // Media warm runs for guests and signed-in users alike (HTTP cache only; no guest quota burn).
   useEffect(() => {
+    syncDetailCacheScope(authScope);
     const ac = new AbortController();
 
     const run = async () => {
@@ -502,7 +469,7 @@ export function VerticalFeed({
       ac.abort();
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [index, dramas]);
+  }, [index, dramas, authScope]);
 
   if (bootLoading && dramas.length === 0) {
     return (
@@ -567,7 +534,8 @@ function FeedPage({
   registerTogglePlay: (fn: (() => void) | null) => void;
 }) {
   const { locale, t } = useLocale();
-  const { user, ready: authReady, openLogin } = useAuth();
+  const { user, unlocked, ready: authReady, openLogin } = useAuth();
+  const authScope = feedAuthScope(user, unlocked.size);
   const { ready: guestReady, canWatch: canGuestWatch, markWatched: markGuestWatched } =
     useGuestWatchQuota();
   const [episode, setEpisode] = useState<Episode | null>(
@@ -649,6 +617,7 @@ function FeedPage({
   }, [authReady, user, drama.numericId, drama.id]);
 
   useEffect(() => {
+    syncDetailCacheScope(authScope);
     const ac = new AbortController();
     const cached = detailCache.get(drama.id);
     if (cached) {
@@ -670,7 +639,7 @@ function FeedPage({
       });
 
     return () => ac.abort();
-  }, [drama.id]);
+  }, [drama.id, authScope]);
 
   useEffect(() => {
     if (!isPlayableEpisode(episode)) {
@@ -774,12 +743,13 @@ function FeedPage({
     };
   }, [active, user, episode?.id, playUrl]);
 
-  const unlocked = !!(episode && (episode.isFree || episode.unlocked));
+  const episodeUnlocked = !!(episode && (episode.isFree || episode.unlocked));
   const episodeId = episode?.id ? String(episode.id) : "";
-  const guestAllowed = !!unlocked && !user && guestReady && !!episodeId && canGuestWatch(episodeId);
-  const canPlay = unlocked && !!(user || guestAllowed);
-  const needsLogin = authReady && guestReady && unlocked && !user && !guestAllowed;
-  const locked = !!episode && !unlocked;
+  const guestAllowed =
+    !!episodeUnlocked && !user && guestReady && !!episodeId && canGuestWatch(episodeId);
+  const canPlay = episodeUnlocked && !!(user || guestAllowed);
+  const needsLogin = authReady && guestReady && episodeUnlocked && !user && !guestAllowed;
+  const locked = !!episode && !episodeUnlocked;
   const cover = isUrl(drama.cover[0]) ? drama.cover[0] : undefined;
 
   useEffect(() => {
@@ -870,7 +840,7 @@ function FeedPage({
           </div>
           <div className="mt-3.5 flex justify-center px-3">
             <Link
-              href={`/drama/${drama.id}?lfs=1`}
+              href={`/drama/${drama.id}/play?lfs=1`}
               className="inline-flex items-center gap-1.5 rounded-full bg-[#2a2c2c]/88 px-4 py-2 text-[13px] font-medium text-white/95 backdrop-blur-sm"
               onClick={(e) => e.stopPropagation()}
             >
@@ -954,7 +924,7 @@ function FeedPage({
 
         <div className="pointer-events-auto max-w-[calc(100%-4.75rem)] px-3">
           <Link
-            href={`/drama/${drama.id}?browse=1`}
+            href={`/drama/${drama.id}`}
             className="inline-flex max-w-full items-center gap-0.5 text-[17px] font-semibold leading-snug text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.65)]"
             onClick={(e) => e.stopPropagation()}
           >
@@ -976,7 +946,7 @@ function FeedPage({
 
         <FeedEpisodeBar
           className="pointer-events-auto mt-1.5"
-          href={`/drama/${drama.id}`}
+          href={`/drama/${drama.id}/play`}
           label={t("feed.watchFull", { n: drama.episodesCount })}
           videoRef={videoRef}
           mediaKey={playUrl}

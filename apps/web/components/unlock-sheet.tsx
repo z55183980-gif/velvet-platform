@@ -4,9 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import { X, Loader2, Check, Lock, Coins } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { useAuth } from "@/components/auth-context";
+import { useDocumentScrollLock } from "@/hooks/use-document-scroll-lock";
 import { buttonVariants } from "./ui/button";
-import { formatCredits } from "@/lib/utils";
-import { cn } from "@/lib/utils";
+import { cn, formatAmount, formatCredits } from "@/lib/utils";
 import type { Episode } from "@/lib/mock-data";
 
 type Status = "idle" | "processing" | "success" | "error" | "insufficient";
@@ -37,6 +37,8 @@ export function UnlockSheet({
   const [mode, setMode] = useState<"episode" | "drama">("episode");
   const panelRef = useRef<HTMLDivElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const statusRef = useRef(status);
+  statusRef.current = status;
 
   const price = mode === "drama" ? Number(buyoutCredits || 0) : episode?.price ?? 0;
   const bal = balance ?? 0;
@@ -44,21 +46,21 @@ export function UnlockSheet({
   const insufficient = balanceKnown && bal < price;
   const showBuyout = !!(buyoutCredits && buyoutCredits > 0 && onBuyDrama);
 
+  useDocumentScrollLock(open);
+
   useEffect(() => {
     if (!open) return;
     setStatus("idle");
     setErrMsg(null);
     setMode("episode");
     void refreshWallet();
-    document.body.style.overflow = "hidden";
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && status !== "processing") onClose();
+      if (e.key === "Escape" && statusRef.current !== "processing") onClose();
     };
     window.addEventListener("keydown", onKey);
     const id = requestAnimationFrame(() => panelRef.current?.focus());
     return () => {
       window.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
       cancelAnimationFrame(id);
       if (timer.current) clearTimeout(timer.current);
     };
@@ -235,7 +237,7 @@ export function UnlockSheet({
                   {vipActive && mode === "episode" ? t("vip.freeWatch") : t("unlock.priceLabel")}
                 </p>
                 <p className="mt-2 text-display font-bold tabular-nums text-ink md:text-h1">
-                  {vipActive && mode === "episode" ? 0 : price.toLocaleString()}
+                  {vipActive && mode === "episode" ? formatAmount(0) : formatAmount(price)}
                 </p>
                 <p className="mt-1 text-body-sm text-ink-muted">{t("card.credits")}</p>
               </div>

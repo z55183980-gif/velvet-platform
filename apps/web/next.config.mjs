@@ -1,3 +1,5 @@
+import { resolveApiProxyTarget } from "./lib/api-proxy-target.mjs";
+
 /** @type {import('next').NextConfig} */
 const staticExport = process.env.STATIC_EXPORT === "1";
 
@@ -56,10 +58,7 @@ const nextConfig = {
   async rewrites() {
     // 本地 / 非静态导出：同源代理到 NestJS，cookie 鉴权可用
     if (staticExport) return [];
-    const apiTarget = (process.env.API_PROXY_TARGET || "http://127.0.0.1:4000").replace(
-      /\/$/,
-      "",
-    );
+    const apiTarget = resolveApiProxyTarget();
     return [
       // public/favicon.ico is served directly — no rewrite to missing favicon.svg
       {

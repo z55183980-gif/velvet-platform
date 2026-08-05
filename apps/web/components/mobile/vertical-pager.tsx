@@ -71,6 +71,7 @@ export function VerticalPager({
     ignoreTap: boolean;
   } | null>(null);
   const animatingRef = useRef(false);
+  const snapTimerRef = useRef<number | null>(null);
   const wheelLockUntil = useRef(0);
   const [dragY, setDragY] = useState(0);
   const [animTo, setAnimTo] = useState<number | null>(null);
@@ -85,6 +86,13 @@ export function VerticalPager({
     return h;
   }, []);
 
+  const clearSnapTimer = useCallback(() => {
+    if (snapTimerRef.current != null) {
+      window.clearTimeout(snapTimerRef.current);
+      snapTimerRef.current = null;
+    }
+  }, []);
+
   useLayoutEffect(() => {
     measure();
     const el = rootRef.current;
@@ -94,6 +102,8 @@ export function VerticalPager({
     return () => ro.disconnect();
   }, [measure]);
 
+  useEffect(() => () => clearSnapTimer(), [clearSnapTimer]);
+
   const canPrev = index > 0;
   const canNext = index < count - 1;
 
@@ -101,6 +111,7 @@ export function VerticalPager({
     (target: number) => {
       const h = heightRef.current || measure();
       if (!h) {
+        clearSnapTimer();
         setDragY(0);
         setAnimTo(null);
         animatingRef.current = false;
@@ -108,7 +119,9 @@ export function VerticalPager({
       }
       animatingRef.current = true;
       setAnimTo(target);
-      window.setTimeout(() => {
+      clearSnapTimer();
+      snapTimerRef.current = window.setTimeout(() => {
+        snapTimerRef.current = null;
         const cur = indexRef.current;
         if (target < 0 && cur < count - 1) {
           onChange(cur + 1);
@@ -120,7 +133,7 @@ export function VerticalPager({
         animatingRef.current = false;
       }, SNAP_MS);
     },
-    [count, measure, onChange],
+    [clearSnapTimer, count, measure, onChange],
   );
 
   const clampDrag = useCallback(
@@ -234,7 +247,9 @@ export function VerticalPager({
     if (target === 0) {
       animatingRef.current = true;
       setAnimTo(0);
-      window.setTimeout(() => {
+      clearSnapTimer();
+      snapTimerRef.current = window.setTimeout(() => {
+        snapTimerRef.current = null;
         setDragY(0);
         setAnimTo(null);
         animatingRef.current = false;
@@ -251,7 +266,9 @@ export function VerticalPager({
     if (animatingRef.current) return;
     animatingRef.current = true;
     setAnimTo(0);
-    window.setTimeout(() => {
+    clearSnapTimer();
+    snapTimerRef.current = window.setTimeout(() => {
+      snapTimerRef.current = null;
       setDragY(0);
       setAnimTo(null);
       animatingRef.current = false;

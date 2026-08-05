@@ -138,18 +138,20 @@ export function VideoPlayer({
         /* ignore */
       }
     };
+    const onEnd = () => onEnded?.();
     v.addEventListener("play", onPlay);
     v.addEventListener("pause", onPause);
     v.addEventListener("timeupdate", onTime);
     v.addEventListener("loadedmetadata", onMeta);
     v.addEventListener("progress", onProg);
-    v.addEventListener("ended", () => onEnded?.());
+    v.addEventListener("ended", onEnd);
     return () => {
       v.removeEventListener("play", onPlay);
       v.removeEventListener("pause", onPause);
       v.removeEventListener("timeupdate", onTime);
       v.removeEventListener("loadedmetadata", onMeta);
       v.removeEventListener("progress", onProg);
+      v.removeEventListener("ended", onEnd);
     };
   }, [src, onEnded, videoRef]);
 

@@ -1,5 +1,5 @@
 export type { Locale } from "./languages";
-import type { Locale } from "./languages";
+import { pickContentText, type Locale } from "./languages";
 
 export interface Category {
   slug: string;
@@ -222,7 +222,7 @@ export function getDrama(id: string): Drama | undefined {
 export function categoryName(slug: string, locale: Locale): string {
   const cat = categories.find((c) => c.slug === slug);
   if (!cat) return slug;
-  return locale === "en" ? cat.nameEn : cat.nameZh;
+  return pickContentText(locale, cat.nameEn, cat.nameZh);
 }
 
 // ---- 兜底数据（API 不可达时使用，保持预览可见）----

@@ -1,6 +1,5 @@
 /**
- * Soft-nav placeholder for /drama/[id].
- * Prefer a neutral dark stage: watch entries stay black-ready; browse (?browse=1) is close to #1c1c1c.
+ * Soft-nav placeholder for /drama/[id] browse landing.
  */
 export default function Loading() {
   return (

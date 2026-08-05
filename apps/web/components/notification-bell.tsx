@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Bell } from "lucide-react";
 import { useAuth } from "@/components/auth-context";
 import { useLocale } from "@/lib/i18n";
+import { pickContentText } from "@/lib/languages";
 import { API_BASE, ApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -68,9 +69,40 @@ export function NotificationBell({
       setItems([]);
       return;
     }
-    reload();
-    const t = setInterval(reload, 25_000);
-    return () => clearInterval(t);
+
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
+    const stopPolling = () => {
+      if (intervalId != null) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+    };
+
+    const startPolling = () => {
+      stopPolling();
+      intervalId = setInterval(reload, 25_000);
+    };
+
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") {
+        stopPolling();
+        return;
+      }
+      void reload();
+      startPolling();
+    };
+
+    if (document.visibilityState !== "hidden") {
+      void reload();
+      startPolling();
+    }
+
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      stopPolling();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [user, reload]);
 
   useEffect(() => {
@@ -136,14 +168,16 @@ export function NotificationBell({
           ) : (
             <ul className="divide-y divide-line">
               {items.map((n) => {
-                const title =
-                  locale === "en"
-                    ? n.titleEn || n.titleZh
-                    : n.titleZh || n.titleEn;
-                const body =
-                  locale === "en"
-                    ? n.bodyEn || n.bodyZh
-                    : n.bodyZh || n.bodyEn;
+                const title = pickContentText(
+                  locale,
+                  n.titleEn || "",
+                  n.titleZh || "",
+                );
+                const body = pickContentText(
+                  locale,
+                  n.bodyEn || "",
+                  n.bodyZh || "",
+                );
                 return (
                   <li
                     key={n.id}

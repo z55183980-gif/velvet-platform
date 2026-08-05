@@ -33,7 +33,7 @@ import {
   uploadAvatar,
   redeemCode,
 } from "@/lib/api";
-import { cn, mediaUrl } from "@/lib/utils";
+import { cn, formatAmount, mediaUrl } from "@/lib/utils";
 
 type DesktopTab = "favorites" | "history" | "orders";
 
@@ -444,7 +444,7 @@ export default function AccountPage() {
                       </p>
                     </div>
                     <p className="mt-2 text-[1.75rem] font-bold tabular-nums leading-none text-ink">
-                      {balance != null ? balance.toLocaleString(locale) : "—"}
+                      {balance != null ? formatAmount(balance) : "—"}
                     </p>
                   </div>
                   <span className="shrink-0 rounded-full bg-brand px-4 py-2 text-body-sm font-medium text-white">
@@ -790,7 +790,7 @@ export default function AccountPage() {
                   return (
                     <Link
                       key={row.id}
-                      href={`/drama/${slug}`}
+                      href={`/drama/${slug}/play`}
                       className="flex items-center gap-3 rounded-lg bg-surface-2/60 px-3 py-2.5 transition-colors hover:bg-surface-2"
                     >
                       {d?.coverUrl && (

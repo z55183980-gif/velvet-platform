@@ -7,6 +7,10 @@ import {
   isWebHost,
 } from "@/lib/site";
 import { localeFromAcceptLanguage } from "@/lib/languages";
+import {
+  checkLiveDrama,
+  LIVE_DRAMA_CHECKED_HEADER,
+} from "@/lib/live-drama";
 
 /**
  * 管理端已拆至独立应用 apps/admin（生产：admin.velvetmovie.space）。
@@ -100,25 +104,6 @@ function withDefaultLocaleCookie(req: NextRequest, res: NextResponse) {
   return res;
 }
 
-/** True when public catalog says the drama is missing / not LIVE. Fail open on API errors. */
-async function isMissingLiveDrama(id: string): Promise<boolean> {
-  const base = (process.env.API_PROXY_TARGET || "http://127.0.0.1:4100").replace(/\/$/, "");
-  try {
-    const res = await fetch(`${base}/api/v1/dramas/${encodeURIComponent(id)}`, {
-      headers: { Accept: "application/json" },
-    });
-    if (res.status === 404) return true;
-    if (!res.ok) return false;
-    const json = (await res.json().catch(() => null)) as {
-      code?: number;
-      data?: unknown;
-    } | null;
-    return !json || json.code !== 0 || !json.data;
-  } catch {
-    return false;
-  }
-}
-
 export async function middleware(req: NextRequest) {
   const { pathname: logicalPath, locale } = stripLocalePrefix(req.nextUrl.pathname);
 
@@ -130,28 +115,42 @@ export async function middleware(req: NextRequest) {
   }
 
   // Hard-404 missing / offline dramas (App Router page notFound() alone stays HTTP 200 under streaming).
-  const dramaMatch = logicalPath.match(/^\/drama\/([^/]+)\/?$/);
-  if (dramaMatch && (await isMissingLiveDrama(dramaMatch[1]))) {
-    const url = req.nextUrl.clone();
-    url.pathname = "/__drama_missing__";
-    const res = NextResponse.rewrite(url);
-    if (locale) localeCookie(res, locale);
-    else withDefaultLocaleCookie(req, res);
-    return res;
+  // On exists/unavailable, mark the request so the page skips a duplicate upstream probe.
+  let requestHeaders: Headers | undefined;
+  const dramaMatch = logicalPath.match(/^\/drama\/([^/]+)(?:\/play)?\/?$/);
+  if (dramaMatch) {
+    const presence = await checkLiveDrama(dramaMatch[1]);
+    if (presence === "missing") {
+      const url = req.nextUrl.clone();
+      url.pathname = "/__drama_missing__";
+      const res = NextResponse.rewrite(url);
+      if (locale) localeCookie(res, locale);
+      else withDefaultLocaleCookie(req, res);
+      return res;
+    }
+    requestHeaders = new Headers(req.headers);
+    requestHeaders.set(LIVE_DRAMA_CHECKED_HEADER, "1");
   }
+
+  const passThrough = requestHeaders
+    ? { request: { headers: requestHeaders } }
+    : undefined;
 
   // Locale-prefixed consumer URLs → rewrite to unprefixed app routes.
   if (locale) {
     const url = req.nextUrl.clone();
     url.pathname = logicalPath;
-    const res = NextResponse.rewrite(url);
+    const res = NextResponse.rewrite(url, passThrough);
     localeCookie(res, locale);
     return res;
   }
 
-  return withDefaultLocaleCookie(req, NextResponse.next());
+  return withDefaultLocaleCookie(req, NextResponse.next(passThrough));
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image).*)"],
+  // Locale cookie / rewrite, admin host redirects, drama hard-404 — not API proxy or static assets.
+  matcher: [
+    "/((?!api|_next|favicon\\.ico|favicon\\.png|favicon-32\\.png|apple-touch-icon\\.png|sw\\.js|logo\\.webp|logo\\.png|logo@2x\\.png|splash-preview\\.html|covers(?:/|$)).*)",
+  ],
 };

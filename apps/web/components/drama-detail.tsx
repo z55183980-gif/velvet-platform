@@ -128,13 +128,16 @@ const PLAY_GRAD_HOVER =
 export function DramaDetail({
   id,
   autoLandscapeFs = false,
-  browseFirst = false,
+  autoStartWatch = false,
+  initialEpisodeNo,
 }: {
   id: string;
   /** Feed「全屏观看」入口：进播放后自动触发真横屏沉浸 */
   autoLandscapeFs?: boolean;
-  /** Feed title entry (?browse=1): show mobile detail landing instead of auto-play */
-  browseFirst?: boolean;
+  /** `/drama/[id]/play` — open watch immediately (Hongguo direct-play entry) */
+  autoStartWatch?: boolean;
+  /** Optional episode from `/play?ep=` */
+  initialEpisodeNo?: number;
 }) {
   const router = useRouter();
   const { locale, t } = useLocale();
@@ -196,6 +199,13 @@ export function DramaDetail({
   const watchShellRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<any>(null);
   const resumeApplied = useRef(false);
+  /** Avoid putting seekTo in the HLS setup effect deps (rebuilds player). */
+  const seekToRef = useRef(seekTo);
+  seekToRef.current = seekTo;
+  const landscapeModeRef = useRef(landscapeMode);
+  landscapeModeRef.current = landscapeMode;
+  /** Playhead to restore when landscapeMode remounts the <video> surface. */
+  const surfaceTimeRef = useRef(0);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -231,18 +241,23 @@ export function DramaDetail({
 
   useEffect(() => {
     if (!data || selected) return;
-    const pick =
-      data.episodes.find(
-        (e) =>
-          e.isFree ||
-          !!e.unlocked ||
-          unlockedNos.has(e.no) ||
-          !!data.vipActive ||
-          !!data.dramaUnlocked ||
-          !!user?.isVip,
-      ) ?? null;
+    const unlocked = (e: Episode) =>
+      e.isFree ||
+      !!e.unlocked ||
+      unlockedNos.has(e.no) ||
+      !!data.vipActive ||
+      !!data.dramaUnlocked ||
+      !!user?.isVip;
+    if (initialEpisodeNo != null) {
+      const fromQuery = data.episodes.find((e) => e.no === initialEpisodeNo);
+      if (fromQuery && unlocked(fromQuery)) {
+        setSelected(fromQuery);
+        return;
+      }
+    }
+    const pick = data.episodes.find((e) => unlocked(e)) ?? null;
     setSelected(pick);
-  }, [data, selected, unlockedNos, user?.isVip]);
+  }, [data, selected, unlockedNos, user?.isVip, initialEpisodeNo]);
 
   useEffect(() => {
     setEpLineExpanded(false);
@@ -256,6 +271,7 @@ export function DramaDetail({
     setRotateFs(pendingLandscapeFsRef.current);
     setQualityIndex(-1);
     setQualities([]);
+    surfaceTimeRef.current = 0;
   }, [selected?.no]);
 
   useEffect(() => {
@@ -352,11 +368,11 @@ export function DramaDetail({
   const lockActionLabel =
     selected && !selected.isFree && !isUnlocked(selected) ? t("vip.open") : undefined;
 
-  /** Mobile: auto-enter watch unless Feed title opened the browse landing (?browse=1). */
+  /** `/drama/[id]/play` only: enter watch as soon as data is ready. */
   useEffect(() => {
-    if (!mobileReady || !isMobile || loading || !data) return;
-    if (!browseFirst) setWatching(true);
-  }, [mobileReady, isMobile, loading, data, browseFirst]);
+    if (!mobileReady || loading || !data) return;
+    if (autoStartWatch) setWatching(true);
+  }, [mobileReady, loading, data, autoStartWatch]);
 
   useEffect(() => {
     if (!playerReady || !selected?.id) {
@@ -545,7 +561,69 @@ export function DramaDetail({
     tryEnterLandscapeFs,
   ]);
 
+  const applyResumeSeek = (video: HTMLVideoElement) => {
+    const target = seekToRef.current;
+    if (target == null || target <= 5 || resumeApplied.current) return;
+    try {
+      video.currentTime = target;
+      resumeApplied.current = true;
+      surfaceTimeRef.current = 0;
+    } catch {
+      /* ignore */
+    }
+  };
+
+  // Resume seek without tearing down HLS/native media.
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !playUrl || !playerReady || !watching) return;
+    if (seekTo == null || seekTo <= 5 || resumeApplied.current) return;
+    const onMeta = () => applyResumeSeek(video);
+    video.addEventListener("loadedmetadata", onMeta);
+    if (video.readyState >= 1) applyResumeSeek(video);
+    return () => video.removeEventListener("loadedmetadata", onMeta);
+  }, [seekTo, playUrl, playerReady, watching, landscapeMode]);
+
+  // landscapeMode toggles which <video> is mounted — re-attach without loadSource/destroy.
+  useEffect(() => {
+    const video = videoRef.current;
+    const src = playUrl;
+    if (!video || !src || !playerReady || !watching) return;
+
+    const restoreSurfaceTime = () => {
+      const surface = surfaceTimeRef.current;
+      if (surface > 1) {
+        try {
+          video.currentTime = surface;
+          const seekTarget = seekToRef.current;
+          if (seekTarget != null && seekTarget > 5 && Math.abs(surface - seekTarget) < 1.5) {
+            resumeApplied.current = true;
+          }
+          surfaceTimeRef.current = 0;
+        } catch {
+          /* ignore */
+        }
+        return;
+      }
+      applyResumeSeek(video);
+    };
+
+    const hls = hlsRef.current;
+    if (hls) {
+      hls.attachMedia(video);
+    } else if (!isHls(src) || video.canPlayType("application/vnd.apple.mpegurl")) {
+      if (video.getAttribute("src") !== src) video.src = src;
+    }
+
+    video.addEventListener("loadedmetadata", restoreSurfaceTime);
+    if (video.readyState >= 1) restoreSurfaceTime();
+    return () => video.removeEventListener("loadedmetadata", restoreSurfaceTime);
+    // Only rebind when the mounted <video> surface flips — not on playUrl (main HLS effect owns that).
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: landscapeMode surface only
+  }, [landscapeMode]);
+
   // HLS attach + quality levels + 横竖检测
+  // Do not depend on landscapeMode/seekTo — those would destroy+recreate and restart playback.
   useEffect(() => {
     const video = videoRef.current;
     const episodeId = selected?.id ? String(selected.id) : "";
@@ -555,19 +633,19 @@ export function DramaDetail({
     const applyAspect = () => {
       if (!video.videoWidth || !video.videoHeight) return;
       const isLand = video.videoWidth >= video.videoHeight;
-      if (followVideoAspect) setLandscapeMode(isLand);
+      if (!followVideoAspect || isLand === landscapeModeRef.current) return;
+      // Preserve playhead across the letterbox/pager <video> remount.
+      const t = video.currentTime;
+      if (t > 0.5) surfaceTimeRef.current = t;
+      else if (seekToRef.current != null && seekToRef.current > 5) {
+        surfaceTimeRef.current = seekToRef.current;
+      }
+      setLandscapeMode(isLand);
     };
 
     const onMeta = () => {
       applyAspect();
-      if (seekTo != null && seekTo > 5 && !resumeApplied.current) {
-        try {
-          video.currentTime = seekTo;
-          resumeApplied.current = true;
-        } catch {
-          /* ignore */
-        }
-      }
+      applyResumeSeek(video);
     };
     video.addEventListener("loadedmetadata", onMeta);
     video.addEventListener("loadeddata", applyAspect);
@@ -597,13 +675,15 @@ export function DramaDetail({
         const mod = await import("hls.js");
         const Hls = mod.default;
         if (cancelled || !Hls.isSupported()) {
-          if (!cancelled) setPlayErr("Trình duyệt không hỗ trợ HLS");
+          if (!cancelled) setPlayErr(t("player.hlsUnsupported"));
           return;
         }
+        // Surface may have remounted while hls.js was loading.
+        const media = videoRef.current ?? video;
         hls = new Hls({ capLevelToPlayerSize: true });
         hlsRef.current = hls;
         hls.loadSource(playUrl);
-        hls.attachMedia(video);
+        hls.attachMedia(media);
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           if (cancelled) return;
           const levels = (hls.levels || []) as Array<{ height?: number }>;
@@ -617,10 +697,11 @@ export function DramaDetail({
           setQualities(mapped);
           setQualityIndex(-1);
           hls.currentLevel = -1;
-          void video.play().catch(() => {});
+          const playTarget = videoRef.current ?? media;
+          void playTarget.play().catch(() => {});
         });
       } catch {
-        if (!cancelled) setPlayErr("Không tải được trình phát HLS");
+        if (!cancelled) setPlayErr(t("player.hlsLoadFailed"));
       }
     })();
     return () => {
@@ -629,17 +710,15 @@ export function DramaDetail({
       if (hls) hls.destroy();
       if (hlsRef.current === hls) hlsRef.current = null;
     };
-    // landscapeMode toggles which <video> is mounted — rebind when the surface changes.
   }, [
     playUrl,
-    seekTo,
     playerReady,
     user,
     watching,
     followVideoAspect,
     selected?.id,
-    landscapeMode,
     canGuestWatch,
+    t,
   ]);
 
   const selectEpisodeByIndex = useCallback(
@@ -663,7 +742,7 @@ export function DramaDetail({
       return (
         <div
           className="fixed inset-0 z-[70]"
-          style={{ background: browseFirst ? "#1c1c1c" : "#000" }}
+          style={{ background: autoStartWatch ? "#000" : "#1c1c1c" }}
           aria-busy="true"
         />
       );
@@ -759,6 +838,11 @@ export function DramaDetail({
         return;
       }
     }
+    if (isMobile) {
+      const epQ = f ? `?ep=${f.no}` : "";
+      router.push(`/drama/${id}/play${epQ}`);
+      return;
+    }
     setWatching(true);
   }
 
@@ -791,6 +875,10 @@ export function DramaDetail({
     if (isUnlocked(ep)) {
       setSelected(ep);
       setDrawerOpen(false);
+      if (isMobile && !autoStartWatch && !watching) {
+        router.push(`/drama/${id}/play?ep=${ep.no}`);
+        return;
+      }
       setWatching(true);
     } else openVipGate(ep);
   };
@@ -912,15 +1000,15 @@ export function DramaDetail({
             type="button"
             onClick={() => {
               void exitImmersiveFs();
-              if (browseFirst) {
-                setWatching(false);
+              if (autoStartWatch) {
+                if (typeof window !== "undefined" && window.history.length > 1) {
+                  router.back();
+                } else {
+                  router.push(`/drama/${id}`);
+                }
                 return;
               }
-              if (typeof window !== "undefined" && window.history.length > 1) {
-                router.back();
-              } else {
-                router.push("/");
-              }
+              setWatching(false);
             }}
             className="inline-flex items-center gap-0.5 text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
             aria-label="back"
@@ -1549,7 +1637,17 @@ export function DramaDetail({
         <div className="flex h-14 shrink-0 items-center justify-between border-b border-white/[0.06] px-4 md:px-5">
           <button
             type="button"
-            onClick={() => setWatching(false)}
+            onClick={() => {
+              if (autoStartWatch) {
+                if (typeof window !== "undefined" && window.history.length > 1) {
+                  router.back();
+                } else {
+                  router.push(`/drama/${id}`);
+                }
+                return;
+              }
+              setWatching(false);
+            }}
             className="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-[14px] text-white/85 transition-colors hover:bg-white/10 hover:text-white"
           >
             <ChevronLeft className="h-5 w-5" />
@@ -1666,7 +1764,7 @@ export function DramaDetail({
     );
   }
 
-  /* ---- Browse: Hongguo mobile detail (?browse=1 from Feed title) ---- */
+  /* ---- Browse: Hongguo mobile detail (/drama/[id]) ---- */
   if (isMobile) {
     const heatLabel = formatCount(dramaHeat(drama), locale);
     const goBackBrowse = () => {
@@ -1798,7 +1896,7 @@ export function DramaDetail({
                   const rCat = categoryName(d.categorySlug, locale);
                   const chipTags = rTags.length ? rTags : rCat ? [rCat] : [];
                   return (
-                    <Link key={d.id} href={`/drama/${d.id}?browse=1`} className="min-w-0">
+                    <Link key={d.id} href={`/drama/${d.id}`} className="min-w-0">
                       <div className="relative aspect-[3/4] overflow-hidden rounded-lg bg-white/[0.06]">
                         {rCover ? (
                           // eslint-disable-next-line @next/next/no-img-element

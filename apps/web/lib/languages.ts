@@ -78,9 +78,9 @@ export function getInterfaceLanguageShortLabel(code?: string | null): string {
   );
 }
 
-/** Content fields are en/zh; map UI locale → content side. */
+/** Content fields are en/zh; only zh UI uses Chinese copy — others (en/fr/…) use English. */
 export function contentLocale(locale: Locale): "en" | "zh" {
-  return locale === "en" ? "en" : "zh";
+  return locale === "zh" ? "zh" : "en";
 }
 
 export function pickContentText(
@@ -88,5 +88,8 @@ export function pickContentText(
   enText: string,
   zhText: string,
 ): string {
-  return contentLocale(locale) === "en" ? enText : zhText || enText;
+  if (contentLocale(locale) === "zh") {
+    return zhText || enText;
+  }
+  return enText || zhText;
 }
