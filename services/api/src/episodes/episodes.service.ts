@@ -66,6 +66,9 @@ export class EpisodesService {
         playUrl: `/api/v1/media/${encoded}?sig=${sig}&exp=${exp}`,
         expiresAt: new Date(exp * 1000).toISOString(),
         durationSec: episode.durationSec,
+        mediaWidth: episode.mediaWidth,
+        mediaHeight: episode.mediaHeight,
+        mediaOrientation: episode.mediaOrientation,
       };
     }
 
@@ -76,6 +79,9 @@ export class EpisodesService {
         playUrl: raw,
         expiresAt: new Date(exp * 1000).toISOString(),
         durationSec: episode.durationSec,
+        mediaWidth: episode.mediaWidth,
+        mediaHeight: episode.mediaHeight,
+        mediaOrientation: episode.mediaOrientation,
       };
     }
 
@@ -96,6 +102,9 @@ export class EpisodesService {
       playUrl,
       expiresAt: new Date(exp * 1000).toISOString(),
       durationSec: episode.durationSec,
+      mediaWidth: episode.mediaWidth,
+      mediaHeight: episode.mediaHeight,
+      mediaOrientation: episode.mediaOrientation,
     };
   }
 

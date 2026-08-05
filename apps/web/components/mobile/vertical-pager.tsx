@@ -68,7 +68,6 @@ export function VerticalPager({
     velocity: number;
     axis: "undecided" | "h" | "v";
     from: number;
-    ignoreTap: boolean;
   } | null>(null);
   const animatingRef = useRef(false);
   const snapTimerRef = useRef<number | null>(null);
@@ -154,8 +153,9 @@ export function VerticalPager({
     if (e.pointerType === "mouse" && e.button !== 0) return;
     measure();
     const target = e.target;
-    const ignoreTap =
-      target instanceof Element && !!target.closest(TAP_IGNORE_SELECTOR);
+    // Interactive descendants own their pointer stream. Capturing it here causes
+    // slider scrubs to compete with page swipes, especially in rotated layouts.
+    if (target instanceof Element && target.closest(TAP_IGNORE_SELECTOR)) return;
     dragRef.current = {
       pointerId: e.pointerId,
       startX: e.clientX,
@@ -166,7 +166,6 @@ export function VerticalPager({
       velocity: 0,
       axis: "undecided",
       from: dragY,
-      ignoreTap,
     };
     try {
       rootRef.current?.setPointerCapture(e.pointerId);
@@ -215,7 +214,6 @@ export function VerticalPager({
     const move = Math.hypot(e.clientX - d.startX, e.clientY - d.startY);
     if (
       d.axis !== "v" &&
-      !d.ignoreTap &&
       move <= TAP_MAX_MOVE_PX &&
       elapsed <= TAP_MAX_MS
     ) {

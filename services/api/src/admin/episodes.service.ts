@@ -151,6 +151,9 @@ export class AdminEpisodesService {
       });
       data.hlsUrl = urls.hlsUrl;
       data.originalUrl = urls.originalUrl;
+      data.mediaWidth = null;
+      data.mediaHeight = null;
+      data.mediaOrientation = null;
       if (urls.hlsUrl || urls.originalUrl) {
         data.uploadStatus = 'COMPLETED';
         if (urls.hlsUrl?.endsWith('.m3u8')) {
@@ -234,6 +237,9 @@ export class AdminEpisodesService {
       data: {
         hlsUrl: null,
         originalUrl: null,
+        mediaWidth: null,
+        mediaHeight: null,
+        mediaOrientation: null,
         uploadStatus: 'PENDING',
         transcodeStatus: 'PENDING',
       },
@@ -261,6 +267,9 @@ export class AdminEpisodesService {
       data: {
         originalUrl: saved.relativePath,
         hlsUrl: saved.relativePath,
+        mediaWidth: null,
+        mediaHeight: null,
+        mediaOrientation: null,
         uploadStatus: 'COMPLETED',
         transcodeStatus: 'PENDING',
       },

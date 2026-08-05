@@ -249,6 +249,9 @@ model Episode {
   hlsUrl          String?
   thumbnailUrl    String?
   durationSec     Int         @default(0)
+  mediaWidth      Int?
+  mediaHeight     Int?
+  mediaOrientation MediaOrientation?
 
   isFree          Boolean     @default(false)
   priceVnd        BigInt      @default(0)           // 法币参考价（创作者分润 / 展示回退用）
@@ -271,6 +274,12 @@ model Episode {
   @@index([dramaId, episodeNumber])
   @@index([transcodeStatus])
   @@map("episodes")
+}
+
+enum MediaOrientation {
+  LANDSCAPE
+  PORTRAIT
+  SQUARE
 }
 
 enum UploadStatus {

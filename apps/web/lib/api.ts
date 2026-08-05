@@ -193,6 +193,14 @@ function mapEpisode(e: any): Episode {
     // 平台原子定价为积分（priceCredits）；回退 priceVnd
     price: Number(e.priceCredits ?? e.priceVnd ?? 0),
     unlocked: e.unlocked != null ? !!e.unlocked : !!e.isFree,
+    mediaWidth: e.mediaWidth != null ? Number(e.mediaWidth) : undefined,
+    mediaHeight: e.mediaHeight != null ? Number(e.mediaHeight) : undefined,
+    mediaOrientation:
+      e.mediaOrientation === "LANDSCAPE" ||
+      e.mediaOrientation === "PORTRAIT" ||
+      e.mediaOrientation === "SQUARE"
+        ? e.mediaOrientation
+        : undefined,
   };
 }
 
@@ -752,7 +760,14 @@ export async function unlockEpisode(episodeId: string | number) {
 }
 
 export async function getPlayUrl(episodeId: string | number, opts?: { signal?: AbortSignal }) {
-  return request<{ playUrl: string; expiresAt: string; durationSec: number }>(
+  return request<{
+    playUrl: string;
+    expiresAt: string;
+    durationSec: number;
+    mediaWidth: number | null;
+    mediaHeight: number | null;
+    mediaOrientation: "LANDSCAPE" | "PORTRAIT" | "SQUARE" | null;
+  }>(
     `/episodes/${episodeId}/play`,
     { signal: opts?.signal },
   );

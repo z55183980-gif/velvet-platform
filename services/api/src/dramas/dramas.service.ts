@@ -239,6 +239,9 @@ export class DramasService {
             priceCredits: true,
             durationSec: true,
             thumbnailUrl: true,
+            mediaWidth: true,
+            mediaHeight: true,
+            mediaOrientation: true,
           },
         },
       },
@@ -304,6 +307,9 @@ export class DramasService {
         priceCredits: ep.priceCredits.toString(),
         durationSec: ep.durationSec,
         thumbnailUrl: ep.thumbnailUrl,
+        mediaWidth: ep.mediaWidth,
+        mediaHeight: ep.mediaHeight,
+        mediaOrientation: ep.mediaOrientation,
         unlocked: free || vipActive || dramaUnlocked || unlockedSet.has(ep.id.toString()),
         // 禁止返回永久片源；播放走 /episodes/:id/play 短时签名
       };

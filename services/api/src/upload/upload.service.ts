@@ -371,6 +371,7 @@ export class UploadService implements OnModuleInit {
       job.status = 'completed';
       job.outputRel = outputRel;
       const durationSec = await this.probeDurationSec(ffmpeg, inputAbs);
+      const mediaDimensions = await this.probeMediaDimensions(ffmpeg, playlist);
 
       let hlsUrl: string = outputRel;
       const pushR2 =
@@ -412,6 +413,7 @@ export class UploadService implements OnModuleInit {
             transcodeStatus: 'COMPLETED',
             uploadStatus: 'COMPLETED',
             ...(durationSec != null ? { durationSec } : {}),
+            ...(mediaDimensions || {}),
           },
         });
       }
@@ -462,6 +464,48 @@ export class UploadService implements OnModuleInit {
       const sec =
         parseInt(m[1], 10) * 3600 + parseInt(m[2], 10) * 60 + Math.round(parseFloat(m[3]));
       return sec > 0 ? sec : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async probeMediaDimensions(
+    ffmpegBin: string,
+    input: string,
+  ): Promise<{
+    mediaWidth: number;
+    mediaHeight: number;
+    mediaOrientation: 'LANDSCAPE' | 'PORTRAIT' | 'SQUARE';
+  } | null> {
+    try {
+      const probe = ffmpegBin.replace(/ffmpeg(?=\.exe$|$)/i, 'ffprobe');
+      const { stdout } = await execFileAsync(
+        probe,
+        [
+          '-v',
+          'error',
+          '-select_streams',
+          'v:0',
+          '-show_streams',
+          '-of',
+          'json',
+          input,
+        ],
+        { timeout: 15000 },
+      );
+      const stream = JSON.parse(String(stdout))?.streams?.[0];
+      let width = Number(stream?.width || 0);
+      let height = Number(stream?.height || 0);
+      if (width <= 0 || height <= 0) return null;
+      const sar = String(stream?.sample_aspect_ratio || '').match(/^(\d+):(\d+)$/);
+      if (sar && Number(sar[2]) > 0) width = Math.round((width * Number(sar[1])) / Number(sar[2]));
+      const rotation = Number(stream?.tags?.rotate ?? stream?.side_data_list?.[0]?.rotation ?? 0);
+      if (Math.abs(rotation) % 180 === 90) [width, height] = [height, width];
+      return {
+        mediaWidth: width,
+        mediaHeight: height,
+        mediaOrientation: width === height ? 'SQUARE' : width > height ? 'LANDSCAPE' : 'PORTRAIT',
+      };
     } catch {
       return null;
     }

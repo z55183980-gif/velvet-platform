@@ -15,6 +15,18 @@ export interface Episode {
   isFree: boolean;
   price: number;
   unlocked?: boolean;
+  mediaWidth?: number;
+  mediaHeight?: number;
+  mediaOrientation?: "LANDSCAPE" | "PORTRAIT" | "SQUARE";
+}
+
+export function episodeIsLandscape(episode?: Episode | null): boolean | null {
+  if (!episode) return null;
+  if (episode.mediaOrientation === "LANDSCAPE") return true;
+  if (episode.mediaOrientation === "PORTRAIT" || episode.mediaOrientation === "SQUARE") return false;
+  const width = Number(episode.mediaWidth || 0);
+  const height = Number(episode.mediaHeight || 0);
+  return width > 0 && height > 0 ? width >= height : null;
 }
 
 export interface Drama {

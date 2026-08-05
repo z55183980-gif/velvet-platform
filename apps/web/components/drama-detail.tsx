@@ -41,7 +41,7 @@ import {
   addLike,
   removeLike,
 } from "@/lib/api";
-import { categoryName, type Drama, type Episode } from "@/lib/mock-data";
+import { categoryName, episodeIsLandscape, type Drama, type Episode } from "@/lib/mock-data";
 import { useGuestWatchQuota } from "@/lib/use-guest-watch-quota";
 import { canGoBackInApp } from "@/lib/nav-history";
 import { pickContentText } from "@/lib/languages";
@@ -196,6 +196,12 @@ export function DramaDetail({
   const [showQuality, setShowQuality] = useState(false);
   const [resumeToast, setResumeToast] = useState(false);
   const [pagerBlocked, setPagerBlocked] = useState(false);
+  const [visualViewportRect, setVisualViewportRect] = useState<{
+    width: number;
+    height: number;
+    offsetLeft: number;
+    offsetTop: number;
+  } | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const watchShellRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<any>(null);
@@ -208,8 +214,6 @@ export function DramaDetail({
   /** Avoid putting t in the HLS setup effect deps (locale switch would rebuild player). */
   const tRef = useRef(t);
   tRef.current = t;
-  /** Playhead to restore when landscapeMode remounts the <video> surface. */
-  const surfaceTimeRef = useRef(0);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -269,14 +273,14 @@ export function DramaDetail({
     setShowMore(false);
     setShowQuality(false);
     setFollowVideoAspect(true);
-    // Keep Feed→lfs landscape seed; otherwise wait for metadata on episode switch.
-    setLandscapeMode(pendingLandscapeFsRef.current);
+    // Prefer persisted media metadata; runtime video dimensions remain the fallback.
+    const knownLandscape = episodeIsLandscape(selected);
+    setLandscapeMode(knownLandscape ?? pendingLandscapeFsRef.current);
     setUiImmersive(false);
-    setRotateFs(pendingLandscapeFsRef.current);
+    setRotateFs(pendingLandscapeFsRef.current && knownLandscape !== false);
     setQualityIndex(-1);
     setQualities([]);
-    surfaceTimeRef.current = 0;
-  }, [selected?.no]);
+  }, [selected]);
 
   useEffect(() => {
     if (!watching) {
@@ -303,15 +307,24 @@ export function DramaDetail({
 
   useEffect(() => {
     const onFs = () => {
-      const fs = !!document.fullscreenElement;
+      const fs = !!(
+        document.fullscreenElement ||
+        (document as Document & { webkitFullscreenElement?: Element | null })
+          .webkitFullscreenElement
+      );
       setBrowserFs(fs);
       if (!fs) {
         setRotateFs(false);
         setUiImmersive(false);
       }
     };
+    onFs();
     document.addEventListener("fullscreenchange", onFs);
-    return () => document.removeEventListener("fullscreenchange", onFs);
+    document.addEventListener("webkitfullscreenchange", onFs);
+    return () => {
+      document.removeEventListener("fullscreenchange", onFs);
+      document.removeEventListener("webkitfullscreenchange", onFs);
+    };
   }, []);
 
   useEffect(() => {
@@ -473,6 +486,28 @@ export function DramaDetail({
   }, []);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    const viewport = window.visualViewport;
+    const apply = () => {
+      setVisualViewportRect({
+        width: viewport?.width ?? window.innerWidth,
+        height: viewport?.height ?? window.innerHeight,
+        offsetLeft: viewport?.offsetLeft ?? 0,
+        offsetTop: viewport?.offsetTop ?? 0,
+      });
+    };
+    apply();
+    viewport?.addEventListener("resize", apply);
+    viewport?.addEventListener("scroll", apply);
+    window.addEventListener("resize", apply);
+    return () => {
+      viewport?.removeEventListener("resize", apply);
+      viewport?.removeEventListener("scroll", apply);
+      window.removeEventListener("resize", apply);
+    };
+  }, []);
+
+  useEffect(() => {
     const v = videoRef.current;
     if (!v || !watching) return;
     const sync = () => setVideoPlaying(!v.paused);
@@ -494,6 +529,7 @@ export function DramaDetail({
     const el = watchShellRef.current;
     let lockedOrient = false;
     let fsOk = false;
+    let nativeVideoFs = false;
     try {
       const req =
         el &&
@@ -505,10 +541,31 @@ export function DramaDetail({
           ).webkitRequestFullscreen?.bind(el));
       if (req && !document.fullscreenElement) {
         await req();
-        fsOk = true;
+        fsOk = !!(
+          document.fullscreenElement ||
+          (document as Document & { webkitFullscreenElement?: Element | null })
+            .webkitFullscreenElement
+        );
       }
     } catch {
       fsOk = false;
+    }
+    if (!fsOk && !document.fullscreenElement) {
+      const video = videoRef.current as
+        | (HTMLVideoElement & { webkitEnterFullscreen?: () => void })
+        | null;
+      try {
+        if (video?.webkitEnterFullscreen) {
+          video.webkitEnterFullscreen();
+          nativeVideoFs = true;
+        }
+      } catch {
+        nativeVideoFs = false;
+      }
+    }
+    if (nativeVideoFs) {
+      setRotateFs(false);
+      return;
     }
     try {
       const orient = screen.orientation as ScreenOrientation & {
@@ -537,12 +594,15 @@ export function DramaDetail({
     if (nowLand || (fsOk && window.matchMedia("(orientation: landscape)").matches)) {
       setRotateFs(false);
       setScreenIsLandscape(true);
+      setUiImmersive(!fsOk);
     } else {
       setRotateFs(true);
+      setUiImmersive(true);
     }
   }, []);
 
-  // Feed「全屏观看」：进入播放且检出横片后自动真横屏沉浸
+  // Route navigation no longer has a user-activation token, so native fullscreen
+  // cannot be requested reliably here. Enter the visual fallback directly.
   // Must stay above any conditional returns (Rules of Hooks).
   useEffect(() => {
     if (!pendingLandscapeFs || !watching || !isMobile) return;
@@ -551,7 +611,9 @@ export function DramaDetail({
     const allowed = !!(user || (episodeId && canGuestWatch(episodeId)));
     if (!playerReady || !allowed) return;
     setPendingLandscapeFs(false);
-    void tryEnterLandscapeFs();
+    setLandChromeVisible(true);
+    setUiImmersive(true);
+    setRotateFs(!screenIsLandscape);
   }, [
     pendingLandscapeFs,
     watching,
@@ -562,7 +624,7 @@ export function DramaDetail({
     selected?.id,
     user,
     canGuestWatch,
-    tryEnterLandscapeFs,
+    screenIsLandscape,
   ]);
 
   const applyResumeSeek = (video: HTMLVideoElement) => {
@@ -571,11 +633,18 @@ export function DramaDetail({
     try {
       video.currentTime = target;
       resumeApplied.current = true;
-      surfaceTimeRef.current = 0;
     } catch {
       /* ignore */
     }
   };
+
+  const handleVideoAspectChange = useCallback(
+    (isLand: boolean) => {
+      if (!followVideoAspect || isLand === landscapeModeRef.current) return;
+      setLandscapeMode(isLand);
+    },
+    [followVideoAspect],
+  );
 
   // Resume seek without tearing down HLS/native media.
   useEffect(() => {
@@ -588,45 +657,8 @@ export function DramaDetail({
     return () => video.removeEventListener("loadedmetadata", onMeta);
   }, [seekTo, playUrl, playerReady, watching, landscapeMode]);
 
-  // landscapeMode toggles which <video> is mounted — re-attach without loadSource/destroy.
-  useEffect(() => {
-    const video = videoRef.current;
-    const src = playUrl;
-    if (!video || !src || !playerReady || !watching) return;
-
-    const restoreSurfaceTime = () => {
-      const surface = surfaceTimeRef.current;
-      if (surface > 1) {
-        try {
-          video.currentTime = surface;
-          const seekTarget = seekToRef.current;
-          if (seekTarget != null && seekTarget > 5 && Math.abs(surface - seekTarget) < 1.5) {
-            resumeApplied.current = true;
-          }
-          surfaceTimeRef.current = 0;
-        } catch {
-          /* ignore */
-        }
-        return;
-      }
-      applyResumeSeek(video);
-    };
-
-    const hls = hlsRef.current;
-    if (hls) {
-      hls.attachMedia(video);
-    } else if (!isHls(src) || video.canPlayType("application/vnd.apple.mpegurl")) {
-      if (video.getAttribute("src") !== src) video.src = src;
-    }
-
-    video.addEventListener("loadedmetadata", restoreSurfaceTime);
-    if (video.readyState >= 1) restoreSurfaceTime();
-    return () => video.removeEventListener("loadedmetadata", restoreSurfaceTime);
-    // Only rebind when the mounted <video> surface flips — not on playUrl (main HLS effect owns that).
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional: landscapeMode surface only
-  }, [landscapeMode]);
-
-  // HLS attach + quality levels + 横竖检测
+  // HLS attach + quality levels. VerticalPlayer observes the currently mounted
+  // media element so aspect detection survives async HLS attach.
   // Do not depend on landscapeMode/seekTo/t — those would destroy+recreate and restart playback.
   useEffect(() => {
     const video = videoRef.current;
@@ -634,43 +666,26 @@ export function DramaDetail({
     const allowed = !!(user || (episodeId && canGuestWatch(episodeId)));
     if (!video || !playUrl || !playerReady || !watching || !allowed) return;
 
-    const applyAspect = () => {
-      if (!video.videoWidth || !video.videoHeight) return;
-      const isLand = video.videoWidth >= video.videoHeight;
-      if (!followVideoAspect || isLand === landscapeModeRef.current) return;
-      // Preserve playhead across the letterbox/pager <video> remount.
-      const t = video.currentTime;
-      if (t > 0.5) surfaceTimeRef.current = t;
-      else if (seekToRef.current != null && seekToRef.current > 5) {
-        surfaceTimeRef.current = seekToRef.current;
-      }
-      setLandscapeMode(isLand);
-    };
-
     const onMeta = () => {
-      applyAspect();
       applyResumeSeek(video);
     };
     video.addEventListener("loadedmetadata", onMeta);
-    video.addEventListener("loadeddata", applyAspect);
-    applyAspect();
 
-    const dropAspectListeners = () => {
+    const dropMediaListeners = () => {
       video.removeEventListener("loadedmetadata", onMeta);
-      video.removeEventListener("loadeddata", applyAspect);
     };
 
     if (!isHls(playUrl)) {
       video.src = playUrl;
       setQualities([]);
       hlsRef.current = null;
-      return dropAspectListeners;
+      return dropMediaListeners;
     }
     if (video.canPlayType("application/vnd.apple.mpegurl")) {
       video.src = playUrl;
       setQualities([]);
       hlsRef.current = null;
-      return dropAspectListeners;
+      return dropMediaListeners;
     }
     let hls: any;
     let cancelled = false;
@@ -710,7 +725,7 @@ export function DramaDetail({
     })();
     return () => {
       cancelled = true;
-      dropAspectListeners();
+      dropMediaListeners();
       if (hls) hls.destroy();
       if (hlsRef.current === hls) hlsRef.current = null;
     };
@@ -719,7 +734,6 @@ export function DramaDetail({
     playerReady,
     user,
     watching,
-    followVideoAspect,
     selected?.id,
     canGuestWatch,
   ]);
@@ -912,6 +926,17 @@ export function DramaDetail({
         /* ignore */
       }
       try {
+        const video = videoRef.current as
+          | (HTMLVideoElement & {
+              webkitDisplayingFullscreen?: boolean;
+              webkitExitFullscreen?: () => void;
+            })
+          | null;
+        if (video?.webkitDisplayingFullscreen) video.webkitExitFullscreen?.();
+      } catch {
+        /* ignore */
+      }
+      try {
         const orient = screen.orientation as ScreenOrientation & { unlock?: () => void };
         orient.unlock?.();
       } catch {
@@ -955,15 +980,18 @@ export function DramaDetail({
       setShowMore(false);
     };
 
-    // 真横屏沉浸：原生横屏 FS，或 CSS rotate 兜底（不含「仅竖屏浏览器全屏」）
-    const trueLandscapeFs =
-      rotateFs || (landscapeMode && browserFs && screenIsLandscape);
-    // 选集底栏+进度：竖屏路径保留；横屏真全屏改用下方红果横屏操作条
-    const showWatchBottomChrome = !trueLandscapeFs;
+    const landscapeImmersive =
+      landscapeMode && (rotateFs || browserFs || uiImmersive);
+    // 选集底栏+进度：竖屏路径保留；横屏沉浸改用下方操作条
+    const showWatchBottomChrome = !landscapeImmersive;
     // 标题/侧栏：竖屏 Maximize / 清 meta
     const showWatchMetaChrome = showWatchBottomChrome && !uiImmersive;
-    const fillVideo = !landscapeMode || trueLandscapeFs;
-    const showLandFsChrome = trueLandscapeFs && landChromeVisible;
+    const showLandFsChrome = landscapeImmersive && landChromeVisible;
+    const landscapeControlWidth = visualViewportRect
+      ? rotateFs
+        ? visualViewportRect.height
+        : visualViewportRect.width
+      : Number.POSITIVE_INFINITY;
     const resumeTimeLabel = resumeHint
       ? `${Math.floor(resumeHint.progressSec / 60)}:${String(Math.floor(resumeHint.progressSec % 60)).padStart(2, "0")}`
       : "";
@@ -980,24 +1008,35 @@ export function DramaDetail({
       <div
         ref={watchShellRef}
         className={cn(
-          rotateFs
+          rotateFs || (uiImmersive && !browserFs)
             ? "fixed z-[70] overflow-hidden bg-black"
             : cn("fixed inset-0 z-[70]", landscapeMode ? "bg-[#181a1a]" : "bg-black"),
         )}
         style={
           rotateFs
             ? {
-                width: "100vh",
-                height: "100vw",
-                top: "50%",
-                left: "50%",
+                width: visualViewportRect ? `${visualViewportRect.height}px` : "100dvh",
+                height: visualViewportRect ? `${visualViewportRect.width}px` : "100dvw",
+                top: visualViewportRect
+                  ? `${visualViewportRect.offsetTop + visualViewportRect.height / 2}px`
+                  : "50%",
+                left: visualViewportRect
+                  ? `${visualViewportRect.offsetLeft + visualViewportRect.width / 2}px`
+                  : "50%",
                 transform: "translate(-50%, -50%) rotate(90deg)",
               }
+            : uiImmersive && !browserFs && visualViewportRect
+              ? {
+                  width: `${visualViewportRect.width}px`,
+                  height: `${visualViewportRect.height}px`,
+                  top: `${visualViewportRect.offsetTop}px`,
+                  left: `${visualViewportRect.offsetLeft}px`,
+                }
             : undefined
         }
       >
         {/* Top chrome — 竖屏常态；横屏真全屏见下方红果条 */}
-        {!trueLandscapeFs ? (
+        {!landscapeImmersive ? (
         <div className="absolute left-0 right-0 top-0 z-40 flex items-center justify-between bg-gradient-to-b from-black/65 via-black/25 to-transparent px-2.5 pb-3 pt-[max(0.4rem,env(safe-area-inset-top))]">
           <button
             type="button"
@@ -1128,7 +1167,20 @@ export function DramaDetail({
           </div>
         </div>
         ) : showLandFsChrome ? (
-          <div className="absolute left-0 right-0 top-0 z-50 flex items-center justify-between bg-gradient-to-b from-black/70 via-black/30 to-transparent px-3 pb-4 pt-[max(0.35rem,env(safe-area-inset-top))]">
+          <div
+            className="absolute left-0 right-0 top-0 z-50 flex items-center justify-between bg-gradient-to-b from-black/70 via-black/30 to-transparent pb-4"
+            style={{
+              paddingTop: rotateFs
+                ? "max(0.35rem, env(safe-area-inset-right))"
+                : "max(0.35rem, env(safe-area-inset-top))",
+              paddingLeft: rotateFs
+                ? "max(0.75rem, env(safe-area-inset-top))"
+                : "max(0.75rem, env(safe-area-inset-left))",
+              paddingRight: rotateFs
+                ? "max(0.75rem, env(safe-area-inset-bottom))"
+                : "max(0.75rem, env(safe-area-inset-right))",
+            }}
+          >
             <button
               type="button"
               onClick={() => {
@@ -1173,67 +1225,29 @@ export function DramaDetail({
           </div>
         ) : null}
 
-        {/* Video stage — 横片信箱：在顶栏与底栏之间垂直居中 */}
-        {landscapeMode && !trueLandscapeFs ? (
-          <div className="absolute inset-x-0 top-[max(3.1rem,calc(env(safe-area-inset-top)+2.5rem))] bottom-[max(6.75rem,calc(env(safe-area-inset-bottom)+5.75rem))] z-10 flex flex-col items-center justify-center">
-            <div className="relative w-full bg-black" style={{ aspectRatio: "16 / 9" }}>
-              <VerticalPlayer
-                videoRef={videoRef}
-                active
-                chrome="watch"
-                objectFit="contain"
-                showSeek={false}
-                bottomInset={0}
-                playbackRate={rate}
-                onPlaybackRateChange={setRate}
-                attachMedia={false}
-                src={canPlay && playUrl ? playUrl : null}
-                poster={coverUrl}
-                autoPlay
-                muted={muted}
-                onMutedChange={setMuted}
-                seekTo={resumeApplied.current ? null : seekTo}
-                loginRequired={needsLogin}
-                onLogin={() => openLogin("login")}
-                onRegister={() => openLogin("register")}
-                locked={locked}
-                lockLabel={
-                  selected
-                    ? `${t("detail.episodeList")} ${selected.no}`
-                    : t("player.empty")
-                }
-                lockActionLabel={lockActionLabel}
-                onUnlock={
-                  selected && !isUnlocked(selected) ? () => openVipGate(selected) : undefined
-                }
-                error={playErr}
-                loading={playLoading}
-                hasNext={hasNext}
-                onNext={playNext}
-                onEnded={playNext}
-              />
-            </div>
-            {/* 中间「全屏观看」→ 真横屏沉浸 */}
-            <div className="mt-3.5 flex justify-center px-3">
-              <button
-                type="button"
-                onClick={() => void enterLandscapeFullscreen()}
-                className="inline-flex items-center gap-1.5 rounded-full bg-[#2a2c2c]/88 px-4 py-2 text-[13px] font-medium text-white/95 backdrop-blur-sm"
-              >
-                <Smartphone className="h-4 w-4 rotate-90" strokeWidth={1.75} />
-                {t("player.watchFullscreen")}
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div className="absolute inset-0 z-10">
+        {/* Keep one media surface mounted while only the stage geometry changes. */}
+        <div
+          className={cn(
+            "absolute z-10 flex flex-col items-center justify-center",
+            landscapeMode && !landscapeImmersive
+              ? "inset-x-0 top-[max(3.1rem,calc(env(safe-area-inset-top)+2.5rem))] bottom-[max(6.75rem,calc(env(safe-area-inset-bottom)+5.75rem))]"
+              : "inset-0",
+          )}
+        >
+          <div
+            className={cn(
+              "relative w-full bg-black",
+              landscapeMode && !landscapeImmersive ? "shrink-0" : "h-full min-h-0",
+            )}
+            style={landscapeMode && !landscapeImmersive ? { aspectRatio: "16 / 9" } : undefined}
+          >
             <VerticalPager
               index={episodeIndex}
               count={data.episodes.length}
               onChange={selectEpisodeByIndex}
-              blocked={pagerBlocked || pagerMenusOpen || trueLandscapeFs}
+              blocked={pagerBlocked || pagerMenusOpen || landscapeImmersive}
               onTap={() => {
-                if (trueLandscapeFs) {
+                if (landscapeImmersive) {
                   setLandChromeVisible((v) => !v);
                   setShowRate(false);
                   setShowMore(false);
@@ -1267,7 +1281,7 @@ export function DramaDetail({
                       videoRef={videoRef}
                       active={active}
                       chrome="watch"
-                      objectFit={fillVideo ? "cover" : "contain"}
+                      objectFit={landscapeMode ? "contain" : "cover"}
                       bottomInset={0}
                       showSeek={false}
                       playbackRate={rate}
@@ -1292,6 +1306,7 @@ export function DramaDetail({
                       onNext={playNext}
                       onEnded={playNext}
                       onSeekingChange={onSeekingChange}
+                      onVideoAspectChange={handleVideoAspectChange}
                       tapToToggle={false}
                     />
                   </div>
@@ -1299,17 +1314,40 @@ export function DramaDetail({
               }}
             </VerticalPager>
           </div>
-        )}
+          {landscapeMode && !landscapeImmersive ? (
+            <div className="mt-3.5 flex shrink-0 justify-center px-3">
+              <button
+                type="button"
+                onClick={() => void enterLandscapeFullscreen()}
+                className="inline-flex items-center gap-1.5 rounded-full bg-[#2a2c2c]/88 px-4 py-2 text-[13px] font-medium text-white/95 backdrop-blur-sm"
+              >
+                <Smartphone className="h-4 w-4 rotate-90" strokeWidth={1.75} />
+                {t("player.watchFullscreen")}
+              </button>
+            </div>
+          ) : null}
+        </div>
 
         {/* 红果横屏全屏操作条：点击画面显隐，不暂停 */}
         {showLandFsChrome ? (
           <div
-            className="absolute inset-x-0 bottom-0 z-50 bg-gradient-to-t from-black/75 via-black/35 to-transparent px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-10"
+            className="absolute inset-x-0 bottom-0 z-50 bg-gradient-to-t from-black/75 via-black/35 to-transparent pt-10"
+            style={{
+              paddingLeft: rotateFs
+                ? "max(0.75rem, env(safe-area-inset-top))"
+                : "max(0.75rem, env(safe-area-inset-left))",
+              paddingRight: rotateFs
+                ? "max(0.75rem, env(safe-area-inset-bottom))"
+                : "max(0.75rem, env(safe-area-inset-right))",
+              paddingBottom: rotateFs
+                ? "max(0.5rem, env(safe-area-inset-left))"
+                : "max(0.5rem, env(safe-area-inset-bottom))",
+            }}
             data-no-tap
             onClick={(e) => e.stopPropagation()}
             onPointerDown={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center gap-2.5">
+            <div className="flex min-w-0 items-center gap-1.5 sm:gap-2.5">
               <button
                 type="button"
                 className="grid h-9 w-9 shrink-0 place-items-center text-white"
@@ -1333,13 +1371,14 @@ export function DramaDetail({
                   videoRef={videoRef}
                   absolute={false}
                   mediaKey={playUrl}
+                  rotated={rotateFs}
                   disabled={!playUrl || needsLogin || locked}
                   onSeekingChange={onSeekingChange}
                   className="px-0"
                 />
               </div>
               <LandVideoTime videoRef={videoRef} kind="duration" />
-              <div className="relative shrink-0">
+              <div className={cn("relative shrink-0", landscapeControlWidth < 520 && "hidden")}>
                 <button
                   type="button"
                   onClick={() => {
@@ -1372,7 +1411,7 @@ export function DramaDetail({
                   </div>
                 ) : null}
               </div>
-              <div className="relative shrink-0">
+              <div className={cn("relative shrink-0", landscapeControlWidth < 640 && "hidden")}>
                 <button
                   type="button"
                   onClick={() => {

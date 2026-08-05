@@ -81,6 +81,7 @@ export function VerticalPlayer({
   playbackRate,
   onPlaybackRateChange,
   onSeekingChange,
+  onVideoAspectChange,
   /** When false, parent owns HLS/src attach (e.g. drama-detail quality picker). Default true. */
   attachMedia = true,
   /** Local tap-to-toggle. Disable when a parent pager owns tap gestures. */
@@ -119,6 +120,8 @@ export function VerticalPlayer({
   onPlaybackRateChange?: (rate: number) => void;
   /** Fired when the feed/full scrubber drag starts or ends (for parent gesture locking). */
   onSeekingChange?: (seeking: boolean) => void;
+  /** Reports the intrinsic aspect of the currently mounted media surface. */
+  onVideoAspectChange?: (landscape: boolean, video: HTMLVideoElement) => void;
   tapToToggle?: boolean;
 }) {
   const { t } = useLocale();
@@ -136,6 +139,11 @@ export function VerticalPlayer({
   const [showRate, setShowRate] = useState(false);
   const [dragging, setDragging] = useState(false);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const aspectChangeRef = useRef(onVideoAspectChange);
+
+  useEffect(() => {
+    aspectChangeRef.current = onVideoAspectChange;
+  }, [onVideoAspectChange]);
 
   useEffect(() => {
     if (playbackRate != null && playbackRate !== rate) setRate(playbackRate);
@@ -166,6 +174,32 @@ export function VerticalPlayer({
   useEffect(() => {
     if (mutedProp != null) setMuted(mutedProp);
   }, [mutedProp]);
+
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    let lastSize = "";
+    const reportAspect = () => {
+      const width = v.videoWidth;
+      const height = v.videoHeight;
+      if (width <= 0 || height <= 0) return;
+      const size = `${width}x${height}`;
+      if (size === lastSize) return;
+      lastSize = size;
+      aspectChangeRef.current?.(width >= height, v);
+    };
+    reportAspect();
+    v.addEventListener("loadedmetadata", reportAspect);
+    v.addEventListener("loadeddata", reportAspect);
+    v.addEventListener("canplay", reportAspect);
+    v.addEventListener("resize", reportAspect);
+    return () => {
+      v.removeEventListener("loadedmetadata", reportAspect);
+      v.removeEventListener("loadeddata", reportAspect);
+      v.removeEventListener("canplay", reportAspect);
+      v.removeEventListener("resize", reportAspect);
+    };
+  }, [videoRef]);
 
   useEffect(() => {
     const v = videoRef.current;

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   useCallback,
   useEffect,
@@ -8,6 +9,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
 import {
@@ -25,7 +27,7 @@ import { FeedEpisodeBar } from "@/components/mobile/feed-episode-bar";
 import { useMobileFeedLock } from "@/components/mobile/mobile-feed-lock";
 import { getPlayUrl, loadDramaDetail, loadFeed, checkFavorite, addFavorite, removeFavorite, checkLike, addLike, removeLike, reportProgress, type DramaDetailPayload } from "@/lib/api";
 import type { Drama, Episode } from "@/lib/mock-data";
-import { categories } from "@/lib/mock-data";
+import { categories, episodeIsLandscape } from "@/lib/mock-data";
 import { pickContentText, type Locale } from "@/lib/languages";
 import { cn, formatCredits } from "@/lib/utils";
 import { useGuestWatchQuota } from "@/lib/use-guest-watch-quota";
@@ -335,7 +337,7 @@ export function VerticalFeed({
   const authScope = feedAuthScope(user, unlocked.size);
   const { setLocked } = useMobileFeedLock();
   const [index, setIndex] = useState(0);
-  const [muted, setMuted] = useState(true);
+  const [muted, setMuted] = useState(false);
   const [pagerBlocked, setPagerBlocked] = useState(false);
   const shellRef = useRef<HTMLDivElement>(null);
   const togglePlayRef = useRef<(() => void) | null>(null);
@@ -533,6 +535,7 @@ function FeedPage({
   onSeekingChange: (seeking: boolean) => void;
   registerTogglePlay: (fn: (() => void) | null) => void;
 }) {
+  const router = useRouter();
   const { locale, t } = useLocale();
   const { user, unlocked, ready: authReady, openLogin } = useAuth();
   const authScope = feedAuthScope(user, unlocked.size);
@@ -553,6 +556,64 @@ function FeedPage({
   const [userPaused, setUserPaused] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
+  const enterLandscapePlayback = useCallback(
+    async (event: ReactMouseEvent<HTMLAnchorElement>) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const href = `/drama/${drama.id}/play?lfs=1`;
+      const root = document.documentElement as HTMLElement & {
+        webkitRequestFullscreen?: () => Promise<void> | void;
+      };
+      let fullscreen = !!(
+        document.fullscreenElement ||
+        (document as Document & { webkitFullscreenElement?: Element | null })
+          .webkitFullscreenElement
+      );
+      try {
+        const request =
+          root.requestFullscreen?.bind(root) ||
+          root.webkitRequestFullscreen?.bind(root);
+        if (!fullscreen && request) {
+          await request();
+          fullscreen = !!(
+            document.fullscreenElement ||
+            (document as Document & { webkitFullscreenElement?: Element | null })
+              .webkitFullscreenElement
+          );
+        }
+      } catch {
+        fullscreen = false;
+      }
+
+      if (fullscreen) {
+        try {
+          const orientation = screen.orientation as ScreenOrientation & {
+            lock?: (orientation: string) => Promise<void>;
+          };
+          await orientation.lock?.("landscape");
+        } catch {
+          /* The detail player will use its visual rotation fallback. */
+        }
+        router.push(href);
+        return;
+      }
+
+      const video = videoRef.current as
+        | (HTMLVideoElement & { webkitEnterFullscreen?: () => void })
+        | null;
+      try {
+        if (video?.webkitEnterFullscreen) {
+          video.webkitEnterFullscreen();
+          return;
+        }
+      } catch {
+        /* Continue to the visual fallback. */
+      }
+      router.push(href);
+    },
+    [drama.id, router],
+  );
+
   const meta = useMemo(() => buildFeedMeta(drama, locale, t), [drama, locale, t]);
 
   useEffect(() => {
@@ -564,22 +625,9 @@ function FeedPage({
     if (!active) setUserPaused(false);
   }, [active]);
 
-  useEffect(() => {
-    const v = videoRef.current;
-    if (!v) return;
-    const sync = () => {
-      if (v.videoWidth > 0 && v.videoHeight > 0) {
-        setLandscape(v.videoWidth >= v.videoHeight);
-      }
-    };
-    sync();
-    v.addEventListener("loadedmetadata", sync);
-    v.addEventListener("loadeddata", sync);
-    return () => {
-      v.removeEventListener("loadedmetadata", sync);
-      v.removeEventListener("loadeddata", sync);
-    };
-  }, [playUrl, active]);
+  const handleVideoAspectChange = useCallback((isLandscape: boolean) => {
+    setLandscape(isLandscape);
+  }, []);
 
   useEffect(() => {
     setLiked(false);
@@ -622,6 +670,8 @@ function FeedPage({
     const cached = detailCache.get(drama.id);
     if (cached) {
       setEpisode(cached.episode);
+      const knownLandscape = episodeIsLandscape(cached.episode);
+      if (knownLandscape != null) setLandscape(knownLandscape);
       setLoading(false);
     } else {
       setLoading(true);
@@ -632,6 +682,8 @@ function FeedPage({
       .then((entry) => {
         if (ac.signal.aborted || !entry) return;
         setEpisode(entry.episode);
+        const knownLandscape = episodeIsLandscape(entry.episode);
+        if (knownLandscape != null) setLandscape(knownLandscape);
         setLoading(false);
       })
       .catch(() => {
@@ -836,13 +888,14 @@ function FeedPage({
               loading={active && loading}
               showSeek={false}
               tapToToggle={false}
+              onVideoAspectChange={handleVideoAspectChange}
             />
           </div>
           <div className="mt-3.5 flex justify-center px-3">
             <Link
               href={`/drama/${drama.id}/play?lfs=1`}
               className="inline-flex items-center gap-1.5 rounded-full bg-[#2a2c2c]/88 px-4 py-2 text-[13px] font-medium text-white/95 backdrop-blur-sm"
-              onClick={(e) => e.stopPropagation()}
+              onClick={(e) => void enterLandscapePlayback(e)}
             >
               <Smartphone className="h-4 w-4 rotate-90" strokeWidth={1.75} />
               {t("player.watchFullscreen")}
@@ -859,6 +912,7 @@ function FeedPage({
           autoPlay={active}
           muted={muted}
           onMutedChange={onMutedChange}
+          onVideoAspectChange={handleVideoAspectChange}
           loginRequired={active && needsLogin}
           onLogin={() => openLogin("login")}
           onRegister={() => openLogin("register")}

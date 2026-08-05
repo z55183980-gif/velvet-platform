@@ -23,6 +23,8 @@ type WatchSeekBarProps = {
   absolute?: boolean;
   /** Rebind when the underlying media identity changes (e.g. playUrl). */
   mediaKey?: string | null;
+  /** The containing player is explicitly rotated clockwise by 90 degrees. */
+  rotated?: boolean;
   /** Fired when scrub drag starts/ends (parent uses this to ignore swipe gestures). */
   onSeekingChange?: (seeking: boolean) => void;
 };
@@ -40,6 +42,7 @@ export function WatchSeekBar({
   disabled,
   absolute = true,
   mediaKey,
+  rotated = false,
   onSeekingChange,
 }: WatchSeekBarProps) {
   const seekRef = useRef<HTMLDivElement>(null);
@@ -176,11 +179,11 @@ export function WatchSeekBar({
     const el = seekRef.current;
     if (!el) return 0;
     const rect = el.getBoundingClientRect();
-    // CSS rotate(90deg) landscape shell: track AABB is tall+narrow on screen edge.
-    // Local L→R maps to screen bottom→top after clockwise 90°.
-    if (rect.height > rect.width * 1.35) {
+    // Local L→R maps to screen top→bottom after clockwise 90°.
+    // Use explicit layout state instead of guessing from a transient AABB.
+    if (rotated) {
       const h = Math.max(1, rect.height);
-      return Math.max(0, Math.min(1, 1 - (clientY - rect.top) / h));
+      return Math.max(0, Math.min(1, (clientY - rect.top) / h));
     }
     const w = Math.max(1, rect.width);
     return Math.max(0, Math.min(1, (clientX - rect.left) / w));
@@ -291,6 +294,11 @@ export function WatchSeekBar({
           if (disabled) return;
           e.preventDefault();
           e.stopPropagation();
+          try {
+            e.currentTarget.setPointerCapture(e.pointerId);
+          } catch {
+            /* ignore */
+          }
           const v = videoRef.current;
           wasPaused.current = !!v?.paused;
           if (v && !v.paused) v.pause();
