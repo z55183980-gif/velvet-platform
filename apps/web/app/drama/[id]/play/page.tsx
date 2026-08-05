@@ -8,7 +8,7 @@ export default async function Page({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ lfs?: string; rotate?: string; ep?: string }>;
+  searchParams: Promise<{ lfs?: string; ep?: string }>;
 }) {
   const { id } = await params;
   const sp = await searchParams;
@@ -23,8 +23,7 @@ export default async function Page({
     <DramaDetail
       id={id}
       autoStartWatch
-      autoLandscapeFs={sp.lfs === "1" || sp.rotate === "1"}
-      autoRotateFullscreen={sp.rotate === "1"}
+      autoLandscapeFs={sp.lfs === "1"}
       initialEpisodeNo={epNo}
     />
   );

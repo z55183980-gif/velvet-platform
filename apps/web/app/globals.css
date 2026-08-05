@@ -78,6 +78,19 @@
 }
 
 @layer base {
+  @media (orientation: landscape) and (pointer: coarse) {
+    html[data-portrait-lock-fallback="true"] body {
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      width: 100dvh;
+      height: 100dvw;
+      overflow: hidden;
+      transform: translate(-50%, -50%) rotate(-90deg);
+      transform-origin: center;
+    }
+  }
+
   :root {
     color-scheme: dark;
     text-rendering: optimizeLegibility;

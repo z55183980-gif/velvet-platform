@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import {
   useCallback,
   useEffect,
@@ -15,6 +14,7 @@ import {
   ChevronRight,
   Heart,
   Pause,
+  Smartphone,
   Star,
 } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
@@ -326,6 +326,17 @@ const FEED_PAGE_SIZE = 20;
 const FEED_PIN_HOTTEST = 3;
 const FEED_LOAD_MORE_THRESHOLD = 4;
 
+type HomeFeedSnapshot = {
+  dramas: Drama[];
+  index: number;
+  muted: boolean;
+  page: number;
+  hasMore: boolean;
+};
+
+/** Preserve the home feed while a client-side watch route is open. */
+let homeFeedSnapshot: HomeFeedSnapshot | null = null;
+
 export function VerticalFeed({
   dramas: dramasProp,
   source,
@@ -338,18 +349,30 @@ export function VerticalFeed({
   const { user, unlocked } = useAuth();
   const authScope = feedAuthScope(user, unlocked.size);
   const { setLocked } = useMobileFeedLock();
-  const [index, setIndex] = useState(0);
-  const [muted, setMuted] = useState(false);
+  const restoredHomeFeed = source === "home" ? homeFeedSnapshot : null;
+  const [index, setIndex] = useState(() =>
+    restoredHomeFeed
+      ? Math.min(restoredHomeFeed.index, Math.max(0, restoredHomeFeed.dramas.length - 1))
+      : 0,
+  );
+  const [muted, setMuted] = useState(() => restoredHomeFeed?.muted ?? false);
   const [pagerBlocked, setPagerBlocked] = useState(false);
   const shellRef = useRef<HTMLDivElement>(null);
   const togglePlayRef = useRef<(() => void) | null>(null);
 
-  const [dramas, setDramas] = useState<Drama[]>(() => dramasProp ?? []);
-  const [bootLoading, setBootLoading] = useState(source === "home" && !(dramasProp && dramasProp.length));
-  const [page, setPage] = useState(1);
-  const [hasMore, setHasMore] = useState(source === "home");
+  const [dramas, setDramas] = useState<Drama[]>(() =>
+    restoredHomeFeed?.dramas ?? dramasProp ?? [],
+  );
+  const [bootLoading, setBootLoading] = useState(
+    source === "home" && !restoredHomeFeed && !(dramasProp && dramasProp.length),
+  );
+  const [page, setPage] = useState(() => restoredHomeFeed?.page ?? 1);
+  const [hasMore, setHasMore] = useState(() =>
+    restoredHomeFeed?.hasMore ?? source === "home",
+  );
   const [loadingMore, setLoadingMore] = useState(false);
   const loadMoreLock = useRef(false);
+  const shouldRestoreHomeFeed = !!(restoredHomeFeed && restoredHomeFeed.dramas.length > 0);
 
   useEffect(() => {
     if (source === "home") return;
@@ -358,6 +381,7 @@ export function VerticalFeed({
 
   useEffect(() => {
     if (source !== "home") return;
+    if (shouldRestoreHomeFeed) return;
     const ac = new AbortController();
     setBootLoading(true);
     void loadFeed(1, FEED_PAGE_SIZE, { pinHottest: FEED_PIN_HOTTEST, signal: ac.signal })
@@ -376,7 +400,12 @@ export function VerticalFeed({
         if (!ac.signal.aborted) setBootLoading(false);
       });
     return () => ac.abort();
-  }, [source]);
+  }, [source, shouldRestoreHomeFeed]);
+
+  useEffect(() => {
+    if (source !== "home" || dramas.length === 0) return;
+    homeFeedSnapshot = { dramas, index, muted, page, hasMore };
+  }, [source, dramas, index, muted, page, hasMore]);
 
   const loadMore = useCallback(async () => {
     if (source !== "home" || !hasMore || loadMoreLock.current) return;
@@ -537,7 +566,6 @@ function FeedPage({
   onSeekingChange: (seeking: boolean) => void;
   registerTogglePlay: (fn: (() => void) | null) => void;
 }) {
-  const router = useRouter();
   const { locale, t } = useLocale();
   const { user, unlocked, ready: authReady, openLogin } = useAuth();
   const authScope = feedAuthScope(user, unlocked.size);
@@ -573,6 +601,44 @@ function FeedPage({
     setLandscape(isLandscape);
   }, []);
 
+  const enterLandscapePlayback = useCallback(async () => {
+    const video = videoRef.current as
+      | (HTMLVideoElement & {
+          webkitEnterFullscreen?: () => void;
+          webkitDisplayingFullscreen?: boolean;
+          webkitRequestFullscreen?: () => Promise<void> | void;
+        })
+      | null;
+    const appleTouchDevice =
+      /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+    if (!video) return;
+    if (appleTouchDevice && video.webkitEnterFullscreen) {
+      try {
+        video.webkitEnterFullscreen();
+        if (video.webkitDisplayingFullscreen !== false) return true;
+      } catch {
+        /* Continue to the standard fullscreen attempt. */
+      }
+    }
+
+    try {
+      const request =
+        video.requestFullscreen?.bind(video) || video.webkitRequestFullscreen?.bind(video);
+      await request?.();
+      const fullscreen = !!(
+        document.fullscreenElement ||
+        (document as Document & { webkitFullscreenElement?: Element | null })
+          .webkitFullscreenElement
+      );
+      if (fullscreen) return true;
+    } catch {
+      /* Stay in portrait-locked feed; the explicit button remains available. */
+    }
+    void lockPortraitOrientation();
+    return false;
+  }, []);
+
   useEffect(() => {
     if (!active) return;
     if (landscape) unlockScreenOrientation();
@@ -582,16 +648,30 @@ function FeedPage({
   useEffect(() => {
     if (!active || !landscape) return;
     const orientation = window.matchMedia("(orientation: landscape)");
-    let navigating = false;
+    let entering = false;
     const openFullscreenPlayer = () => {
-      if (!orientation.matches || navigating) return;
-      navigating = true;
-      router.push(`/drama/${drama.id}/play?rotate=1`);
+      if (!orientation.matches || entering) return;
+      entering = true;
+      void enterLandscapePlayback().finally(() => {
+        entering = false;
+      });
     };
-    openFullscreenPlayer();
-    orientation.addEventListener("change", openFullscreenPlayer);
-    return () => orientation.removeEventListener("change", openFullscreenPlayer);
-  }, [active, landscape, drama.id, router]);
+    void openFullscreenPlayer();
+    const onChange = () => {
+      if (orientation.matches) void openFullscreenPlayer();
+      else unlockScreenOrientation();
+    };
+    orientation.addEventListener("change", onChange);
+    return () => orientation.removeEventListener("change", onChange);
+  }, [active, landscape, enterLandscapePlayback]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!active || !video || !landscape) return;
+    const restorePortrait = () => void lockPortraitOrientation();
+    video.addEventListener("webkitendfullscreen", restorePortrait);
+    return () => video.removeEventListener("webkitendfullscreen", restorePortrait);
+  }, [active, landscape]);
 
   useEffect(() => {
     setLiked(false);
@@ -851,6 +931,17 @@ function FeedPage({
           showSeek={false}
           tapToToggle={false}
       />
+
+      {landscape && active ? (
+        <button
+          type="button"
+          onClick={() => void enterLandscapePlayback()}
+          className="absolute left-1/2 top-[calc(50%+min(30vw,8rem))] z-35 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-[#2a2c2c]/88 px-4 py-2 text-[13px] font-medium text-white/95 backdrop-blur-sm"
+        >
+          <Smartphone className="h-4 w-4 rotate-90" strokeWidth={1.75} />
+          {t("player.watchFullscreen")}
+        </button>
+      ) : null}
 
       {/* Tap-to-pause affordance on home feed only (sticky until tap-to-play). */}
       {userPaused && active ? (

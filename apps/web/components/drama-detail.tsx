@@ -15,6 +15,7 @@ import {
   Maximize,
   Minimize2,
   MoreVertical,
+  Smartphone,
   Star,
   Volume2,
   VolumeX,
@@ -132,15 +133,12 @@ const PLAY_GRAD_HOVER =
 export function DramaDetail({
   id,
   autoLandscapeFs = false,
-  autoRotateFullscreen = false,
   autoStartWatch = false,
   initialEpisodeNo,
 }: {
   id: string;
   /** Feed「全屏观看」入口：进播放后自动触发真横屏沉浸 */
   autoLandscapeFs?: boolean;
-  /** Device rotation opened this route; portrait rotation returns to the source page. */
-  autoRotateFullscreen?: boolean;
   /** `/drama/[id]/play` — open watch immediately (Hongguo direct-play entry) */
   autoStartWatch?: boolean;
   /** Optional episode from `/play?ep=` */
@@ -192,7 +190,7 @@ export function DramaDetail({
   /** Fullscreen API 不可用时仍进入竖屏沉浸 UI（如部分 iOS Safari） */
   const [uiImmersive, setUiImmersive] = useState(false);
   /** iOS 等无法 lock 横屏时的 CSS 强制横屏全屏（仅横屏全屏路径） */
-  const [rotateFs, setRotateFs] = useState(!!autoLandscapeFs);
+  const [rotateFs, setRotateFs] = useState(false);
   /** 红果横屏全屏：操作条显隐（点击画面切换，不暂停） */
   const [landChromeVisible, setLandChromeVisible] = useState(true);
   const [screenIsLandscape, setScreenIsLandscape] = useState(false);
@@ -284,7 +282,7 @@ export function DramaDetail({
     const knownLandscape = episodeIsLandscape(selected);
     setLandscapeMode(knownLandscape ?? pendingLandscapeFsRef.current);
     setUiImmersive(false);
-    setRotateFs(pendingLandscapeFsRef.current && knownLandscape !== false);
+    setRotateFs(false);
     setQualityIndex(-1);
     setQualities([]);
   }, [selected]);
@@ -564,6 +562,7 @@ export function DramaDetail({
     const el = watchShellRef.current;
     let lockedOrient = false;
     let fsOk = false;
+    let nativeVideoFs = false;
     const appleTouchDevice =
       /iPad|iPhone|iPod/.test(navigator.userAgent) ||
       (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
@@ -588,9 +587,33 @@ export function DramaDetail({
     } catch {
       fsOk = false;
     }
-    // Never fall back to video.webkitEnterFullscreen(). iOS native video
-    // fullscreen owns the entire surface, so our title and controls cannot render.
-    // The fixed immersive shell below is the compatible fallback.
+    if (appleTouchDevice && !fsOk) {
+      const video = videoRef.current as
+        | (HTMLVideoElement & {
+            webkitEnterFullscreen?: () => void;
+            webkitDisplayingFullscreen?: boolean;
+          })
+        | null;
+      try {
+        if (video?.webkitEnterFullscreen) {
+          video.webkitEnterFullscreen();
+          nativeVideoFs = video.webkitDisplayingFullscreen !== false;
+        }
+      } catch {
+        nativeVideoFs = false;
+      }
+    }
+    if (nativeVideoFs) {
+      setRotateFs(false);
+      setUiImmersive(false);
+      return;
+    }
+    if (!fsOk) {
+      setRotateFs(false);
+      setUiImmersive(false);
+      void lockPortraitOrientation();
+      return;
+    }
     try {
       const orient = screen.orientation as ScreenOrientation & {
         lock?: (orientation: string) => Promise<void>;
@@ -653,9 +676,8 @@ export function DramaDetail({
     }
   }, []);
 
-  // Route navigation no longer has a user-activation token, so native fullscreen
-  // cannot be requested reliably here. Enter the visual fallback directly.
-  // Must stay above any conditional returns (Rules of Hooks).
+  // A routed fullscreen request may lack user activation. Never substitute the
+  // deprecated page-style landscape shell when the browser rejects fullscreen.
   useEffect(() => {
     if (!pendingLandscapeFs || !watching || !isMobile) return;
     if (!landscapeMode || !playUrl) return;
@@ -663,9 +685,7 @@ export function DramaDetail({
     const allowed = !!(user || (episodeId && canGuestWatch(episodeId)));
     if (!playerReady || !allowed) return;
     setPendingLandscapeFs(false);
-    setLandChromeVisible(true);
-    setUiImmersive(true);
-    setRotateFs(!screenIsLandscape);
+    void tryEnterLandscapeFs();
   }, [
     pendingLandscapeFs,
     watching,
@@ -676,7 +696,7 @@ export function DramaDetail({
     selected?.id,
     user,
     canGuestWatch,
-    screenIsLandscape,
+    tryEnterLandscapeFs,
   ]);
 
   useEffect(() => {
@@ -685,6 +705,7 @@ export function DramaDetail({
       if (!browserFs && !uiImmersive && !rotateFs) void tryEnterLandscapeFs();
       return;
     }
+    unlockScreenOrientation();
     if (browserFs || uiImmersive || rotateFs) void exitImmersiveFs();
   }, [
     screenOrientationReady,
@@ -697,30 +718,6 @@ export function DramaDetail({
     rotateFs,
     tryEnterLandscapeFs,
     exitImmersiveFs,
-  ]);
-
-  const autoRotateReturningRef = useRef(false);
-  useEffect(() => {
-    if (
-      !autoRotateFullscreen ||
-      !screenOrientationReady ||
-      screenIsLandscape ||
-      autoRotateReturningRef.current
-    ) {
-      return;
-    }
-    autoRotateReturningRef.current = true;
-    void exitImmersiveFs().finally(() => {
-      if (canGoBackInApp()) router.back();
-      else router.replace(`/drama/${id}`);
-    });
-  }, [
-    autoRotateFullscreen,
-    screenOrientationReady,
-    screenIsLandscape,
-    exitImmersiveFs,
-    router,
-    id,
   ]);
 
   const applyResumeSeek = (video: HTMLVideoElement) => {
@@ -1384,6 +1381,17 @@ export function DramaDetail({
           />
         ) : null}
 
+        {landscapeMode && !landscapeImmersive ? (
+          <button
+            type="button"
+            onClick={() => void tryEnterLandscapeFs()}
+            className="absolute left-1/2 top-[calc(50%+min(30vw,8rem))] z-30 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-[#2a2c2c]/88 px-4 py-2 text-[13px] font-medium text-white/95 backdrop-blur-sm"
+          >
+            <Smartphone className="h-4 w-4 rotate-90" strokeWidth={1.75} />
+            {t("player.watchFullscreen")}
+          </button>
+        ) : null}
+
         {/* 红果横屏全屏操作条：点击画面显隐，不暂停 */}
         {showLandFsChrome ? (
           <div
@@ -1669,11 +1677,7 @@ export function DramaDetail({
                       if (uiImmersive) {
                         void exitImmersiveFs();
                       } else if (landscapeMode) {
-                        // 右侧 Maximize = 清 meta，不进真横屏
-                        setShowRate(false);
-                        setShowMore(false);
-                        setShowQuality(false);
-                        setUiImmersive(true);
+                        void tryEnterLandscapeFs();
                       } else {
                         void enterPortraitFullscreen();
                       }

@@ -4,14 +4,19 @@ type LockableScreenOrientation = ScreenOrientation & {
 };
 
 export async function lockPortraitOrientation() {
+  const orientation = screen.orientation as LockableScreenOrientation;
   try {
-    await (screen.orientation as LockableScreenOrientation).lock?.("portrait");
+    if (!orientation.lock) throw new Error("orientation lock unsupported");
+    await orientation.lock("portrait");
+    document.documentElement.removeAttribute("data-portrait-lock-fallback");
   } catch {
-    // Browser tabs commonly reject orientation locks outside fullscreen/PWA mode.
+    // Safari tabs reject orientation locks outside installed/fullscreen mode.
+    document.documentElement.setAttribute("data-portrait-lock-fallback", "true");
   }
 }
 
 export function unlockScreenOrientation() {
+  document.documentElement.removeAttribute("data-portrait-lock-fallback");
   try {
     (screen.orientation as LockableScreenOrientation).unlock?.();
   } catch {
