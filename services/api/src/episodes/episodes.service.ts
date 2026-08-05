@@ -22,6 +22,9 @@ export class EpisodesService {
       include: { drama: true },
     });
     if (!episode) throw new BizException(BizCode.NOT_FOUND, 'episode.notFound');
+    if (episode.drama?.status !== 'LIVE') {
+      throw new BizException(BizCode.NOT_FOUND, 'common.notFound');
+    }
 
     const policy = await this.lockAccess.resolveForDrama(episode.drama);
     const free = this.lockAccess.isFree(episode, policy);

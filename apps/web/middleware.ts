@@ -11,7 +11,7 @@ import { localeFromAcceptLanguage } from "@/lib/languages";
 /**
  * 管理端已拆至独立应用 apps/admin（生产：admin.velvetmovie.space）。
  * 本中间件仅：
- * - 用户域访问 /admin|/ops|/console → 跳转管理端域名
+ * - 用户域访问 /admin|/ops|/console（含 /zh|/en|/fr 前缀）→ 跳转管理端域名
  * - 误把管理域指到本应用时 → 跳转 ADMIN_ORIGIN
  * - locale 前缀 rewrite
  * - 首次访问根据 Accept-Language 写入 dv_locale（避免 SSR/CSR 语言不一致）
@@ -27,21 +27,22 @@ function localeCookie(res: NextResponse, locale: string) {
   });
 }
 
-function localeRewrite(
-  req: NextRequest,
-  prefix: (typeof LOCALE_PREFIXES)[number],
-): NextResponse | null {
-  const { pathname } = req.nextUrl;
-  const root = `/${prefix}`;
-  if (pathname !== root && !pathname.startsWith(`${root}/`)) return null;
-
-  const url = req.nextUrl.clone();
-  const rest = pathname.slice(root.length) || "/";
-  url.pathname = rest.startsWith("/") ? rest : `/${rest}`;
-
-  const res = NextResponse.rewrite(url);
-  localeCookie(res, prefix);
-  return res;
+/** Strip /zh|/en|/fr prefix; returns unprefixed path + optional locale. */
+function stripLocalePrefix(pathname: string): {
+  pathname: string;
+  locale: (typeof LOCALE_PREFIXES)[number] | null;
+} {
+  for (const prefix of LOCALE_PREFIXES) {
+    const root = `/${prefix}`;
+    if (pathname === root || pathname.startsWith(`${root}/`)) {
+      const rest = pathname.slice(root.length) || "/";
+      return {
+        pathname: rest.startsWith("/") ? rest : `/${rest}`,
+        locale: prefix,
+      };
+    }
+  }
+  return { pathname, locale: null };
 }
 
 function mapAdminPath(pathname: string): string {
@@ -55,36 +56,36 @@ function mapAdminPath(pathname: string): string {
   return pathname;
 }
 
-function hostRedirects(req: NextRequest): NextResponse | null {
+function isAdminPath(pathname: string): boolean {
+  return ADMIN_PREFIXES.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+}
+
+function hostRedirects(req: NextRequest, logicalPathname: string): NextResponse | null {
   const host = req.headers.get("host")?.split(":")[0]?.toLowerCase() || "";
-  const { pathname, search } = req.nextUrl;
+  const { search } = req.nextUrl;
 
   // 本地：/admin* → 独立管理端 :3001
   if (isLocalHost(host)) {
-    for (const p of ADMIN_PREFIXES) {
-      if (pathname === p || pathname.startsWith(`${p}/`)) {
-        const dest = mapAdminPath(pathname);
-        const localAdmin =
-          process.env.NEXT_PUBLIC_ADMIN_URL || "http://localhost:3001";
-        return NextResponse.redirect(`${localAdmin.replace(/\/$/, "")}${dest}${search}`, 308);
-      }
+    if (isAdminPath(logicalPathname)) {
+      const dest = mapAdminPath(logicalPathname);
+      const localAdmin =
+        process.env.NEXT_PUBLIC_ADMIN_URL || "http://localhost:3001";
+      return NextResponse.redirect(`${localAdmin.replace(/\/$/, "")}${dest}${search}`, 308);
     }
     return null;
   }
 
   if (isWebHost(host)) {
-    for (const p of ADMIN_PREFIXES) {
-      if (pathname === p || pathname.startsWith(`${p}/`)) {
-        const dest = mapAdminPath(pathname);
-        return NextResponse.redirect(`${ADMIN_ORIGIN}${dest}${search}`, 308);
-      }
+    if (isAdminPath(logicalPathname)) {
+      const dest = mapAdminPath(logicalPathname);
+      return NextResponse.redirect(`${ADMIN_ORIGIN}${dest}${search}`, 308);
     }
     return null;
   }
 
   // 管理域若仍指向 web 构建，整站跳到独立管理端
   if (isAdminHost(host)) {
-    const dest = mapAdminPath(pathname === "/" ? "/admin" : pathname);
+    const dest = mapAdminPath(logicalPathname === "/" ? "/admin" : logicalPathname);
     return NextResponse.redirect(`${ADMIN_ORIGIN}${dest}${search}`, 308);
   }
 
@@ -99,12 +100,22 @@ function withDefaultLocaleCookie(req: NextRequest, res: NextResponse) {
 }
 
 export function middleware(req: NextRequest) {
-  const redirected = hostRedirects(req);
-  if (redirected) return redirected;
+  const { pathname: logicalPath, locale } = stripLocalePrefix(req.nextUrl.pathname);
 
-  for (const prefix of LOCALE_PREFIXES) {
-    const rewritten = localeRewrite(req, prefix);
-    if (rewritten) return rewritten;
+  // Admin redirects use the unprefixed path so /zh/admin → admin host (not 404).
+  const redirected = hostRedirects(req, logicalPath);
+  if (redirected) {
+    if (locale) localeCookie(redirected, locale);
+    return redirected;
+  }
+
+  // Locale-prefixed consumer URLs → rewrite to unprefixed app routes.
+  if (locale) {
+    const url = req.nextUrl.clone();
+    url.pathname = logicalPath;
+    const res = NextResponse.rewrite(url);
+    localeCookie(res, locale);
+    return res;
   }
 
   return withDefaultLocaleCookie(req, NextResponse.next());

@@ -243,7 +243,8 @@ export class DramasService {
         },
       },
     });
-    if (!drama) return null;
+    // Public catalog: offline / draft titles must not be reachable by old URLs.
+    if (!drama || drama.status !== 'LIVE') return null;
     return {
       ...drama,
       creator: drama.creator
@@ -261,13 +262,14 @@ export class DramasService {
       where: this.resolveDramaWhere(dramaId),
       select: {
         id: true,
+        status: true,
         freeEpisodeCount: true,
         lockMode: true,
         creatorId: true,
         buyoutCredits: true,
       },
     });
-    if (!drama) return null;
+    if (!drama || drama.status !== 'LIVE') return null;
     const episodes = await this.prisma.episode.findMany({
       where: { dramaId: drama.id },
       orderBy: { episodeNumber: 'asc' },

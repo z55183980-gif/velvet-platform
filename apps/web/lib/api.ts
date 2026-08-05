@@ -390,6 +390,8 @@ export async function loadDramaDetail(
     return { drama, episodes, buyoutCredits, vipActive, dramaUnlocked };
   } catch (err) {
     if (opts?.signal?.aborted || isAbortError(err)) throw err;
+    // Never surface mock catalogs in production (fake dramas on 404 / API blips).
+    if (process.env.NODE_ENV === "production") return null;
     const { mockDramaDetail } = await import("./mock-data");
     return mockDramaDetail(slug);
   }

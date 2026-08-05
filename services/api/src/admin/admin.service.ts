@@ -703,6 +703,43 @@ export class AdminService {
   }
 
   // ============ Banner CRUD ============
+  /** Allow http(s) absolute URLs or same-site paths; reject admin shells / protocols. */
+  private normalizeBannerLinkUrl(raw: unknown): string | null {
+    if (raw == null) return null;
+    const s = String(raw).trim();
+    if (!s) return null;
+    if (s.startsWith('/') && !s.startsWith('//')) {
+      if (/^\/(admin|ops|console)(\/|$)/i.test(s)) {
+        throw new BizException(BizCode.BAD_REQUEST, 'validation.bannerLinkUrl');
+      }
+      return s;
+    }
+    let u: URL;
+    try {
+      u = new URL(s);
+    } catch {
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.bannerLinkUrl');
+    }
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.bannerLinkUrl');
+    }
+    return s;
+  }
+
+  private async resolveBannerDramaId(raw: unknown): Promise<bigint | null> {
+    if (raw == null || raw === '') return null;
+    const id = String(raw).trim();
+    if (!/^\d+$/.test(id)) {
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.bannerDramaId');
+    }
+    const drama = await this.prisma.drama.findUnique({
+      where: { id: BigInt(id) },
+      select: { id: true },
+    });
+    if (!drama) throw new BizException(BizCode.NOT_FOUND, 'Drama không tồn tại');
+    return drama.id;
+  }
+
   async listBanners(all = false) {
     const where = all
       ? undefined
@@ -736,13 +773,15 @@ export class AdminService {
     if (endAt <= startAt) {
       throw new BizException(BizCode.BAD_REQUEST, 'validation.endAfterStart');
     }
+    const linkUrl = this.normalizeBannerLinkUrl(dto.linkUrl);
+    const dramaId = await this.resolveBannerDramaId(dto.dramaId);
     const banner = await this.prisma.banner.create({
       data: {
         titleEn: dto.titleEn,
         titleZh: dto.titleZh,
         imageUrl: dto.imageUrl,
-        linkUrl: dto.linkUrl,
-        dramaId: dto.dramaId ? BigInt(dto.dramaId) : null,
+        linkUrl,
+        dramaId,
         startAt,
         endAt,
         sortOrder: dto.sortOrder ?? 0,
@@ -764,8 +803,8 @@ export class AdminService {
     if (dto.titleEn != null) data.titleEn = dto.titleEn;
     if (dto.titleZh != null) data.titleZh = dto.titleZh;
     if (dto.imageUrl != null) data.imageUrl = dto.imageUrl;
-    if ("linkUrl" in dto) data.linkUrl = dto.linkUrl ? String(dto.linkUrl) : null;
-    if ("dramaId" in dto) data.dramaId = dto.dramaId ? BigInt(dto.dramaId) : null;
+    if ("linkUrl" in dto) data.linkUrl = this.normalizeBannerLinkUrl(dto.linkUrl);
+    if ("dramaId" in dto) data.dramaId = await this.resolveBannerDramaId(dto.dramaId);
     if (dto.startAt != null) data.startAt = new Date(dto.startAt);
     if (dto.endAt != null) data.endAt = new Date(dto.endAt);
     if (dto.sortOrder != null) data.sortOrder = Number(dto.sortOrder);

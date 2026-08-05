@@ -59,8 +59,14 @@ class BannerDto {
   @IsNotEmpty() @IsString() titleEn!: string;
   @IsOptional() @IsString() titleZh?: string;
   @IsNotEmpty() @IsString() imageUrl!: string;
-  @IsOptional() @IsString() linkUrl?: string;
-  @IsOptional() @IsString() dramaId?: string;
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && String(v).trim() !== '')
+  @IsString()
+  linkUrl?: string;
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null && v !== undefined && String(v).trim() !== '')
+  @IsString()
+  dramaId?: string;
   @IsNotEmpty() @IsString() startAt!: string;
   @IsNotEmpty() @IsString() endAt!: string;
   @IsOptional() @Type(() => Number) @IsNumber() sortOrder?: number;

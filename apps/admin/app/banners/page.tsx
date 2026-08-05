@@ -66,7 +66,17 @@ function toLocalDatetimeValue(value: string | Date) {
 
 function isValidImageUrl(url: string) {
   const v = url.trim();
-  return /^https?:\/\//i.test(v) || v.startsWith("/");
+  return /^https?:\/\//i.test(v) || (v.startsWith("/") && !v.startsWith("//"));
+}
+
+/** Same-site path or http(s); block admin shells and opaque schemes. */
+function isValidBannerLinkUrl(url: string) {
+  const v = url.trim();
+  if (!v) return false;
+  if (v.startsWith("/") && !v.startsWith("//")) {
+    return !/^\/(admin|ops|console)(\/|$)/i.test(v);
+  }
+  return /^https?:\/\//i.test(v);
 }
 
 function jumpModeFromRow(row: Banner): JumpMode {
@@ -274,6 +284,7 @@ export default function AdminBannersPage() {
       if (form.jumpMode === "link") {
         linkUrl = form.linkUrl.trim() || null;
         if (!linkUrl) throw new Error(t("bannerJumpNeedValue"));
+        if (!isValidBannerLinkUrl(linkUrl)) throw new Error(t("bannerLinkInvalid"));
       } else if (form.jumpMode === "drama") {
         dramaId = form.dramaId.trim() || null;
         if (!dramaId) throw new Error(t("bannerJumpNeedValue"));

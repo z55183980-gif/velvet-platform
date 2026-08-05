@@ -61,10 +61,7 @@ const nextConfig = {
       "",
     );
     return [
-      {
-        source: "/favicon.ico",
-        destination: "/favicon.svg",
-      },
+      // public/favicon.ico is served directly — no rewrite to missing favicon.svg
       {
         source: "/api/:path*",
         destination: `${apiTarget}/api/:path*`,
