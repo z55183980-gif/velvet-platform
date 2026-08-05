@@ -6,7 +6,10 @@ import { AuthProvider } from "@/components/auth-context";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ToastProvider } from "@/components/toast";
 import { AppShell } from "@/components/app-shell";
+import { BrandSplash } from "@/components/brand-splash";
 import { normalizeInterfaceLanguage } from "@/lib/languages";
+
+const BRAND_SPLASH_BOOT_SCRIPT = `(function(){try{var el=document.getElementById("velvet-boot-splash");if(!el)return;if(sessionStorage.getItem("dv_splash_done")||window.matchMedia("(min-width:768px)").matches){el.dataset.skip="1";el.setAttribute("hidden","");el.style.display="none";document.documentElement.classList.remove("velvet-splash-lock");}else{document.documentElement.classList.add("velvet-splash-lock");}}catch(e){}})();`;
 
 export const metadata: Metadata = {
   title: "Velvet — Spicy Short Dramas",
@@ -69,11 +72,33 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         />
       </head>
       <body>
+        {/* Mobile session boot splash (TikTok-style). Hidden on md+ / already-seen sessions. */}
+        <div
+          id="velvet-boot-splash"
+          className="fixed inset-0 z-[200] flex flex-col items-center justify-center bg-black md:hidden"
+          aria-hidden="true"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element -- first-paint splash, no next/image */}
+          <img
+            src="/logo.png"
+            alt=""
+            width={88}
+            height={88}
+            decoding="async"
+            className="h-[88px] w-[88px] object-contain"
+          />
+          <span className="mt-5 text-[28px] font-bold tracking-tight text-white">Velvet</span>
+          <span className="absolute inset-x-0 bottom-[max(1.25rem,env(safe-area-inset-bottom))] text-center text-[12px] font-medium tracking-wide text-white/35">
+            Short dramas. Private thrills.
+          </span>
+        </div>
+        <script dangerouslySetInnerHTML={{ __html: BRAND_SPLASH_BOOT_SCRIPT }} />
         <ThemeProvider>
           <LocaleProvider initialLocale={initialLocale}>
             <ToastProvider>
               <AuthProvider>
                 <AppShell>{children}</AppShell>
+                <BrandSplash />
               </AuthProvider>
             </ToastProvider>
           </LocaleProvider>

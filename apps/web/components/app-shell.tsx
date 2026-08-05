@@ -17,7 +17,7 @@ function isDramaPath(pathname: string | null) {
   return pathname === "/drama" || pathname.startsWith("/drama/");
 }
 
-/** Consumer chrome (Navbar/Footer/BottomTab). CSS-responsive — no JS breakpoint flash. */
+/** Consumer chrome (Navbar desktop / Footer desktop / BottomTab mobile). */
 export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <MobileFeedLockProvider>
@@ -42,7 +42,7 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
     >
       <Suspense
         fallback={
-          <header className="sticky top-0 z-50 h-12 shrink-0 bg-base/70 backdrop-blur-xl md:h-16" />
+          <header className="sticky top-0 z-50 hidden h-16 shrink-0 bg-base/70 backdrop-blur-xl md:block" />
         }
       >
         <Navbar />

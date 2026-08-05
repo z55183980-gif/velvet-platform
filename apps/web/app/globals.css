@@ -134,6 +134,14 @@
     font-size: 16px;
   }
 
+  /* Mobile cold-open splash: block scroll until BrandSplash fades out */
+  html.velvet-splash-lock,
+  html.velvet-splash-lock body {
+    overflow: hidden;
+    overscroll-behavior: none;
+    touch-action: none;
+  }
+
   /* International feel + diacritic safety: any uppercase label gets tracking */
   .uppercase {
     letter-spacing: 0.1em;

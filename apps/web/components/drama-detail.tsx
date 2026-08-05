@@ -87,6 +87,8 @@ export function DramaDetail({
   const { ready: guestReady, canWatch: canGuestWatch, markWatched: markGuestWatched } = useGuestWatchQuota();
   const { mobile: isMobile, ready: mobileReady } = useIsMobile();
   const [pendingLandscapeFs, setPendingLandscapeFs] = useState(autoLandscapeFs);
+  const pendingLandscapeFsRef = useRef(autoLandscapeFs);
+  pendingLandscapeFsRef.current = pendingLandscapeFs;
   const [data, setData] = useState<{
     drama: Drama;
     episodes: Episode[];
@@ -115,14 +117,17 @@ export function DramaDetail({
   const [showRate, setShowRate] = useState(false);
   const [showMore, setShowMore] = useState(false);
   const [epLineExpanded, setEpLineExpanded] = useState(false);
-  /** 移动端：横片源自动 16:9 信箱；竖片源竖屏铺满 */
-  const [landscapeMode, setLandscapeMode] = useState(false);
+  /**
+   * 移动端：横片源自动 16:9 信箱；竖片源竖屏铺满。
+   * Feed「全屏观看」带 ?lfs=1 时先按横片布局，避免元数据检出前误走竖屏 cover。
+   */
+  const [landscapeMode, setLandscapeMode] = useState(!!autoLandscapeFs);
   const [followVideoAspect, setFollowVideoAspect] = useState(true);
   const [browserFs, setBrowserFs] = useState(false);
   /** Fullscreen API 不可用时仍进入竖屏沉浸 UI（如部分 iOS Safari） */
   const [uiImmersive, setUiImmersive] = useState(false);
   /** iOS 等无法 lock 横屏时的 CSS 强制横屏全屏（仅横屏全屏路径） */
-  const [rotateFs, setRotateFs] = useState(false);
+  const [rotateFs, setRotateFs] = useState(!!autoLandscapeFs);
   const [qualities, setQualities] = useState<Array<{ index: number; height: number; label: string }>>([]);
   const [qualityIndex, setQualityIndex] = useState(-1); // -1 = auto
   const [showQuality, setShowQuality] = useState(false);
@@ -186,19 +191,22 @@ export function DramaDetail({
     setShowMore(false);
     setShowQuality(false);
     setFollowVideoAspect(true);
-    setLandscapeMode(false);
+    // Keep Feed→lfs landscape seed; otherwise wait for metadata on episode switch.
+    setLandscapeMode(pendingLandscapeFsRef.current);
     setUiImmersive(false);
-    setRotateFs(false);
+    setRotateFs(pendingLandscapeFsRef.current);
     setQualityIndex(-1);
     setQualities([]);
   }, [selected?.no]);
 
   useEffect(() => {
     if (!watching) {
-      setLandscapeMode(false);
+      if (!pendingLandscapeFsRef.current) {
+        setLandscapeMode(false);
+        setRotateFs(false);
+      }
       setBrowserFs(false);
       setUiImmersive(false);
-      setRotateFs(false);
       setShowQuality(false);
       setResumeToast(false);
     }
@@ -406,7 +414,10 @@ export function DramaDetail({
       } catch {
         lockedOrient = false;
       }
-      if (!lockedOrient) setRotateFs(true);
+      // Navigation loses the Feed tap gesture — Fullscreen/orientation often fail;
+      // keep CSS rotate landscape as the reliable mobile path.
+      if (lockedOrient) setRotateFs(false);
+      else setRotateFs(true);
     })();
   }, [
     pendingLandscapeFs,
@@ -445,18 +456,25 @@ export function DramaDetail({
       }
     };
     video.addEventListener("loadedmetadata", onMeta);
+    video.addEventListener("loadeddata", applyAspect);
+    applyAspect();
+
+    const dropAspectListeners = () => {
+      video.removeEventListener("loadedmetadata", onMeta);
+      video.removeEventListener("loadeddata", applyAspect);
+    };
 
     if (!isHls(playUrl)) {
       video.src = playUrl;
       setQualities([]);
       hlsRef.current = null;
-      return () => video.removeEventListener("loadedmetadata", onMeta);
+      return dropAspectListeners;
     }
     if (video.canPlayType("application/vnd.apple.mpegurl")) {
       video.src = playUrl;
       setQualities([]);
       hlsRef.current = null;
-      return () => video.removeEventListener("loadedmetadata", onMeta);
+      return dropAspectListeners;
     }
     let hls: any;
     let cancelled = false;
@@ -493,7 +511,7 @@ export function DramaDetail({
     })();
     return () => {
       cancelled = true;
-      video.removeEventListener("loadedmetadata", onMeta);
+      dropAspectListeners();
       if (hls) hls.destroy();
       if (hlsRef.current === hls) hlsRef.current = null;
     };

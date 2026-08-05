@@ -10,13 +10,12 @@ import { useTheme } from "@/components/theme-provider";
 import { NotificationBell } from "@/components/notification-bell";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { BrandLogo } from "@/components/brand-logo";
-import { useMobileFeedLock } from "@/components/mobile/mobile-feed-lock";
 import { cn } from "@/lib/utils";
 
 /**
- * CSS-responsive navbar:
- * - max-md: compact mobile shell (bottom tabs handle primary nav)
- * - md+: full desktop nav + creator link
+ * Desktop-only shell navbar.
+ * Mobile primary nav is BottomTabBar; never mount compact top chrome on max-md
+ * (avoids Feed-lock timing flash when returning home).
  */
 export function Navbar() {
   const { t } = useLocale();
@@ -24,7 +23,6 @@ export function Navbar() {
   const searchParams = useSearchParams();
   const { user, ready: authReady, openLogin, openVip } = useAuth();
   const { theme, cycleTheme } = useTheme();
-  const { locked: feedLocked } = useMobileFeedLock();
   const [scrolled, setScrolled] = useState(false);
   const [themeMounted, setThemeMounted] = useState(false);
   const filteredHome =
@@ -39,13 +37,6 @@ export function Navbar() {
 
   // Only choose Sun/Moon after mount so SSR HTML always matches the first client paint.
   const ThemeIcon = theme === "light" ? Sun : Moon;
-  // Mobile /me has its own Hongguo-style chrome (theme + settings).
-  // Mobile home feed is immersive video; hide shell navbar.
-  // Mobile /theater relies on bottom tabs; hide shell navbar.
-  const hideOnMobileMe = pathname === "/me" || pathname.startsWith("/me/");
-  const hideOnMobileFeed = feedLocked;
-  const hideOnMobileTheater =
-    pathname === "/theater" || pathname.startsWith("/theater/");
 
   const links = [
     { href: "/", label: t("nav.home"), match: (p: string) => p === "/" && !filteredHome },
@@ -77,12 +68,9 @@ export function Navbar() {
   return (
     <header
       className={cn(
-        "z-50 shrink-0 transition-[background-color,border-color,backdrop-filter] duration-300",
-        // Mobile: sticky solid chrome (in feed shell the parent is overflow-hidden, so it stays put)
+        // Desktop only — mobile never shows this chrome.
+        "z-50 hidden shrink-0 transition-[background-color,border-color,backdrop-filter] duration-300 md:block",
         "sticky top-0 border-b border-line/60 bg-base/70 backdrop-blur-xl",
-        hideOnMobileMe && "max-md:hidden",
-        hideOnMobileFeed && "max-md:hidden",
-        hideOnMobileTheater && "max-md:hidden",
         // Desktop home: fixed overlay until scroll
         isHomeOverlay &&
           cn(
@@ -93,31 +81,26 @@ export function Navbar() {
           ),
       )}
     >
-      <div className="mx-auto flex h-12 max-w-lg items-center gap-4 px-4 md:h-16 md:max-w-[1280px] md:gap-6 md:px-10">
+      <div className="mx-auto flex h-16 max-w-[1280px] items-center gap-6 px-10">
         <Link
           href="/"
           className="group flex shrink-0 items-center transition-opacity hover:opacity-90"
           aria-label="Velvet"
         >
-          <span className="md:hidden">
-            <BrandLogo size={28} priority wordmarkClassName="group-hover:text-brand" />
-          </span>
-          <span className="hidden md:inline-flex">
-            <BrandLogo
-              size={34}
-              priority
-              onDark={isHomeOverlay}
-              wordmarkClassName={cn(
-                "transition-colors",
-                isHomeOverlay
-                  ? "group-hover:text-white/85"
-                  : "group-hover:text-brand",
-              )}
-            />
-          </span>
+          <BrandLogo
+            size={34}
+            priority
+            onDark={isHomeOverlay}
+            wordmarkClassName={cn(
+              "transition-colors",
+              isHomeOverlay
+                ? "group-hover:text-white/85"
+                : "group-hover:text-brand",
+            )}
+          />
         </Link>
 
-        <nav className="hidden items-center gap-1 md:flex">
+        <nav className="flex items-center gap-1">
           {links.map((l) => {
             const active = l.match(pathname);
             return (
@@ -147,9 +130,8 @@ export function Navbar() {
             className={cn(
               "grid h-9 w-9 place-items-center rounded-full transition-colors",
               isHomeOverlay
-                ? "md:text-white/70 md:hover:bg-white/10 md:hover:text-white"
-                : "",
-              "text-ink-muted hover:bg-surface-2 hover:text-ink",
+                ? "text-white/70 hover:bg-white/10 hover:text-white"
+                : "text-ink-muted hover:bg-surface-2 hover:text-ink",
             )}
             aria-label="theme"
             title={themeMounted ? theme : undefined}
@@ -162,18 +144,9 @@ export function Navbar() {
             )}
           </button>
 
-          <LanguageSwitcher tone="default" className="md:hidden" />
-          <LanguageSwitcher
-            tone={isHomeOverlay ? "onDark" : "default"}
-            className="hidden md:block"
-          />
+          <LanguageSwitcher tone={isHomeOverlay ? "onDark" : "default"} />
 
-          <span className="md:hidden">
-            <NotificationBell tone="default" />
-          </span>
-          <span className="hidden md:inline-flex">
-            <NotificationBell tone={isHomeOverlay ? "onDark" : "default"} />
-          </span>
+          <NotificationBell tone={isHomeOverlay ? "onDark" : "default"} />
 
           <button
             type="button"
@@ -183,7 +156,7 @@ export function Navbar() {
               user?.isVip
                 ? "bg-gold/15 text-gold hover:bg-gold/25"
                 : isHomeOverlay
-                  ? "bg-surface-2/80 text-ink-muted hover:bg-surface-3 hover:text-ink md:bg-white/10 md:text-white/80 md:hover:bg-white/15 md:hover:text-white"
+                  ? "bg-white/10 text-white/80 hover:bg-white/15 hover:text-white"
                   : "bg-surface-2/80 text-ink-muted hover:bg-surface-3 hover:text-ink",
             )}
             title={t("nav.vip")}
@@ -199,7 +172,7 @@ export function Navbar() {
             <span
               className={cn(
                 "grid h-9 place-items-center rounded-full px-3 text-body-sm",
-                isHomeOverlay ? "text-ink-muted md:text-white/60" : "text-ink-muted",
+                isHomeOverlay ? "text-white/60" : "text-ink-muted",
               )}
             >
               …
@@ -210,7 +183,7 @@ export function Navbar() {
               className={cn(
                 "grid h-9 max-w-[7rem] place-items-center truncate rounded-full px-3 text-body-sm transition-colors",
                 isHomeOverlay
-                  ? "text-ink-muted hover:bg-surface-2 hover:text-ink md:text-white/75 md:hover:bg-white/10 md:hover:text-white"
+                  ? "text-white/75 hover:bg-white/10 hover:text-white"
                   : "text-ink-muted hover:bg-surface-2 hover:text-ink",
               )}
               aria-label={t("nav.account")}
@@ -230,9 +203,9 @@ export function Navbar() {
                 type="button"
                 onClick={() => openLogin("register")}
                 className={cn(
-                  "hidden h-9 place-items-center rounded-full px-4 text-body-sm font-medium transition-colors md:grid",
+                  "grid h-9 place-items-center rounded-full px-4 text-body-sm font-medium transition-colors",
                   isHomeOverlay
-                    ? "text-ink-muted hover:bg-surface-2 hover:text-ink md:text-white/80 md:hover:bg-white/10 md:hover:text-white"
+                    ? "text-white/80 hover:bg-white/10 hover:text-white"
                     : "text-ink-muted hover:bg-surface-2 hover:text-ink",
                 )}
               >
@@ -251,7 +224,7 @@ export function Navbar() {
           <Link
             href="/creator"
             className={cn(
-              "hidden rounded-md px-3.5 py-2 text-[15px] transition-colors md:inline-flex",
+              "inline-flex rounded-md px-3.5 py-2 text-[15px] transition-colors",
               isHomeOverlay
                 ? creatorActive
                   ? "text-white"

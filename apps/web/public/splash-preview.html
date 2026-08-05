@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
+    <title>Velvet Splash Preview</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@700&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #000;
+        font-family: "Plus Jakarta Sans", system-ui, sans-serif;
+      }
+      #velvet-boot-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 200;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: #000;
+      }
+      #velvet-boot-splash img {
+        width: 88px;
+        height: 88px;
+        object-fit: contain;
+      }
+      #velvet-boot-splash span {
+        margin-top: 20px;
+        font-size: 28px;
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        color: #fff;
+      }
+      .tagline {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: max(20px, env(safe-area-inset-bottom));
+        text-align: center;
+        color: rgba(255, 255, 255, 0.35);
+        font-size: 12px;
+        font-weight: 500;
+        letter-spacing: 0.02em;
+        z-index: 201;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="velvet-boot-splash" aria-hidden="true">
+      <img src="/logo.png" alt="" width="88" height="88" />
+      <span>Velvet</span>
+    </div>
+    <p class="tagline">Short dramas. Private thrills.</p>
+  </body>
+</html>
