@@ -73,12 +73,20 @@ const PLAY_GRAD =
 const PLAY_GRAD_HOVER =
   "linear-gradient(92.27deg, #ed6f00 0.32%, #eb862f)";
 
-export function DramaDetail({ id }: { id: string }) {
+export function DramaDetail({
+  id,
+  autoLandscapeFs = false,
+}: {
+  id: string;
+  /** Feed「全屏观看」入口：进播放后自动触发真横屏沉浸 */
+  autoLandscapeFs?: boolean;
+}) {
   const router = useRouter();
   const { locale, t } = useLocale();
   const { user, openLogin, openVip, ready: authReady } = useAuth();
   const { ready: guestReady, canWatch: canGuestWatch, markWatched: markGuestWatched } = useGuestWatchQuota();
   const { mobile: isMobile, ready: mobileReady } = useIsMobile();
+  const [pendingLandscapeFs, setPendingLandscapeFs] = useState(autoLandscapeFs);
   const [data, setData] = useState<{
     drama: Drama;
     episodes: Episode[];
@@ -597,6 +605,36 @@ export function DramaDetail({ id }: { id: string }) {
   const locked = !playerReady;
   const playLoading = !authReady || !guestReady || (canPlay && !playUrl && !playErr);
 
+  // Feed「全屏观看」：进入播放且检出横片后自动真横屏沉浸
+  useEffect(() => {
+    if (!pendingLandscapeFs || !watching || !isMobile) return;
+    if (!landscapeMode || !playUrl || !canPlay) return;
+    setPendingLandscapeFs(false);
+    setShowRate(false);
+    setShowMore(false);
+    setShowQuality(false);
+    setUiImmersive(false);
+    const el = watchShellRef.current;
+    void (async () => {
+      let lockedOrient = false;
+      try {
+        if (el?.requestFullscreen && !document.fullscreenElement) {
+          await el.requestFullscreen();
+        }
+        const orient = screen.orientation as ScreenOrientation & {
+          lock?: (orientation: string) => Promise<void>;
+        };
+        if (orient.lock) {
+          await orient.lock("landscape");
+          lockedOrient = true;
+        }
+      } catch {
+        lockedOrient = false;
+      }
+      if (!lockedOrient) setRotateFs(true);
+    })();
+  }, [pendingLandscapeFs, watching, isMobile, landscapeMode, playUrl, canPlay]);
+
   const selectEpisode = (ep: Episode) => {
     if (isUnlocked(ep)) {
       setSelected(ep);
@@ -693,13 +731,13 @@ export function DramaDetail({ id }: { id: string }) {
       setShowMore(false);
     };
 
-    const immersiveFs = browserFs || uiImmersive || rotateFs;
-    // Hongguo: 选集底栏在竖屏全屏也保留；仅横屏沉浸整块清掉。
-    const showWatchBottomChrome = !rotateFs && !(landscapeMode && immersiveFs);
-    // 图一：标题+侧栏；图二（竖屏全屏）：清标题/侧栏，只留进度+选集条。
-    const portraitImmersive = !landscapeMode && immersiveFs;
-    const showWatchMetaChrome = showWatchBottomChrome && !portraitImmersive;
-    const fillVideo = !landscapeMode || immersiveFs;
+    // 真横屏沉浸（中间「全屏观看」）：旋转/系统横屏，整块清掉底栏。
+    const trueLandscapeFs = rotateFs || (landscapeMode && browserFs);
+    // 选集底栏+进度：竖屏清屏、横屏清 meta 都保留；仅真横屏沉浸隐藏。
+    const showWatchBottomChrome = !trueLandscapeFs;
+    // 标题/侧栏：任一侧 Maximize/竖屏全屏清掉（uiImmersive）。
+    const showWatchMetaChrome = showWatchBottomChrome && !uiImmersive;
+    const fillVideo = !landscapeMode || trueLandscapeFs;
     const resumeTimeLabel = resumeHint
       ? `${Math.floor(resumeHint.progressSec / 60)}:${String(Math.floor(resumeHint.progressSec % 60)).padStart(2, "0")}`
       : "";
@@ -732,7 +770,8 @@ export function DramaDetail({ id }: { id: string }) {
             : undefined
         }
       >
-        {/* Top chrome */}
+        {/* Top chrome — 真横屏沉浸时隐藏（图四） */}
+        {!trueLandscapeFs ? (
         <div className="absolute left-0 right-0 top-0 z-40 flex items-center justify-between bg-gradient-to-b from-black/65 via-black/25 to-transparent px-2.5 pb-3 pt-[max(0.4rem,env(safe-area-inset-top))]">
           <button
             type="button"
@@ -861,10 +900,11 @@ export function DramaDetail({ id }: { id: string }) {
             )}
           </div>
         </div>
+        ) : null}
 
-        {/* Video stage */}
-        {landscapeMode && !immersiveFs ? (
-          <div className="absolute inset-x-0 top-[max(3.25rem,calc(env(safe-area-inset-top)+2.75rem))] z-10">
+        {/* Video stage — 横片信箱（非真横屏沉浸） */}
+        {landscapeMode && !trueLandscapeFs ? (
+          <div className="absolute inset-x-0 top-[max(3.1rem,calc(env(safe-area-inset-top)+2.5rem))] z-10">
             <div className="relative mx-auto w-full bg-black" style={{ aspectRatio: "16 / 9" }}>
               <VerticalPlayer
                 videoRef={videoRef}
@@ -902,11 +942,12 @@ export function DramaDetail({ id }: { id: string }) {
                 onEnded={playNext}
               />
             </div>
-            <div className="mt-3 flex justify-center px-3">
+            {/* 中间「全屏观看」→ 真横屏沉浸（图四） */}
+            <div className="mt-3.5 flex justify-center px-3">
               <button
                 type="button"
                 onClick={() => void enterLandscapeFullscreen()}
-                className="inline-flex items-center gap-1.5 rounded-full bg-black/45 px-4 py-2 text-[13px] font-medium text-white ring-1 ring-white/12 backdrop-blur-sm"
+                className="inline-flex items-center gap-1.5 rounded-full bg-[#2a2c2c]/88 px-4 py-2 text-[13px] font-medium text-white/95 backdrop-blur-sm"
               >
                 <Smartphone className="h-4 w-4 rotate-90" strokeWidth={1.75} />
                 {t("player.watchFullscreen")}
@@ -1085,27 +1126,14 @@ export function DramaDetail({ id }: { id: string }) {
               <WatchSeekBar
                 videoRef={videoRef}
                 absolute={false}
+                mediaKey={playUrl}
                 disabled={!playUrl || needsLogin || locked}
                 onSeekingChange={onSeekingChange}
-                className={cn(portraitImmersive ? "px-0 pb-1" : "px-0")}
               />
 
-              {/* 图一：贴底全宽顶圆角；图二：悬浮圆角条 */}
-              <div
-                className={cn(
-                  portraitImmersive
-                    ? "px-2.5 pb-[max(0.35rem,env(safe-area-inset-bottom))]"
-                    : "pb-[max(0px,env(safe-area-inset-bottom))]",
-                )}
-              >
-                <div
-                  className={cn(
-                    "flex h-11 items-stretch text-white",
-                    portraitImmersive
-                      ? "overflow-hidden rounded-[12px] bg-black/55 shadow-[0_4px_20px_rgba(0,0,0,0.35)] backdrop-blur-md"
-                      : "rounded-t-[12px] bg-[#1a1a1a]/92 backdrop-blur-sm",
-                  )}
-                >
+              {/* 选集底栏：全屏清 meta 后颜色/样式不变 */}
+              <div className="pb-[max(0px,env(safe-area-inset-bottom))]">
+                <div className="flex h-11 items-stretch rounded-t-[12px] bg-[#1a1a1a]/92 text-white backdrop-blur-sm">
                   <button
                     type="button"
                     onClick={() => setDrawerOpen(true)}
@@ -1119,22 +1147,26 @@ export function DramaDetail({ id }: { id: string }) {
                   <button
                     type="button"
                     onClick={() => {
-                      if (portraitImmersive) {
+                      if (uiImmersive) {
                         void exitImmersiveFs();
                       } else if (landscapeMode) {
-                        void enterLandscapeFullscreen();
+                        // 右侧 Maximize = 清 meta，不进真横屏
+                        setShowRate(false);
+                        setShowMore(false);
+                        setShowQuality(false);
+                        setUiImmersive(true);
                       } else {
                         void enterPortraitFullscreen();
                       }
                     }}
                     className="grid w-12 shrink-0 place-items-center"
                     aria-label={
-                      portraitImmersive
+                      uiImmersive
                         ? t("player.exitFullscreen")
                         : t("player.fullscreen")
                     }
                   >
-                    {portraitImmersive ? (
+                    {uiImmersive ? (
                       <Minimize2 className="h-5 w-5" strokeWidth={1.75} />
                     ) : (
                       <Maximize className="h-5 w-5" strokeWidth={1.75} />

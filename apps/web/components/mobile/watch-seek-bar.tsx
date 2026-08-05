@@ -10,20 +10,27 @@ function fmtTime(sec: number) {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
+function readDuration(v: HTMLVideoElement) {
+  const d = v.duration;
+  return Number.isFinite(d) && d > 0 ? d : 0;
+}
+
 type WatchSeekBarProps = {
   videoRef: React.RefObject<HTMLVideoElement | null>;
   bottom?: number;
   className?: string;
   disabled?: boolean;
   absolute?: boolean;
+  /** Rebind when the underlying media identity changes (e.g. playUrl). */
+  mediaKey?: string | null;
   /** Fired when scrub drag starts/ends (parent uses this to ignore swipe gestures). */
   onSeekingChange?: (seeking: boolean) => void;
 };
 
 /**
  * Hongguo-style scrubber:
- * - idle: thin full-bleed track + small circular thumb
- * - drag: thicken track + larger thumb + preview + time
+ * - idle: thin inset track + always-visible circular thumb
+ * - drag: thicken + thumb + current/total time above thumb
  * - seek throttled for smoother scrubbing on HLS
  */
 export function WatchSeekBar({
@@ -32,108 +39,137 @@ export function WatchSeekBar({
   className,
   disabled,
   absolute = true,
+  mediaKey,
   onSeekingChange,
 }: WatchSeekBarProps) {
   const seekRef = useRef<HTMLDivElement>(null);
-  const previewCanvasRef = useRef<HTMLCanvasElement>(null);
   const [current, setCurrent] = useState(0);
   const [duration, setDuration] = useState(0);
   const [buffered, setBuffered] = useState(0);
   const [dragging, setDragging] = useState(false);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const wasPaused = useRef(false);
   const dragRatio = useRef(0);
-  const lastSeekAt = useRef(0);
-  const pendingSeek = useRef<number | null>(null);
-  const seekTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const wantSeekTime = useRef<number | null>(null);
+  const seekInFlight = useRef(false);
+  const durationRef = useRef(0);
 
   useEffect(() => {
-    const v = videoRef.current;
-    if (!v) return;
-    const onTime = () => {
-      if (!dragging) setCurrent(v.currentTime);
+    durationRef.current = duration;
+  }, [duration]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let attached: HTMLVideoElement | null = null;
+    let raf = 0;
+
+    const detach = () => {
+      if (!attached) return;
+      attached.removeEventListener("timeupdate", onTime);
+      attached.removeEventListener("loadedmetadata", onMeta);
+      attached.removeEventListener("durationchange", onMeta);
+      attached.removeEventListener("progress", onProg);
+      attached.removeEventListener("seeked", onSeeked);
+      attached.removeEventListener("seeking", onSeeking);
+      attached = null;
+      if (raf) cancelAnimationFrame(raf);
+      raf = 0;
     };
-    const onMeta = () => setDuration(v.duration || 0);
-    const onProg = () => {
+
+    const flushSeek = () => {
+      const v = attached ?? videoRef.current;
+      const next = wantSeekTime.current;
+      if (!v || next == null || disabled) return;
+      if (seekInFlight.current) return;
+      seekInFlight.current = true;
+      wantSeekTime.current = null;
       try {
-        if (v.buffered.length > 0 && v.duration > 0) {
-          setBuffered(v.buffered.end(v.buffered.length - 1) / v.duration);
+        v.currentTime = next;
+      } catch {
+        seekInFlight.current = false;
+      }
+    };
+
+    const onSeeked = () => {
+      seekInFlight.current = false;
+      // Catch up to the latest thumb position while still dragging.
+      if (wantSeekTime.current != null) flushSeek();
+    };
+    const onSeeking = () => {
+      seekInFlight.current = true;
+    };
+
+    const onTime = () => {
+      const v = attached;
+      if (!v || dragging) return;
+      setCurrent(v.currentTime || 0);
+      const d = readDuration(v);
+      if (d > 0 && d !== durationRef.current) setDuration(d);
+    };
+    const onMeta = () => {
+      const v = attached;
+      if (!v) return;
+      const d = readDuration(v);
+      if (d > 0) setDuration(d);
+    };
+    const onProg = () => {
+      const v = attached;
+      if (!v) return;
+      try {
+        const d = readDuration(v);
+        if (v.buffered.length > 0 && d > 0) {
+          setBuffered(v.buffered.end(v.buffered.length - 1) / d);
         }
       } catch {
         /* ignore */
       }
     };
-    onTime();
-    onMeta();
-    onProg();
-    v.addEventListener("timeupdate", onTime);
-    v.addEventListener("loadedmetadata", onMeta);
-    v.addEventListener("durationchange", onMeta);
-    v.addEventListener("progress", onProg);
-    return () => {
-      v.removeEventListener("timeupdate", onTime);
-      v.removeEventListener("loadedmetadata", onMeta);
-      v.removeEventListener("durationchange", onMeta);
-      v.removeEventListener("progress", onProg);
+
+    const tick = () => {
+      if (cancelled) return;
+      const v = videoRef.current;
+      if (v && v !== attached) {
+        detach();
+        attached = v;
+        seekInFlight.current = false;
+        attached.addEventListener("timeupdate", onTime);
+        attached.addEventListener("loadedmetadata", onMeta);
+        attached.addEventListener("durationchange", onMeta);
+        attached.addEventListener("progress", onProg);
+        attached.addEventListener("seeked", onSeeked);
+        attached.addEventListener("seeking", onSeeking);
+        onTime();
+        onMeta();
+        onProg();
+      } else if (v && !dragging && !v.paused && !v.ended) {
+        setCurrent(v.currentTime || 0);
+        const d = readDuration(v);
+        if (d > 0 && d !== durationRef.current) setDuration(d);
+      }
+      raf = requestAnimationFrame(tick);
     };
-  }, [videoRef, dragging]);
 
-  const captureFrame = () => {
-    const v = videoRef.current;
-    const canvas = previewCanvasRef.current;
-    if (!v || !canvas || v.readyState < 2) return;
-    const w = 90;
-    const h = 160;
-    canvas.width = w;
-    canvas.height = h;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    try {
-      const vw = v.videoWidth || w;
-      const vh = v.videoHeight || h;
-      const scale = Math.max(w / vw, h / vh);
-      const dw = vw * scale;
-      const dh = vh * scale;
-      ctx.drawImage(v, (w - dw) / 2, (h - dh) / 2, dw, dh);
-      setPreviewUrl(canvas.toDataURL("image/jpeg", 0.7));
-    } catch {
-      /* cross-origin / empty frame */
-    }
-  };
+    raf = requestAnimationFrame(tick);
+    return () => {
+      cancelled = true;
+      detach();
+    };
+  }, [videoRef, mediaKey, dragging, disabled]);
 
-  const commitSeek = (time: number) => {
+  const requestSeek = (time: number) => {
+    const d = durationRef.current;
+    if (!d || disabled) return;
+    const next = Math.max(0, Math.min(d, time));
+    wantSeekTime.current = next;
+    if (seekInFlight.current) return;
     const v = videoRef.current;
-    if (!v || !duration || disabled) return;
-    const next = Math.max(0, Math.min(duration, time));
+    if (!v) return;
+    seekInFlight.current = true;
+    wantSeekTime.current = null;
     try {
       v.currentTime = next;
     } catch {
-      /* ignore */
+      seekInFlight.current = false;
     }
-    lastSeekAt.current = Date.now();
-  };
-
-  const scheduleSeek = (time: number) => {
-    pendingSeek.current = time;
-    const now = Date.now();
-    const elapsed = now - lastSeekAt.current;
-    if (elapsed >= 90) {
-      if (seekTimer.current) {
-        clearTimeout(seekTimer.current);
-        seekTimer.current = null;
-      }
-      commitSeek(time);
-      pendingSeek.current = null;
-      return;
-    }
-    if (seekTimer.current) return;
-    seekTimer.current = setTimeout(() => {
-      seekTimer.current = null;
-      if (pendingSeek.current != null) {
-        commitSeek(pendingSeek.current);
-        pendingSeek.current = null;
-      }
-    }, 90 - elapsed);
   };
 
   const ratioFromEvent = (clientX: number) => {
@@ -145,10 +181,14 @@ export function WatchSeekBar({
 
   const applyRatioUi = (ratio: number) => {
     dragRatio.current = ratio;
-    if (!duration) return;
-    const time = ratio * duration;
+    const d = durationRef.current;
+    if (!d) {
+      setCurrent(ratio);
+      return;
+    }
+    const time = ratio * d;
     setCurrent(time);
-    scheduleSeek(time);
+    requestSeek(time);
   };
 
   useEffect(() => {
@@ -157,25 +197,31 @@ export function WatchSeekBar({
 
   useEffect(() => {
     if (!dragging) return;
-    const v = videoRef.current;
-    const onSeeked = () => captureFrame();
-    v?.addEventListener("seeked", onSeeked);
-    captureFrame();
 
     const onMove = (e: PointerEvent) => {
       applyRatioUi(ratioFromEvent(e.clientX));
     };
     const onUp = () => {
-      if (seekTimer.current) {
-        clearTimeout(seekTimer.current);
-        seekTimer.current = null;
+      const d = durationRef.current;
+      if (d > 0) {
+        const finalTime =
+          wantSeekTime.current != null
+            ? wantSeekTime.current
+            : Math.max(0, Math.min(d, dragRatio.current * d));
+        wantSeekTime.current = finalTime;
+        const v = videoRef.current;
+        if (v) {
+          seekInFlight.current = false;
+          try {
+            v.currentTime = finalTime;
+            setCurrent(finalTime);
+          } catch {
+            /* ignore */
+          }
+        }
       }
-      if (pendingSeek.current != null) {
-        commitSeek(pendingSeek.current);
-        pendingSeek.current = null;
-      }
+      wantSeekTime.current = null;
       setDragging(false);
-      setPreviewUrl(null);
       const video = videoRef.current;
       if (video && !wasPaused.current) {
         void video.play().catch(() => undefined);
@@ -185,7 +231,6 @@ export function WatchSeekBar({
     window.addEventListener("pointerup", onUp);
     window.addEventListener("pointercancel", onUp);
     return () => {
-      v?.removeEventListener("seeked", onSeeked);
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
@@ -195,45 +240,37 @@ export function WatchSeekBar({
 
   useEffect(
     () => () => {
-      if (seekTimer.current) clearTimeout(seekTimer.current);
+      wantSeekTime.current = null;
+      seekInFlight.current = false;
     },
     [],
   );
 
-  const progress = duration > 0 ? current / duration : 0;
-  const previewLeft = Math.min(86, Math.max(14, progress * 100));
+  const progress =
+    duration > 0
+      ? Math.max(0, Math.min(1, current / duration))
+      : dragging
+        ? Math.max(0, Math.min(1, current <= 1 ? current : 0))
+        : 0;
+  const timeLeft = Math.min(88, Math.max(12, progress * 100));
 
   return (
     <div
       className={cn(
-        "relative",
-        absolute && "absolute inset-x-0 z-40 px-0",
+        "relative px-3",
+        absolute && "absolute inset-x-0 z-40",
         className,
       )}
       style={absolute ? { bottom } : undefined}
       onClick={(e) => e.stopPropagation()}
       data-no-tap
     >
-      <canvas ref={previewCanvasRef} className="hidden" />
-
       {dragging ? (
         <div
-          className="pointer-events-none absolute bottom-[1.15rem] flex w-[4.5rem] -translate-x-1/2 flex-col items-center"
-          style={{ left: `${previewLeft}%` }}
+          className="pointer-events-none absolute bottom-[1.05rem] -translate-x-1/2 whitespace-nowrap text-[12px] font-semibold tabular-nums tracking-wide text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.75)]"
+          style={{ left: `${timeLeft}%` }}
         >
-          <div className="overflow-hidden rounded-md ring-2 ring-white/90 shadow-[0_4px_16px_rgba(0,0,0,0.45)]">
-            {previewUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={previewUrl} alt="" className="h-28 w-[4.5rem] object-cover" />
-            ) : (
-              <div className="flex h-28 w-[4.5rem] items-center justify-center bg-black/65 text-[11px] text-white/50">
-                …
-              </div>
-            )}
-          </div>
-          <div className="mt-1.5 text-[12px] font-medium tabular-nums tracking-wide text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.65)]">
-            {fmtTime(current)} / {fmtTime(duration)}
-          </div>
+          {fmtTime(duration > 0 ? current : 0)} / {fmtTime(duration)}
         </div>
       ) : null}
 
@@ -254,7 +291,6 @@ export function WatchSeekBar({
           applyRatioUi(ratioFromEvent(e.clientX));
         }}
       >
-        {/* Track sits near the bottom of the hit area so it hugs the episode dock. */}
         <div
           className={cn(
             "absolute inset-x-0 bottom-[7px] overflow-visible rounded-full transition-[height,background-color] duration-150",

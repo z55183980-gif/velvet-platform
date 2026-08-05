@@ -13,6 +13,7 @@ import {
 import {
   ChevronRight,
   Heart,
+  Smartphone,
   Star,
 } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
@@ -578,9 +579,31 @@ function FeedPage({
   const [likeCount, setLikeCount] = useState(drama.likeCount ?? 0);
   const [favorited, setFavorited] = useState(false);
   const [favCount, setFavCount] = useState(drama.favoriteCount ?? 0);
+  const [landscape, setLandscape] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const meta = useMemo(() => buildFeedMeta(drama, locale, t), [drama, locale, t]);
+
+  useEffect(() => {
+    setLandscape(false);
+  }, [drama.id]);
+
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const sync = () => {
+      if (v.videoWidth > 0 && v.videoHeight > 0) {
+        setLandscape(v.videoWidth >= v.videoHeight);
+      }
+    };
+    sync();
+    v.addEventListener("loadedmetadata", sync);
+    v.addEventListener("loadeddata", sync);
+    return () => {
+      v.removeEventListener("loadedmetadata", sync);
+      v.removeEventListener("loadeddata", sync);
+    };
+  }, [playUrl, active]);
 
   useEffect(() => {
     setLiked(false);
@@ -801,32 +824,75 @@ function FeedPage({
   };
 
   return (
-    <div className="relative h-full min-h-0 overflow-hidden bg-base">
-      <VerticalPlayer
-        videoRef={videoRef}
-        active={active}
-        chrome="feed"
-        src={playUrl && canPlay ? playUrl : null}
-        poster={cover}
-        autoPlay={active}
-        muted={muted}
-        onMutedChange={onMutedChange}
-        loginRequired={active && needsLogin}
-        onLogin={() => openLogin("login")}
-        onRegister={() => openLogin("register")}
-        locked={locked}
-        lockLabel={
-          locked && episode
-            ? `${t("detail.unlockEpisode")} · ${formatCredits(episode.price, t("card.credits"))}`
-            : undefined
-        }
-        lockActionLabel={t("feed.watch")}
-        onUnlock={undefined}
-        error={active ? playErr : null}
-        loading={active && loading}
-        showSeek={false}
-        tapToToggle={false}
-      />
+    <div className={cn("relative h-full min-h-0 overflow-hidden", landscape ? "bg-black" : "bg-base")}>
+      {landscape ? (
+        <div className="absolute inset-x-0 top-[max(3.25rem,calc(env(safe-area-inset-top)+2.75rem))] z-10">
+          <div className="relative mx-auto w-full bg-black" style={{ aspectRatio: "16 / 9" }}>
+            <VerticalPlayer
+              videoRef={videoRef}
+              active={active}
+              chrome="feed"
+              objectFit="contain"
+              src={playUrl && canPlay ? playUrl : null}
+              poster={cover}
+              autoPlay={active}
+              muted={muted}
+              onMutedChange={onMutedChange}
+              loginRequired={active && needsLogin}
+              onLogin={() => openLogin("login")}
+              onRegister={() => openLogin("register")}
+              locked={locked}
+              lockLabel={
+                locked && episode
+                  ? `${t("detail.unlockEpisode")} · ${formatCredits(episode.price, t("card.credits"))}`
+                  : undefined
+              }
+              lockActionLabel={t("feed.watch")}
+              onUnlock={undefined}
+              error={active ? playErr : null}
+              loading={active && loading}
+              showSeek={false}
+              tapToToggle={false}
+            />
+          </div>
+          <div className="mt-3.5 flex justify-center px-3">
+            <Link
+              href={`/drama/${drama.id}?lfs=1`}
+              className="inline-flex items-center gap-1.5 rounded-full bg-[#2a2c2c]/88 px-4 py-2 text-[13px] font-medium text-white/95 backdrop-blur-sm"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <Smartphone className="h-4 w-4 rotate-90" strokeWidth={1.75} />
+              {t("player.watchFullscreen")}
+            </Link>
+          </div>
+        </div>
+      ) : (
+        <VerticalPlayer
+          videoRef={videoRef}
+          active={active}
+          chrome="feed"
+          src={playUrl && canPlay ? playUrl : null}
+          poster={cover}
+          autoPlay={active}
+          muted={muted}
+          onMutedChange={onMutedChange}
+          loginRequired={active && needsLogin}
+          onLogin={() => openLogin("login")}
+          onRegister={() => openLogin("register")}
+          locked={locked}
+          lockLabel={
+            locked && episode
+              ? `${t("detail.unlockEpisode")} · ${formatCredits(episode.price, t("card.credits"))}`
+              : undefined
+          }
+          lockActionLabel={t("feed.watch")}
+          onUnlock={undefined}
+          error={active ? playErr : null}
+          loading={active && loading}
+          showSeek={false}
+          tapToToggle={false}
+        />
+      )}
 
       {/* Bottom info stack: title → tags → episode bar; side actions hug the top */}
       <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex flex-col">
