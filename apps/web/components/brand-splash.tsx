@@ -12,6 +12,9 @@ const FADE_MS = 340;
  * TikTok-style cold open: black stage + centered mark (once per session, mobile).
  * Static #velvet-boot-splash is painted from root layout for first paint; this
  * controller fades it out and marks the session.
+ *
+ * Root layout also installs an inline failsafe timer so a hydration crash cannot
+ * leave the splash covering the app forever.
  */
 export function BrandSplash() {
   useEffect(() => {
@@ -19,10 +22,12 @@ export function BrandSplash() {
     if (!el) return;
     if (el.dataset.skip === "1" || el.hasAttribute("hidden")) {
       el.remove();
+      document.documentElement.classList.remove("velvet-splash-lock");
       return;
     }
 
     let finished = false;
+    let minTimer = 0;
     const finish = () => {
       if (finished) return;
       finished = true;
@@ -43,7 +48,7 @@ export function BrandSplash() {
 
     const releaseAfterMin = () => {
       const wait = Math.max(0, MIN_MS - (performance.now() - started));
-      window.setTimeout(finish, wait);
+      minTimer = window.setTimeout(finish, wait);
     };
 
     if (document.readyState === "complete") releaseAfterMin();
@@ -52,8 +57,8 @@ export function BrandSplash() {
     const maxTimer = window.setTimeout(finish, MAX_MS);
     return () => {
       window.clearTimeout(maxTimer);
+      window.clearTimeout(minTimer);
       window.removeEventListener("load", releaseAfterMin);
-      document.documentElement.classList.remove("velvet-splash-lock");
     };
   }, []);
 

@@ -2143,8 +2143,22 @@ export function LocaleProvider({
 
 export function useLocale(): LocaleContextValue {
   const ctx = useContext(LocaleContext);
-  if (!ctx) throw new Error("useLocale must be used within LocaleProvider");
-  return ctx;
+  if (ctx) return ctx;
+  // Next.js not-found / error slots can briefly render without the client provider tree.
+  // Never throw — return a stable English fallback translator instead.
+  return {
+    locale: FALLBACK_LOCALE,
+    setLocale: () => {},
+    t: (path: string, vars?: Record<string, string | number>) => {
+      let s = lookup(dicts[FALLBACK_LOCALE], path);
+      if (vars) {
+        for (const [k, v] of Object.entries(vars)) {
+          s = s.replaceAll(`{${k}}`, String(v));
+        }
+      }
+      return s;
+    },
+  };
 }
 
 export type { Locale };

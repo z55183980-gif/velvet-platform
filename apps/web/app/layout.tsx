@@ -9,7 +9,7 @@ import { AppShell } from "@/components/app-shell";
 import { BrandSplash } from "@/components/brand-splash";
 import { normalizeInterfaceLanguage } from "@/lib/languages";
 
-const BRAND_SPLASH_BOOT_SCRIPT = `(function(){try{var el=document.getElementById("velvet-boot-splash");if(!el)return;if(sessionStorage.getItem("dv_splash_done")||window.matchMedia("(min-width:768px)").matches){el.dataset.skip="1";el.setAttribute("hidden","");el.style.display="none";document.documentElement.classList.remove("velvet-splash-lock");}else{document.documentElement.classList.add("velvet-splash-lock");}}catch(e){}})();`;
+const BRAND_SPLASH_BOOT_SCRIPT = `(function(){try{var el=document.getElementById("velvet-boot-splash");if(!el)return;var KEY="dv_splash_done";var FADE=340;function dismiss(){try{sessionStorage.setItem(KEY,"1");}catch(e){}var node=document.getElementById("velvet-boot-splash");document.documentElement.classList.remove("velvet-splash-lock");if(!node)return;node.style.transition="opacity "+FADE+"ms ease";node.style.opacity="0";node.style.pointerEvents="none";window.setTimeout(function(){try{node.remove();}catch(e){}},FADE+40);}if(sessionStorage.getItem(KEY)||window.matchMedia("(min-width:768px)").matches){el.dataset.skip="1";el.setAttribute("hidden","");el.style.display="none";document.documentElement.classList.remove("velvet-splash-lock");}else{document.documentElement.classList.add("velvet-splash-lock");window.setTimeout(dismiss,3200);}}catch(e){try{document.documentElement.classList.remove("velvet-splash-lock");}catch(_){}}})();`;
 
 export const metadata: Metadata = {
   title: "Velvet — Spicy Short Dramas",
