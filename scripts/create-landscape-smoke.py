@@ -250,9 +250,9 @@ const payload = JSON.parse(
     create: {
       creatorId: creator.id,
       slug: payload.slug,
-      titleVi: 'Landscape smoke (5s HLS)',
+      titleEn: 'Landscape smoke (5s HLS)',
       titleZh: '横屏冒烟测片（5秒）',
-      descriptionVi: 'Clip ngang ngắn từ mẫu công khai (Sintel), chỉ để kiểm thử letterbox.',
+      descriptionEn: 'Short public landscape clip (Sintel) for 16:9 letterbox smoke tests.',
       descriptionZh: '公开横屏样片短剪（Sintel），用于联调 16:9 信箱播放。',
       coverUrl: payload.coverUrl || null,
       categorySlug: category.slug,
@@ -267,9 +267,9 @@ const payload = JSON.parse(
       externalRef: 'land-smoke-hls',
     },
     update: {
-      titleVi: 'Landscape smoke (5s HLS)',
+      titleEn: 'Landscape smoke (5s HLS)',
       titleZh: '横屏冒烟测片（5秒）',
-      descriptionVi: 'Clip ngang ngắn từ mẫu công khai (Sintel), chỉ để kiểm thử letterbox.',
+      descriptionEn: 'Short public landscape clip (Sintel) for 16:9 letterbox smoke tests.',
       descriptionZh: '公开横屏样片短剪（Sintel），用于联调 16:9 信箱播放。',
       coverUrl: payload.coverUrl || undefined,
       tags: ['smoke', 'landscape', 'public', 'hls'],
