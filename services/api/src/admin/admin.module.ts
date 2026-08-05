@@ -36,9 +36,10 @@ import { SettingsController } from './settings.controller';
 import { AdminNotificationsController } from './notifications.controller';
 import { YtdlpProvider } from './ytdlp.provider';
 import { YtdlpImportService } from './ytdlp-import.service';
+import { UploadModule } from '../upload/upload.module';
 
 @Module({
-  imports: [WalletModule, ExchangeModule, ReconcileModule, AuthModule, RedeemModule],
+  imports: [WalletModule, ExchangeModule, ReconcileModule, AuthModule, RedeemModule, UploadModule],
   controllers: [
     AdminAuthController,
     AdminAuditController,

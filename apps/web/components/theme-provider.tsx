@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from "react";
 
@@ -14,7 +15,7 @@ export type ThemeMode = "light" | "dark";
 type ThemeCtx = {
   theme: ThemeMode;
   resolved: ThemeMode;
-  /** False until localStorage theme is applied — keep SSR/client first paint aligned. */
+  /** False until client has applied the stored preference. */
   ready: boolean;
   setTheme: (t: ThemeMode) => void;
   cycleTheme: () => void;
@@ -22,6 +23,7 @@ type ThemeCtx = {
 
 const Ctx = createContext<ThemeCtx | null>(null);
 const STORAGE_KEY = "dv_theme";
+const DEFAULT_THEME: ThemeMode = "dark";
 
 function applyDom(resolved: ThemeMode) {
   const root = document.documentElement;
@@ -34,40 +36,56 @@ function applyDom(resolved: ThemeMode) {
 function readStoredTheme(): ThemeMode {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
-    // Migrate legacy "system" to dark
     if (saved === "light" || saved === "dark") return saved;
   } catch {
     /* ignore */
   }
-  return "dark";
+  return DEFAULT_THEME;
+}
+
+function subscribeTheme(onStoreChange: () => void) {
+  const onStorage = (e: StorageEvent) => {
+    if (e.key === STORAGE_KEY || e.key === null) onStoreChange();
+  };
+  window.addEventListener("storage", onStorage);
+  window.addEventListener("dv-theme", onStoreChange as EventListener);
+  return () => {
+    window.removeEventListener("storage", onStorage);
+    window.removeEventListener("dv-theme", onStoreChange as EventListener);
+  };
+}
+
+function emitThemeChange() {
+  window.dispatchEvent(new Event("dv-theme"));
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  // SSR + first client render must match (default dark). Load preference after mount.
-  const [theme, setThemeState] = useState<ThemeMode>("dark");
+  // During SSR + hydration, React uses getServerSnapshot ("dark") so markup matches.
+  // After hydration, getSnapshot reads localStorage without a hydration warning.
+  const stored = useSyncExternalStore(subscribeTheme, readStoredTheme, () => DEFAULT_THEME);
+  const [override, setOverride] = useState<ThemeMode | null>(null);
   const [ready, setReady] = useState(false);
+  const theme = override ?? stored;
 
   useEffect(() => {
-    const next = readStoredTheme();
-    setThemeState(next);
-    applyDom(next);
     setReady(true);
-  }, []);
-
-  useEffect(() => {
-    if (!ready) return;
     applyDom(theme);
+  }, [theme]);
+
+  const setTheme = useCallback((t: ThemeMode) => {
+    setOverride(t);
     try {
-      localStorage.setItem(STORAGE_KEY, theme);
+      localStorage.setItem(STORAGE_KEY, t);
     } catch {
       /* ignore */
     }
-  }, [theme, ready]);
-
-  const setTheme = useCallback((t: ThemeMode) => setThemeState(t), []);
-  const cycleTheme = useCallback(() => {
-    setThemeState((prev) => (prev === "dark" ? "light" : "dark"));
+    applyDom(t);
+    emitThemeChange();
   }, []);
+
+  const cycleTheme = useCallback(() => {
+    setTheme(theme === "dark" ? "light" : "dark");
+  }, [setTheme, theme]);
 
   return (
     <Ctx.Provider value={{ theme, resolved: theme, ready, setTheme, cycleTheme }}>

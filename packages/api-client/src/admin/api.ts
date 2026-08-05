@@ -625,6 +625,25 @@ export async function adminImportUpload(files: FileList | File[], dryRun: boolea
   return adminRequest("/admin/import/upload", { method: "POST", body: form });
 }
 
+/** Upload cover/thumbnail image to instance storage. Returns `/api/v1/media/...` url. */
+export async function adminUploadImage(
+  file: Blob,
+  opts?: { kind?: "cover" | "thumbnail" | "image"; filename?: string },
+) {
+  const form = new FormData();
+  const name = opts?.filename || (file instanceof File ? file.name : "cover.jpg");
+  form.append("file", file, name);
+  form.append("kind", opts?.kind || "cover");
+  return adminRequest<{
+    relativePath: string;
+    originalUrl: string;
+    filename: string;
+    size: number;
+    mime: string;
+    url: string;
+  }>("/admin/upload/image", { method: "POST", body: form });
+}
+
 export async function adminLocalImport(rootPath?: string, dryRun?: boolean) {
   return adminRequest("/admin/import/local", {
     method: "POST",

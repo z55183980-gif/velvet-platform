@@ -7,11 +7,12 @@ import {
   Post,
   Query,
   Req,
+  UploadedFile,
   UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { FilesInterceptor } from '@nestjs/platform-express';
+import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { Transform, Type } from 'class-transformer';
 import {
   ArrayMinSize,
@@ -29,6 +30,7 @@ import {
 import { memoryStorage } from 'multer';
 import { BizCode, BizException } from '../common/biz.exception';
 import { ok } from '../common/response';
+import { UploadService } from '../upload/upload.service';
 import { AdminRoleGuard, AdminRoles } from './admin-role.guard';
 import { AdminGuard } from './admin.guard';
 import { AdminService } from './admin.service';
@@ -222,7 +224,37 @@ export class ContentController {
     private readonly episodes: AdminEpisodesService,
     private readonly ops: AdminOpsService,
     private readonly ytdlp: YtdlpImportService,
+    private readonly upload: UploadService,
   ) {}
+
+  /** 管理端封面/缩略图上传 → 实例 STORAGE_ROOT/covers，返回 /api/v1/media/... */
+  @Post('upload/image')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 8 * 1024 * 1024 },
+      fileFilter: (_req, file, cb) => {
+        const okMime = ['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype);
+        cb(okMime ? null : new Error(`无效图片类型: ${file.mimetype}`), okMime);
+      },
+    }),
+  )
+  async uploadImage(
+    @UploadedFile() file: Express.Multer.File,
+    @Body() body: { kind?: string },
+  ) {
+    const kindRaw = (body?.kind || 'cover').trim();
+    const kind =
+      kindRaw === 'thumbnail' || kindRaw === 'image' || kindRaw === 'cover'
+        ? kindRaw
+        : 'cover';
+    const saved = this.upload.saveImage(file, kind);
+    return ok({
+      ...saved,
+      url: `/api/v1/media/${saved.relativePath}`,
+    });
+  }
 
   @Get('dramas')
   async listDramas(

@@ -153,6 +153,45 @@ export class UploadService implements OnModuleInit {
     };
   }
 
+  /** 封面/缩略图上传 → STORAGE_ROOT/covers（实例本地存储，经 /api/v1/media 访问） */
+  saveImage(file: Express.Multer.File, kind: 'cover' | 'thumbnail' | 'image' = 'cover'): UploadResult {
+    if (!file) throw new BizException(BizCode.BAD_REQUEST, '未收到文件');
+    let ext = path.extname(file.originalname || '').toLowerCase();
+    const mime = (file.mimetype || '').toLowerCase();
+    if (!ext || ext === '.') {
+      if (mime === 'image/png') ext = '.png';
+      else if (mime === 'image/webp') ext = '.webp';
+      else ext = '.jpg';
+    }
+    const allowed = new Set(['.jpg', '.jpeg', '.png', '.webp']);
+    if (!allowed.has(ext)) {
+      throw new BizException(BizCode.BAD_REQUEST, `不支持的图片格式: ${ext}`);
+    }
+    if (mime && !['image/jpeg', 'image/png', 'image/webp', 'application/octet-stream'].includes(mime)) {
+      throw new BizException(BizCode.BAD_REQUEST, `mime 无效: ${mime}`);
+    }
+    const dir = path.join(this.getStorageRoot(), 'covers');
+    fs.mkdirSync(dir, { recursive: true });
+    const id = crypto.randomUUID().replace(/-/g, '').slice(0, 16);
+    const filename = `${kind}-${Date.now()}-${id}${ext === '.jpeg' ? '.jpg' : ext}`;
+    const abs = path.join(dir, filename);
+    fs.writeFileSync(abs, file.buffer);
+    const relativePath = `covers/${filename}`;
+    const mimeByExt: Record<string, string> = {
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.png': 'image/png',
+      '.webp': 'image/webp',
+    };
+    return {
+      relativePath,
+      originalUrl: relativePath,
+      filename,
+      size: file.size,
+      mime: mime && mime !== 'application/octet-stream' ? mime : mimeByExt[ext] || 'image/jpeg',
+    };
+  }
+
   resolveAbs(relativePath: string): string {
     const normalized = path.normalize(relativePath).replace(/^(\.\.(\/|\\|$))+/, '');
     // storage 内

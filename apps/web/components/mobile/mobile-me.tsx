@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   Bell,
@@ -154,6 +154,11 @@ export function MobileMe(props: Props) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [showGroups, setShowGroups] = useState(false);
   const [historyStatus, setHistoryStatus] = useState<HistoryStatusFilter>("all");
+  const [themeMounted, setThemeMounted] = useState(false);
+
+  useEffect(() => {
+    setThemeMounted(true);
+  }, []);
 
   const avatar = mediaUrl(user.avatarUrl);
 
@@ -252,7 +257,15 @@ export function MobileMe(props: Props) {
           aria-label={t("account.nightMode")}
           title={t("account.nightMode")}
         >
-          {resolved === "dark" ? <Moon className="h-5 w-5" /> : <Sun className="h-5 w-5" />}
+          {themeMounted ? (
+            resolved === "dark" ? (
+              <Moon className="h-5 w-5" />
+            ) : (
+              <Sun className="h-5 w-5" />
+            )
+          ) : (
+            <span className="inline-block h-5 w-5" aria-hidden />
+          )}
         </button>
         <button
           type="button"

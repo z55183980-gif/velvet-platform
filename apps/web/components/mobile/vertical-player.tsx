@@ -498,7 +498,8 @@ export function VerticalPlayer({
 
       {overlay}
 
-      {src && !locked && !loginRequired && !error && !playing && !loading && (
+      {/* Feed owns pause/play via pager tap — never flash the center play affordance while swapping. */}
+      {src && !locked && !loginRequired && !error && !playing && !loading && chrome !== "feed" && (
         <button
           type="button"
           aria-label={t("player.play")}
@@ -632,7 +633,7 @@ export function VerticalPlayer({
         </div>
       )}
 
-      {!src && !locked && !loginRequired && !loading && (
+      {!src && !locked && !loginRequired && !loading && chrome !== "feed" && (
         <div className="absolute inset-0 z-[6] flex items-center justify-center">
           <span className="grid h-16 w-16 place-items-center rounded-full bg-black/45 text-white backdrop-blur">
             <Play className="h-7 w-7 fill-white" />

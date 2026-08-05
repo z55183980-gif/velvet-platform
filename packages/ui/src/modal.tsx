@@ -5,7 +5,7 @@ import { AlertTriangle, CircleHelp, LoaderCircle, X } from "lucide-react";
 import { Button } from "./components";
 import { cn } from "./cn";
 
-export type ModalSize = "sm" | "md" | "lg" | "xl";
+export type ModalSize = "sm" | "md" | "lg" | "xl" | "2xl";
 
 export type ModalProps = {
   open: boolean;
@@ -23,6 +23,7 @@ const sizeWidth: Record<ModalSize, string> = {
   md: "32rem",
   lg: "48rem",
   xl: "64rem",
+  "2xl": "76rem",
 };
 
 export function Modal({

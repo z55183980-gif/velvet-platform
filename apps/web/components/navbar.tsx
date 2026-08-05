@@ -23,18 +23,22 @@ export function Navbar() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const { user, ready: authReady, openLogin, openVip } = useAuth();
-  const { theme, ready: themeReady, cycleTheme } = useTheme();
+  const { theme, cycleTheme } = useTheme();
   const { locked: feedLocked } = useMobileFeedLock();
   const [scrolled, setScrolled] = useState(false);
+  const [themeMounted, setThemeMounted] = useState(false);
   const filteredHome =
     !!searchParams.get("cat") || !!searchParams.get("q") || !!searchParams.get("sort");
   const isHome = pathname === "/" && !filteredHome;
   // Hero overlay only on desktop home
   const isHomeOverlay = isHome;
 
-  // Keep SSR + first client paint on dark so localStorage theme doesn't hydrate-mismatch.
-  const uiTheme = themeReady ? theme : "dark";
-  const ThemeIcon = uiTheme === "light" ? Sun : Moon;
+  useEffect(() => {
+    setThemeMounted(true);
+  }, []);
+
+  // Only choose Sun/Moon after mount so SSR HTML always matches the first client paint.
+  const ThemeIcon = theme === "light" ? Sun : Moon;
   // Mobile /me has its own Hongguo-style chrome (theme + settings).
   // Mobile home feed is immersive video; hide shell navbar.
   // Mobile /theater relies on bottom tabs; hide shell navbar.
@@ -148,10 +152,14 @@ export function Navbar() {
               "text-ink-muted hover:bg-surface-2 hover:text-ink",
             )}
             aria-label="theme"
-            title={uiTheme}
+            title={themeMounted ? theme : undefined}
             suppressHydrationWarning
           >
-            <ThemeIcon className="h-4 w-4" />
+            {themeMounted ? (
+              <ThemeIcon className="h-4 w-4" />
+            ) : (
+              <span className="inline-block h-4 w-4" aria-hidden />
+            )}
           </button>
 
           <LanguageSwitcher tone="default" className="md:hidden" />

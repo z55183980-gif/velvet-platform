@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -10,20 +10,46 @@ import {
   adminDeleteDrama,
   adminDeleteEpisode,
   adminGetDrama,
+  adminListCategories,
   adminListSettings,
   adminOfflineDrama,
   adminOnlineDrama,
   adminRejectDrama,
   adminReorderEpisodes,
   adminRetryTranscode,
-  adminSetFeatured,
-  adminSetOfficial,
-  adminSetSortWeight,
   adminUpdateDrama,
   adminUpdateEpisode,
+  adminUploadImage,
 } from "@velvet/api-client";
-import { Button, DataTable, Input, Select, StatCard, fmtNum, type Column } from "@velvet/ui";
+import { Badge, Button, DataTable, Input, Select, cn, fmtNum, type Column } from "@velvet/ui";
+import {
+  AlertTriangle,
+  ArrowDown,
+  ArrowUp,
+  Check,
+  ChevronDown,
+  CircleDollarSign,
+  Clapperboard,
+  Eye,
+  FileVideo,
+  Heart,
+  ImageIcon,
+  ImagePlus,
+  LayoutDashboard,
+  ListVideo,
+  LoaderCircle,
+  LockKeyhole,
+  Plus,
+  RotateCcw,
+  Save,
+  Settings2,
+  Sparkles,
+  Trash2,
+  UnlockKeyhole,
+  Video,
+} from "lucide-react";
 import { ConfirmModal } from "@/components/glass-modal";
+import { captureVideoFirstFrame } from "@/lib/capture-video-frame";
 import { useI18n, statusLabel } from "@/lib/i18n";
 
 type Episode = {
@@ -60,13 +86,41 @@ type Drama = {
   publishedAt?: string | null;
   sourceType?: string;
   creator?: { displayName?: string };
-  category?: { nameZh?: string; nameEn?: string };
+  category?: { slug?: string; nameZh?: string; nameEn?: string };
   episodes?: Episode[];
 };
 
-type DetailTab = "info" | "episodes" | "policy";
-
+type Category = { slug: string; nameZh?: string; nameEn?: string };
+type DetailTab = "overview" | "info" | "episodes" | "policy";
 type LockMode = "FREE_FIRST_N" | "VIP_ALL" | "ALL_FREE";
+type BasicDraft = {
+  titleZh: string;
+  titleEn: string;
+  categorySlug: string;
+  coverUrl: string;
+  descriptionZh: string;
+  descriptionEn: string;
+};
+
+const emptyDraft: BasicDraft = {
+  titleZh: "",
+  titleEn: "",
+  categorySlug: "",
+  coverUrl: "",
+  descriptionZh: "",
+  descriptionEn: "",
+};
+
+function draftFromDrama(drama: Drama): BasicDraft {
+  return {
+    titleZh: drama.titleZh || "",
+    titleEn: drama.titleEn || "",
+    categorySlug: drama.category?.slug || "",
+    coverUrl: drama.coverUrl || "",
+    descriptionZh: drama.descriptionZh || "",
+    descriptionEn: drama.descriptionEn || "",
+  };
+}
 
 function isEpisodeFreeByPolicy(opts: {
   episodeIsFree: boolean;
@@ -74,65 +128,213 @@ function isEpisodeFreeByPolicy(opts: {
   mode: LockMode;
   freeEpisodeCount: number;
 }) {
-  if (opts.episodeIsFree) return true;
-  if (opts.mode === "ALL_FREE") return true;
+  if (opts.episodeIsFree || opts.mode === "ALL_FREE") return true;
   if (opts.mode === "VIP_ALL") return false;
   return opts.episodeNumber <= Math.max(0, Math.floor(opts.freeEpisodeCount || 0));
+}
+
+function FieldLabel({ label, required, children }: { label: string; required?: boolean; children: ReactNode }) {
+  return (
+    <label className="block text-[13px] font-medium text-ink-muted">
+      <span className="mb-1.5 block">
+        {label}{required ? <span className="ml-1 text-danger">*</span> : null}
+      </span>
+      {children}
+    </label>
+  );
+}
+
+function Metric({ icon, label, value }: { icon: ReactNode; label: string; value: ReactNode }) {
+  return (
+    <div className="content-metric">
+      <span className="content-metric__icon">{icon}</span>
+      <div>
+        <p className="text-[12px] font-medium text-ink-subtle">{label}</p>
+        <p className="mt-0.5 text-lg font-semibold tabular-nums tracking-tight text-ink">{value}</p>
+      </div>
+    </div>
+  );
+}
+
+function Toggle({ checked, onChange, label, description }: { checked: boolean; onChange: () => void; label: string; description: string }) {
+  return (
+    <button type="button" className="content-toggle-row" onClick={onChange} aria-pressed={checked}>
+      <span className={cn("content-toggle", checked && "content-toggle--on")}>
+        <span />
+      </span>
+      <span className="min-w-0 text-left">
+        <span className="block text-sm font-semibold text-ink">{label}</span>
+        <span className="mt-0.5 block text-xs leading-5 text-ink-subtle">{description}</span>
+      </span>
+    </button>
+  );
+}
+
+function EpisodeThumbnailField({
+  url,
+  disabled,
+  kind = "thumbnail",
+  onUploaded,
+  onError,
+  fromVideoLabel,
+  uploadLabel,
+}: {
+  url?: string;
+  disabled?: boolean;
+  kind?: "cover" | "thumbnail" | "image";
+  onUploaded: (url: string) => void | Promise<void>;
+  onError: (message: string) => void;
+  fromVideoLabel: string;
+  uploadLabel: string;
+}) {
+  const videoRef = useRef<HTMLInputElement>(null);
+  const imageRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+
+  const run = async (task: () => Promise<void>) => {
+    setBusy(true);
+    try {
+      await task();
+    } catch (e) {
+      onError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="content-ep-thumb">
+      <div className="content-ep-thumb__preview">
+        {busy ? (
+          <LoaderCircle className="h-4 w-4 animate-spin text-brand" />
+        ) : url ? (
+          <img src={url} alt="" />
+        ) : (
+          <ImageIcon className="h-4 w-4 text-ink-subtle" />
+        )}
+      </div>
+      <div className="content-ep-thumb__actions">
+        <button
+          type="button"
+          className="content-ep-thumb__btn"
+          disabled={disabled || busy}
+          title={fromVideoLabel}
+          onClick={() => videoRef.current?.click()}
+        >
+          <Video className="h-3.5 w-3.5" />
+          <span>{fromVideoLabel}</span>
+        </button>
+        <button
+          type="button"
+          className="content-ep-thumb__btn"
+          disabled={disabled || busy}
+          title={uploadLabel}
+          onClick={() => imageRef.current?.click()}
+        >
+          <ImagePlus className="h-3.5 w-3.5" />
+          <span>{uploadLabel}</span>
+        </button>
+      </div>
+      <input
+        ref={videoRef}
+        type="file"
+        accept="video/*"
+        className="sr-only"
+        tabIndex={-1}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (!file) return;
+          void run(async () => {
+            const blob = await captureVideoFirstFrame(file);
+            const saved = await adminUploadImage(blob, {
+              kind,
+              filename: `${file.name.replace(/\.[^.]+$/, "") || "media"}-${kind}.jpg`,
+            });
+            await onUploaded(saved.url);
+          });
+        }}
+      />
+      <input
+        ref={imageRef}
+        type="file"
+        accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+        className="sr-only"
+        tabIndex={-1}
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (!file) return;
+          void run(async () => {
+            const saved = await adminUploadImage(file, { kind, filename: file.name });
+            await onUploaded(saved.url);
+          });
+        }}
+      />
+    </div>
+  );
 }
 
 export function ContentDetailPanel({
   id,
   onDeleted,
+  onDirtyChange,
 }: {
   id: string;
   onDeleted?: () => void;
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const { t } = useI18n();
   const router = useRouter();
   const qc = useQueryClient();
-  const [tab, setTab] = useState<DetailTab>("info");
+  const [tab, setTab] = useState<DetailTab>("overview");
   const [reason, setReason] = useState("");
   const [weight, setWeight] = useState(0);
   const [freeEpisodes, setFreeEpisodes] = useState(3);
   const [lockMode, setLockMode] = useState<string>("INHERIT");
   const [buyoutCredits, setBuyoutCredits] = useState(0);
+  const [draft, setDraft] = useState<BasicDraft>(emptyDraft);
+  const [savedDraft, setSavedDraft] = useState<BasicDraft>(emptyDraft);
   const [error, setError] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteEpisodeId, setDeleteEpisodeId] = useState<string | null>(null);
+  const [showAddEpisode, setShowAddEpisode] = useState(false);
   const [selectedEps, setSelectedEps] = useState<Set<string>>(new Set());
   const [batchFree, setBatchFree] = useState<"keep" | "1" | "0">("keep");
   const [batchPrice, setBatchPrice] = useState("");
   const [newEp, setNewEp] = useState({
     title: "",
     sourceUrl: "",
+    thumbnailUrl: "",
     isFree: false,
     priceCredits: 10,
   });
   const [previewEp, setPreviewEp] = useState(1);
   const [previewVip, setPreviewVip] = useState(false);
 
-  const detailQ = useQuery({
-    queryKey: ["admin", "drama", id],
-    queryFn: () => adminGetDrama(id) as Promise<Drama>,
-  });
-
+  const detailQ = useQuery({ queryKey: ["admin", "drama", id], queryFn: () => adminGetDrama(id) as Promise<Drama> });
+  const categoriesQ = useQuery({ queryKey: ["admin", "categories"], queryFn: () => adminListCategories(true) as Promise<Category[]> });
   const settingsQ = useQuery({
     queryKey: ["admin", "settings"],
     queryFn: async () => {
-      const result = (await adminListSettings()) as {
-        items?: { key: string; value: unknown }[];
-      };
+      const result = (await adminListSettings()) as { items?: { key: string; value: unknown }[] };
       return result.items ?? [];
     },
   });
 
   useEffect(() => {
     if (!detailQ.data) return;
+    const nextDraft = draftFromDrama(detailQ.data);
+    setDraft(nextDraft);
+    setSavedDraft(nextDraft);
     setWeight(detailQ.data.sortWeight ?? 0);
     setFreeEpisodes(detailQ.data.freeEpisodeCount ?? 3);
     setLockMode(detailQ.data.lockMode || "INHERIT");
     setBuyoutCredits(Number(detailQ.data.buyoutCredits || 0));
   }, [detailQ.data]);
+
+  const isDirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(savedDraft), [draft, savedDraft]);
+  useEffect(() => onDirtyChange?.(isDirty), [isDirty, onDirtyChange]);
 
   const actionMut = useMutation({
     mutationFn: (action: () => Promise<unknown>) => action(),
@@ -144,625 +346,368 @@ export function ContentDetailPanel({
     },
     onError: (e: Error) => setError(e.message),
   });
-
   const act = (action: () => Promise<unknown>) => actionMut.mutate(action);
   const drama = detailQ.data;
   const episodes = drama?.episodes ?? [];
+
+  const saveBasicInfo = () => {
+    if (!draft.titleZh.trim() && !draft.titleEn.trim()) {
+      setError(t("dramaTitleRequired"));
+      return;
+    }
+    actionMut.mutate(
+      () => adminUpdateDrama(id, { ...draft, titleZh: draft.titleZh.trim(), titleEn: draft.titleEn.trim() }),
+      { onSuccess: () => setSavedDraft(draft) },
+    );
+  };
 
   const moveEpisode = (episodeId: string, dir: -1 | 1) => {
     const list = [...episodes];
     const idx = list.findIndex((e) => String(e.id) === episodeId);
     const next = idx + dir;
     if (idx < 0 || next < 0 || next >= list.length) return;
-    const swapped = [...list];
-    [swapped[idx], swapped[next]] = [swapped[next], swapped[idx]];
-    act(() => adminReorderEpisodes(id, swapped.map((e) => String(e.id))));
+    [list[idx], list[next]] = [list[next], list[idx]];
+    act(() => adminReorderEpisodes(id, list.map((e) => String(e.id))));
   };
 
   const globalMode = useMemo(() => {
     const raw = settingsQ.data?.find((s) => s.key === "episodeLockMode")?.value;
-    return raw === "VIP_ALL" || raw === "ALL_FREE" || raw === "FREE_FIRST_N"
-      ? (raw as LockMode)
-      : ("FREE_FIRST_N" as LockMode);
+    return raw === "VIP_ALL" || raw === "ALL_FREE" || raw === "FREE_FIRST_N" ? raw as LockMode : "FREE_FIRST_N";
   }, [settingsQ.data]);
-
   const globalFreeCount = useMemo(() => {
-    const raw = settingsQ.data?.find((s) => s.key === "defaultFreeEpisodes")?.value;
-    const n = Number(raw);
+    const n = Number(settingsQ.data?.find((s) => s.key === "defaultFreeEpisodes")?.value);
     return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 3;
   }, [settingsQ.data]);
-
-  const effectiveMode: LockMode =
-    lockMode === "INHERIT" ? globalMode : (lockMode as LockMode);
-  const effectiveFree = freeEpisodes;
-
+  const effectiveMode: LockMode = lockMode === "INHERIT" ? globalMode : lockMode as LockMode;
   const previewResult = useMemo(() => {
     const ep = episodes.find((e) => e.episodeNumber === previewEp);
-    const free = isEpisodeFreeByPolicy({
-      episodeIsFree: !!ep?.isFree,
-      episodeNumber: previewEp,
-      mode: effectiveMode,
-      freeEpisodeCount: effectiveFree,
-    });
+    const free = isEpisodeFreeByPolicy({ episodeIsFree: !!ep?.isFree, episodeNumber: previewEp, mode: effectiveMode, freeEpisodeCount: freeEpisodes });
     if (free) return "free" as const;
-    if (previewVip) return "vip" as const;
-    return "locked" as const;
-  }, [episodes, previewEp, previewVip, effectiveMode, effectiveFree]);
+    return previewVip ? "vip" as const : "locked" as const;
+  }, [episodes, previewEp, previewVip, effectiveMode, freeEpisodes]);
 
-  const episodeColumns: Column<Episode>[] = useMemo(
-    () => [
-      {
-        key: "select",
-        header: "",
-        cell: (episode) => (
-          <input
-            type="checkbox"
-            checked={selectedEps.has(String(episode.id))}
-            onChange={(e) =>
-              setSelectedEps((prev) => {
-                const next = new Set(prev);
-                e.target.checked
-                  ? next.add(String(episode.id))
-                  : next.delete(String(episode.id));
-                return next;
-              })
-            }
-          />
-        ),
-      },
-      {
-        key: "number",
-        header: t("episodeNumber"),
-        cell: (episode) => String(episode.episodeNumber ?? "—"),
-        className: "tabular-nums",
-      },
-      {
-        key: "title",
-        header: t("colTitle"),
-        cell: (episode) => (
-          <Input
-            defaultValue={episode.title || ""}
-            onBlur={(e) =>
-              e.target.value !== (episode.title || "") &&
-              act(() => adminUpdateEpisode(String(episode.id), { title: e.target.value }))
-            }
-          />
-        ),
-      },
-      {
-        key: "media",
-        header: t("playUrl"),
-        cell: (episode) => (
-          <Input
-            className="min-w-[12rem]"
-            defaultValue={episode.hlsUrl || episode.originalUrl || ""}
-            placeholder="m3u8 / mp4"
-            onBlur={(e) => {
-              const next = e.target.value.trim();
-              const prev = episode.hlsUrl || episode.originalUrl || "";
-              if (next !== prev) {
-                act(() =>
-                  adminUpdateEpisode(String(episode.id), {
-                    sourceUrl: next || undefined,
-                    hlsUrl: next || "",
-                    originalUrl: next || "",
-                  }),
-                );
-              }
-            }}
-          />
-        ),
-      },
-      {
-        key: "free",
-        header: t("free"),
-        cell: (episode) => (
-          <input
-            type="checkbox"
-            defaultChecked={!!episode.isFree}
-            onChange={(e) =>
-              act(() =>
-                adminUpdateEpisode(String(episode.id), { isFree: e.target.checked }),
-              )
-            }
-          />
-        ),
-      },
-      {
-        key: "credits",
-        header: t("colCredits"),
-        cell: (episode) => (
-          <Input
-            type="number"
-            className="w-24"
-            defaultValue={Number(episode.priceCredits || 0)}
-            onBlur={(e) =>
-              Number(e.target.value) !== Number(episode.priceCredits || 0) &&
-              act(() =>
-                adminUpdateEpisode(String(episode.id), {
-                  priceCredits: Number(e.target.value),
-                }),
-              )
-            }
-          />
-        ),
-      },
-      {
-        key: "transcode",
-        header: t("transcodeStatus"),
-        cell: (episode) => (
-          <span className={episode.transcodeStatus === "FAILED" ? "text-danger" : ""}>
-            {episode.transcodeStatus || "—"}
-          </span>
-        ),
-      },
-      {
-        key: "actions",
-        header: "",
-        cell: (episode) => (
-          <div className="flex flex-wrap gap-1">
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={actionMut.isPending}
-              onClick={() => moveEpisode(String(episode.id), -1)}
-            >
-              {t("moveUp")}
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={actionMut.isPending}
-              onClick={() => moveEpisode(String(episode.id), 1)}
-            >
-              {t("moveDown")}
-            </Button>
-            {["FAILED", "PENDING"].includes(episode.transcodeStatus || "") ? (
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={actionMut.isPending}
-                onClick={() => act(() => adminRetryTranscode(String(episode.id)))}
-              >
-                {t("retryTranscode")}
-              </Button>
-            ) : null}
-            <Button
-              size="sm"
-              variant="danger"
-              disabled={actionMut.isPending}
-              onClick={() => setDeleteEpisodeId(String(episode.id))}
-            >
-              {t("delete")}
-            </Button>
-          </div>
-        ),
-      },
-    ],
-    [t, actionMut.isPending, selectedEps, episodes],
-  );
+  const episodeColumns: Column<Episode>[] = useMemo(() => [
+    {
+      key: "select", header: "", className: "w-10",
+      cell: (episode) => <input className="content-checkbox" type="checkbox" checked={selectedEps.has(String(episode.id))} onChange={(e) => setSelectedEps((prev) => {
+        const next = new Set(prev); e.target.checked ? next.add(String(episode.id)) : next.delete(String(episode.id)); return next;
+      })} />,
+    },
+    {
+      key: "number", header: t("episodeNumber"), className: "w-20 tabular-nums",
+      cell: (episode) => <span className="inline-flex h-8 min-w-8 items-center justify-center rounded-lg bg-surface-2 px-2 font-semibold">{episode.episodeNumber ?? "—"}</span>,
+    },
+    {
+      key: "thumb", header: t("episodeThumbnail"), className: "w-44",
+      cell: (episode) => (
+        <EpisodeThumbnailField
+          url={episode.thumbnailUrl}
+          disabled={actionMut.isPending}
+          fromVideoLabel={t("thumbFromVideo")}
+          uploadLabel={t("thumbUpload")}
+          onError={setError}
+          onUploaded={(url) => act(() => adminUpdateEpisode(String(episode.id), { thumbnailUrl: url }))}
+        />
+      ),
+    },
+    {
+      key: "title", header: t("colTitle"),
+      cell: (episode) => <Input className="min-w-40" defaultValue={episode.title || ""} onBlur={(e) => e.target.value !== (episode.title || "") && act(() => adminUpdateEpisode(String(episode.id), { title: e.target.value }))} />,
+    },
+    {
+      key: "media", header: t("playUrl"),
+      cell: (episode) => <Input className="min-w-52" defaultValue={episode.hlsUrl || episode.originalUrl || ""} placeholder="m3u8 / mp4" onBlur={(e) => {
+        const next = e.target.value.trim(); const prev = episode.hlsUrl || episode.originalUrl || "";
+        if (next !== prev) act(() => adminUpdateEpisode(String(episode.id), { sourceUrl: next || undefined, hlsUrl: next || "", originalUrl: next || "" }));
+      }} />,
+    },
+    {
+      key: "access", header: t("episodeAccess"), className: "w-28",
+      cell: (episode) => <button type="button" className={cn("content-access-pill", episode.isFree && "content-access-pill--free")} onClick={() => act(() => adminUpdateEpisode(String(episode.id), { isFree: !episode.isFree }))}>
+        {episode.isFree ? <UnlockKeyhole className="h-3.5 w-3.5" /> : <LockKeyhole className="h-3.5 w-3.5" />}{episode.isFree ? t("free") : `${Number(episode.priceCredits || 0)} ${t("creditsShort")}`}
+      </button>,
+    },
+    {
+      key: "transcode", header: t("transcodeStatus"), className: "w-28",
+      cell: (episode) => <Badge tone={episode.transcodeStatus === "FAILED" ? "danger" : episode.transcodeStatus === "READY" ? "success" : "warning"}>{episode.transcodeStatus || "—"}</Badge>,
+    },
+    {
+      key: "actions", header: "", className: "w-32",
+      cell: (episode) => <div className="flex justify-end gap-1">
+        <Button size="sm" variant="ghost" className="!h-8 !w-8 !p-0" title={t("moveUp")} disabled={actionMut.isPending} onClick={() => moveEpisode(String(episode.id), -1)}><ArrowUp className="h-4 w-4" /></Button>
+        <Button size="sm" variant="ghost" className="!h-8 !w-8 !p-0" title={t("moveDown")} disabled={actionMut.isPending} onClick={() => moveEpisode(String(episode.id), 1)}><ArrowDown className="h-4 w-4" /></Button>
+        {["FAILED", "PENDING"].includes(episode.transcodeStatus || "") ? <Button size="sm" variant="ghost" className="!h-8 !w-8 !p-0" title={t("retryTranscode")} onClick={() => act(() => adminRetryTranscode(String(episode.id)))}><RotateCcw className="h-4 w-4" /></Button> : null}
+        <Button size="sm" variant="ghost" className="!h-8 !w-8 !p-0 !text-danger" title={t("delete")} onClick={() => setDeleteEpisodeId(String(episode.id))}><Trash2 className="h-4 w-4" /></Button>
+      </div>,
+    },
+  ], [t, actionMut.isPending, selectedEps, episodes]);
 
-  const handleDeleteDrama = () => {
-    actionMut.mutate(() => adminDeleteDrama(id, reason || "admin delete"), {
-      onSuccess: async () => {
-        setDeleteOpen(false);
-        setError(null);
-        await qc.invalidateQueries({ queryKey: ["admin", "dramas"] });
-        if (onDeleted) onDeleted();
-        else router.replace("/content");
-      },
-    });
-  };
+  const handleDeleteDrama = () => actionMut.mutate(() => adminDeleteDrama(id, reason || "admin delete"), {
+    onSuccess: async () => { setDeleteOpen(false); setError(null); await qc.invalidateQueries({ queryKey: ["admin", "dramas"] }); onDeleted ? onDeleted() : router.replace("/content"); },
+  });
 
-  if (detailQ.isLoading) {
-    return <p className="text-ink-muted">{t("loading")}</p>;
-  }
+  if (detailQ.isLoading) return <div className="content-detail-loading"><LoaderCircle className="h-5 w-5 animate-spin text-brand" /><span>{t("loading")}</span></div>;
+  if (!drama) return <p className="text-ink-muted">{t("empty")}</p>;
 
-  if (!drama) {
-    return <p className="text-ink-muted">{t("empty")}</p>;
-  }
+  const statusTone = drama.status === "LIVE" ? "success" : drama.status === "PENDING_REVIEW" ? "warning" : drama.status === "REJECTED" ? "danger" : "default";
+  const tabs: { key: DetailTab; label: string; icon: ReactNode; count?: number }[] = [
+    { key: "overview", label: t("tabOverview"), icon: <LayoutDashboard /> },
+    { key: "info", label: t("tabDramaInfo"), icon: <Clapperboard /> },
+    { key: "episodes", label: t("tabEpisodes"), icon: <ListVideo />, count: episodes.length },
+    { key: "policy", label: t("tabPlayPolicy"), icon: <LockKeyhole /> },
+  ];
 
   return (
-    <>
-      {error || detailQ.error ? (
-        <p className="mb-3 text-body-sm text-danger">
-          {error || (detailQ.error as Error).message}
-        </p>
-      ) : null}
-
-      <div className="mb-4 flex flex-wrap items-start gap-4">
-        {drama.coverUrl ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={drama.coverUrl}
-            alt=""
-            className="h-28 w-20 rounded-lg bg-surface-2 object-cover"
-          />
-        ) : (
-          <div className="h-28 w-20 rounded-lg bg-surface-2" />
-        )}
+    <div className="content-detail-shell">
+      <section className="content-detail-hero">
+        <div className="content-cover">
+          {drama.coverUrl ? <img src={drama.coverUrl} alt="" /> : <ImageIcon className="h-7 w-7 text-ink-subtle" />}
+        </div>
         <div className="min-w-0 flex-1">
-          <h1 className="text-h3 font-semibold">
-            {drama.titleZh || drama.titleEn || "—"}
-          </h1>
-          <p className="mt-1 text-body-sm text-ink-muted">
-            slug {drama.slug} · {t("status")}{" "}
-            <strong>{statusLabel(t, drama.status)}</strong>
-            {drama.sourceType ? ` · ${drama.sourceType}` : ""}
-          </p>
-          <div className="mt-3 grid gap-2 sm:grid-cols-4">
-            <StatCard label={t("views")} value={fmtNum(drama.viewCount)} />
-            <StatCard label={t("unlocks")} value={fmtNum(drama.unlockCount)} />
-            <StatCard label={t("favorites")} value={fmtNum(drama.favoriteCount)} />
-            <StatCard label={t("episodeCount")} value={episodes.length} />
-          </div>
-        </div>
-      </div>
-
-      <div className="mb-4 flex flex-wrap gap-2">
-        {(
-          [
-            ["info", t("tabDramaInfo")],
-            ["episodes", t("tabEpisodes")],
-            ["policy", t("tabPlayPolicy")],
-          ] as const
-        ).map(([key, label]) => (
-          <Button
-            key={key}
-            size="sm"
-            variant={tab === key ? "primary" : "secondary"}
-            onClick={() => setTab(key)}
-          >
-            {label}
-          </Button>
-        ))}
-      </div>
-
-      {tab === "info" ? (
-        <div className="space-y-4">
-          <div className="space-y-2 text-body-sm">
-            <p>
-              {t("colCreator")} {drama.creator?.displayName || "—"} · {t("category")}{" "}
-              {drama.category?.nameZh || drama.category?.nameEn || "—"}
-            </p>
-            <p className="whitespace-pre-wrap text-ink-muted">
-              {drama.descriptionZh || drama.descriptionEn || ""}
-            </p>
-          </div>
-
           <div className="flex flex-wrap items-center gap-2">
-            <Input
-              className="w-64"
-              placeholder={t("actionReasonPlaceholder")}
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-            />
-            {drama.status === "PENDING_REVIEW" ? (
-              <>
-                <Button
-                  size="sm"
-                  disabled={actionMut.isPending}
-                  onClick={() => act(() => adminApproveDrama(id))}
-                >
-                  {t("approveReview")}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="danger"
-                  disabled={actionMut.isPending}
-                  onClick={() => act(() => adminRejectDrama(id, reason || "rejected"))}
-                >
-                  {t("reject")}
-                </Button>
-              </>
-            ) : null}
-            {drama.status === "LIVE" ? (
-              <Button
-                size="sm"
-                variant="danger"
-                disabled={actionMut.isPending}
-                onClick={() => act(() => adminOfflineDrama(id, reason))}
-              >
-                {t("forceOffline")}
-              </Button>
-            ) : null}
-            {["OFFLINE", "REJECTED"].includes(drama.status || "") ? (
-              <Button
-                size="sm"
-                disabled={actionMut.isPending}
-                onClick={() => act(() => adminOnlineDrama(id, reason))}
-              >
-                {t("restoreOnline")}
-              </Button>
-            ) : null}
-            <Button
-              size="sm"
-              variant="danger"
-              disabled={actionMut.isPending}
-              onClick={() => setDeleteOpen(true)}
-            >
-              {t("delete")}
-            </Button>
+            <Badge tone={statusTone}>{statusLabel(t, drama.status)}</Badge>
+            {drama.isOfficial ? <span className="content-flag"><Check className="h-3 w-3" />{t("official")}</span> : null}
+            {drama.isFeatured ? <span className="content-flag content-flag--brand"><Sparkles className="h-3 w-3" />{t("featuredFlag")}</span> : null}
           </div>
+          <h1 className="mt-2 truncate text-[22px] font-bold tracking-tight text-ink">{drama.titleZh || drama.titleEn || "—"}</h1>
+          <p className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-ink-subtle"><span>{drama.slug}</span><span>·</span><span>{drama.creator?.displayName || "—"}</span><span>·</span><span>{drama.category?.nameZh || drama.category?.nameEn || "—"}</span></p>
+        </div>
+        <div className="hidden items-center gap-2 lg:flex">
+          {drama.status === "PENDING_REVIEW" ? <Button size="sm" onClick={() => act(() => adminApproveDrama(id))}><Check className="h-4 w-4" />{t("approveReview")}</Button> : null}
+          {drama.status === "LIVE" ? <Button size="sm" variant="secondary" onClick={() => setTab("overview")}><Settings2 className="h-4 w-4" />{t("manageStatus")}</Button> : null}
+        </div>
+      </section>
 
-          <div className="flex flex-wrap items-center gap-2 border-t border-line pt-3">
-            <p className="w-full text-caption text-ink-subtle">{t("heroHintContent")}</p>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => act(() => adminSetFeatured(id, !drama.isFeatured))}
-            >
-              {t("featuredFlag")}：{drama.isFeatured ? t("on") : t("off")}
-            </Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => act(() => adminSetOfficial(id, !drama.isOfficial))}
-            >
-              {t("official")}：{drama.isOfficial ? t("on") : t("off")}
-            </Button>
-            <Input
-              type="number"
-              className="w-24"
-              value={weight}
-              onChange={(e) => setWeight(Number(e.target.value))}
-              title={t("sortWeightTitle")}
-            />
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => act(() => adminSetSortWeight(id, weight))}
-            >
-              {t("saveSortWeight")}
-            </Button>
-          </div>
+      {error || detailQ.error || categoriesQ.error ? (
+        <div className="content-inline-error">
+          <AlertTriangle className="h-4 w-4" />
+          <span>{error || (detailQ.error as Error)?.message || (categoriesQ.error as Error)?.message}</span>
         </div>
       ) : null}
 
-      {tab === "episodes" ? (
-        <div className="space-y-4">
-          <div className="card glass-card space-y-3 p-3">
-            <p className="text-caption font-medium text-ink-muted">{t("addEpisode")}</p>
-            <div className="flex flex-wrap items-end gap-2">
-              <label className="text-caption text-ink-muted">
-                {t("colTitle")}
-                <Input
-                  className="mt-1 w-40"
-                  value={newEp.title}
-                  onChange={(e) => setNewEp((v) => ({ ...v, title: e.target.value }))}
-                />
-              </label>
-              <label className="text-caption text-ink-muted">
-                {t("playUrl")}
-                <Input
-                  className="mt-1 w-72"
-                  placeholder="https://...m3u8"
-                  value={newEp.sourceUrl}
-                  onChange={(e) => setNewEp((v) => ({ ...v, sourceUrl: e.target.value }))}
-                />
-              </label>
-              <label className="flex items-center gap-2 text-caption text-ink-muted">
-                <input
-                  type="checkbox"
-                  checked={newEp.isFree}
-                  onChange={(e) => setNewEp((v) => ({ ...v, isFree: e.target.checked }))}
-                />
-                {t("free")}
-              </label>
-              {!newEp.isFree ? (
-                <label className="text-caption text-ink-muted">
-                  {t("colCredits")}
+      <nav className="content-detail-tabs" aria-label={t("dramaEditNavigation")}>
+        {tabs.map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            className={cn("content-detail-tab", tab === item.key && "content-detail-tab--active")}
+            onClick={() => setTab(item.key)}
+          >
+            {item.icon}
+            <span>{item.label}</span>
+            {item.count != null ? <span className="content-detail-tab__count">{item.count}</span> : null}
+            {item.key === "info" && isDirty ? (
+              <span className="content-detail-tab__dirty" title={t("unsavedChanges")} />
+            ) : null}
+          </button>
+        ))}
+      </nav>
+
+      <div className="content-detail-body">
+        {tab === "overview" ? <div className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <Metric icon={<Eye />} label={t("views")} value={fmtNum(drama.viewCount)} />
+            <Metric icon={<UnlockKeyhole />} label={t("unlocks")} value={fmtNum(drama.unlockCount)} />
+            <Metric icon={<Heart />} label={t("favorites")} value={fmtNum(drama.favoriteCount)} />
+            <Metric icon={<FileVideo />} label={t("episodeCount")} value={episodes.length} />
+          </div>
+          <section className="content-section-card space-y-4">
+            <div className="content-section-heading"><div><h2>{t("statusAndActions")}</h2><p>{t("statusActionHint")}</p></div></div>
+            <FieldLabel label={t("actionReason")}><Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder={t("actionReasonPlaceholder")} /></FieldLabel>
+            <div className="flex flex-wrap gap-2">
+              {drama.status === "PENDING_REVIEW" ? <>
+                <Button size="sm" disabled={actionMut.isPending} onClick={() => act(() => adminApproveDrama(id))}><Check className="h-4 w-4" />{t("approveReview")}</Button>
+                <Button size="sm" variant="secondary" disabled={actionMut.isPending || !reason.trim()} onClick={() => act(() => adminRejectDrama(id, reason))}><AlertTriangle className="h-4 w-4" />{t("reject")}</Button>
+              </> : null}
+              {drama.status === "LIVE" ? <Button size="sm" variant="secondary" disabled={actionMut.isPending || !reason.trim()} onClick={() => act(() => adminOfflineDrama(id, reason))}><LockKeyhole className="h-4 w-4" />{t("forceOffline")}</Button> : null}
+              {drama.status === "OFFLINE" || drama.status === "REJECTED" ? <Button size="sm" disabled={actionMut.isPending || !reason.trim()} onClick={() => act(() => adminOnlineDrama(id, reason))}><UnlockKeyhole className="h-4 w-4" />{t("restoreOnline")}</Button> : null}
+            </div>
+          </section>
+          <section className="content-section-card space-y-4">
+            <div className="content-section-heading"><div><h2>{t("distributionSettings")}</h2><p>{t("contentSummaryHint")}</p></div></div>
+            <div className="grid gap-3 md:grid-cols-2">
+              <Toggle checked={!!drama.isFeatured} onChange={() => act(() => adminUpdateDrama(id, { isFeatured: !drama.isFeatured }))} label={t("featured")} description={t("featuredSettingHint")} />
+              <Toggle checked={!!drama.isOfficial} onChange={() => act(() => adminUpdateDrama(id, { isOfficial: !drama.isOfficial }))} label={t("official")} description={t("officialSettingHint")} />
+            </div>
+            <div className="flex flex-wrap items-end gap-2 border-t border-line pt-4">
+              <FieldLabel label={t("sortWeightTitle")}><Input type="number" className="w-36" value={weight} onChange={(e) => setWeight(Number(e.target.value))} /></FieldLabel>
+              <Button size="sm" variant="secondary" disabled={actionMut.isPending || weight === (drama.sortWeight ?? 0)} onClick={() => act(() => adminUpdateDrama(id, { sortWeight: weight }))}>{t("saveSortWeight")}</Button>
+            </div>
+          </section>
+          <section className="content-danger-zone"><div><h2>{t("dangerZone")}</h2><p>{t("dangerZoneHint")}</p></div><Button size="sm" variant="danger" onClick={() => setDeleteOpen(true)}><Trash2 className="h-4 w-4" />{t("deleteDrama")}</Button></section>
+        </div> : null}
+
+        {tab === "info" ? <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_19rem]">
+          <section className="content-section-card space-y-5">
+            <div className="content-section-heading"><div><h2>{t("editBasicInfo")}</h2><p>{t("editBasicInfoHint")}</p></div></div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <FieldLabel label={t("titleZhLabel")} required><Input value={draft.titleZh} onChange={(e) => setDraft((v) => ({ ...v, titleZh: e.target.value }))} /></FieldLabel>
+              <FieldLabel label={t("titleEnLabel")}><Input value={draft.titleEn} onChange={(e) => setDraft((v) => ({ ...v, titleEn: e.target.value }))} /></FieldLabel>
+            </div>
+            <FieldLabel label={t("category")} required><Select value={draft.categorySlug} onChange={(e) => setDraft((v) => ({ ...v, categorySlug: e.target.value }))}><option value="">{t("selectCategory")}</option>{(categoriesQ.data ?? []).map((category) => <option key={category.slug} value={category.slug}>{category.nameZh || category.nameEn || category.slug}</option>)}</Select></FieldLabel>
+            <FieldLabel label={t("coverUrlLabel")}>
+              <div className="space-y-3">
+                <div className="relative">
+                  <ImageIcon className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-ink-subtle" />
                   <Input
-                    type="number"
-                    className="mt-1 w-24"
-                    value={newEp.priceCredits}
-                    onChange={(e) =>
-                      setNewEp((v) => ({ ...v, priceCredits: Number(e.target.value) }))
-                    }
+                    className="pl-9"
+                    placeholder="/api/v1/media/… 或 https://…"
+                    value={draft.coverUrl}
+                    onChange={(e) => setDraft((v) => ({ ...v, coverUrl: e.target.value }))}
                   />
+                </div>
+                <EpisodeThumbnailField
+                  url={draft.coverUrl || undefined}
+                  kind="cover"
+                  disabled={actionMut.isPending}
+                  fromVideoLabel={t("thumbFromVideo")}
+                  uploadLabel={t("thumbUpload")}
+                  onError={setError}
+                  onUploaded={(url) => setDraft((v) => ({ ...v, coverUrl: url }))}
+                />
+              </div>
+            </FieldLabel>
+            <div className="grid gap-4 md:grid-cols-2">
+              <FieldLabel label={t("descriptionZhLabel")}><textarea className="content-textarea" rows={7} value={draft.descriptionZh} onChange={(e) => setDraft((v) => ({ ...v, descriptionZh: e.target.value }))} /></FieldLabel>
+              <FieldLabel label={t("descriptionEnLabel")}><textarea className="content-textarea" rows={7} value={draft.descriptionEn} onChange={(e) => setDraft((v) => ({ ...v, descriptionEn: e.target.value }))} /></FieldLabel>
+            </div>
+            <div className="content-save-bar"><span className={cn("text-xs", isDirty ? "text-warning" : "text-ink-subtle")}>{isDirty ? t("unsavedChanges") : t("allChangesSaved")}</span><div className="flex gap-2"><Button size="sm" variant="ghost" disabled={!isDirty || actionMut.isPending} onClick={() => setDraft(savedDraft)}>{t("discardChanges")}</Button><Button size="sm" disabled={!isDirty || actionMut.isPending} onClick={saveBasicInfo}>{actionMut.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{actionMut.isPending ? t("saving") : t("saveChanges")}</Button></div></div>
+          </section>
+          <aside className="space-y-4">
+            <section className="content-section-card"><h3 className="text-sm font-semibold text-ink">{t("coverPreview")}</h3><div className="content-cover-preview">{draft.coverUrl ? <img src={draft.coverUrl} alt="" /> : <><ImageIcon className="h-8 w-8" /><span>{t("noCover")}</span></>}</div><p className="mt-3 text-xs leading-5 text-ink-subtle">{t("coverRecommendation")}</p></section>
+            <section className="content-tip-card"><Sparkles className="h-5 w-5" /><div><h3>{t("editingTips")}</h3><p>{t("editingTipsContent")}</p></div></section>
+          </aside>
+        </div> : null}
+
+        {tab === "episodes" ? <div className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-base font-semibold text-ink">{t("episodeManagement")}</h2>
+              <p className="mt-0.5 text-xs text-ink-subtle">{t("episodeManagementHint", { n: episodes.length })}</p>
+            </div>
+            <Button size="sm" onClick={() => setShowAddEpisode((v) => !v)}>
+              {showAddEpisode ? <ChevronDown className="h-4 w-4 rotate-180" /> : <Plus className="h-4 w-4" />}
+              {showAddEpisode ? t("collapse") : t("addEpisode")}
+            </Button>
+          </div>
+          {showAddEpisode ? (
+            <section className="content-section-card space-y-4">
+              <div className="grid gap-3 lg:grid-cols-[1fr_2fr]">
+                <FieldLabel label={t("colTitle")}>
+                  <Input value={newEp.title} onChange={(e) => setNewEp((v) => ({ ...v, title: e.target.value }))} />
+                </FieldLabel>
+                <FieldLabel label={t("playUrl")} required>
+                  <Input
+                    placeholder="https://…m3u8"
+                    value={newEp.sourceUrl}
+                    onChange={(e) => setNewEp((v) => ({ ...v, sourceUrl: e.target.value }))}
+                  />
+                </FieldLabel>
+              </div>
+              <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto_auto] lg:items-end">
+                <FieldLabel label={t("episodeThumbnail")}>
+                  <EpisodeThumbnailField
+                    url={newEp.thumbnailUrl || undefined}
+                    disabled={actionMut.isPending}
+                    fromVideoLabel={t("thumbFromVideo")}
+                    uploadLabel={t("thumbUpload")}
+                    onError={setError}
+                    onUploaded={(url) => setNewEp((v) => ({ ...v, thumbnailUrl: url }))}
+                  />
+                </FieldLabel>
+                <label className="flex items-center gap-2 self-end pb-2 text-sm text-ink-muted">
+                  <input
+                    className="content-checkbox"
+                    type="checkbox"
+                    checked={newEp.isFree}
+                    onChange={(e) => setNewEp((v) => ({ ...v, isFree: e.target.checked }))}
+                  />
+                  {t("free")}
                 </label>
-              ) : null}
+                <Button
+                  className="self-end"
+                  size="sm"
+                  disabled={actionMut.isPending || !newEp.sourceUrl.trim()}
+                  onClick={() =>
+                    act(async () => {
+                      await adminCreateEpisode(id, {
+                        title: newEp.title || undefined,
+                        sourceUrl: newEp.sourceUrl.trim(),
+                        thumbnailUrl: newEp.thumbnailUrl || undefined,
+                        isFree: newEp.isFree,
+                        priceCredits: newEp.isFree ? 0 : newEp.priceCredits,
+                      });
+                      setNewEp({ title: "", sourceUrl: "", thumbnailUrl: "", isFree: false, priceCredits: 10 });
+                      setShowAddEpisode(false);
+                    })
+                  }
+                >
+                  <Plus className="h-4 w-4" />
+                  {t("addEpisode")}
+                </Button>
+              </div>
+              <p className="text-xs leading-5 text-ink-subtle">{t("episodeThumbHint")}</p>
+            </section>
+          ) : null}
+          <div className="content-batch-toolbar">
+            <div className="flex items-center gap-2">
+              <input
+                className="content-checkbox"
+                type="checkbox"
+                aria-label={t("selectAllPage")}
+                checked={episodes.length > 0 && episodes.every((ep) => selectedEps.has(String(ep.id)))}
+                onChange={() =>
+                  setSelectedEps(
+                    episodes.length > 0 && episodes.every((ep) => selectedEps.has(String(ep.id)))
+                      ? new Set()
+                      : new Set(episodes.map((ep) => String(ep.id))),
+                  )
+                }
+              />
+              <span className="text-xs font-medium text-ink-muted">{t("selectedCount", { n: selectedEps.size })}</span>
+            </div>
+            <div className="flex flex-1 flex-wrap items-center justify-end gap-2">
+              <Select className="w-36" value={batchFree} onChange={(e) => setBatchFree(e.target.value as typeof batchFree)}>
+                <option value="keep">{t("batchKeepFree")}</option>
+                <option value="1">{t("batchSetFree")}</option>
+                <option value="0">{t("batchSetPaid")}</option>
+              </Select>
+              <Input
+                className="w-32"
+                type="number"
+                placeholder={t("priceCreditsPerEpisode")}
+                value={batchPrice}
+                onChange={(e) => setBatchPrice(e.target.value)}
+              />
               <Button
                 size="sm"
-                disabled={actionMut.isPending || !newEp.sourceUrl.trim()}
+                variant="secondary"
+                disabled={!selectedEps.size || actionMut.isPending || (batchFree === "keep" && batchPrice === "")}
                 onClick={() =>
-                  act(async () => {
-                    await adminCreateEpisode(id, {
-                      title: newEp.title || undefined,
-                      sourceUrl: newEp.sourceUrl.trim(),
-                      isFree: newEp.isFree,
-                      priceCredits: newEp.isFree ? 0 : newEp.priceCredits,
-                    });
-                    setNewEp({ title: "", sourceUrl: "", isFree: false, priceCredits: 10 });
-                  })
+                  act(() =>
+                    adminBatchEpisodes(id, {
+                      ids: [...selectedEps],
+                      ...(batchFree !== "keep" ? { isFree: batchFree === "1" } : {}),
+                      ...(batchPrice !== "" ? { priceCredits: Number(batchPrice) } : {}),
+                    }),
+                  )
                 }
               >
-                {t("addEpisode")}
+                {t("batchApply")}
               </Button>
             </div>
           </div>
+          <DataTable className="content-episode-table" columns={episodeColumns} rows={episodes} emptyTitle={t("emptyEpisodes")} />
+        </div> : null}
 
-          <div className="flex flex-wrap items-end gap-2 card glass-card p-3">
-            <span className="text-caption text-ink-muted">
-              {t("selectedCount", { n: selectedEps.size })}
-            </span>
-            <Select
-              className="w-36"
-              value={batchFree}
-              onChange={(e) => setBatchFree(e.target.value as typeof batchFree)}
-            >
-              <option value="keep">{t("batchKeepFree")}</option>
-              <option value="1">{t("batchSetFree")}</option>
-              <option value="0">{t("batchSetPaid")}</option>
-            </Select>
-            <Input
-              className="w-28"
-              type="number"
-              placeholder={t("priceCreditsPerEpisode")}
-              value={batchPrice}
-              onChange={(e) => setBatchPrice(e.target.value)}
-            />
-            <Button
-              size="sm"
-              disabled={
-                !selectedEps.size ||
-                actionMut.isPending ||
-                (batchFree === "keep" && batchPrice === "")
-              }
-              onClick={() =>
-                act(() =>
-                  adminBatchEpisodes(id, {
-                    ids: [...selectedEps],
-                    ...(batchFree !== "keep" ? { isFree: batchFree === "1" } : {}),
-                    ...(batchPrice !== "" ? { priceCredits: Number(batchPrice) } : {}),
-                  }),
-                )
-              }
-            >
-              {t("batchApply")}
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() =>
-                setSelectedEps(
-                  episodes.length > 0 &&
-                    episodes.every((ep) => selectedEps.has(String(ep.id)))
-                    ? new Set()
-                    : new Set(episodes.map((ep) => String(ep.id))),
-                )
-              }
-            >
-              {t("selectAllPage")}
-            </Button>
-          </div>
+        {tab === "policy" ? <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_21rem]">
+          <section className="content-section-card space-y-5"><div className="content-section-heading"><div><h2>{t("playbackPolicyTitle")}</h2><p>{t("policyGlobalHint", { mode: globalMode === "VIP_ALL" ? t("lockModeVipAll") : globalMode === "ALL_FREE" ? t("lockModeAllFree") : t("lockModeFreeFirstN"), n: globalFreeCount })}</p></div></div><FieldLabel label={t("lockMode")}><Select value={lockMode} onChange={(e) => setLockMode(e.target.value)}><option value="INHERIT">{t("lockModeInherit")}</option><option value="FREE_FIRST_N">{t("lockModeFreeFirstN")}</option><option value="VIP_ALL">{t("lockModeVipAll")}</option><option value="ALL_FREE">{t("lockModeAllFree")}</option></Select></FieldLabel><div className="grid gap-4 sm:grid-cols-2"><FieldLabel label={t("freeEpisodes")}><Input type="number" min={0} value={freeEpisodes} disabled={effectiveMode === "VIP_ALL" || effectiveMode === "ALL_FREE"} onChange={(e) => setFreeEpisodes(Number(e.target.value))} /></FieldLabel><FieldLabel label={t("buyoutCreditsLabel")}><div className="relative"><CircleDollarSign className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-ink-subtle" /><Input type="number" min={0} className="pl-9" value={buyoutCredits} onChange={(e) => setBuyoutCredits(Number(e.target.value))} /></div></FieldLabel></div><div className="flex justify-end border-t border-line pt-4"><Button size="sm" disabled={actionMut.isPending} onClick={() => act(() => adminUpdateDrama(id, { lockMode: lockMode === "INHERIT" ? null : lockMode, freeEpisodeCount: freeEpisodes, buyoutCredits: buyoutCredits > 0 ? buyoutCredits : null }))}><Save className="h-4 w-4" />{t("saveLockPolicy")}</Button></div></section>
+          <aside className="content-policy-preview"><div className="flex items-center gap-2"><span className="content-policy-preview__icon"><Eye className="h-4 w-4" /></span><div><h3>{t("policyPreview")}</h3><p>{t("policyPreviewHint")}</p></div></div><div className="mt-5 space-y-4"><FieldLabel label={t("episodeNumber")}><Input type="number" min={1} value={previewEp} onChange={(e) => setPreviewEp(Math.max(1, Number(e.target.value) || 1))} /></FieldLabel><label className="flex items-center gap-2 text-sm text-ink-muted"><input className="content-checkbox" type="checkbox" checked={previewVip} onChange={(e) => setPreviewVip(e.target.checked)} />{t("previewAsVip")}</label><div className={cn("content-preview-result", `content-preview-result--${previewResult}`)}>{previewResult === "free" ? <UnlockKeyhole /> : <LockKeyhole />}<div><strong>{previewResult === "free" ? t("previewResultFree") : previewResult === "vip" ? t("previewResultVip") : t("previewResultLocked")}</strong><span>{t("episodeN", { n: previewEp })}</span></div></div></div></aside>
+        </div> : null}
+      </div>
 
-          <DataTable
-            columns={episodeColumns}
-            rows={episodes}
-            emptyTitle={t("emptyEpisodes")}
-          />
-        </div>
-      ) : null}
-
-      {tab === "policy" ? (
-        <div className="space-y-4">
-          <p className="text-body-sm text-ink-muted">
-            {t("policyGlobalHint", {
-              mode:
-                globalMode === "VIP_ALL"
-                  ? t("lockModeVipAll")
-                  : globalMode === "ALL_FREE"
-                    ? t("lockModeAllFree")
-                    : t("lockModeFreeFirstN"),
-              n: globalFreeCount,
-            })}
-          </p>
-          <div className="flex flex-wrap items-end gap-3">
-            <label className="text-caption text-ink-muted">
-              {t("lockMode")}
-              <Select
-                className="mt-1 w-44"
-                value={lockMode}
-                onChange={(e) => setLockMode(e.target.value)}
-              >
-                <option value="INHERIT">{t("lockModeInherit")}</option>
-                <option value="FREE_FIRST_N">{t("lockModeFreeFirstN")}</option>
-                <option value="VIP_ALL">{t("lockModeVipAll")}</option>
-                <option value="ALL_FREE">{t("lockModeAllFree")}</option>
-              </Select>
-            </label>
-            <label className="text-caption text-ink-muted">
-              {t("freeEpisodes")}
-              <Input
-                type="number"
-                className="mt-1 w-28"
-                value={freeEpisodes}
-                disabled={effectiveMode === "VIP_ALL" || effectiveMode === "ALL_FREE"}
-                onChange={(e) => setFreeEpisodes(Number(e.target.value))}
-              />
-            </label>
-            <label className="text-caption text-ink-muted">
-              {t("buyoutCreditsLabel")}
-              <Input
-                type="number"
-                className="mt-1 w-28"
-                value={buyoutCredits}
-                onChange={(e) => setBuyoutCredits(Number(e.target.value))}
-              />
-            </label>
-            <Button
-              size="sm"
-              disabled={actionMut.isPending}
-              onClick={() =>
-                act(() =>
-                  adminUpdateDrama(id, {
-                    lockMode: lockMode === "INHERIT" ? null : lockMode,
-                    freeEpisodeCount: freeEpisodes,
-                    buyoutCredits: buyoutCredits > 0 ? buyoutCredits : null,
-                  }),
-                )
-              }
-            >
-              {t("saveLockPolicy")}
-            </Button>
-          </div>
-
-          <div className="card glass-card space-y-3 p-4">
-            <p className="text-caption font-medium text-ink-muted">{t("policyPreview")}</p>
-            <div className="flex flex-wrap items-end gap-3">
-              <label className="text-caption text-ink-muted">
-                {t("episodeNumber")}
-                <Input
-                  type="number"
-                  className="mt-1 w-24"
-                  min={1}
-                  value={previewEp}
-                  onChange={(e) => setPreviewEp(Math.max(1, Number(e.target.value) || 1))}
-                />
-              </label>
-              <label className="flex items-center gap-2 text-caption text-ink-muted">
-                <input
-                  type="checkbox"
-                  checked={previewVip}
-                  onChange={(e) => setPreviewVip(e.target.checked)}
-                />
-                {t("previewAsVip")}
-              </label>
-            </div>
-            <p className="text-body-sm">
-              {previewResult === "free"
-                ? t("previewResultFree")
-                : previewResult === "vip"
-                  ? t("previewResultVip")
-                  : t("previewResultLocked")}
-            </p>
-          </div>
-        </div>
-      ) : null}
-
-      <ConfirmModal
-        open={deleteOpen}
-        onClose={() => setDeleteOpen(false)}
-        onConfirm={handleDeleteDrama}
-        message={t("confirmDeleteDrama")}
-        busy={actionMut.isPending}
-      />
-      <ConfirmModal
-        open={!!deleteEpisodeId}
-        onClose={() => setDeleteEpisodeId(null)}
-        onConfirm={() => {
-          if (!deleteEpisodeId) return;
-          actionMut.mutate(() => adminDeleteEpisode(deleteEpisodeId), {
-            onSuccess: async () => {
-              setDeleteEpisodeId(null);
-              await qc.invalidateQueries({ queryKey: ["admin", "drama", id] });
-            },
-          });
-        }}
-        message={t("confirmDeleteEpisode")}
-        busy={actionMut.isPending}
-      />
-    </>
+      <ConfirmModal open={deleteOpen} onClose={() => setDeleteOpen(false)} onConfirm={handleDeleteDrama} message={t("confirmDeleteDrama")} busy={actionMut.isPending} />
+      <ConfirmModal open={!!deleteEpisodeId} onClose={() => setDeleteEpisodeId(null)} onConfirm={() => { if (!deleteEpisodeId) return; actionMut.mutate(() => adminDeleteEpisode(deleteEpisodeId), { onSuccess: async () => { setDeleteEpisodeId(null); await qc.invalidateQueries({ queryKey: ["admin", "drama", id] }); } }); }} message={t("confirmDeleteEpisode")} busy={actionMut.isPending} />
+    </div>
   );
 }
