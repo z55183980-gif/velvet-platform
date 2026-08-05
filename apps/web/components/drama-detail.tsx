@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Play,
@@ -9,6 +10,7 @@ import {
   ChevronRight,
   ChevronUp,
   Clock3,
+  Flame,
   Heart,
   Maximize,
   Minimize2,
@@ -69,6 +71,14 @@ function formatCount(n: number, locale: string) {
   return String(n);
 }
 
+/** Approximate “heat” from available engagement signals (no dedicated heat field). */
+function dramaHeat(d: Drama) {
+  const likes = d.likeCount ?? 0;
+  const favs = d.favoriteCount ?? 0;
+  const base = Math.round((d.rating || 0) * 12_000) + (d.episodesCount || 0) * 800;
+  return Math.max(base, likes * 1_200 + favs * 3_500 + base);
+}
+
 function fmtLandTime(sec: number) {
   if (!Number.isFinite(sec) || sec < 0) return "00:00:00";
   const h = Math.floor(sec / 3600);
@@ -118,10 +128,13 @@ const PLAY_GRAD_HOVER =
 export function DramaDetail({
   id,
   autoLandscapeFs = false,
+  browseFirst = false,
 }: {
   id: string;
   /** Feed「全屏观看」入口：进播放后自动触发真横屏沉浸 */
   autoLandscapeFs?: boolean;
+  /** Feed title entry (?browse=1): show mobile detail landing instead of auto-play */
+  browseFirst?: boolean;
 }) {
   const router = useRouter();
   const { locale, t } = useLocale();
@@ -339,11 +352,11 @@ export function DramaDetail({
   const lockActionLabel =
     selected && !selected.isFree && !isUnlocked(selected) ? t("vip.open") : undefined;
 
-  /** Mobile: skip poster/info landing — go straight into vertical watch. */
+  /** Mobile: auto-enter watch unless Feed title opened the browse landing (?browse=1). */
   useEffect(() => {
     if (!mobileReady || !isMobile || loading || !data) return;
-    setWatching(true);
-  }, [mobileReady, isMobile, loading, data]);
+    if (!browseFirst) setWatching(true);
+  }, [mobileReady, isMobile, loading, data, browseFirst]);
 
   useEffect(() => {
     if (!playerReady || !selected?.id) {
@@ -647,7 +660,13 @@ export function DramaDetail({
 
   if (loading) {
     if (isMobile) {
-      return <div className="fixed inset-0 z-[70] bg-black" aria-busy="true" />;
+      return (
+        <div
+          className="fixed inset-0 z-[70]"
+          style={{ background: browseFirst ? "#1c1c1c" : "#000" }}
+          aria-busy="true"
+        />
+      );
     }
     return (
       <div className="mx-auto max-w-[1280px] px-4 pb-24 pt-6 md:px-10 md:pt-10">
@@ -893,6 +912,10 @@ export function DramaDetail({
             type="button"
             onClick={() => {
               void exitImmersiveFs();
+              if (browseFirst) {
+                setWatching(false);
+                return;
+              }
               if (typeof window !== "undefined" && window.history.length > 1) {
                 router.back();
               } else {
@@ -1643,11 +1666,211 @@ export function DramaDetail({
     );
   }
 
-  /* ---- Browse: Hongguo detail (desktop only; mobile never lands here) ---- */
+  /* ---- Browse: Hongguo mobile detail (?browse=1 from Feed title) ---- */
   if (isMobile) {
-    return <div className="fixed inset-0 z-[70] bg-black" aria-busy="true" />;
+    const heatLabel = formatCount(dramaHeat(drama), locale);
+    const goBackBrowse = () => {
+      if (typeof window !== "undefined" && window.history.length > 1) router.back();
+      else router.push("/");
+    };
+    const onShareMore = async () => {
+      const url = typeof window !== "undefined" ? window.location.href.split("?")[0] : "";
+      try {
+        if (navigator.share) {
+          await navigator.share({ title, url });
+          return;
+        }
+      } catch {
+        /* ignore cancel */
+      }
+      try {
+        await navigator.clipboard.writeText(url);
+      } catch {
+        /* ignore */
+      }
+    };
+
+    return (
+      <div
+        className="fixed inset-0 z-[70] flex flex-col overflow-hidden text-white"
+        style={{ background: "#1c1c1c" }}
+      >
+        <div className="flex shrink-0 items-center justify-between px-2 pb-1 pt-[max(0.35rem,env(safe-area-inset-top))]">
+          <button
+            type="button"
+            onClick={goBackBrowse}
+            className="grid h-11 w-11 place-items-center text-white"
+            aria-label="back"
+          >
+            <ChevronLeft className="h-7 w-7" strokeWidth={2} />
+          </button>
+          <button
+            type="button"
+            onClick={() => void onShareMore()}
+            className="grid h-11 w-11 place-items-center text-white"
+            aria-label={t("player.more")}
+          >
+            <MoreVertical className="h-5 w-5" />
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[calc(5.25rem+env(safe-area-inset-bottom))]">
+          <div className="flex gap-3.5">
+            <div className="relative h-[138px] w-[98px] shrink-0 overflow-hidden rounded-xl bg-white/[0.06]">
+              {coverIsImg ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={drama.cover[0]} alt="" className="h-full w-full object-cover" />
+              ) : (
+                <div
+                  className="h-full w-full"
+                  style={{
+                    background: `linear-gradient(150deg, ${drama.cover[0]}, ${drama.cover[1]})`,
+                  }}
+                />
+              )}
+            </div>
+            <div className="min-w-0 flex-1 pt-0.5">
+              <h1 className="text-[20px] font-semibold leading-7 text-white">{title}</h1>
+              <p className="mt-2 text-[13px] leading-5 text-white/45">
+                {t("card.episodesAll", { n: drama.episodesCount })}
+                {" · "}
+                {t("detail.heatValue", { n: heatLabel })}
+              </p>
+              {tags.length > 0 ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {tags.map((tag) => (
+                    <span
+                      key={tag}
+                      className="inline-flex max-w-full items-center gap-0.5 rounded-md bg-white/[0.06] px-2 py-1 text-[12px] leading-none text-white/65"
+                    >
+                      <span className="truncate">{tag}</span>
+                      <ChevronRight className="h-3 w-3 shrink-0 opacity-70" strokeWidth={2.25} />
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          {desc ? (
+            <section className="mt-7">
+              <h2 className="text-[16px] font-medium text-white">{t("detail.synopsis")}</h2>
+              <p
+                className={cn(
+                  "mt-2 text-[14px] leading-[22px] text-white/55",
+                  !descExpanded && "line-clamp-3",
+                )}
+              >
+                {desc}
+                {!descExpanded && desc.length > 72 ? (
+                  <>
+                    {" "}
+                    <button
+                      type="button"
+                      onClick={() => setDescExpanded(true)}
+                      className="inline text-[14px] text-[#8aa8c8]"
+                    >
+                      {t("detail.expand")}
+                    </button>
+                  </>
+                ) : null}
+              </p>
+              {descExpanded && desc.length > 72 ? (
+                <button
+                  type="button"
+                  onClick={() => setDescExpanded(false)}
+                  className="mt-1 text-[14px] text-[#8aa8c8]"
+                >
+                  {t("detail.collapse")}
+                </button>
+              ) : null}
+            </section>
+          ) : null}
+
+          {related.length > 0 ? (
+            <section className="mt-8">
+              <h2 className="mb-3.5 text-[16px] font-medium text-white">{t("detail.guessYouLike")}</h2>
+              <div className="grid grid-cols-2 gap-x-3 gap-y-5">
+                {related.map((d) => {
+                  const rTitle = pickContentText(locale, d.titleEn, d.titleZh);
+                  const rCover = isUrl(d.cover[0]);
+                  const rTags = (d.tags || []).filter(Boolean).slice(0, 3);
+                  const rCat = categoryName(d.categorySlug, locale);
+                  const chipTags = rTags.length ? rTags : rCat ? [rCat] : [];
+                  return (
+                    <Link key={d.id} href={`/drama/${d.id}?browse=1`} className="min-w-0">
+                      <div className="relative aspect-[3/4] overflow-hidden rounded-lg bg-white/[0.06]">
+                        {rCover ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={d.cover[0]} alt="" className="h-full w-full object-cover" />
+                        ) : (
+                          <div
+                            className="h-full w-full"
+                            style={{
+                              background: `linear-gradient(150deg, ${d.cover[0]}, ${d.cover[1]})`,
+                            }}
+                          />
+                        )}
+                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 to-transparent px-2 pb-1.5 pt-8">
+                          <span className="inline-flex items-center gap-0.5 rounded bg-black/45 px-1.5 py-0.5 text-[11px] text-white/95 backdrop-blur-sm">
+                            <Flame className="h-3 w-3 text-[#ff8a3d]" fill="currentColor" />
+                            {t("detail.heatBadge", {
+                              n: formatCount(dramaHeat(d), locale),
+                            })}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="mt-2 line-clamp-1 text-[14px] font-medium leading-5 text-white">
+                        {rTitle}
+                      </p>
+                      {chipTags.length > 0 ? (
+                        <p className="mt-1 truncate text-[12px] text-white/40">
+                          {chipTags.join(" · ")}
+                        </p>
+                      ) : null}
+                    </Link>
+                  );
+                })}
+              </div>
+            </section>
+          ) : null}
+        </div>
+
+        <div
+          className="absolute inset-x-0 bottom-0 z-40 flex gap-2.5 px-4 pb-[max(0.65rem,env(safe-area-inset-bottom))] pt-3"
+          style={{
+            background:
+              "linear-gradient(180deg, rgba(28,28,28,0) 0%, rgba(28,28,28,0.92) 35%, #1c1c1c 70%)",
+          }}
+        >
+          <button
+            type="button"
+            onClick={onWatchFree}
+            className="flex h-11 flex-[1.65] items-center justify-center gap-1.5 rounded-xl bg-white text-[15px] font-semibold text-black"
+          >
+            <Play className="h-4 w-4 fill-black text-black" />
+            {t("detail.continuePlay")}
+          </button>
+          <button
+            type="button"
+            onClick={() => void toggleFavorite()}
+            className="flex h-11 flex-1 items-center justify-center gap-1.5 rounded-xl bg-white/[0.1] text-[15px] font-medium text-white"
+          >
+            <Star
+              className={cn(
+                "h-4 w-4",
+                favorited ? "fill-[#ffb000] text-[#ffb000]" : "fill-none text-white",
+              )}
+              strokeWidth={1.75}
+            />
+            {favorited ? t("detail.favorited") : t("detail.favorite")}
+          </button>
+        </div>
+      </div>
+    );
   }
 
+  /* ---- Browse: Hongguo detail (desktop) ---- */
   return (
     <div className="relative overflow-hidden pb-[calc(5.5rem+env(safe-area-inset-bottom))] md:pb-24">
       {/* Desktop backdrop — warm orange glow like hongguo */}

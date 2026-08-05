@@ -26,7 +26,7 @@ export default async function Page({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ lfs?: string }>;
+  searchParams: Promise<{ lfs?: string; browse?: string }>;
 }) {
   const { id } = await params;
   const sp = await searchParams;
@@ -35,5 +35,11 @@ export default async function Page({
     return notFound();
   }
 
-  return <DramaDetail id={id} autoLandscapeFs={sp.lfs === "1"} />;
+  return (
+    <DramaDetail
+      id={id}
+      autoLandscapeFs={sp.lfs === "1"}
+      browseFirst={sp.browse === "1"}
+    />
+  );
 }

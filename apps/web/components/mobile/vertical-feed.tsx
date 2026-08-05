@@ -13,6 +13,7 @@ import {
 import {
   ChevronRight,
   Heart,
+  Pause,
   Smartphone,
   Star,
 } from "lucide-react";
@@ -580,13 +581,20 @@ function FeedPage({
   const [favorited, setFavorited] = useState(false);
   const [favCount, setFavCount] = useState(drama.favoriteCount ?? 0);
   const [landscape, setLandscape] = useState(false);
+  /** Home feed only: sticky center Pause after user tap-to-pause (not scroll-away auto-pause). */
+  const [userPaused, setUserPaused] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const meta = useMemo(() => buildFeedMeta(drama, locale, t), [drama, locale, t]);
 
   useEffect(() => {
     setLandscape(false);
+    setUserPaused(false);
   }, [drama.id]);
+
+  useEffect(() => {
+    if (!active) setUserPaused(false);
+  }, [active]);
 
   useEffect(() => {
     const v = videoRef.current;
@@ -779,8 +787,13 @@ function FeedPage({
     registerTogglePlay(() => {
       const v = videoRef.current;
       if (!v || !playUrl || !canPlay || locked || needsLogin) return;
-      if (v.paused) void v.play().catch(() => {});
-      else v.pause();
+      if (v.paused) {
+        setUserPaused(false);
+        void v.play().catch(() => {});
+      } else {
+        v.pause();
+        setUserPaused(true);
+      }
     });
     return () => registerTogglePlay(null);
   }, [active, playUrl, canPlay, locked, needsLogin, registerTogglePlay]);
@@ -894,6 +907,18 @@ function FeedPage({
         />
       )}
 
+      {/* Tap-to-pause affordance on home feed only (sticky until tap-to-play). */}
+      {userPaused && active ? (
+        <div
+          className="pointer-events-none absolute inset-0 z-[15] flex items-center justify-center"
+          aria-hidden
+        >
+          <div className="grid h-16 w-16 place-items-center rounded-full bg-black/45 text-white backdrop-blur-sm">
+            <Pause className="h-7 w-7 fill-white text-white" strokeWidth={1.5} />
+          </div>
+        </div>
+      ) : null}
+
       {/* Bottom info stack: title → tags → episode bar; side actions hug the top */}
       <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex flex-col">
         <div className="pointer-events-auto absolute bottom-full right-2.5 mb-2 flex flex-col items-center gap-5">
@@ -929,7 +954,7 @@ function FeedPage({
 
         <div className="pointer-events-auto max-w-[calc(100%-4.75rem)] px-3">
           <Link
-            href={`/drama/${drama.id}`}
+            href={`/drama/${drama.id}?browse=1`}
             className="inline-flex max-w-full items-center gap-0.5 text-[17px] font-semibold leading-snug text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.65)]"
             onClick={(e) => e.stopPropagation()}
           >
@@ -954,6 +979,7 @@ function FeedPage({
           href={`/drama/${drama.id}`}
           label={t("feed.watchFull", { n: drama.episodesCount })}
           videoRef={videoRef}
+          mediaKey={playUrl}
           seekEnabled={active && !!playUrl && canPlay && !locked && !needsLogin && !playErr}
           onSeekingChange={active ? onSeekingChange : undefined}
         />

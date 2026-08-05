@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { AudioLines, ChevronRight, Lock, Star } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
+import { useTheme } from "@/components/theme-provider";
 import type { Episode } from "@/lib/mock-data";
 import { cn, mediaUrl } from "@/lib/utils";
 
@@ -39,6 +40,8 @@ export function EpisodeDrawer({
   onToggleFavorite?: () => void;
 }) {
   const { t } = useLocale();
+  const { resolved } = useTheme();
+  const dark = resolved === "dark";
   const [tab, setTab] = useState<"about" | "episodes">("episodes");
   const total = episodesCount || episodes.length;
 
@@ -47,7 +50,7 @@ export function EpisodeDrawer({
     return Array.from({ length: count }, (_, i) => {
       const start = i * SEG_SIZE + 1;
       const end = Math.min((i + 1) * SEG_SIZE, total);
-      return { start, end, label: `${start}-${end}` };
+      return { start, end, label: `${start}\u2013${end}` };
     });
   }, [total]);
 
@@ -70,7 +73,8 @@ export function EpisodeDrawer({
       <button
         type="button"
         className={cn(
-          "absolute inset-0 bg-black/45 transition-opacity",
+          "absolute inset-0 transition-opacity",
+          dark ? "bg-black/55" : "bg-black/45",
           open ? "opacity-100" : "opacity-0",
         )}
         aria-label="close"
@@ -78,27 +82,50 @@ export function EpisodeDrawer({
       />
       <div
         className={cn(
-          "absolute inset-x-0 bottom-0 flex max-h-[72dvh] flex-col rounded-t-[18px] bg-white shadow-xl transition-transform duration-300",
+          "absolute inset-x-0 bottom-0 flex max-h-[72dvh] flex-col rounded-t-[18px] shadow-xl transition-transform duration-300",
+          dark ? "bg-[#262626] text-white" : "bg-white text-[#1a1a1a]",
           open ? "translate-y-0" : "translate-y-full",
         )}
       >
         <div className="flex shrink-0 justify-center pb-1 pt-2.5">
-          <span className="h-1 w-9 rounded-full bg-black/15" />
+          <span
+            className={cn(
+              "h-1 w-9 rounded-full",
+              dark ? "bg-white/25" : "bg-black/15",
+            )}
+          />
         </div>
 
         <div className="flex shrink-0 items-center gap-3 px-4 pb-3 pt-1">
-          <div className="relative h-[58px] w-[42px] shrink-0 overflow-hidden rounded-md bg-[#f2f2f2]">
+          <div
+            className={cn(
+              "relative h-[58px] w-[42px] shrink-0 overflow-hidden rounded-md",
+              dark ? "bg-white/[0.08]" : "bg-[#f2f2f2]",
+            )}
+          >
             {cover ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={cover} alt="" className="h-full w-full object-cover" />
             ) : null}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="flex items-center gap-0.5 truncate text-[16px] font-semibold text-[#1a1a1a]">
+            <p
+              className={cn(
+                "flex items-center gap-0.5 truncate text-[16px] font-semibold",
+                dark ? "text-white" : "text-[#1a1a1a]",
+              )}
+            >
               <span className="truncate">{title}</span>
-              <ChevronRight className="h-4 w-4 shrink-0 text-[#1a1a1a]/90" />
+              <ChevronRight
+                className={cn(
+                  "h-4 w-4 shrink-0",
+                  dark ? "text-white/90" : "text-[#1a1a1a]/90",
+                )}
+              />
             </p>
-            <p className="mt-1 text-[12px] text-[#999]">{t("card.episodesAll", { n: total })}</p>
+            <p className={cn("mt-1 text-[12px]", dark ? "text-white/45" : "text-[#999]")}>
+              {t("card.episodesAll", { n: total })}
+            </p>
           </div>
         </div>
 
@@ -106,7 +133,7 @@ export function EpisodeDrawer({
           {(
             [
               ["about", t("detail.about")],
-              ["episodes", t("detail.episodeList")],
+              ["episodes", t("detail.pickEpisodes")],
             ] as const
           ).map(([id, label]) => {
             const active = tab === id;
@@ -117,7 +144,9 @@ export function EpisodeDrawer({
                 onClick={() => setTab(id)}
                 className={cn(
                   "pb-2 text-[17px] transition-colors",
-                  active ? "font-bold text-[#1a1a1a]" : "font-medium text-[#999]",
+                  active
+                    ? cn("font-bold", dark ? "text-white" : "text-[#1a1a1a]")
+                    : cn("font-medium", dark ? "text-white/40" : "text-[#999]"),
                 )}
               >
                 {label}
@@ -128,7 +157,12 @@ export function EpisodeDrawer({
 
         <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-3 pt-3">
           {tab === "about" ? (
-            <p className="whitespace-pre-wrap text-[14px] leading-6 text-[#555]">
+            <p
+              className={cn(
+                "whitespace-pre-wrap text-[14px] leading-6",
+                dark ? "text-white/55" : "text-[#555]",
+              )}
+            >
               {desc?.trim() || t("detail.about")}
             </p>
           ) : (
@@ -147,7 +181,9 @@ export function EpisodeDrawer({
                       onClick={() => setSegIndex(i)}
                       className={cn(
                         "shrink-0 text-[14px]",
-                        i === segIndex ? "font-semibold text-[#1a1a1a]" : "font-normal text-[#999]",
+                        i === segIndex
+                          ? cn("font-semibold", dark ? "text-white" : "text-[#1a1a1a]")
+                          : cn("font-normal", dark ? "text-white/40" : "text-[#999]"),
                       )}
                     >
                       {seg.label}
@@ -168,13 +204,20 @@ export function EpisodeDrawer({
                         className={cn(
                           "relative flex aspect-square w-full items-center justify-center rounded-lg text-[15px] font-medium tabular-nums transition-colors",
                           active
-                            ? "bg-[rgba(255,126,13,0.14)] text-[#ff7e0d]"
-                            : "bg-[#f3f3f3] text-[#333]",
+                            ? "bg-[rgba(255,126,13,0.18)] text-[#ff7e0d]"
+                            : dark
+                              ? "bg-white/[0.08] text-white/85"
+                              : "bg-[#f3f3f3] text-[#333]",
                         )}
                         title={canPlay ? undefined : t("vip.open")}
                       >
                         {!canPlay && (
-                          <Lock className="absolute left-1 top-1 h-3 w-3 text-[#bbb]" />
+                          <Lock
+                            className={cn(
+                              "absolute left-1 top-1 h-3 w-3",
+                              dark ? "text-white/35" : "text-[#bbb]",
+                            )}
+                          />
                         )}
                         {active && (
                           <AudioLines
@@ -193,7 +236,12 @@ export function EpisodeDrawer({
         </div>
 
         {onToggleFavorite && (
-          <div className="shrink-0 border-t border-black/[0.04] px-4 pb-[max(0.85rem,env(safe-area-inset-bottom))] pt-3">
+          <div
+            className={cn(
+              "shrink-0 px-4 pb-[max(0.85rem,env(safe-area-inset-bottom))] pt-3",
+              dark ? "border-t border-white/[0.06]" : "border-t border-black/[0.04]",
+            )}
+          >
             <button
               type="button"
               onClick={onToggleFavorite}

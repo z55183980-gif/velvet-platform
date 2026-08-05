@@ -12,12 +12,19 @@ function fmtTime(sec: number) {
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
+function readDuration(v: HTMLVideoElement) {
+  const d = v.duration;
+  return Number.isFinite(d) && d > 0 ? d : 0;
+}
+
 type FeedEpisodeBarProps = {
   href: string;
   label: string;
   videoRef: React.RefObject<HTMLVideoElement | null>;
   /** When false, show CTA only (locked / login / no src). */
   seekEnabled?: boolean;
+  /** Rebind when underlying media identity changes (e.g. playUrl). */
+  mediaKey?: string | null;
   onSeekingChange?: (seeking: boolean) => void;
   className?: string;
 };
@@ -31,6 +38,7 @@ export function FeedEpisodeBar({
   label,
   videoRef,
   seekEnabled = true,
+  mediaKey,
   onSeekingChange,
   className,
 }: FeedEpisodeBarProps) {
@@ -39,37 +47,93 @@ export function FeedEpisodeBar({
   const [duration, setDuration] = useState(0);
   const [buffered, setBuffered] = useState(0);
   const [dragging, setDragging] = useState(false);
+  const durationRef = useRef(0);
 
   useEffect(() => {
-    const v = videoRef.current;
-    if (!v || !seekEnabled) return;
+    durationRef.current = duration;
+  }, [duration]);
+
+  useEffect(() => {
+    if (!seekEnabled) {
+      setCurrent(0);
+      setDuration(0);
+      setBuffered(0);
+      return;
+    }
+
+    let cancelled = false;
+    let attached: HTMLVideoElement | null = null;
+    let raf = 0;
+
     const onTime = () => {
-      if (!dragging) setCurrent(v.currentTime);
+      const v = attached;
+      if (!v || dragging) return;
+      setCurrent(v.currentTime || 0);
+      const d = readDuration(v);
+      if (d > 0 && d !== durationRef.current) setDuration(d);
     };
-    const onMeta = () => setDuration(v.duration || 0);
+    const onMeta = () => {
+      const v = attached;
+      if (!v) return;
+      const d = readDuration(v);
+      if (d > 0) setDuration(d);
+    };
     const onProg = () => {
+      const v = attached;
+      if (!v) return;
       try {
-        if (v.buffered.length > 0 && v.duration > 0) {
-          setBuffered(v.buffered.end(v.buffered.length - 1) / v.duration);
+        const d = readDuration(v);
+        if (v.buffered.length > 0 && d > 0) {
+          setBuffered(v.buffered.end(v.buffered.length - 1) / d);
         }
       } catch {
         /* ignore */
       }
     };
-    onTime();
-    onMeta();
-    onProg();
-    v.addEventListener("timeupdate", onTime);
-    v.addEventListener("loadedmetadata", onMeta);
-    v.addEventListener("durationchange", onMeta);
-    v.addEventListener("progress", onProg);
-    return () => {
-      v.removeEventListener("timeupdate", onTime);
-      v.removeEventListener("loadedmetadata", onMeta);
-      v.removeEventListener("durationchange", onMeta);
-      v.removeEventListener("progress", onProg);
+
+    const detach = () => {
+      if (!attached) return;
+      attached.removeEventListener("timeupdate", onTime);
+      attached.removeEventListener("loadedmetadata", onMeta);
+      attached.removeEventListener("durationchange", onMeta);
+      attached.removeEventListener("progress", onProg);
+      attached = null;
     };
-  }, [videoRef, seekEnabled, dragging]);
+
+    const attach = (v: HTMLVideoElement) => {
+      detach();
+      attached = v;
+      attached.addEventListener("timeupdate", onTime);
+      attached.addEventListener("loadedmetadata", onMeta);
+      attached.addEventListener("durationchange", onMeta);
+      attached.addEventListener("progress", onProg);
+      onTime();
+      onMeta();
+      onProg();
+    };
+
+    // video mounts after playUrl (key={src}) — poll until ref is live, then keep in sync.
+    const tick = () => {
+      if (cancelled) return;
+      const v = videoRef.current;
+      if (v && v !== attached) {
+        attach(v);
+      } else if (v && !dragging && !v.paused && !v.ended) {
+        // iOS/WebKit can under-fire timeupdate; mirror watch-seek-bar rAF sync.
+        setCurrent(v.currentTime || 0);
+        const d = readDuration(v);
+        if (d > 0 && d !== durationRef.current) setDuration(d);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+
+    raf = requestAnimationFrame(tick);
+    return () => {
+      cancelled = true;
+      if (raf) cancelAnimationFrame(raf);
+      detach();
+    };
+  }, [videoRef, seekEnabled, mediaKey, dragging]);
 
   const setSeeking = useCallback(
     (next: boolean) => {
@@ -87,8 +151,9 @@ export function FeedEpisodeBar({
 
   const seekToRatio = (ratio: number) => {
     const v = videoRef.current;
-    if (!v || !duration) return;
-    const next = Math.max(0, Math.min(duration, ratio * duration));
+    const d = durationRef.current;
+    if (!v || !d) return;
+    const next = Math.max(0, Math.min(d, ratio * d));
     v.currentTime = next;
     setCurrent(next);
   };
@@ -113,7 +178,7 @@ export function FeedEpisodeBar({
       window.removeEventListener("pointercancel", onUp);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dragging, duration, setSeeking]);
+  }, [dragging, setSeeking]);
 
   const progress = duration > 0 ? current / duration : 0;
 

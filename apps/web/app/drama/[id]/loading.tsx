@@ -1,12 +1,11 @@
 /**
  * Soft-nav placeholder for /drama/[id].
- * Mobile never uses the browse landing — blank watch stage only.
- * Desktop keeps a light detail skeleton.
+ * Prefer a neutral dark stage: watch entries stay black-ready; browse (?browse=1) is close to #1c1c1c.
  */
 export default function Loading() {
   return (
     <>
-      <div className="fixed inset-0 z-[70] bg-black md:hidden" aria-busy="true" />
+      <div className="fixed inset-0 z-[70] bg-[#1c1c1c] md:hidden" aria-busy="true" />
       <div className="mx-auto hidden max-w-[1280px] px-4 pb-24 pt-6 md:block md:px-10 md:pt-10">
         <div className="flex gap-9">
           <div className="h-[238px] w-[168px] shrink-0 animate-pulse rounded-2xl bg-white/[0.06]" />
