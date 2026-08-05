@@ -14,6 +14,7 @@ import { localeFromAcceptLanguage } from "@/lib/languages";
  * - 用户域访问 /admin|/ops|/console（含 /zh|/en|/fr 前缀）→ 跳转管理端域名
  * - 误把管理域指到本应用时 → 跳转 ADMIN_ORIGIN
  * - locale 前缀 rewrite
+ * - 已删/下架短剧 document 请求 → 硬 404
  * - 首次访问根据 Accept-Language 写入 dv_locale（避免 SSR/CSR 语言不一致）
  */
 const ADMIN_PREFIXES = ["/admin", "/ops", "/console"];
@@ -99,7 +100,26 @@ function withDefaultLocaleCookie(req: NextRequest, res: NextResponse) {
   return res;
 }
 
-export function middleware(req: NextRequest) {
+/** True when public catalog says the drama is missing / not LIVE. Fail open on API errors. */
+async function isMissingLiveDrama(id: string): Promise<boolean> {
+  const base = (process.env.API_PROXY_TARGET || "http://127.0.0.1:4100").replace(/\/$/, "");
+  try {
+    const res = await fetch(`${base}/api/v1/dramas/${encodeURIComponent(id)}`, {
+      headers: { Accept: "application/json" },
+    });
+    if (res.status === 404) return true;
+    if (!res.ok) return false;
+    const json = (await res.json().catch(() => null)) as {
+      code?: number;
+      data?: unknown;
+    } | null;
+    return !json || json.code !== 0 || !json.data;
+  } catch {
+    return false;
+  }
+}
+
+export async function middleware(req: NextRequest) {
   const { pathname: logicalPath, locale } = stripLocalePrefix(req.nextUrl.pathname);
 
   // Admin redirects use the unprefixed path so /zh/admin → admin host (not 404).
@@ -107,6 +127,17 @@ export function middleware(req: NextRequest) {
   if (redirected) {
     if (locale) localeCookie(redirected, locale);
     return redirected;
+  }
+
+  // Hard-404 missing / offline dramas (App Router page notFound() alone stays HTTP 200 under streaming).
+  const dramaMatch = logicalPath.match(/^\/drama\/([^/]+)\/?$/);
+  if (dramaMatch && (await isMissingLiveDrama(dramaMatch[1]))) {
+    const url = req.nextUrl.clone();
+    url.pathname = "/__drama_missing__";
+    const res = NextResponse.rewrite(url);
+    if (locale) localeCookie(res, locale);
+    else withDefaultLocaleCookie(req, res);
+    return res;
   }
 
   // Locale-prefixed consumer URLs → rewrite to unprefixed app routes.
