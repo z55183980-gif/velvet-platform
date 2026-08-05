@@ -172,11 +172,18 @@ export function WatchSeekBar({
     }
   };
 
-  const ratioFromEvent = (clientX: number) => {
+  const ratioFromEvent = (clientX: number, clientY: number) => {
     const el = seekRef.current;
     if (!el) return 0;
     const rect = el.getBoundingClientRect();
-    return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    // CSS rotate(90deg) landscape shell: track AABB is tall+narrow on screen edge.
+    // Local L→R maps to screen bottom→top after clockwise 90°.
+    if (rect.height > rect.width * 1.35) {
+      const h = Math.max(1, rect.height);
+      return Math.max(0, Math.min(1, 1 - (clientY - rect.top) / h));
+    }
+    const w = Math.max(1, rect.width);
+    return Math.max(0, Math.min(1, (clientX - rect.left) / w));
   };
 
   const applyRatioUi = (ratio: number) => {
@@ -199,7 +206,7 @@ export function WatchSeekBar({
     if (!dragging) return;
 
     const onMove = (e: PointerEvent) => {
-      applyRatioUi(ratioFromEvent(e.clientX));
+      applyRatioUi(ratioFromEvent(e.clientX, e.clientY));
     };
     const onUp = () => {
       const d = durationRef.current;
@@ -288,7 +295,7 @@ export function WatchSeekBar({
           wasPaused.current = !!v?.paused;
           if (v && !v.paused) v.pause();
           setDragging(true);
-          applyRatioUi(ratioFromEvent(e.clientX));
+          applyRatioUi(ratioFromEvent(e.clientX, e.clientY));
         }}
       >
         <div

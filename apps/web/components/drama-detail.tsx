@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useRouter } from "next/navigation";
 import {
   Play,
+  Pause,
   ChevronLeft,
   ChevronRight,
   ChevronUp,
@@ -68,6 +69,47 @@ function formatCount(n: number, locale: string) {
   return String(n);
 }
 
+function fmtLandTime(sec: number) {
+  if (!Number.isFinite(sec) || sec < 0) return "00:00:00";
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+function LandVideoTime({
+  videoRef,
+  kind,
+}: {
+  videoRef: RefObject<HTMLVideoElement | null>;
+  kind: "current" | "duration";
+}) {
+  const [value, setValue] = useState(0);
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const tick = () => {
+      setValue(
+        kind === "duration"
+          ? Number.isFinite(v.duration) && v.duration > 0
+            ? v.duration
+            : 0
+          : v.currentTime || 0,
+      );
+    };
+    tick();
+    v.addEventListener("timeupdate", tick);
+    v.addEventListener("durationchange", tick);
+    v.addEventListener("loadedmetadata", tick);
+    return () => {
+      v.removeEventListener("timeupdate", tick);
+      v.removeEventListener("durationchange", tick);
+      v.removeEventListener("loadedmetadata", tick);
+    };
+  }, [videoRef, kind]);
+  return <span className="shrink-0 text-[12px] tabular-nums text-white/90">{fmtLandTime(value)}</span>;
+}
+
 const PLAY_GRAD =
   "linear-gradient(92.27deg, #ff7e0d 0.32%, #ff9233)";
 const PLAY_GRAD_HOVER =
@@ -128,6 +170,10 @@ export function DramaDetail({
   const [uiImmersive, setUiImmersive] = useState(false);
   /** iOS 等无法 lock 横屏时的 CSS 强制横屏全屏（仅横屏全屏路径） */
   const [rotateFs, setRotateFs] = useState(!!autoLandscapeFs);
+  /** 红果横屏全屏：操作条显隐（点击画面切换，不暂停） */
+  const [landChromeVisible, setLandChromeVisible] = useState(true);
+  const [screenIsLandscape, setScreenIsLandscape] = useState(false);
+  const [videoPlaying, setVideoPlaying] = useState(true);
   const [qualities, setQualities] = useState<Array<{ index: number; height: number; label: string }>>([]);
   const [qualityIndex, setQualityIndex] = useState(-1); // -1 = auto
   const [showQuality, setShowQuality] = useState(false);
@@ -384,6 +430,85 @@ export function DramaDetail({
     };
   }, [user, selected?.id, playUrl, watching]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(orientation: landscape)");
+    const apply = () => setScreenIsLandscape(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
+
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v || !watching) return;
+    const sync = () => setVideoPlaying(!v.paused);
+    sync();
+    v.addEventListener("play", sync);
+    v.addEventListener("pause", sync);
+    return () => {
+      v.removeEventListener("play", sync);
+      v.removeEventListener("pause", sync);
+    };
+  }, [watching, playUrl, landscapeMode, rotateFs]);
+
+  const tryEnterLandscapeFs = useCallback(async () => {
+    setShowRate(false);
+    setShowMore(false);
+    setShowQuality(false);
+    setUiImmersive(false);
+    setLandChromeVisible(true);
+    const el = watchShellRef.current;
+    let lockedOrient = false;
+    let fsOk = false;
+    try {
+      const req =
+        el &&
+        (el.requestFullscreen?.bind(el) ||
+          (
+            el as HTMLElement & {
+              webkitRequestFullscreen?: () => Promise<void> | void;
+            }
+          ).webkitRequestFullscreen?.bind(el));
+      if (req && !document.fullscreenElement) {
+        await req();
+        fsOk = true;
+      }
+    } catch {
+      fsOk = false;
+    }
+    try {
+      const orient = screen.orientation as ScreenOrientation & {
+        lock?: (orientation: string) => Promise<void>;
+      };
+      if (orient.lock) {
+        try {
+          await orient.lock("landscape");
+          lockedOrient = true;
+        } catch {
+          try {
+            await orient.lock("landscape-primary");
+            lockedOrient = true;
+          } catch {
+            lockedOrient = false;
+          }
+        }
+      }
+    } catch {
+      lockedOrient = false;
+    }
+    const nowLand =
+      lockedOrient ||
+      (typeof window !== "undefined" && window.matchMedia("(orientation: landscape)").matches);
+    // Prefer native FS+orientation; CSS rotate only when device stays portrait.
+    if (nowLand || (fsOk && window.matchMedia("(orientation: landscape)").matches)) {
+      setRotateFs(false);
+      setScreenIsLandscape(true);
+    } else {
+      setRotateFs(true);
+    }
+  }, []);
+
   // Feed「全屏观看」：进入播放且检出横片后自动真横屏沉浸
   // Must stay above any conditional returns (Rules of Hooks).
   useEffect(() => {
@@ -393,32 +518,7 @@ export function DramaDetail({
     const allowed = !!(user || (episodeId && canGuestWatch(episodeId)));
     if (!playerReady || !allowed) return;
     setPendingLandscapeFs(false);
-    setShowRate(false);
-    setShowMore(false);
-    setShowQuality(false);
-    setUiImmersive(false);
-    const el = watchShellRef.current;
-    void (async () => {
-      let lockedOrient = false;
-      try {
-        if (el?.requestFullscreen && !document.fullscreenElement) {
-          await el.requestFullscreen();
-        }
-        const orient = screen.orientation as ScreenOrientation & {
-          lock?: (orientation: string) => Promise<void>;
-        };
-        if (orient.lock) {
-          await orient.lock("landscape");
-          lockedOrient = true;
-        }
-      } catch {
-        lockedOrient = false;
-      }
-      // Navigation loses the Feed tap gesture — Fullscreen/orientation often fail;
-      // keep CSS rotate landscape as the reliable mobile path.
-      if (lockedOrient) setRotateFs(false);
-      else setRotateFs(true);
-    })();
+    void tryEnterLandscapeFs();
   }, [
     pendingLandscapeFs,
     watching,
@@ -429,6 +529,7 @@ export function DramaDetail({
     selected?.id,
     user,
     canGuestWatch,
+    tryEnterLandscapeFs,
   ]);
 
   // HLS attach + quality levels + 横竖检测
@@ -694,6 +795,7 @@ export function DramaDetail({
     const exitImmersiveFs = async () => {
       setUiImmersive(false);
       setRotateFs(false);
+      setLandChromeVisible(true);
       try {
         if (document.fullscreenElement) await document.exitFullscreen();
       } catch {
@@ -724,29 +826,9 @@ export function DramaDetail({
       }
     };
 
-    /** 横屏沉浸：requestFullscreen + orientation.lock；失败则 CSS rotateFs */
-    const enterLandscapeFullscreen = async () => {
-      setShowRate(false);
-      setShowMore(false);
-      setShowQuality(false);
-      setUiImmersive(false);
-      const el = watchShellRef.current;
-      let locked = false;
-      try {
-        if (el?.requestFullscreen && !document.fullscreenElement) {
-          await el.requestFullscreen();
-        }
-        const orient = screen.orientation as ScreenOrientation & {
-          lock?: (orientation: string) => Promise<void>;
-        };
-        if (orient.lock) {
-          await orient.lock("landscape");
-          locked = true;
-        }
-      } catch {
-        locked = false;
-      }
-      if (!locked) setRotateFs(true);
+    /** 横屏沉浸：优先 requestFullscreen + orientation.lock；失败则 CSS rotateFs */
+    const enterLandscapeFullscreen = () => {
+      void tryEnterLandscapeFs();
     };
 
     const applyQuality = (index: number) => {
@@ -763,13 +845,15 @@ export function DramaDetail({
       setShowMore(false);
     };
 
-    // 真横屏沉浸（中间「全屏观看」）：旋转/系统横屏，整块清掉底栏。
-    const trueLandscapeFs = rotateFs || (landscapeMode && browserFs);
-    // 选集底栏+进度：竖屏清屏、横屏清 meta 都保留；仅真横屏沉浸隐藏。
+    // 真横屏沉浸：原生横屏 FS，或 CSS rotate 兜底（不含「仅竖屏浏览器全屏」）
+    const trueLandscapeFs =
+      rotateFs || (landscapeMode && browserFs && screenIsLandscape);
+    // 选集底栏+进度：竖屏路径保留；横屏真全屏改用下方红果横屏操作条
     const showWatchBottomChrome = !trueLandscapeFs;
-    // 标题/侧栏：任一侧 Maximize/竖屏全屏清掉（uiImmersive）。
+    // 标题/侧栏：竖屏 Maximize / 清 meta
     const showWatchMetaChrome = showWatchBottomChrome && !uiImmersive;
     const fillVideo = !landscapeMode || trueLandscapeFs;
+    const showLandFsChrome = trueLandscapeFs && landChromeVisible;
     const resumeTimeLabel = resumeHint
       ? `${Math.floor(resumeHint.progressSec / 60)}:${String(Math.floor(resumeHint.progressSec % 60)).padStart(2, "0")}`
       : "";
@@ -802,7 +886,7 @@ export function DramaDetail({
             : undefined
         }
       >
-        {/* Top chrome — 真横屏沉浸时隐藏（图四） */}
+        {/* Top chrome — 竖屏常态；横屏真全屏见下方红果条 */}
         {!trueLandscapeFs ? (
         <div className="absolute left-0 right-0 top-0 z-40 flex items-center justify-between bg-gradient-to-b from-black/65 via-black/25 to-transparent px-2.5 pb-3 pt-[max(0.4rem,env(safe-area-inset-top))]">
           <button
@@ -932,6 +1016,50 @@ export function DramaDetail({
             )}
           </div>
         </div>
+        ) : showLandFsChrome ? (
+          <div className="absolute left-0 right-0 top-0 z-50 flex items-center justify-between bg-gradient-to-b from-black/70 via-black/30 to-transparent px-3 pb-4 pt-[max(0.35rem,env(safe-area-inset-top))]">
+            <button
+              type="button"
+              onClick={() => {
+                void exitImmersiveFs();
+              }}
+              className="inline-flex min-w-0 max-w-[80%] items-center gap-0.5 text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
+              aria-label="back"
+            >
+              <ChevronLeft className="h-7 w-7 shrink-0" strokeWidth={2} />
+              <span className="truncate text-[15px] font-medium">
+                {title}
+                {selected ? ` ${t("detail.episodeLabel", { n: selected.no })}` : ""}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowRate(false);
+                setShowQuality(false);
+                setShowMore((v) => !v);
+              }}
+              className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-white"
+              aria-label={t("player.more")}
+            >
+              <MoreVertical className="h-5 w-5" />
+            </button>
+            {showMore ? (
+              <div className="absolute right-3 top-full z-50 mt-1 min-w-[132px] overflow-hidden rounded-xl bg-[#2a2c2c]/96 py-1 shadow-lg ring-1 ring-white/10 backdrop-blur-md">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMuted((m) => !m);
+                    setShowMore(false);
+                  }}
+                  className="flex w-full items-center gap-2 px-3 py-2.5 text-[13px] text-white/85"
+                >
+                  {muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
+                  {muted ? t("player.unmute") : t("player.mute")}
+                </button>
+              </div>
+            ) : null}
+          </div>
         ) : null}
 
         {/* Video stage — 横片信箱：在顶栏与底栏之间垂直居中 */}
@@ -992,8 +1120,15 @@ export function DramaDetail({
               index={episodeIndex}
               count={data.episodes.length}
               onChange={selectEpisodeByIndex}
-              blocked={pagerBlocked || pagerMenusOpen}
+              blocked={pagerBlocked || pagerMenusOpen || trueLandscapeFs}
               onTap={() => {
+                if (trueLandscapeFs) {
+                  setLandChromeVisible((v) => !v);
+                  setShowRate(false);
+                  setShowMore(false);
+                  setShowQuality(false);
+                  return;
+                }
                 const v = videoRef.current;
                 if (!v || !canPlay || !playUrl || locked || needsLogin) return;
                 if (v.paused) void v.play().catch(() => {});
@@ -1022,9 +1157,8 @@ export function DramaDetail({
                       active={active}
                       chrome="watch"
                       objectFit={fillVideo ? "cover" : "contain"}
-                      // Shell owns seek+episode chrome; landscape immersive uses in-player seek.
-                      bottomInset={showWatchBottomChrome ? 0 : 12}
-                      showSeek={!showWatchBottomChrome}
+                      bottomInset={0}
+                      showSeek={false}
                       playbackRate={rate}
                       onPlaybackRateChange={setRate}
                       attachMedia={false}
@@ -1055,6 +1189,153 @@ export function DramaDetail({
             </VerticalPager>
           </div>
         )}
+
+        {/* 红果横屏全屏操作条：点击画面显隐，不暂停 */}
+        {showLandFsChrome ? (
+          <div
+            className="absolute inset-x-0 bottom-0 z-50 bg-gradient-to-t from-black/75 via-black/35 to-transparent px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-10"
+            data-no-tap
+            onClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2.5">
+              <button
+                type="button"
+                className="grid h-9 w-9 shrink-0 place-items-center text-white"
+                aria-label={videoPlaying ? t("player.pause") : t("player.play")}
+                onClick={() => {
+                  const v = videoRef.current;
+                  if (!v) return;
+                  if (v.paused) void v.play().catch(() => {});
+                  else v.pause();
+                }}
+              >
+                {videoPlaying ? (
+                  <Pause className="h-5 w-5 fill-white" />
+                ) : (
+                  <Play className="ml-0.5 h-5 w-5 fill-white" />
+                )}
+              </button>
+              <LandVideoTime videoRef={videoRef} kind="current" />
+              <div className="min-w-0 flex-1">
+                <WatchSeekBar
+                  videoRef={videoRef}
+                  absolute={false}
+                  mediaKey={playUrl}
+                  disabled={!playUrl || needsLogin || locked}
+                  onSeekingChange={onSeekingChange}
+                  className="px-0"
+                />
+              </div>
+              <LandVideoTime videoRef={videoRef} kind="duration" />
+              <div className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowQuality(false);
+                    setShowMore(false);
+                    setShowRate((v) => !v);
+                  }}
+                  className="px-1.5 text-[13px] font-medium text-white/95"
+                >
+                  {t("player.speed")}
+                </button>
+                {showRate ? (
+                  <div className="absolute bottom-full right-0 mb-2 min-w-[92px] overflow-hidden rounded-xl bg-[#2a2c2c]/96 py-1 shadow-lg ring-1 ring-white/10">
+                    {PLAYER_RATES.map((r) => (
+                      <button
+                        key={r}
+                        type="button"
+                        onClick={() => {
+                          setRate(r);
+                          setShowRate(false);
+                        }}
+                        className={cn(
+                          "flex w-full items-center justify-center px-3 py-2.5 text-[13px]",
+                          r === rate ? "font-semibold text-[#ff7e0d]" : "text-white/85",
+                        )}
+                      >
+                        {r === 1 ? t("player.speedNormal") : `${r}x`}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+              <div className="relative shrink-0">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowRate(false);
+                    setShowMore(false);
+                    setShowQuality((v) => !v);
+                  }}
+                  className="px-1.5 text-[13px] font-medium text-white/95"
+                >
+                  {qualityIndex < 0
+                    ? t("player.qualityAuto")
+                    : qualities.find((q) => q.index === qualityIndex)?.label ||
+                      t("player.qualityAuto")}
+                </button>
+                {showQuality ? (
+                  <div className="absolute bottom-full right-0 mb-2 min-w-[112px] overflow-hidden rounded-xl bg-[#2a2c2c]/96 py-1 shadow-lg ring-1 ring-white/10">
+                    <button
+                      type="button"
+                      onClick={() => applyQuality(-1)}
+                      className={cn(
+                        "flex w-full items-center justify-center px-3 py-2.5 text-[13px]",
+                        qualityIndex < 0 ? "font-semibold text-[#ff7e0d]" : "text-white/85",
+                      )}
+                    >
+                      {t("player.qualityAuto")}
+                    </button>
+                    {qualities.map((q) => (
+                      <button
+                        key={q.index}
+                        type="button"
+                        onClick={() => applyQuality(q.index)}
+                        className={cn(
+                          "flex w-full items-center justify-center px-3 py-2.5 text-[13px]",
+                          qualityIndex === q.index
+                            ? "font-semibold text-[#ff7e0d]"
+                            : "text-white/85",
+                        )}
+                      >
+                        {q.label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+            <div className="mt-2.5 flex items-center gap-5 pb-0.5 text-[12px] text-white/90">
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5"
+                onClick={() => void toggleLike()}
+              >
+                <Heart
+                  className={cn("h-4 w-4", liked ? "fill-[#ff4d6d] text-[#ff4d6d]" : "text-white")}
+                  strokeWidth={1.75}
+                />
+                {formatCount(likeCount, locale)}
+              </button>
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5"
+                onClick={() => void toggleFavorite()}
+              >
+                <Star
+                  className={cn(
+                    "h-4 w-4",
+                    favorited ? "fill-[#ffb000] text-[#ffb000]" : "text-white",
+                  )}
+                  strokeWidth={1.75}
+                />
+                {formatCount(favCount, locale)}
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         {/* Resume toast */}
         {resumeToast && showWatchBottomChrome ? (
