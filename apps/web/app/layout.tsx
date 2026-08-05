@@ -32,7 +32,7 @@ const notoSansSC = Noto_Sans_SC({
 });
 
 /** Fail-open: storage / early-script errors must never leave a permanent black overlay. */
-const BRAND_SPLASH_BOOT_SCRIPT = `(function(){function hideSplash(){try{document.documentElement.classList.remove("velvet-splash-lock");}catch(e){}var node=document.getElementById("velvet-boot-splash");if(!node)return;node.dataset.skip="1";node.setAttribute("hidden","");node.style.display="none";try{node.remove();}catch(e){}}try{var el=document.getElementById("velvet-boot-splash");if(!el)return;var KEY="dv_splash_done";var FADE=340;function dismiss(){try{sessionStorage.setItem(KEY,"1");}catch(e){}var node=document.getElementById("velvet-boot-splash");document.documentElement.classList.remove("velvet-splash-lock");if(!node)return;node.style.transition="opacity "+FADE+"ms ease";node.style.opacity="0";node.style.pointerEvents="none";window.setTimeout(function(){try{node.remove();}catch(e){}},FADE+40);}var seen=false;try{seen=!!sessionStorage.getItem(KEY);}catch(e){hideSplash();return;}if(seen||window.matchMedia("(min-width:768px)").matches){el.dataset.skip="1";el.setAttribute("hidden","");el.style.display="none";document.documentElement.classList.remove("velvet-splash-lock");}else{document.documentElement.classList.add("velvet-splash-lock");window.setTimeout(dismiss,3200);}}catch(e){hideSplash();}})();`;
+const BRAND_SPLASH_BOOT_SCRIPT = `(function(){function hideSplash(){try{document.documentElement.classList.remove("velvet-splash-lock");}catch(e){}var node=document.getElementById("velvet-boot-splash");if(!node)return;node.dataset.skip="1";node.setAttribute("hidden","");node.style.display="none";}try{var el=document.getElementById("velvet-boot-splash");if(!el)return;var KEY="dv_splash_done";var FADE=340;function dismiss(){try{sessionStorage.setItem(KEY,"1");}catch(e){}var node=document.getElementById("velvet-boot-splash");document.documentElement.classList.remove("velvet-splash-lock");if(!node)return;node.style.transition="opacity "+FADE+"ms ease";node.style.opacity="0";node.style.pointerEvents="none";window.setTimeout(function(){node.setAttribute("hidden","");node.style.display="none";},FADE+40);}var seen=false;try{seen=!!sessionStorage.getItem(KEY);}catch(e){hideSplash();return;}if(seen||window.matchMedia("(min-width:768px)").matches){el.dataset.skip="1";el.setAttribute("hidden","");el.style.display="none";document.documentElement.classList.remove("velvet-splash-lock");}else{document.documentElement.classList.add("velvet-splash-lock");window.setTimeout(dismiss,3200);}}catch(e){hideSplash();}})();`;
 
 export const metadata: Metadata = {
   title: "Velvet — Spicy Short Dramas",
@@ -99,6 +99,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           id="velvet-boot-splash"
           className="fixed inset-0 z-[200] flex flex-col items-center justify-center bg-black md:hidden"
           aria-hidden="true"
+          suppressHydrationWarning
         >
           {/* eslint-disable-next-line @next/next/no-img-element -- first-paint splash, no next/image */}
           <img

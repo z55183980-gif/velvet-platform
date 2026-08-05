@@ -21,7 +21,11 @@ export function BrandSplash() {
     const el = document.getElementById(VELVET_BOOT_SPLASH_ID);
     if (!el) return;
     if (el.dataset.skip === "1" || el.hasAttribute("hidden")) {
-      el.remove();
+      // The splash is rendered by the root layout, so it must stay in the DOM.
+      // Removing a React-owned sibling makes the next App Router commit call
+      // insertBefore/removeChild with a stale anchor and trips the global error page.
+      el.hidden = true;
+      el.style.display = "none";
       document.documentElement.classList.remove("velvet-splash-lock");
       return;
     }
@@ -40,7 +44,10 @@ export function BrandSplash() {
       el.style.opacity = "0";
       el.style.pointerEvents = "none";
       document.documentElement.classList.remove("velvet-splash-lock");
-      window.setTimeout(() => el.remove(), FADE_MS + 40);
+      window.setTimeout(() => {
+        el.hidden = true;
+        el.style.display = "none";
+      }, FADE_MS + 40);
     };
 
     document.documentElement.classList.add("velvet-splash-lock");
