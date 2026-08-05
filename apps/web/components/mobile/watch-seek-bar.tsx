@@ -205,7 +205,11 @@ export function WatchSeekBar({
 
   return (
     <div
-      className={cn(absolute && "absolute inset-x-0 z-40", "px-3", className)}
+      className={cn(
+        "relative px-3",
+        absolute && "absolute inset-x-0 z-40",
+        className,
+      )}
       style={absolute ? { bottom } : undefined}
       onClick={(e) => e.stopPropagation()}
       data-no-tap

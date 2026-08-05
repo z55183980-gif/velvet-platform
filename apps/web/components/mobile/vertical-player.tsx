@@ -523,7 +523,11 @@ export function VerticalPlayer({
       )}
 
       {src && !locked && !loginRequired && !error && chrome === "watch" && showSeek ? (
-        <WatchSeekBar videoRef={videoRef} bottom={bottomInset} />
+        <WatchSeekBar
+          videoRef={videoRef}
+          bottom={bottomInset}
+          onSeekingChange={onSeekingChange}
+        />
       ) : null}
 
       {src && !locked && !loginRequired && !error && !isMinimal && (
