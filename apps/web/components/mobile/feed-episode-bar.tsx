@@ -239,7 +239,7 @@ export function FeedEpisodeBar({
               className={cn(
                 // Center in the hit area so the scrubber thumb isn't clipped
                 // by overflow-hidden / the tab bar edge below the feed stage.
-                "absolute inset-x-0 top-1/2 -translate-y-1/2 overflow-visible bg-white/20 transition-[height] duration-150",
+                "absolute inset-x-2 top-1/2 -translate-y-1/2 overflow-visible bg-white/20 transition-[height] duration-150",
                 dragging ? "h-1.5" : "h-[2px]",
               )}
             >

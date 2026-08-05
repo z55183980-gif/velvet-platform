@@ -22,8 +22,8 @@ export function EpisodeThumbnailField({
   url?: string;
   disabled?: boolean;
   kind?: "cover" | "thumbnail" | "image";
-  /** "compact" fits a narrow table cell (episode list); "form" fits a standalone wide form row (e.g. drama cover field). */
-  size?: "compact" | "form";
+  /** "compact" fits a narrow table cell; "form" a wide form row; "poster" a full-width 3:4 cover panel. */
+  size?: "compact" | "form" | "poster";
   onUploaded: (url: string) => void | Promise<void>;
   onError: (message: string) => void;
   fromVideoLabel: string;
@@ -71,7 +71,13 @@ export function EpisodeThumbnailField({
       : null;
 
   return (
-    <div className={cn("content-ep-thumb", size === "form" && "content-ep-thumb--form")}>
+    <div
+      className={cn(
+        "content-ep-thumb",
+        size === "form" && "content-ep-thumb--form",
+        size === "poster" && "content-ep-thumb--poster",
+      )}
+    >
       <div className="content-ep-thumb__preview">
         {busy ? (
           <LoaderCircle className="h-4 w-4 animate-spin text-brand" />

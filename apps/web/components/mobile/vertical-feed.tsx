@@ -355,7 +355,8 @@ export function VerticalFeed({
       ? Math.min(restoredHomeFeed.index, Math.max(0, restoredHomeFeed.dramas.length - 1))
       : 0,
   );
-  const [muted, setMuted] = useState(() => restoredHomeFeed?.muted ?? false);
+  // Browser autoplay policies require the first feed item to begin muted.
+  const [muted, setMuted] = useState(() => restoredHomeFeed?.muted ?? true);
   const [pagerBlocked, setPagerBlocked] = useState(false);
   const shellRef = useRef<HTMLDivElement>(null);
   const togglePlayRef = useRef<(() => void) | null>(null);

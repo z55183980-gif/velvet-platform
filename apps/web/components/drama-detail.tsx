@@ -216,6 +216,7 @@ export function DramaDetail({
   seekToRef.current = seekTo;
   const landscapeModeRef = useRef(landscapeMode);
   landscapeModeRef.current = landscapeMode;
+  const previousLandscapeModeRef = useRef(landscapeMode);
   /** Avoid putting t in the HLS setup effect deps (locale switch would rebuild player). */
   const tRef = useRef(t);
   tRef.current = t;
@@ -675,6 +676,15 @@ export function DramaDetail({
       /* ignore */
     }
   }, []);
+
+  useEffect(() => {
+    const wasLandscape = previousLandscapeModeRef.current;
+    previousLandscapeModeRef.current = landscapeMode;
+    if (!watching || !isMobile || !wasLandscape || landscapeMode) return;
+    void exitImmersiveFs().finally(() => {
+      void lockPortraitOrientation();
+    });
+  }, [watching, isMobile, landscapeMode, exitImmersiveFs]);
 
   // A routed fullscreen request may lack user activation. Never substitute the
   // deprecated page-style landscape shell when the browser rejects fullscreen.

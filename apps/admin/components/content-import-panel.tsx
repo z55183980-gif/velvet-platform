@@ -48,7 +48,7 @@ export function ContentImportPanel() {
     <>
       {error ? <p className="mb-3 text-body-sm text-danger">{error}</p> : null}
 
-      <div className="mb-6 space-y-4 card glass-card p-4">
+      <div className="mb-6 space-y-4 upload-panel">
         <h2 className="text-h4 font-semibold">{t("importFolderTitle")}</h2>
         <p className="text-body-sm text-ink-muted">{t("importFolderHint")}</p>
         <input
@@ -97,7 +97,7 @@ export function ContentImportPanel() {
         </div>
       </div>
 
-      <div className="mb-6 space-y-4 card glass-card p-4">
+      <div className="mb-6 space-y-4 upload-panel">
         <h2 className="text-h4 font-semibold">{t("localPathTitle")}</h2>
         <p className="text-body-sm text-ink-muted">{t("localPathHint")}</p>
         <Input
@@ -117,7 +117,7 @@ export function ContentImportPanel() {
       </div>
 
       {result ? (
-        <div className="card glass-card space-y-2 p-4 text-body-sm">
+        <div className="upload-panel space-y-2 text-body-sm">
           <p>
             {t("importSummary", {
               scanned: result.scanned ?? "—",

@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button } from "@velvet/ui";
 import { ContentImportPanel } from "@/components/content-import-panel";
 import { OnlineDramaForm } from "@/components/online-drama-form";
 import { UploadDramaForm } from "@/components/upload-drama-form";
@@ -31,23 +30,27 @@ export function ContentAddPanel({
 
   return (
     <div>
-      <div className="mb-4 flex flex-wrap gap-2">
-        {(
-          [
-            ["upload", t("contentUpload")],
-            ["local", t("contentLocal")],
-            ["online", t("contentOnline")],
-          ] as const
-        ).map(([key, label]) => (
-          <Button
-            key={key}
-            size="sm"
-            variant={tab === key ? "primary" : "secondary"}
-            onClick={() => switchTab(key)}
-          >
-            {label}
-          </Button>
-        ))}
+      <div className="mb-4" role="tablist" aria-label={t("contentAdd")}>
+        <div className="seg-tabs">
+          {(
+            [
+              ["upload", t("contentUpload")],
+              ["local", t("contentLocal")],
+              ["online", t("contentOnline")],
+            ] as const
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={tab === key}
+              className="seg-tabs__item"
+              onClick={() => switchTab(key)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {tab === "upload" ? (

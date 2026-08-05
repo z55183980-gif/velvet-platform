@@ -25,9 +25,7 @@ function AdminContentAddInner() {
 
   return (
     <AdminShell title={t("contentAdd")}>
-      <div className="admin-fill card flex min-h-0 flex-col border border-line bg-white p-4 shadow-[var(--shadow-1)] md:p-6">
-        <ContentAddPanel tab={tab} onTabChange={setTab} />
-      </div>
+      <ContentAddPanel tab={tab} onTabChange={setTab} />
     </AdminShell>
   );
 }

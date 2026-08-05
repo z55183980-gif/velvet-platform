@@ -86,7 +86,7 @@ export function OnlineDramaForm() {
       <p className="text-body-sm text-ink-muted">{t("contentAddOnlineHint")}</p>
       {error ? <p className="text-body-sm text-danger">{error}</p> : null}
       {createdId ? (
-        <div className="card glass-card flex flex-wrap items-center gap-3 p-4 text-body-sm">
+        <div className="upload-panel flex flex-wrap items-center gap-3 text-body-sm">
           <span>{t("onlineCreated", { n: createdCount })}</span>
           <Link href={`/content/${createdId}`} className="text-brand hover:underline">
             {t("onlineViewDrama")}
@@ -94,7 +94,7 @@ export function OnlineDramaForm() {
         </div>
       ) : null}
 
-      <div className="card glass-card grid gap-3 p-4 md:grid-cols-2">
+      <div className="upload-panel grid gap-3 md:grid-cols-2">
         <label className="text-caption text-ink-muted">
           {t("onlineTitleZh")}
           <Input className="mt-1" value={titleZh} onChange={(e) => setTitleZh(e.target.value)} />
@@ -132,7 +132,7 @@ export function OnlineDramaForm() {
         </label>
       </div>
 
-      <div className="card glass-card space-y-3 p-4">
+      <div className="upload-panel space-y-3">
         <div>
           <h3 className="text-h4 font-semibold">{t("onlineEpisodesTitle")}</h3>
           <p className="text-body-sm text-ink-muted">{t("onlineEpisodesHint")}</p>

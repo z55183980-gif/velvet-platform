@@ -167,7 +167,7 @@ export function YtdlpImportPanel() {
 
   return (
     <div className="space-y-4">
-      <div className="card glass-card space-y-2 p-4">
+      <div className="upload-panel space-y-2">
         <h3 className="text-h4 font-semibold">{t("ytdlpImportTitle")}</h3>
         <p className="text-body-sm text-ink-muted">{t("ytdlpImportHint")}</p>
         {!configured ? (
@@ -189,7 +189,7 @@ export function YtdlpImportPanel() {
 
       {error ? <p className="text-body-sm text-danger">{error}</p> : null}
       {result ? (
-        <div className="card glass-card flex flex-wrap items-center gap-3 p-4 text-body-sm">
+        <div className="upload-panel flex flex-wrap items-center gap-3 text-body-sm">
           <span>
             {result.mode === "transfer"
               ? t("ytdlpTransferred", {
@@ -236,7 +236,7 @@ export function YtdlpImportPanel() {
       </div>
 
       {probe ? (
-        <div className="card glass-card space-y-4 p-4">
+        <div className="upload-panel space-y-4">
           <div className="flex flex-wrap gap-3">
             {probe.coverUrl ? (
               // eslint-disable-next-line @next/next/no-img-element

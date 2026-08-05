@@ -12,6 +12,7 @@ import {
 } from "@velvet/api-client";
 import { Badge, Button, Input, Select, cn } from "@velvet/ui";
 import {
+  AlertTriangle,
   ChevronDown,
   Cloud,
   HardDrive,
@@ -282,31 +283,16 @@ export function UploadDramaForm() {
     progress.length > 0 ? Math.round((doneCount / progress.length) * 100) : 0;
 
   return (
-    <div className="upload-drama space-y-4">
-      <p className="text-body-sm text-ink-muted">{t("contentAddUploadHint")}</p>
-
-      <div className="upload-status-bar">
-        <span className={cn("upload-status-pill", r2Enabled ? "is-ok" : "is-muted")}>
-          {r2Enabled ? <Cloud className="h-3.5 w-3.5" /> : <HardDrive className="h-3.5 w-3.5" />}
-          {r2Enabled ? t("uploadR2CdnNote") : t("uploadR2LocalNote")}
-        </span>
-        <span className={cn("upload-status-pill", ffmpegReady ? "is-ok" : "is-warn")}>
-          {ffmpegReady ? t("ffmpegReady") : t("ffmpegMissing")}
-        </span>
-        {storageQ.data?.mediaBucket ? (
-          <span className="upload-status-pill is-muted">
-            {storageQ.data.storageBackend} · {storageQ.data.mediaBucket}
-          </span>
-        ) : null}
-        {!r2Enabled && !storageQ.isLoading ? (
-          <span className="upload-status-note">{t("uploadR2NotEnabledHint")}</span>
-        ) : null}
-      </div>
-
-      {error ? <p className="text-body-sm text-danger">{error}</p> : null}
+    <div className="upload-drama">
+      {error ? (
+        <div className="content-inline-error mb-4">
+          <AlertTriangle className="h-4 w-4" />
+          <span>{error}</span>
+        </div>
+      ) : null}
 
       {createdId ? (
-        <div className="content-section-card flex flex-wrap items-center gap-3 !py-3">
+        <div className="upload-panel mb-4 flex flex-wrap items-center gap-3 !py-3">
           <span className="text-sm text-ink">
             {createdLocal
               ? t("uploadDramaCreatedLocal", { n: createdCount || doneCount })
@@ -324,153 +310,86 @@ export function UploadDramaForm() {
         </div>
       ) : null}
 
-      <section className="content-section-card space-y-4">
-        <div className="content-section-heading !mb-0">
-          <div>
-            <h2>{t("uploadSectionInfo")}</h2>
-            <p>{t("uploadSectionInfoHint")}</p>
-          </div>
-        </div>
-        <div className="grid gap-3 md:grid-cols-2">
-          <label className="text-caption text-ink-muted">
-            {t("onlineTitleZh")}
-            <Input className="mt-1" value={titleZh} onChange={(e) => setTitleZh(e.target.value)} disabled={busy} />
-          </label>
-          <label className="text-caption text-ink-muted">
-            {t("onlineCategory")}
-            <Select
-              className="mt-1"
-              value={categorySlug}
-              onChange={(e) => setCategorySlug(e.target.value)}
-              disabled={busy}
-            >
-              <option value="">{t("selectCategory")}</option>
-              {(categoriesQ.data ?? []).map((c) => (
-                <option key={c.slug} value={c.slug}>
-                  {c.nameZh || c.nameEn || c.slug}
-                </option>
-              ))}
-            </Select>
-          </label>
-          <label className="text-caption text-ink-muted md:col-span-2">
-            {t("onlineCoverUrl")}
-            <div className="mt-1 flex max-w-2xl flex-wrap items-center gap-3">
-              <Input
-                className="min-w-[16rem] flex-1"
-                value={coverUrl}
-                onChange={(e) => setCoverUrl(e.target.value)}
-                placeholder="/api/v1/media/… 或 CDN URL"
-                disabled={busy}
-              />
-              <EpisodeThumbnailField
-                url={coverUrl || undefined}
-                kind="cover"
-                size="form"
-                disabled={busy}
-                videoFile={sortedFiles[0]}
-                fromVideoLabel={t("thumbFromVideo")}
-                uploadLabel={t("thumbUpload")}
-                onError={setError}
-                onUploaded={(url) => {
-                  setCoverUrl(url);
-                  setError(null);
-                }}
-              />
+      <div className="upload-layout">
+        <div className="upload-col">
+          <section className="upload-panel">
+            <div className="upload-panel__head">
+              <div>
+                <h2>{t("uploadSectionInfo")}</h2>
+                <p>{t("uploadSectionInfoHint")}</p>
+              </div>
             </div>
-          </label>
-          <label className="text-caption text-ink-muted md:col-span-2">
-            {t("onlineDescZh")}
-            <textarea
-              className="content-textarea mt-1"
-              rows={3}
-              value={descriptionZh}
-              onChange={(e) => setDescriptionZh(e.target.value)}
-              disabled={busy}
-            />
-          </label>
-        </div>
 
-        <button
-          type="button"
-          className="upload-advanced-toggle"
-          onClick={() => setAdvancedOpen((v) => !v)}
-        >
-          <ChevronDown className={cn("h-4 w-4 transition", advancedOpen && "rotate-180")} />
-          {t("uploadAdvancedOptions")}
-        </button>
-        {advancedOpen ? (
-          <label className="text-caption text-ink-muted block max-w-md">
-            {t("onlineSlug")}
-            <Input className="mt-1" value={slug} onChange={(e) => setSlug(e.target.value)} disabled={busy} />
-          </label>
-        ) : null}
-      </section>
-
-      <section className="content-section-card space-y-4">
-        <div className="content-section-heading !mb-0">
-          <div>
-            <h2>{t("uploadSectionPolicy")}</h2>
-            <p>{t("uploadSectionPolicyHint")}</p>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-4 text-sm text-ink-muted">
-          <label className="flex items-center gap-2">
-            <input
-              className="content-checkbox"
-              type="checkbox"
-              checked={isFree}
-              disabled={busy}
-              onChange={(e) => setIsFree(e.target.checked)}
-            />
-            {t("free")}
-          </label>
-          {!isFree ? (
-            <>
-              <label className="flex items-center gap-2">
-                {t("priceCreditsPerEpisode")}
-                <Input
-                  className="w-24"
-                  type="number"
-                  min={1}
-                  value={priceCredits}
+            <div className="grid gap-3.5 md:grid-cols-2">
+              <label className="upload-field">
+                <span>{t("onlineTitleZh")}</span>
+                <Input value={titleZh} onChange={(e) => setTitleZh(e.target.value)} disabled={busy} />
+              </label>
+              <label className="upload-field">
+                <span>{t("onlineCategory")}</span>
+                <Select
+                  value={categorySlug}
+                  onChange={(e) => setCategorySlug(e.target.value)}
                   disabled={busy}
-                  onChange={(e) => setPriceCredits(Number(e.target.value) || 0)}
+                >
+                  <option value="">{t("selectCategory")}</option>
+                  {(categoriesQ.data ?? []).map((c) => (
+                    <option key={c.slug} value={c.slug}>
+                      {c.nameZh || c.nameEn || c.slug}
+                    </option>
+                  ))}
+                </Select>
+              </label>
+              <label className="upload-field md:col-span-2">
+                <span>{t("onlineDescZh")}</span>
+                <textarea
+                  className="content-textarea"
+                  rows={4}
+                  value={descriptionZh}
+                  onChange={(e) => setDescriptionZh(e.target.value)}
+                  disabled={busy}
                 />
               </label>
-              <label className="flex items-center gap-2">
-                {t("freeEpisodes")}
-                <Input
-                  className="w-20"
-                  type="number"
-                  min={0}
-                  value={freeEpisodeCount}
-                  disabled={busy}
-                  onChange={(e) => setFreeEpisodeCount(Number(e.target.value) || 0)}
-                />
-              </label>
-            </>
-          ) : null}
-        </div>
-      </section>
+            </div>
 
-      <section className="content-section-card space-y-4">
-        <div className="content-section-heading !mb-0">
-          <div>
-            <h2>{t("uploadVideosTitle")}</h2>
-            <p>{t("uploadVideosHint")}</p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {files.length ? (
-              <Button size="sm" variant="ghost" disabled={busy} onClick={() => { setFiles([]); setProgress([]); }}>
-                {t("uploadClearFiles")}
-              </Button>
-            ) : null}
-            <Button size="sm" variant="secondary" type="button" disabled={busy} onClick={() => fileRef.current?.click()}>
-              <Upload className="h-4 w-4" />
-              {t("selectVideoFile")}
-            </Button>
-          </div>
-        </div>
+            <div className="mt-3.5 border-t border-line pt-3">
+              <button
+                type="button"
+                className="upload-advanced-toggle"
+                onClick={() => setAdvancedOpen((v) => !v)}
+              >
+                <ChevronDown className={cn("h-4 w-4 transition", advancedOpen && "rotate-180")} />
+                {t("uploadAdvancedOptions")}
+              </button>
+              {advancedOpen ? (
+                <label className="upload-field mt-3 max-w-md">
+                  <span>{t("onlineSlug")}</span>
+                  <Input value={slug} onChange={(e) => setSlug(e.target.value)} disabled={busy} />
+                </label>
+              ) : null}
+            </div>
+          </section>
+
+          <section className="upload-panel">
+            <div className="upload-panel__head">
+              <div>
+                <h2>{t("uploadVideosTitle")}</h2>
+                <p>{t("uploadVideosHint")}</p>
+              </div>
+              <div className="flex shrink-0 flex-wrap gap-2">
+                {files.length ? (
+                  <Button size="sm" variant="ghost" disabled={busy} onClick={() => { setFiles([]); setProgress([]); }}>
+                    {t("uploadClearFiles")}
+                  </Button>
+                ) : null}
+                <Button size="sm" variant="secondary" type="button" disabled={busy} onClick={() => fileRef.current?.click()}>
+                  <Upload className="h-4 w-4" />
+                  {t("selectVideoFile")}
+                </Button>
+              </div>
+            </div>
+
+            <div className="space-y-3.5">
 
         <input
           ref={fileRef}
@@ -612,7 +531,121 @@ export function UploadDramaForm() {
             </div>
           </div>
         ) : null}
-      </section>
+            </div>
+          </section>
+        </div>
+
+        <aside className="upload-col upload-col--side">
+          <section className="upload-panel">
+            <div className="upload-panel__head">
+              <div>
+                <h2>{t("uploadSectionCover")}</h2>
+                <p>{t("coverRecommendation")}</p>
+              </div>
+            </div>
+            <EpisodeThumbnailField
+              url={coverUrl || undefined}
+              kind="cover"
+              size="poster"
+              disabled={busy}
+              videoFile={sortedFiles[0]}
+              fromVideoLabel={t("thumbFromVideo")}
+              uploadLabel={t("thumbUpload")}
+              onError={setError}
+              onUploaded={(url) => {
+                setCoverUrl(url);
+                setError(null);
+              }}
+            />
+            <label className="upload-field mt-3">
+              <span>{t("onlineCoverUrl")}</span>
+              <Input
+                value={coverUrl}
+                onChange={(e) => setCoverUrl(e.target.value)}
+                placeholder="/api/v1/media/… 或 CDN URL"
+                disabled={busy}
+              />
+            </label>
+          </section>
+
+          <section className="upload-panel">
+            <div className="upload-panel__head">
+              <div>
+                <h2>{t("uploadSectionPolicy")}</h2>
+                <p>{t("uploadSectionPolicyHint")}</p>
+              </div>
+            </div>
+            <label className="flex items-center gap-2 text-sm text-ink-muted">
+              <input
+                className="content-checkbox"
+                type="checkbox"
+                checked={isFree}
+                disabled={busy}
+                onChange={(e) => setIsFree(e.target.checked)}
+              />
+              {t("free")}
+            </label>
+            {!isFree ? (
+              <div className="mt-3.5 grid gap-3">
+                <label className="upload-field">
+                  <span>{t("priceCreditsPerEpisode")}</span>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={priceCredits}
+                    disabled={busy}
+                    onChange={(e) => setPriceCredits(Number(e.target.value) || 0)}
+                  />
+                </label>
+                <label className="upload-field">
+                  <span>{t("freeEpisodes")}</span>
+                  <Input
+                    type="number"
+                    min={0}
+                    value={freeEpisodeCount}
+                    disabled={busy}
+                    onChange={(e) => setFreeEpisodeCount(Number(e.target.value) || 0)}
+                  />
+                </label>
+              </div>
+            ) : null}
+          </section>
+
+          <section className="upload-panel">
+            <div className="upload-panel__head !mb-3">
+              <div>
+                <h2>{t("uploadEnvTitle")}</h2>
+              </div>
+            </div>
+            <div className="upload-env">
+              <div className="upload-env__row">
+                <span className="upload-env__label">{t("uploadEnvStorage")}</span>
+                <span className={cn("upload-status-pill", r2Enabled ? "is-ok" : "is-muted")}>
+                  {r2Enabled ? <Cloud className="h-3.5 w-3.5" /> : <HardDrive className="h-3.5 w-3.5" />}
+                  {r2Enabled ? t("uploadR2CdnNote") : t("uploadR2LocalNote")}
+                </span>
+              </div>
+              <div className="upload-env__row">
+                <span className="upload-env__label">ffmpeg</span>
+                <span className={cn("upload-status-pill", ffmpegReady ? "is-ok" : "is-warn")}>
+                  {ffmpegReady ? t("ffmpegReady") : t("ffmpegMissing")}
+                </span>
+              </div>
+              {storageQ.data?.mediaBucket ? (
+                <div className="upload-env__row">
+                  <span className="upload-env__label">Bucket</span>
+                  <span className="upload-status-pill is-muted">
+                    {storageQ.data.storageBackend} · {storageQ.data.mediaBucket}
+                  </span>
+                </div>
+              ) : null}
+              {!r2Enabled && !storageQ.isLoading ? (
+                <p className="upload-status-note">{t("uploadR2NotEnabledHint")}</p>
+              ) : null}
+            </div>
+          </section>
+        </aside>
+      </div>
 
       <div className="upload-submit-bar">
         <p className="min-w-0 flex-1 text-xs text-ink-subtle">
