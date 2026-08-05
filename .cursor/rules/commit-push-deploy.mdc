@@ -1,0 +1,20 @@
+---
+description: Commit, push main, and production deploy without re-confirming
+alwaysApply: true
+---
+
+# Commit / Push / Deploy — No Re-Ask
+
+When the user asks to **commit**, **push main**, and/or **deploy** (e.g.「工作区 commit push main 部署」), **execute immediately**. Do **not** use AskQuestion or other menus to re-confirm target, scope, or whether to deploy.
+
+## Defaults
+
+1. **Commit** relevant workspace changes only (exclude secrets, `.env*`, and ad-hoc `scripts/_tmp_*` unless explicitly requested).
+2. **Push** to `origin/main` (current branch is normally `main`).
+3. **Deploy production** per `docs/11-生产部署手册.md`: SSH `starnexus-s4` → sync `origin/main` → build → PM2 restart → smoke `https://velvetmovie.space/`.
+4. If only one app changed, rebuild/restart that app is enough (e.g. web-only → `velvet-web`); otherwise follow the full handbook script.
+5. Report commit SHA, push result, deploy/smoke outcome — then stop unless something failed.
+
+## Still obey git safety
+
+No `git config` changes, no force-push to main, no `--no-verify`, no amend unless the user's commit rules allow it. If author identity is missing, use `GIT_AUTHOR_*` / `GIT_COMMITTER_*` env vars matching recent commits — do not run `git config`.
