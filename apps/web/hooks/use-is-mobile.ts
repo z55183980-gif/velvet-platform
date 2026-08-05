@@ -2,18 +2,35 @@
 
 import { useLayoutEffect, useState } from "react";
 
-/** Matches Tailwind `md` (768px). */
+/**
+ * Matches Tailwind `md` while keeping touch phones mobile after rotation.
+ * A viewport-only query flips large phones to desktop when landscape/fullscreen
+ * makes their CSS width exceed 767px.
+ */
 export function useIsMobile(breakpointPx = 768): { mobile: boolean; ready: boolean } {
   const [mobile, setMobile] = useState(false);
   const [ready, setReady] = useState(false);
 
   useLayoutEffect(() => {
-    const mq = window.matchMedia(`(max-width: ${breakpointPx - 1}px)`);
-    const apply = () => setMobile(mq.matches);
+    const viewportMq = window.matchMedia(`(max-width: ${breakpointPx - 1}px)`);
+    const coarsePointerMq = window.matchMedia("(pointer: coarse)");
+    const apply = () => {
+      const screenShortSide = Math.min(window.screen.width, window.screen.height);
+      const touchPhone =
+        screenShortSide < breakpointPx &&
+        (navigator.maxTouchPoints > 0 || coarsePointerMq.matches);
+      setMobile(viewportMq.matches || touchPhone);
+    };
     apply();
     setReady(true);
-    mq.addEventListener("change", apply);
-    return () => mq.removeEventListener("change", apply);
+    viewportMq.addEventListener("change", apply);
+    coarsePointerMq.addEventListener("change", apply);
+    window.addEventListener("resize", apply);
+    return () => {
+      viewportMq.removeEventListener("change", apply);
+      coarsePointerMq.removeEventListener("change", apply);
+      window.removeEventListener("resize", apply);
+    };
   }, [breakpointPx]);
 
   return { mobile, ready };

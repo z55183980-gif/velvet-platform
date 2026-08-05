@@ -14,14 +14,16 @@ import {
 import { Badge, Button, Input, Select, cn } from "@velvet/ui";
 import {
   ChevronDown,
+  Clapperboard,
   Cloud,
   HardDrive,
-  ImagePlus,
   LoaderCircle,
   RotateCcw,
   Trash2,
   Upload,
 } from "lucide-react";
+import { EpisodeThumbnailField } from "@/components/episode-thumbnail-field";
+import { captureVideoFirstFrame } from "@/lib/capture-video-frame";
 import { useI18n } from "@/lib/i18n";
 
 type Category = { slug: string; nameZh?: string; nameEn?: string };
@@ -58,7 +60,6 @@ export function UploadDramaForm() {
   const { t } = useI18n();
   const qc = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
-  const coverRef = useRef<HTMLInputElement>(null);
 
   const [titleZh, setTitleZh] = useState("");
   const [slug, setSlug] = useState("");
@@ -357,7 +358,7 @@ export function UploadDramaForm() {
           </label>
           <label className="text-caption text-ink-muted md:col-span-2">
             {t("onlineCoverUrl")}
-            <div className="mt-1 flex flex-wrap gap-2">
+            <div className="mt-1 flex flex-wrap items-start gap-3">
               <Input
                 className="min-w-[16rem] flex-1"
                 value={coverUrl}
@@ -365,35 +366,46 @@ export function UploadDramaForm() {
                 placeholder="/api/v1/media/… 或 CDN URL"
                 disabled={busy}
               />
-              <Button
-                size="sm"
-                variant="secondary"
-                type="button"
-                disabled={coverBusy || busy}
-                onClick={() => coverRef.current?.click()}
-              >
-                {coverBusy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <ImagePlus className="h-4 w-4" />}
-                {t("thumbUpload")}
-              </Button>
-              <input
-                ref={coverRef}
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                className="sr-only"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  e.target.value = "";
-                  if (!file) return;
-                  setCoverBusy(true);
-                  void adminUploadImage(file, { kind: "cover", filename: file.name })
-                    .then((res) => {
-                      setCoverUrl(res.url);
-                      setError(null);
-                    })
-                    .catch((err: Error) => setError(err.message))
-                    .finally(() => setCoverBusy(false));
+              <EpisodeThumbnailField
+                url={coverUrl || undefined}
+                kind="cover"
+                disabled={busy}
+                fromVideoLabel={t("thumbFromVideo")}
+                uploadLabel={t("thumbUpload")}
+                onError={setError}
+                onUploaded={(url) => {
+                  setCoverUrl(url);
+                  setError(null);
                 }}
               />
+              {sortedFiles.length ? (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  type="button"
+                  disabled={coverBusy || busy}
+                  onClick={() => {
+                    const first = sortedFiles[0];
+                    setCoverBusy(true);
+                    void captureVideoFirstFrame(first)
+                      .then((blob) =>
+                        adminUploadImage(blob, {
+                          kind: "cover",
+                          filename: `${first.name.replace(/\.[^.]+$/, "") || "cover"}-cover.jpg`,
+                        }),
+                      )
+                      .then((res) => {
+                        setCoverUrl(res.url);
+                        setError(null);
+                      })
+                      .catch((err: Error) => setError(err.message))
+                      .finally(() => setCoverBusy(false));
+                  }}
+                >
+                  {coverBusy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Clapperboard className="h-4 w-4" />}
+                  {t("uploadCoverFromFirstEpisode")}
+                </Button>
+              ) : null}
             </div>
           </label>
           <label className="text-caption text-ink-muted md:col-span-2">
