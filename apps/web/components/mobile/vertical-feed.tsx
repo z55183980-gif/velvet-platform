@@ -826,8 +826,8 @@ function FeedPage({
   return (
     <div className={cn("relative h-full min-h-0 overflow-hidden", landscape ? "bg-black" : "bg-base")}>
       {landscape ? (
-        <div className="absolute inset-x-0 top-[max(3.25rem,calc(env(safe-area-inset-top)+2.75rem))] z-10">
-          <div className="relative mx-auto w-full bg-black" style={{ aspectRatio: "16 / 9" }}>
+        <div className="absolute inset-x-0 top-[max(3.25rem,calc(env(safe-area-inset-top)+2.75rem))] bottom-[max(7.5rem,calc(var(--mobile-tab-safe-bottom,0px)+6.5rem))] z-10 flex flex-col items-center justify-center">
+          <div className="relative w-full bg-black" style={{ aspectRatio: "16 / 9" }}>
             <VerticalPlayer
               videoRef={videoRef}
               active={active}

@@ -376,6 +376,50 @@ export function DramaDetail({
     };
   }, [user, selected?.id, playUrl, watching]);
 
+  // Feed「全屏观看」：进入播放且检出横片后自动真横屏沉浸
+  // Must stay above any conditional returns (Rules of Hooks).
+  useEffect(() => {
+    if (!pendingLandscapeFs || !watching || !isMobile) return;
+    if (!landscapeMode || !playUrl) return;
+    const episodeId = selected?.id ? String(selected.id) : "";
+    const allowed = !!(user || (episodeId && canGuestWatch(episodeId)));
+    if (!playerReady || !allowed) return;
+    setPendingLandscapeFs(false);
+    setShowRate(false);
+    setShowMore(false);
+    setShowQuality(false);
+    setUiImmersive(false);
+    const el = watchShellRef.current;
+    void (async () => {
+      let lockedOrient = false;
+      try {
+        if (el?.requestFullscreen && !document.fullscreenElement) {
+          await el.requestFullscreen();
+        }
+        const orient = screen.orientation as ScreenOrientation & {
+          lock?: (orientation: string) => Promise<void>;
+        };
+        if (orient.lock) {
+          await orient.lock("landscape");
+          lockedOrient = true;
+        }
+      } catch {
+        lockedOrient = false;
+      }
+      if (!lockedOrient) setRotateFs(true);
+    })();
+  }, [
+    pendingLandscapeFs,
+    watching,
+    isMobile,
+    landscapeMode,
+    playUrl,
+    playerReady,
+    selected?.id,
+    user,
+    canGuestWatch,
+  ]);
+
   // HLS attach + quality levels + 横竖检测
   useEffect(() => {
     const video = videoRef.current;
@@ -604,36 +648,6 @@ export function DramaDetail({
   const canPlay = playerReady && !!(user || guestAllowed);
   const locked = !playerReady;
   const playLoading = !authReady || !guestReady || (canPlay && !playUrl && !playErr);
-
-  // Feed「全屏观看」：进入播放且检出横片后自动真横屏沉浸
-  useEffect(() => {
-    if (!pendingLandscapeFs || !watching || !isMobile) return;
-    if (!landscapeMode || !playUrl || !canPlay) return;
-    setPendingLandscapeFs(false);
-    setShowRate(false);
-    setShowMore(false);
-    setShowQuality(false);
-    setUiImmersive(false);
-    const el = watchShellRef.current;
-    void (async () => {
-      let lockedOrient = false;
-      try {
-        if (el?.requestFullscreen && !document.fullscreenElement) {
-          await el.requestFullscreen();
-        }
-        const orient = screen.orientation as ScreenOrientation & {
-          lock?: (orientation: string) => Promise<void>;
-        };
-        if (orient.lock) {
-          await orient.lock("landscape");
-          lockedOrient = true;
-        }
-      } catch {
-        lockedOrient = false;
-      }
-      if (!lockedOrient) setRotateFs(true);
-    })();
-  }, [pendingLandscapeFs, watching, isMobile, landscapeMode, playUrl, canPlay]);
 
   const selectEpisode = (ep: Episode) => {
     if (isUnlocked(ep)) {
@@ -902,10 +916,10 @@ export function DramaDetail({
         </div>
         ) : null}
 
-        {/* Video stage — 横片信箱（非真横屏沉浸） */}
+        {/* Video stage — 横片信箱：在顶栏与底栏之间垂直居中 */}
         {landscapeMode && !trueLandscapeFs ? (
-          <div className="absolute inset-x-0 top-[max(3.1rem,calc(env(safe-area-inset-top)+2.5rem))] z-10">
-            <div className="relative mx-auto w-full bg-black" style={{ aspectRatio: "16 / 9" }}>
+          <div className="absolute inset-x-0 top-[max(3.1rem,calc(env(safe-area-inset-top)+2.5rem))] bottom-[max(6.75rem,calc(env(safe-area-inset-bottom)+5.75rem))] z-10 flex flex-col items-center justify-center">
+            <div className="relative w-full bg-black" style={{ aspectRatio: "16 / 9" }}>
               <VerticalPlayer
                 videoRef={videoRef}
                 active
@@ -942,7 +956,7 @@ export function DramaDetail({
                 onEnded={playNext}
               />
             </div>
-            {/* 中间「全屏观看」→ 真横屏沉浸（图四） */}
+            {/* 中间「全屏观看」→ 真横屏沉浸 */}
             <div className="mt-3.5 flex justify-center px-3">
               <button
                 type="button"
