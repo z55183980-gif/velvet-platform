@@ -60,7 +60,9 @@ export async function registerPwaServiceWorker() {
     location.hostname === "127.0.0.1";
   if (!secure) return;
   try {
-    await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+    const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+    // Pick up SW fixes quickly after deploys (navigate-safe worker).
+    void reg.update();
   } catch {
     /* ignore */
   }

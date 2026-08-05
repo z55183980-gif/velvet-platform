@@ -42,6 +42,17 @@ const nextConfig = {
     : {
         trailingSlash: false,
       }),
+  async headers() {
+    return [
+      {
+        source: "/sw.js",
+        headers: [
+          { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
+          { key: "Service-Worker-Allowed", value: "/" },
+        ],
+      },
+    ];
+  },
   async rewrites() {
     // 本地 / 非静态导出：同源代理到 NestJS，cookie 鉴权可用
     if (staticExport) return [];
