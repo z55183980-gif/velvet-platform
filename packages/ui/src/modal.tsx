@@ -48,18 +48,23 @@ export function Modal({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-end justify-center p-0 sm:items-center sm:p-4">
+    <div className="fixed inset-0 z-[80] flex items-end justify-center overflow-hidden p-0 sm:items-center sm:p-4">
       <div className="absolute inset-0 bg-black/45 backdrop-blur-sm" onClick={onClose} aria-hidden />
       <div
         role="dialog"
         aria-modal="true"
         className={cn(
-          "relative flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-3xl sm:rounded-3xl",
+          // min-h-0 lets max-height win over flex min-content sizing so long
+          // forms scroll inside the panel instead of overflowing the viewport.
+          "relative flex min-h-0 max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-3xl sm:max-h-[calc(100dvh-2rem)] sm:rounded-3xl",
           className,
         )}
         style={{
           width: "calc(100% - 1.5rem)",
           maxWidth: sizeWidth[size],
+          // Inline maxHeight so viewport fit does not depend on Tailwind
+          // scanning this package (node_modules sources are skipped by default).
+          maxHeight: "min(92dvh, calc(100dvh - 2rem))",
         }}
         onClick={(e) => e.stopPropagation()}
       >

@@ -17,6 +17,7 @@ import {
 } from './local-import.util';
 import { convertExternalPlayUrl, slugifyTitle } from './online-drama.util';
 import { AuditService } from '../common/audit.service';
+import { UploadService } from '../upload/upload.service';
 
 export interface LocalImportOptions {
   rootPath?: string;
@@ -61,6 +62,19 @@ export interface CreateOnlineDramaInput {
   episodes: OnlineEpisodeInput[];
 }
 
+export interface CreateLocalUploadDramaInput {
+  titleZh: string;
+  titleEn?: string;
+  slug?: string;
+  descriptionZh?: string;
+  descriptionEn?: string;
+  categorySlug: string;
+  coverUrl?: string;
+  freeEpisodeCount?: number;
+  lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE';
+  status?: 'DRAFT' | 'LIVE';
+}
+
 @Injectable()
 export class AdminService {
   private readonly logger = new Logger(AdminService.name);
@@ -71,6 +85,7 @@ export class AdminService {
     private readonly wallet: WalletService,
     private readonly config: ConfigService,
     private readonly audit: AuditService,
+    private readonly upload: UploadService,
   ) {
     this.pitRate = Number(config.get('PIT_RATE') || 0.05);
     this.defaultImportRoot =
@@ -1133,7 +1148,102 @@ export class AdminService {
     };
   }
 
-  /** 软删除：清空关联、保留订单收益记录 */
+  /**
+   * 创建本地托管剧壳（无分集）。随后用 /admin/dramas/:id/episodes/upload 逐集上传，
+   * 转码完成后按 STORAGE_BACKEND=r2 推送到 velvet-media。
+   */
+  async createLocalUploadDrama(dto: CreateLocalUploadDramaInput, actorId?: bigint) {
+    const titleZh = String(dto.titleZh || '').trim();
+    if (!titleZh) {
+      throw new BizException(BizCode.BAD_REQUEST, '中文标题必填');
+    }
+    const categorySlug = String(dto.categorySlug || '').trim();
+    if (!categorySlug) {
+      throw new BizException(BizCode.BAD_REQUEST, '分类必填');
+    }
+    const cat = await this.prisma.category.findUnique({ where: { slug: categorySlug } });
+    if (!cat) {
+      throw new BizException(BizCode.BAD_REQUEST, `分类不存在: ${categorySlug}`);
+    }
+
+    const titleEn = String(dto.titleEn || titleZh).trim();
+    let slug = String(dto.slug || slugifyTitle(titleZh)).trim();
+    if (!slug) slug = slugifyTitle(titleZh);
+
+    const existing = await this.prisma.drama.findUnique({ where: { slug } });
+    if (existing) {
+      throw new BizException(BizCode.CONFLICT, `slug 已存在: ${slug}`);
+    }
+
+    let creator = await this.prisma.creator.findFirst({
+      where: { kycStatus: 'APPROVED' },
+      orderBy: { id: 'asc' },
+    });
+    if (!creator) {
+      creator = await this.prisma.creator.findFirst();
+    }
+    if (!creator) {
+      const u = await this.prisma.user.upsert({
+        where: { email: 'sample@velvet.dev' },
+        create: { email: 'sample@velvet.dev', nickname: 'Sample Studio' },
+        update: {},
+      });
+      creator = await this.prisma.creator.create({
+        data: {
+          userId: u.id,
+          creatorType: 'INDIVIDUAL',
+          displayName: 'Sample Studio',
+          revenueShare: 0.7,
+          kycStatus: 'APPROVED',
+        },
+      });
+    }
+
+    const freeEpisodeCount = Math.max(0, Math.floor(Number(dto.freeEpisodeCount ?? 3)));
+    const lockMode = dto.lockMode || 'FREE_FIRST_N';
+    const status = dto.status === 'LIVE' ? 'LIVE' : 'DRAFT';
+
+    const drama = await this.prisma.drama.create({
+      data: {
+        creatorId: creator.id,
+        slug,
+        titleEn,
+        titleZh,
+        descriptionEn: dto.descriptionEn?.trim() || null,
+        descriptionZh: dto.descriptionZh?.trim() || null,
+        categorySlug,
+        coverUrl: dto.coverUrl?.trim() || null,
+        freeEpisodeCount,
+        lockMode,
+        isOfficial: true,
+        sourceType: 'R2',
+        tags: ['upload', 'r2'],
+        status,
+        publishedAt: status === 'LIVE' ? new Date() : null,
+        totalEpisodes: 0,
+      } as any,
+    });
+
+    await this.audit.write({
+      actorId,
+      action: 'drama.createUpload',
+      targetType: 'drama',
+      targetId: drama.id.toString(),
+      payload: { slug: drama.slug, status, storageBackend: this.config.get('STORAGE_BACKEND') || 'local' },
+    });
+
+    return {
+      id: drama.id.toString(),
+      slug: drama.slug,
+      status: drama.status,
+      sourceType: drama.sourceType,
+      totalEpisodes: 0,
+      storageBackend: (this.config.get<string>('STORAGE_BACKEND') || 'local').toLowerCase(),
+      r2Enabled: (this.config.get<string>('STORAGE_BACKEND') || 'local').toLowerCase() === 'r2',
+    };
+  }
+
+  /** 软删除：清空关联、保留订单收益记录；同步清理本地与 R2 媒资 */
   async deleteDrama(id: string, reason?: string, actorId?: bigint) {
     const dramaId = BigInt(id);
     const cnt = await this.prisma.order.count({ where: { dramaId } });
@@ -1143,6 +1253,22 @@ export class AdminService {
         `Không thể xoá: có ${cnt} đơn hàng liên quan. Hãy OFFLINE thay vì xoá.`,
       );
     }
+    const drama = await this.prisma.drama.findUnique({
+      where: { id: dramaId },
+      include: {
+        episodes: {
+          select: { hlsUrl: true, originalUrl: true, thumbnailUrl: true },
+        },
+      },
+    });
+    if (!drama) throw new BizException(BizCode.NOT_FOUND, 'drama.notFound');
+
+    const urls: Array<string | null | undefined> = [drama.coverUrl];
+    for (const ep of drama.episodes) {
+      urls.push(ep.hlsUrl, ep.originalUrl, ep.thumbnailUrl);
+    }
+    const purge = await this.upload.purgeMediaUrls(urls);
+
     await this.prisma.$transaction(async (tx) => {
       await tx.episode.deleteMany({ where: { dramaId } });
       await tx.drama.delete({ where: { id: dramaId } });
@@ -1152,8 +1278,73 @@ export class AdminService {
       action: 'drama.delete',
       targetType: 'drama',
       targetId: id,
-      payload: { reason },
+      payload: { reason, purge },
     });
-    return { ok: true };
+    return { ok: true, purge };
+  }
+
+  /**
+   * Batch shelf / delete. Offline & online use updateMany; delete runs per-id
+   * so order conflicts and media purge stay consistent with single delete.
+   */
+  async batchLifecycle(
+    action: 'offline' | 'online' | 'delete',
+    ids: (string | number)[],
+    reason?: string,
+    actorId?: bigint,
+  ) {
+    if (!ids?.length) throw new BizException(BizCode.BAD_REQUEST, 'ids.empty');
+    const reasonText = (reason && String(reason).trim()) || `admin batch ${action}`;
+    const uniqueIds = [...new Set(ids.map((id) => String(id)))];
+    const bigIds = uniqueIds.map((id) => BigInt(id));
+
+    if (action === 'offline') {
+      const result = await this.prisma.drama.updateMany({
+        where: { id: { in: bigIds }, status: 'LIVE' },
+        data: { status: 'OFFLINE' },
+      });
+      await this.audit.write({
+        actorId,
+        action: 'drama.batchOffline',
+        targetType: 'drama',
+        payload: { ids: uniqueIds, reason: reasonText, updated: result.count },
+      });
+      return { action, updated: result.count, failed: [] as { id: string; error: string }[] };
+    }
+
+    if (action === 'online') {
+      const result = await this.prisma.drama.updateMany({
+        where: { id: { in: bigIds }, status: { in: ['OFFLINE', 'REJECTED'] } },
+        data: { status: 'LIVE', publishedAt: new Date() },
+      });
+      await this.audit.write({
+        actorId,
+        action: 'drama.batchOnline',
+        targetType: 'drama',
+        payload: { ids: uniqueIds, reason: reasonText, updated: result.count },
+      });
+      return { action, updated: result.count, failed: [] as { id: string; error: string }[] };
+    }
+
+    const failed: { id: string; error: string }[] = [];
+    let updated = 0;
+    for (const id of uniqueIds) {
+      try {
+        await this.deleteDrama(id, reasonText, actorId);
+        updated += 1;
+      } catch (e: any) {
+        failed.push({
+          id,
+          error: e?.message || String(e),
+        });
+      }
+    }
+    await this.audit.write({
+      actorId,
+      action: 'drama.batchDelete',
+      targetType: 'drama',
+      payload: { ids: uniqueIds, reason: reasonText, updated, failed },
+    });
+    return { action, updated, failed };
   }
 }

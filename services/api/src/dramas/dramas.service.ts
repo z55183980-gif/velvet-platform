@@ -2,8 +2,18 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { LockAccessService } from '../common/lock-access.service';
 
+type FeedRankCache = {
+  at: number;
+  pinCount: number;
+  pinIds: bigint[];
+  heatIds: bigint[];
+};
+
 @Injectable()
 export class DramasService {
+  private feedRankCache: FeedRankCache | null = null;
+  private readonly feedRankTtlMs = 60_000;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly lockAccess: LockAccessService,
@@ -53,19 +63,156 @@ export class DramasService {
       this.prisma.drama.count({ where }),
     ]);
     return {
-      rows: rows.map((d) => ({
-        ...d,
-        creator: d.creator
-          ? {
-              displayName: d.creator.displayName,
-              creatorType: d.creator.creatorType,
-              avatarUrl: d.creator.user?.avatarUrl ?? null,
-            }
-          : null,
-      })),
+      rows: rows.map((d) => this.mapListDrama(d)),
       total,
       page,
       pageSize,
+    };
+  }
+
+  /**
+   * Mobile home vertical feed:
+   * - Page 1 prefix: ops hottest shelf (pinHottest, default 3)
+   * - Rest: 7d watch/unlock heat; sparse traffic falls back to decayed lifetime metrics
+   */
+  async getHomeFeed(opts: { page?: number; pageSize?: number; pinHottest?: number }) {
+    const page = opts.page || 1;
+    const pageSize = opts.pageSize || 20;
+    const pinHottest = Math.min(10, Math.max(0, opts.pinHottest ?? 3));
+
+    const ranked = await this.getOrBuildFeedRank(pinHottest);
+    const orderedIds = [...ranked.pinIds, ...ranked.heatIds];
+    const total = orderedIds.length;
+    const start = (page - 1) * pageSize;
+    const pageIds = orderedIds.slice(start, start + pageSize);
+
+    if (pageIds.length === 0) {
+      return { rows: [], total, page, pageSize, hasMore: false };
+    }
+
+    const rows = await this.prisma.drama.findMany({
+      where: { id: { in: pageIds }, status: 'LIVE' },
+      include: {
+        creator: {
+          select: {
+            displayName: true,
+            creatorType: true,
+            user: { select: { avatarUrl: true } },
+          },
+        },
+        category: true,
+      },
+    });
+    const byId = new Map(rows.map((d) => [d.id.toString(), d]));
+    const ordered = pageIds
+      .map((id) => byId.get(id.toString()))
+      .filter((d): d is NonNullable<typeof d> => !!d);
+
+    return {
+      rows: ordered.map((d) => this.mapListDrama(d)),
+      total,
+      page,
+      pageSize,
+      hasMore: start + pageIds.length < total,
+    };
+  }
+
+  private async getOrBuildFeedRank(pinHottest: number): Promise<FeedRankCache> {
+    const now = Date.now();
+    if (
+      this.feedRankCache &&
+      now - this.feedRankCache.at < this.feedRankTtlMs &&
+      this.feedRankCache.pinCount === pinHottest
+    ) {
+      return this.feedRankCache;
+    }
+    const built = await this.buildFeedRank(pinHottest);
+    this.feedRankCache = built;
+    return built;
+  }
+
+  private async buildFeedRank(pinHottest: number): Promise<FeedRankCache> {
+    const since = new Date(Date.now() - 7 * 24 * 60 * 60_000);
+
+    const [hottest, live, watchGroups, unlockRows] = await Promise.all([
+      this.prisma.drama.findMany({
+        where: { status: 'LIVE', isHottest: true },
+        orderBy: [{ hottestSortOrder: 'asc' }, { publishedAt: 'desc' }],
+        select: { id: true },
+        take: Math.max(pinHottest, 48),
+      }),
+      this.prisma.drama.findMany({
+        where: { status: 'LIVE' },
+        select: {
+          id: true,
+          viewCount: true,
+          unlockCount: true,
+          publishedAt: true,
+          createdAt: true,
+        },
+      }),
+      this.prisma.watchHistory.groupBy({
+        by: ['dramaId'],
+        where: { watchedAt: { gte: since } },
+        _count: { _all: true },
+      }),
+      this.prisma.userUnlock.findMany({
+        where: { unlockedAt: { gte: since } },
+        select: { episode: { select: { dramaId: true } } },
+      }),
+    ]);
+
+    const watchMap = new Map<string, number>();
+    for (const g of watchGroups) {
+      watchMap.set(g.dramaId.toString(), g._count._all);
+    }
+
+    const unlockMap = new Map<string, number>();
+    for (const row of unlockRows) {
+      const id = row.episode.dramaId.toString();
+      unlockMap.set(id, (unlockMap.get(id) || 0) + 1);
+    }
+
+    const nowMs = Date.now();
+    const scored = live.map((d) => {
+      const id = d.id.toString();
+      const watches7d = watchMap.get(id) || 0;
+      const unlocks7d = unlockMap.get(id) || 0;
+      const published = (d.publishedAt || d.createdAt).getTime();
+      const ageDays = Math.max(0, (nowMs - published) / 86_400_000);
+      const decay =
+        Number(d.viewCount) / (1 + ageDays / 7) +
+        (Number(d.unlockCount) * 2) / (1 + ageDays / 14);
+      // Real 7d signals dominate; decay fills cold/sparse catalogs.
+      const score = watches7d * 10 + unlocks7d * 30 + decay * 0.01;
+      return { id: d.id, score };
+    });
+    scored.sort((a, b) => b.score - a.score || (a.id < b.id ? -1 : 1));
+
+    const pinIds = hottest.slice(0, pinHottest).map((d) => d.id);
+    const pinSet = new Set(pinIds.map((id) => id.toString()));
+    const heatIds = scored.map((s) => s.id).filter((id) => !pinSet.has(id.toString()));
+
+    return { at: Date.now(), pinCount: pinHottest, pinIds, heatIds };
+  }
+
+  private mapListDrama(d: {
+    creator?: {
+      displayName: string;
+      creatorType: string;
+      user?: { avatarUrl: string | null } | null;
+    } | null;
+    [key: string]: unknown;
+  }) {
+    return {
+      ...d,
+      creator: d.creator
+        ? {
+            displayName: d.creator.displayName,
+            creatorType: d.creator.creatorType,
+            avatarUrl: d.creator.user?.avatarUrl ?? null,
+          }
+        : null,
     };
   }
 
@@ -202,16 +349,7 @@ export class DramasService {
         category: true,
       },
     });
-    return rows.map((d) => ({
-      ...d,
-      creator: d.creator
-        ? {
-            displayName: d.creator.displayName,
-            creatorType: d.creator.creatorType,
-            avatarUrl: d.creator.user?.avatarUrl ?? null,
-          }
-        : null,
-    }));
+    return rows.map((d) => this.mapListDrama(d));
   }
 
   async listCategories() {

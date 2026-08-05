@@ -11,6 +11,8 @@ export type ContentSearchFilters = {
   categorySlug: string;
   isOfficial: string;
   isFeatured: string;
+  /** r2 | local | online | "" */
+  mediaKind: string;
   sort: "weight" | "latest";
 };
 
@@ -33,6 +35,7 @@ function countActiveFilters(value: ContentSearchFilters) {
   if (value.categorySlug) n += 1;
   if (value.isOfficial) n += 1;
   if (value.isFeatured) n += 1;
+  if (value.mediaKind) n += 1;
   return n;
 }
 
@@ -101,8 +104,18 @@ export function ContentSearchBar({
       categorySlug: "",
       isOfficial: "",
       isFeatured: "",
+      mediaKind: "",
     });
   }
+
+  const mediaKindLabel =
+    value.mediaKind === "r2"
+      ? t("mediaKindR2")
+      : value.mediaKind === "local"
+        ? t("mediaKindLocal")
+        : value.mediaKind === "online"
+          ? t("mediaKindOnline")
+          : "";
 
   const chips: { key: string; label: string; clear: () => void }[] = [];
   if (value.status && value.status !== "ALL") {
@@ -118,6 +131,13 @@ export function ContentSearchBar({
       key: "category",
       label: `${t("category")}: ${category?.nameZh || category?.nameEn || value.categorySlug}`,
       clear: () => patch({ categorySlug: "" }),
+    });
+  }
+  if (value.mediaKind && mediaKindLabel) {
+    chips.push({
+      key: "mediaKind",
+      label: `${t("mediaKindFilter")}: ${mediaKindLabel}`,
+      clear: () => patch({ mediaKind: "" }),
     });
   }
   if (value.isOfficial) {
@@ -246,6 +266,19 @@ export function ContentSearchBar({
                         {category.nameZh || category.nameEn}
                       </option>
                     ))}
+                  </Select>
+                </label>
+
+                <label className="block space-y-1">
+                  <span className="text-caption font-medium text-ink-muted">{t("mediaKindFilter")}</span>
+                  <Select
+                    value={value.mediaKind}
+                    onChange={(e) => patch({ mediaKind: e.target.value })}
+                  >
+                    <option value="">{t("mediaKindAll")}</option>
+                    <option value="r2">{t("mediaKindR2")}</option>
+                    <option value="local">{t("mediaKindLocal")}</option>
+                    <option value="online">{t("mediaKindOnline")}</option>
                   </Select>
                 </label>
 

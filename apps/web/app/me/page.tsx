@@ -11,6 +11,7 @@ import {
   LogOut,
   PenLine,
   Crown,
+  Sparkles,
 } from "lucide-react";
 import { useAuth } from "@/components/auth-context";
 import { useLocale } from "@/lib/i18n";
@@ -37,7 +38,7 @@ import { cn, mediaUrl } from "@/lib/utils";
 type DesktopTab = "favorites" | "history" | "orders";
 
 export default function AccountPage() {
-  const { user, ready, openLogin, openVip, logout, applySession } = useAuth();
+  const { user, ready, openLogin, openVip, openRecharge, balance, logout, applySession } = useAuth();
   const { t, locale } = useLocale();
 
   const [nickname, setNickname] = useState("");
@@ -281,6 +282,8 @@ export default function AccountPage() {
         onAvatar={(f) => void onAvatar(f)}
         onLogout={() => logout()}
         openVip={openVip}
+        openRecharge={openRecharge}
+        balance={balance}
         t={t}
         locale={locale}
         titleOf={titleOf}
@@ -423,6 +426,33 @@ export default function AccountPage() {
             </button>
 
             <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              <button
+                type="button"
+                onClick={openRecharge}
+                className="rounded-2xl border border-brand/20 p-4 text-left transition-colors hover:bg-surface-2/60"
+                style={{
+                  background:
+                    "radial-gradient(280px 120px at 100% 0%, oklch(0.68 0.19 18 / 0.14), transparent 60%), var(--color-surface)",
+                }}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <Sparkles className="h-3.5 w-3.5 text-brand" />
+                      <p className="text-overline uppercase tracking-widest text-brand">
+                        {t("account.balance")}
+                      </p>
+                    </div>
+                    <p className="mt-2 text-[1.75rem] font-bold tabular-nums leading-none text-ink">
+                      {balance != null ? balance.toLocaleString(locale) : "—"}
+                    </p>
+                  </div>
+                  <span className="shrink-0 rounded-full bg-brand px-4 py-2 text-body-sm font-medium text-white">
+                    {t("account.recharge")}
+                  </span>
+                </div>
+              </button>
+
               <div
                 className="rounded-2xl border border-line/80 p-4"
                 style={{
@@ -456,7 +486,7 @@ export default function AccountPage() {
                 </div>
               </div>
 
-              <div className="rounded-2xl border border-line/80 bg-surface p-4">
+              <div className="rounded-2xl border border-line/80 bg-surface p-4 sm:col-span-2">
                 <p className="text-overline uppercase tracking-widest text-ink-subtle">
                   {t("vip.redeemSection")}
                 </p>

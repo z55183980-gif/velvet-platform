@@ -261,6 +261,100 @@ export async function adminRetryTranscode(id: string) {
   return adminRequest(`/admin/episodes/${id}/transcode-retry`, { method: "POST", body: "{}" });
 }
 
+export async function adminStorageStatus() {
+  return adminRequest<{
+    storageBackend: string;
+    r2Enabled: boolean;
+    r2Configured: boolean;
+    mediaBucket: string;
+    uploadBucket: string;
+    cdnBase: string;
+    ffmpegReady: boolean;
+  }>("/admin/storage/status");
+}
+
+export async function adminDramaStorage(dramaId: string) {
+  return adminRequest<{
+    storageBackend: string;
+    r2Enabled: boolean;
+    r2Configured: boolean;
+    mediaBucket: string;
+    cdnBase: string;
+    ffmpegReady: boolean;
+    episodes: Array<{
+      id: string;
+      episodeNumber: number;
+      title?: string | null;
+      hlsUrl?: string | null;
+      originalUrl?: string | null;
+      transcodeStatus?: string;
+      uploadStatus?: string;
+      r2Prefix?: string | null;
+      objectCount: number;
+      totalBytes: number;
+      objects: Array<{ key: string; size: number; lastModified?: string }>;
+    }>;
+  }>(`/admin/dramas/${dramaId}/storage`);
+}
+
+export async function adminTranscodeJob(jobId: string) {
+  return adminRequest<{
+    id: string;
+    episodeId?: string;
+    status: "queued" | "processing" | "completed" | "failed";
+    outputRel?: string;
+    error?: string;
+  }>(`/admin/transcode/${jobId}`);
+}
+
+/** Upload video to an existing episode → transcode → R2 when enabled. */
+export async function adminUploadEpisodeVideo(episodeId: string, file: File) {
+  const form = new FormData();
+  form.append("file", file, file.name);
+  return adminRequest<{
+    jobId: string;
+    transcodeStatus: string;
+    relativePath: string;
+    ffmpegReady: boolean;
+    episode: { id: string; hlsUrl?: string; originalUrl?: string; transcodeStatus?: string };
+  }>(`/admin/episodes/${episodeId}/upload`, { method: "POST", body: form });
+}
+
+/** Create episode + upload video in one request. */
+export async function adminCreateEpisodeWithUpload(
+  dramaId: string,
+  file: File,
+  opts?: {
+    title?: string;
+    episodeNumber?: number;
+    isFree?: boolean;
+    priceCredits?: number;
+    thumbnailUrl?: string;
+  },
+) {
+  const form = new FormData();
+  form.append("file", file, file.name);
+  if (opts?.title) form.append("title", opts.title);
+  if (opts?.episodeNumber != null) form.append("episodeNumber", String(opts.episodeNumber));
+  if (opts?.isFree != null) form.append("isFree", opts.isFree ? "true" : "false");
+  if (opts?.priceCredits != null) form.append("priceCredits", String(opts.priceCredits));
+  if (opts?.thumbnailUrl) form.append("thumbnailUrl", opts.thumbnailUrl);
+  return adminRequest<{
+    jobId: string;
+    transcodeStatus: string;
+    relativePath: string;
+    ffmpegReady: boolean;
+    episode: { id: string };
+  }>(`/admin/dramas/${dramaId}/episodes/upload`, { method: "POST", body: form });
+}
+
+export async function adminPurgeEpisodeMedia(episodeId: string) {
+  return adminRequest<{ ok: boolean; purge: { r2Deleted: number; localDeleted: number } }>(
+    `/admin/episodes/${episodeId}/media/purge`,
+    { method: "POST", body: "{}" },
+  );
+}
+
 export async function adminBatchDramas(body: {
   ids: (string | number)[];
   freeEpisodeCount?: number;
@@ -269,6 +363,21 @@ export async function adminBatchDramas(body: {
   buyoutCredits?: number | null;
 }) {
   return adminRequest("/admin/dramas/batch", { method: "PATCH", body: JSON.stringify(body) });
+}
+
+export async function adminBatchDramaLifecycle(body: {
+  ids: (string | number)[];
+  action: "offline" | "online" | "delete";
+  reason?: string;
+}) {
+  return adminRequest<{
+    action: "offline" | "online" | "delete";
+    updated: number;
+    failed: { id: string; error: string }[];
+  }>("/admin/dramas/batch-lifecycle", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 export async function adminListBanners(all = true) {
@@ -683,6 +792,78 @@ export async function adminCreateOnlineDrama(body: {
   });
 }
 
+/** Create empty LOCAL drama shell for subsequent R2/video uploads. */
+export async function adminCreateUploadDrama(body: {
+  titleZh: string;
+  titleEn?: string;
+  slug?: string;
+  descriptionZh?: string;
+  descriptionEn?: string;
+  categorySlug: string;
+  coverUrl?: string;
+  freeEpisodeCount?: number;
+  lockMode?: "FREE_FIRST_N" | "VIP_ALL" | "ALL_FREE";
+  status?: "DRAFT" | "LIVE";
+}) {
+  return adminRequest<{
+    id: string;
+    slug: string;
+    status: string;
+    sourceType: string;
+    totalEpisodes: number;
+    storageBackend: string;
+    r2Enabled: boolean;
+  }>("/admin/dramas/upload", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+/** One-shot: create drama + upload multiple videos (sorted by filename). */
+export async function adminCreateUploadDramaWithFiles(
+  files: File[],
+  meta: {
+    titleZh: string;
+    titleEn?: string;
+    slug?: string;
+    descriptionZh?: string;
+    categorySlug: string;
+    coverUrl?: string;
+    freeEpisodeCount?: number;
+    lockMode?: "FREE_FIRST_N" | "VIP_ALL" | "ALL_FREE";
+    status?: "DRAFT" | "LIVE";
+    isFree?: boolean;
+    priceCredits?: number;
+  },
+) {
+  if (!files.length) throw new Error("未选择视频文件");
+  const form = new FormData();
+  form.append("titleZh", meta.titleZh);
+  if (meta.titleEn) form.append("titleEn", meta.titleEn);
+  if (meta.slug) form.append("slug", meta.slug);
+  if (meta.descriptionZh) form.append("descriptionZh", meta.descriptionZh);
+  form.append("categorySlug", meta.categorySlug);
+  if (meta.coverUrl) form.append("coverUrl", meta.coverUrl);
+  if (meta.freeEpisodeCount != null) form.append("freeEpisodeCount", String(meta.freeEpisodeCount));
+  if (meta.lockMode) form.append("lockMode", meta.lockMode);
+  if (meta.status) form.append("status", meta.status);
+  if (meta.isFree != null) form.append("isFree", meta.isFree ? "true" : "false");
+  if (meta.priceCredits != null) form.append("priceCredits", String(meta.priceCredits));
+  for (const file of files) {
+    form.append("files", file, file.name);
+  }
+  return adminRequest<{
+    id: string;
+    slug: string;
+    status: string;
+    totalEpisodes: number;
+    r2Enabled?: boolean;
+    storageBackend?: string;
+    ffmpegReady: boolean;
+    jobs: Array<{ episodeId: string; jobId: string; filename: string }>;
+  }>("/admin/dramas/upload-with-files", { method: "POST", body: form });
+}
+
 export async function adminYtdlpStatus() {
   return adminRequest<{
     configured: boolean;
@@ -741,6 +922,60 @@ export async function adminYtdlpImport(body: {
     kind: "single" | "playlist";
     failedEpisodes: Array<{ episodeNumber: number; url: string; error: string }>;
   }>("/admin/ytdlp/import", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function adminYtdlpResolve(body: {
+  url: string;
+  formatPreference?: "best_hls" | "best_mp4" | "best";
+  playlistIndex?: number;
+}) {
+  return adminRequest<{
+    playUrl: string;
+    originalUrl: string;
+  }>("/admin/ytdlp/resolve", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function adminYtdlpTransfer(body: {
+  url: string;
+  categorySlug: string;
+  target: "local" | "r2";
+  titleZh?: string;
+  titleEn?: string;
+  status?: "DRAFT" | "LIVE";
+  maxEpisodes?: number;
+  formatPreference?: "best_hls" | "best_mp4" | "best";
+}) {
+  return adminRequest<{
+    id: string;
+    slug: string;
+    status: string;
+    sourceType: string;
+    target: "local" | "r2";
+    preferR2: boolean;
+    storageBackend: string;
+    r2Configured: boolean;
+    ffmpegReady: boolean;
+    extractor: string;
+    kind: "single" | "playlist";
+    externalRef: string;
+    totalEpisodes: number;
+    transferredEpisodes: number;
+    failedEpisodes: Array<{ episodeNumber: number; url: string; error: string }>;
+    jobs: Array<{
+      episodeId: string;
+      episodeNumber: number;
+      jobId: string;
+      filename: string;
+      size: number;
+    }>;
+    previewUrl?: string;
+  }>("/admin/ytdlp/transfer", {
     method: "POST",
     body: JSON.stringify(body),
   });

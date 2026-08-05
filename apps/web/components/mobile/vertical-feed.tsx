@@ -21,7 +21,7 @@ import { VerticalPlayer } from "@/components/mobile/vertical-player";
 import { VerticalPager } from "@/components/mobile/vertical-pager";
 import { FeedEpisodeBar } from "@/components/mobile/feed-episode-bar";
 import { useMobileFeedLock } from "@/components/mobile/mobile-feed-lock";
-import { getPlayUrl, loadDramaDetail, checkFavorite, addFavorite, removeFavorite, checkLike, addLike, removeLike, reportProgress, type DramaDetailPayload } from "@/lib/api";
+import { getPlayUrl, loadDramaDetail, loadFeed, checkFavorite, addFavorite, removeFavorite, checkLike, addLike, removeLike, reportProgress, type DramaDetailPayload } from "@/lib/api";
 import type { Drama, Episode } from "@/lib/mock-data";
 import { categories } from "@/lib/mock-data";
 import { pickContentText, type Locale } from "@/lib/languages";
@@ -286,15 +286,89 @@ function buildFeedMeta(
   return { title, tags: tags.slice(0, 4) };
 }
 
-export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
+const FEED_PAGE_SIZE = 20;
+const FEED_PIN_HOTTEST = 3;
+const FEED_LOAD_MORE_THRESHOLD = 4;
+
+export function VerticalFeed({
+  dramas: dramasProp,
+  source,
+}: {
+  dramas?: Drama[];
+  /** When "home", load GET /dramas/feed with paging (ops pin + 7d heat). */
+  source?: "home";
+}) {
   const { t } = useLocale();
-  const { user, ready: authReady } = useAuth();
   const { setLocked } = useMobileFeedLock();
   const [index, setIndex] = useState(0);
   const [muted, setMuted] = useState(true);
   const [pagerBlocked, setPagerBlocked] = useState(false);
   const shellRef = useRef<HTMLDivElement>(null);
   const togglePlayRef = useRef<(() => void) | null>(null);
+
+  const [dramas, setDramas] = useState<Drama[]>(() => dramasProp ?? []);
+  const [bootLoading, setBootLoading] = useState(source === "home" && !(dramasProp && dramasProp.length));
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(source === "home");
+  const [loadingMore, setLoadingMore] = useState(false);
+  const loadMoreLock = useRef(false);
+
+  useEffect(() => {
+    if (source === "home") return;
+    setDramas(dramasProp ?? []);
+  }, [dramasProp, source]);
+
+  useEffect(() => {
+    if (source !== "home") return;
+    const ac = new AbortController();
+    setBootLoading(true);
+    void loadFeed(1, FEED_PAGE_SIZE, { pinHottest: FEED_PIN_HOTTEST, signal: ac.signal })
+      .then((r) => {
+        if (ac.signal.aborted) return;
+        setDramas(r.rows);
+        setPage(r.page);
+        setHasMore(r.hasMore);
+      })
+      .catch(() => {
+        if (ac.signal.aborted) return;
+        setDramas([]);
+        setHasMore(false);
+      })
+      .finally(() => {
+        if (!ac.signal.aborted) setBootLoading(false);
+      });
+    return () => ac.abort();
+  }, [source]);
+
+  const loadMore = useCallback(async () => {
+    if (source !== "home" || !hasMore || loadMoreLock.current) return;
+    loadMoreLock.current = true;
+    setLoadingMore(true);
+    try {
+      const nextPage = page + 1;
+      const r = await loadFeed(nextPage, FEED_PAGE_SIZE, { pinHottest: FEED_PIN_HOTTEST });
+      setDramas((prev) => {
+        const seen = new Set(prev.map((d) => d.id));
+        const appended = r.rows.filter((d) => !seen.has(d.id));
+        return appended.length ? [...prev, ...appended] : prev;
+      });
+      setPage(r.page);
+      setHasMore(r.hasMore);
+    } catch {
+      /* keep current list; user can scroll again later */
+    } finally {
+      setLoadingMore(false);
+      loadMoreLock.current = false;
+    }
+  }, [source, hasMore, page]);
+
+  useEffect(() => {
+    if (source !== "home") return;
+    if (dramas.length === 0) return;
+    if (index >= dramas.length - FEED_LOAD_MORE_THRESHOLD) {
+      void loadMore();
+    }
+  }, [index, dramas.length, source, loadMore]);
 
   const onIndexChange = useCallback((next: number) => {
     setIndex(next);
@@ -398,8 +472,8 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
     }
   }, [index, dramas]);
 
+  // Media warm runs for guests and signed-in users alike (HTTP cache only; no guest quota burn).
   useEffect(() => {
-    if (!authReady || !user) return;
     const ac = new AbortController();
 
     const run = async () => {
@@ -426,7 +500,13 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
       ac.abort();
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [authReady, user, index, dramas]);
+  }, [index, dramas]);
+
+  if (bootLoading && dramas.length === 0) {
+    return (
+      <div className="flex h-full min-h-0 items-center justify-center text-ink-muted">…</div>
+    );
+  }
 
   if (dramas.length === 0) {
     return (
@@ -437,7 +517,7 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
   }
 
   return (
-    <div ref={shellRef} className="h-full min-h-0">
+    <div ref={shellRef} className="relative h-full min-h-0">
       <VerticalPager
         index={index}
         count={dramas.length}
@@ -460,6 +540,11 @@ export function VerticalFeed({ dramas }: { dramas: Drama[] }) {
           );
         }}
       </VerticalPager>
+      {loadingMore ? (
+        <div className="pointer-events-none absolute inset-x-0 bottom-16 z-40 flex justify-center">
+          <span className="rounded-full bg-black/45 px-3 py-1 text-[11px] text-white/90">…</span>
+        </div>
+      ) : null}
     </div>
   );
 }

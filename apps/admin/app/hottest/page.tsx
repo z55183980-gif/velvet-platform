@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type DragEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ImageIcon, X } from "lucide-react";
 import {
   adminListDramas,
   adminListHottest,
@@ -21,6 +22,7 @@ type Drama = {
   titleEn?: string;
   slug?: string;
   status?: string;
+  coverUrl?: string | null;
   viewCount?: number;
   unlockCount?: number;
   isHottest?: boolean;
@@ -31,6 +33,22 @@ function dramaId(row: Drama) {
   return String(row.id);
 }
 
+function dramaTitle(row: Drama) {
+  return row.titleZh || row.titleEn || "—";
+}
+
+function idsKey(rows: Drama[]) {
+  return rows.map(dramaId).join(",");
+}
+
+function moveItem<T>(list: T[], from: number, to: number): T[] {
+  if (from === to || from < 0 || to < 0 || from >= list.length || to >= list.length) return list;
+  const next = [...list];
+  const [item] = next.splice(from, 1);
+  next.splice(to, 0, item);
+  return next;
+}
+
 export default function AdminHottestPage() {
   const { t } = useI18n();
   const qc = useQueryClient();
@@ -39,6 +57,10 @@ export default function AdminHottestPage() {
   const [q, setQ] = useState("");
   const [searchQ, setSearchQ] = useState("");
   const [removeId, setRemoveId] = useState<string | null>(null);
+  const [ordered, setOrdered] = useState<Drama[]>([]);
+  const [syncedKey, setSyncedKey] = useState<string | null>(null);
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dropId, setDropId] = useState<string | null>(null);
 
   const listQ = useQuery({
     queryKey: ["admin", "hottest", "list"],
@@ -49,6 +71,17 @@ export default function AdminHottestPage() {
       );
     },
   });
+
+  const dirty = syncedKey !== null && idsKey(ordered) !== syncedKey;
+
+  useEffect(() => {
+    if (!listQ.data) return;
+    const key = idsKey(listQ.data);
+    if (syncedKey === null || idsKey(ordered) === syncedKey) {
+      setOrdered(listQ.data);
+      setSyncedKey(key);
+    }
+  }, [listQ.data, ordered, syncedKey]);
 
   const searchQry = useQuery({
     queryKey: ["admin", "hottest", "search", searchQ],
@@ -75,8 +108,18 @@ export default function AdminHottestPage() {
     onError: (e: Error) => setError(e.message),
   });
 
-  const rows = listQ.data ?? [];
-  const selectedIds = useMemo(() => new Set(rows.map(dramaId)), [rows]);
+  const saveSortMut = useMutation({
+    mutationFn: (ids: string[]) => adminReorderHottest(ids),
+    onSuccess: async () => {
+      setError(null);
+      setSyncedKey(idsKey(ordered));
+      await qc.invalidateQueries({ queryKey: ["admin", "hottest"] });
+      await qc.invalidateQueries({ queryKey: ["admin", "dramas"] });
+    },
+    onError: (e: Error) => setError(e.message),
+  });
+
+  const selectedIds = useMemo(() => new Set(ordered.map(dramaId)), [ordered]);
 
   function closeAdd() {
     setAddOpen(false);
@@ -84,92 +127,67 @@ export default function AdminHottestPage() {
     setSearchQ("");
   }
 
-  function move(id: string, dir: -1 | 1) {
-    const list = [...rows];
-    const idx = list.findIndex((r) => dramaId(r) === id);
-    const next = idx + dir;
-    if (idx < 0 || next < 0 || next >= list.length) return;
-    const swapped = [...list];
-    [swapped[idx], swapped[next]] = [swapped[next], swapped[idx]];
-    actionMut.mutate(() => adminReorderHottest(swapped.map(dramaId)));
+  function discardSort() {
+    if (!listQ.data) return;
+    setOrdered(listQ.data);
+    setSyncedKey(idsKey(listQ.data));
   }
 
-  const columns: Column<Drama>[] = useMemo(
-    () => [
-      {
-        key: "order",
-        header: t("colSort"),
-        cell: (row) => {
-          const idx = rows.findIndex((r) => dramaId(r) === dramaId(row));
-          return String(idx >= 0 ? idx + 1 : (row.hottestSortOrder ?? 0) + 1);
-        },
-      },
-      {
-        key: "title",
-        header: t("drama"),
-        cell: (row) => (
-          <div>
-            <Link href={`/content/${row.id}`} className="font-medium text-brand hover:underline">
-              {row.titleZh || row.titleEn || "—"}
-            </Link>
-            <div className="text-caption text-ink-muted">{row.slug}</div>
-          </div>
-        ),
-      },
-      {
-        key: "metrics",
-        header: t("colViewsUnlocks"),
-        cell: (row) => `${fmtNum(row.viewCount)} / ${fmtNum(row.unlockCount)}`,
-      },
-      {
-        key: "actions",
-        header: t("actions"),
-        cell: (row) => {
-          const idx = rows.findIndex((r) => dramaId(r) === dramaId(row));
-          const busy = actionMut.isPending;
-          return (
-            <div className="flex flex-wrap gap-1">
-              <Button
-                size="sm"
-                variant="secondary"
-                disabled={busy || idx <= 0}
-                onClick={() => move(dramaId(row), -1)}
-              >
-                {t("moveUp")}
-              </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                disabled={busy || idx < 0 || idx >= rows.length - 1}
-                onClick={() => move(dramaId(row), 1)}
-              >
-                {t("moveDown")}
-              </Button>
-              <Button
-                size="sm"
-                variant="danger"
-                disabled={busy}
-                onClick={() => setRemoveId(dramaId(row))}
-              >
-                {t("remove")}
-              </Button>
-            </div>
-          );
-        },
-      },
-    ],
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [t, actionMut.isPending, rows],
-  );
+  function onDragStart(id: string) {
+    setDragId(id);
+  }
+
+  function onDragOver(e: DragEvent, overId: string) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (overId !== dropId) setDropId(overId);
+  }
+
+  function onDrop(overId: string) {
+    if (!dragId || dragId === overId) {
+      setDragId(null);
+      setDropId(null);
+      return;
+    }
+    setOrdered((prev) => {
+      const from = prev.findIndex((r) => dramaId(r) === dragId);
+      const to = prev.findIndex((r) => dramaId(r) === overId);
+      return moveItem(prev, from, to);
+    });
+    setDragId(null);
+    setDropId(null);
+  }
+
+  function onDragEnd() {
+    setDragId(null);
+    setDropId(null);
+  }
 
   const searchColumns: Column<Drama>[] = useMemo(
     () => [
       {
+        key: "cover",
+        header: t("coverPreview"),
+        className: "w-16",
+        cell: (row) => (
+          <div className="h-14 w-10 overflow-hidden rounded bg-panel">
+            {row.coverUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={row.coverUrl} alt="" className="h-full w-full object-cover" />
+            ) : (
+              <div className="grid h-full place-items-center text-ink-subtle">
+                <ImageIcon className="h-3.5 w-3.5" />
+              </div>
+            )}
+          </div>
+        ),
+      },
+      {
         key: "title",
         header: t("drama"),
         cell: (row) => (
           <div>
-            <div className="font-medium">{row.titleZh || row.titleEn || "—"}</div>
+            <div className="font-medium">{dramaTitle(row)}</div>
             <div className="text-caption text-ink-muted">{row.slug}</div>
           </div>
         ),
@@ -193,7 +211,7 @@ export default function AdminHottestPage() {
             <Button
               size="sm"
               variant={added ? "secondary" : "primary"}
-              disabled={actionMut.isPending || added}
+              disabled={actionMut.isPending || dirty || added}
               onClick={() => actionMut.mutate(() => adminSetHottest(dramaId(row), true))}
             >
               {added ? t("alreadyAdded") : t("add")}
@@ -202,10 +220,12 @@ export default function AdminHottestPage() {
         },
       },
     ],
-    [t, actionMut.isPending, selectedIds],
+    [t, actionMut.isPending, selectedIds, dirty],
   );
 
-  const removeRow = removeId ? rows.find((r) => dramaId(r) === removeId) : undefined;
+  const removeRow = removeId ? ordered.find((r) => dramaId(r) === removeId) : undefined;
+  const busy = actionMut.isPending || saveSortMut.isPending;
+  const loading = listQ.isFetching && !listQ.data;
 
   return (
     <AdminShell title={t("hottest")}>
@@ -216,22 +236,128 @@ export default function AdminHottestPage() {
       ) : null}
 
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-        <p className="max-w-2xl text-body-sm text-ink-muted">{t("heroHintHottest")}</p>
+        <div className="max-w-2xl space-y-1">
+          <p className="text-body-sm text-ink-muted">{t("heroHintHottest")}</p>
+          {dirty ? (
+            <p className="text-body-sm text-warning">{t("hottestSortUnsaved")}</p>
+          ) : null}
+        </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
-          <span className="text-body-sm text-ink-muted">{t("totalCount", { n: rows.length })}</span>
-          <Button size="sm" onClick={() => setAddOpen(true)}>
+          <span className="text-body-sm text-ink-muted">{t("totalCount", { n: ordered.length })}</span>
+          {dirty ? (
+            <Button size="sm" variant="secondary" disabled={busy} onClick={discardSort}>
+              {t("discardChanges")}
+            </Button>
+          ) : null}
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={busy || !dirty}
+            onClick={() => saveSortMut.mutate(ordered.map(dramaId))}
+          >
+            {saveSortMut.isPending ? t("saving") : t("hottestSaveSort")}
+          </Button>
+          <Button size="sm" disabled={dirty} onClick={() => setAddOpen(true)}>
             {t("hottestAddFromAll")}
           </Button>
         </div>
       </div>
 
-      <DataTable
-        columns={columns}
-        rows={rows}
-        loading={listQ.isFetching && !listQ.data}
-        emptyTitle={t("hottestEmpty")}
-        emptyDescription={t("hottestEmptyHint")}
-      />
+      {loading ? (
+        <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10">
+          {Array.from({ length: 10 }).map((_, i) => (
+            <div key={i} className="overflow-hidden rounded-lg border border-line bg-white/70">
+              <div className="aspect-[3/4] animate-pulse bg-panel" />
+              <div className="space-y-1.5 p-1.5">
+                <div className="h-3 animate-pulse rounded bg-panel" />
+                <div className="h-2.5 w-2/3 animate-pulse rounded bg-panel" />
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : ordered.length === 0 ? (
+        <div className="card glass-card admin-fill flex flex-col items-center justify-center gap-2 px-6 py-16 text-center">
+          <p className="text-body font-medium text-ink">{t("hottestEmpty")}</p>
+          <p className="max-w-md text-body-sm text-ink-muted">{t("hottestEmptyHint")}</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10">
+          {ordered.map((row, idx) => {
+            const id = dramaId(row);
+            const title = dramaTitle(row);
+            const dragging = dragId === id;
+            const dropTarget = dropId === id && dragId && dragId !== id;
+            return (
+              <div
+                key={id}
+                draggable={!busy}
+                title={t("hottestDragHint")}
+                onDragStart={(e) => {
+                  // Don't start card drag from interactive controls.
+                  const target = e.target as HTMLElement | null;
+                  if (target?.closest("a,button")) {
+                    e.preventDefault();
+                    return;
+                  }
+                  e.dataTransfer.effectAllowed = "move";
+                  e.dataTransfer.setData("text/plain", id);
+                  onDragStart(id);
+                }}
+                onDragOver={(e) => onDragOver(e, id)}
+                onDrop={() => onDrop(id)}
+                onDragEnd={onDragEnd}
+                className={[
+                  "group relative cursor-grab overflow-hidden rounded-lg border bg-white/80 shadow-sm transition active:cursor-grabbing",
+                  dragging ? "opacity-40" : "hover:border-brand/40 hover:shadow-md",
+                  dropTarget ? "border-brand ring-2 ring-brand/20" : "border-line",
+                ].join(" ")}
+              >
+                <div className="relative aspect-[3/4] bg-panel">
+                  {row.coverUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={row.coverUrl}
+                      alt=""
+                      draggable={false}
+                      className="pointer-events-none h-full w-full object-cover"
+                    />
+                  ) : (
+                    <div className="grid h-full place-items-center text-ink-subtle">
+                      <ImageIcon className="h-5 w-5" />
+                    </div>
+                  )}
+
+                  <span className="absolute left-1 top-1 rounded bg-black/65 px-1 py-px text-[10px] font-semibold tabular-nums text-white">
+                    {idx + 1}
+                  </span>
+
+                  <button
+                    type="button"
+                    disabled={busy || dirty}
+                    onClick={() => setRemoveId(id)}
+                    className="absolute right-1 top-1 inline-flex h-6 w-6 items-center justify-center rounded-full bg-danger text-white opacity-0 transition enabled:group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-0"
+                    title={t("remove")}
+                    aria-label={t("remove")}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+
+                <div className="p-1.5">
+                  <Link
+                    href={`/content/${row.id}`}
+                    draggable={false}
+                    className="line-clamp-2 text-[11px] font-medium leading-snug text-ink hover:text-brand"
+                    title={title}
+                  >
+                    {title}
+                  </Link>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       <GlassModal open={addOpen} onClose={closeAdd} title={t("hottestAddFromAll")} size="lg">
         <p className="mb-3 text-body-sm text-ink-muted">{t("hottestSearchHint")}</p>
@@ -273,7 +399,7 @@ export default function AdminHottestPage() {
         onClose={() => setRemoveId(null)}
         busy={actionMut.isPending}
         message={t("hottestConfirmRemove", {
-          title: removeRow?.titleZh || removeRow?.titleEn || removeId || "",
+          title: removeRow ? dramaTitle(removeRow) : removeId || "",
         })}
         onConfirm={() => {
           if (!removeId) return;

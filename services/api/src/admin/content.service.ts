@@ -10,6 +10,8 @@ export interface DramaListFilter {
   isOfficial?: '1' | '0';
   isFeatured?: '1' | '0';
   isHottest?: '1' | '0';
+  /** r2 = R2/CDN 成片；local = 本机托管；online = 外链在线剧 */
+  mediaKind?: 'r2' | 'local' | 'online';
   /** weight = 运营权重；latest = 上架时间（最新） */
   sort?: 'weight' | 'latest';
   page?: number;
@@ -35,6 +37,13 @@ export class ContentService {
     if (filter.isFeatured === '0') where.isFeatured = false;
     if (filter.isHottest === '1') where.isHottest = true;
     if (filter.isHottest === '0') where.isHottest = false;
+    if (filter.mediaKind === 'online') {
+      where.sourceType = 'ONLINE';
+    } else if (filter.mediaKind === 'r2') {
+      where.sourceType = 'R2';
+    } else if (filter.mediaKind === 'local') {
+      where.sourceType = 'LOCAL';
+    }
     if (filter.q) {
       where.OR = [
         { titleEn: { contains: filter.q, mode: 'insensitive' } },

@@ -4,10 +4,11 @@ import { useEffect, useState } from "react";
 import { Button } from "@velvet/ui";
 import { ContentImportPanel } from "@/components/content-import-panel";
 import { OnlineDramaForm } from "@/components/online-drama-form";
+import { UploadDramaForm } from "@/components/upload-drama-form";
 import { YtdlpImportPanel } from "@/components/ytdlp-import-panel";
 import { useI18n } from "@/lib/i18n";
 
-export type ContentAddTab = "local" | "online";
+export type ContentAddTab = "upload" | "local" | "online";
 
 export function ContentAddPanel({
   tab: controlledTab,
@@ -17,7 +18,7 @@ export function ContentAddPanel({
   onTabChange?: (tab: ContentAddTab) => void;
 } = {}) {
   const { t } = useI18n();
-  const [tab, setTab] = useState<ContentAddTab>(controlledTab ?? "local");
+  const [tab, setTab] = useState<ContentAddTab>(controlledTab ?? "upload");
 
   useEffect(() => {
     if (controlledTab) setTab(controlledTab);
@@ -30,9 +31,10 @@ export function ContentAddPanel({
 
   return (
     <div>
-      <div className="mb-4 flex gap-2">
+      <div className="mb-4 flex flex-wrap gap-2">
         {(
           [
+            ["upload", t("contentUpload")],
             ["local", t("contentLocal")],
             ["online", t("contentOnline")],
           ] as const
@@ -48,7 +50,9 @@ export function ContentAddPanel({
         ))}
       </div>
 
-      {tab === "local" ? (
+      {tab === "upload" ? (
+        <UploadDramaForm />
+      ) : tab === "local" ? (
         <div className="space-y-4">
           <p className="text-body-sm text-ink-muted">{t("contentAddLocalHint")}</p>
           <ContentImportPanel />

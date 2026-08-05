@@ -1,7 +1,9 @@
 import { Injectable } from '@nestjs/common';
+import * as fs from 'fs';
 import { PrismaService } from '../prisma/prisma.service';
 import { BizException, BizCode } from '../common/biz.exception';
 import { AuditService } from '../common/audit.service';
+import { UploadService } from '../upload/upload.service';
 import { convertExternalPlayUrl } from './online-drama.util';
 
 function toBigIntCredits(v: number | string | undefined | null, fallback = 0n): bigint {
@@ -18,6 +20,7 @@ export class AdminEpisodesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly upload: UploadService,
   ) {}
 
   async listByDrama(dramaId: string) {
@@ -68,7 +71,10 @@ export class AdminEpisodesService {
       throw new BizException(BizCode.BAD_REQUEST, '付费集需设置积分价 > 0');
     }
 
-    const urls = this.resolveMediaUrls(dto);
+    const hasMediaInput = !!(dto.sourceUrl?.trim() || dto.hlsUrl?.trim() || dto.originalUrl?.trim());
+    const urls = hasMediaInput
+      ? this.resolveMediaUrls(dto)
+      : { hlsUrl: null as string | null, originalUrl: null as string | null };
     const ep = await this.prisma.$transaction(async (tx) => {
       const created = await tx.episode.create({
         data: {
@@ -176,6 +182,12 @@ export class AdminEpisodesService {
     const ep = await this.prisma.episode.findUnique({ where: { id: BigInt(id) } });
     if (!ep) throw new BizException(BizCode.NOT_FOUND, 'episode.notFound');
 
+    const purge = await this.upload.purgeMediaUrls([
+      ep.hlsUrl,
+      ep.originalUrl,
+      ep.thumbnailUrl,
+    ]);
+
     await this.prisma.$transaction(async (tx) => {
       await tx.episode.delete({ where: { id: ep.id } });
       const remaining = await tx.episode.findMany({
@@ -200,9 +212,161 @@ export class AdminEpisodesService {
       action: 'episode.delete',
       targetType: 'episode',
       targetId: id,
-      payload: { dramaId: ep.dramaId.toString(), episodeNumber: ep.episodeNumber },
+      payload: {
+        dramaId: ep.dramaId.toString(),
+        episodeNumber: ep.episodeNumber,
+        purge,
+      },
     });
-    return { ok: true };
+    return { ok: true, purge };
+  }
+
+  async purgeMedia(id: string, actorId?: bigint) {
+    const ep = await this.prisma.episode.findUnique({ where: { id: BigInt(id) } });
+    if (!ep) throw new BizException(BizCode.NOT_FOUND, 'episode.notFound');
+    const purge = await this.upload.purgeMediaUrls([
+      ep.hlsUrl,
+      ep.originalUrl,
+      ep.thumbnailUrl,
+    ]);
+    await this.prisma.episode.update({
+      where: { id: ep.id },
+      data: {
+        hlsUrl: null,
+        originalUrl: null,
+        uploadStatus: 'PENDING',
+        transcodeStatus: 'PENDING',
+      },
+    });
+    await this.audit.write({
+      actorId,
+      action: 'episode.media.purge',
+      targetType: 'episode',
+      targetId: id,
+      payload: purge,
+    });
+    return { ok: true, purge };
+  }
+
+  async uploadVideo(id: string, file: Express.Multer.File, actorId?: bigint) {
+    const ep = await this.prisma.episode.findUnique({ where: { id: BigInt(id) } });
+    if (!ep) throw new BizException(BizCode.NOT_FOUND, 'episode.notFound');
+    if (!file) throw new BizException(BizCode.BAD_REQUEST, '未收到文件');
+
+    await this.upload.purgeMediaUrls([ep.hlsUrl, ep.originalUrl]).catch(() => undefined);
+
+    const saved = this.upload.saveUpload(file);
+    await this.prisma.episode.update({
+      where: { id: ep.id },
+      data: {
+        originalUrl: saved.relativePath,
+        hlsUrl: saved.relativePath,
+        uploadStatus: 'COMPLETED',
+        transcodeStatus: 'PENDING',
+      },
+    });
+    const job = this.upload.enqueueTranscode(saved.relativePath, String(ep.id));
+    await this.audit.write({
+      actorId,
+      action: 'episode.upload',
+      targetType: 'episode',
+      targetId: id,
+      payload: { relativePath: saved.relativePath, jobId: job.id, size: saved.size },
+    });
+    return {
+      episode: this.serialize({
+        ...ep,
+        originalUrl: saved.relativePath,
+        hlsUrl: saved.relativePath,
+        uploadStatus: 'COMPLETED',
+        transcodeStatus: 'PENDING',
+      }),
+      ...saved,
+      jobId: job.id,
+      transcodeStatus: job.status,
+      storage: this.upload.storageStatus(),
+      ffmpegReady: !!(await this.upload.detectFfmpeg()),
+    };
+  }
+
+  async createWithUpload(
+    dramaId: string,
+    file: Express.Multer.File,
+    dto: {
+      title?: string;
+      episodeNumber?: number;
+      isFree?: boolean;
+      priceCredits?: number | string;
+      thumbnailUrl?: string;
+    },
+    actorId?: bigint,
+  ) {
+    if (!file) throw new BizException(BizCode.BAD_REQUEST, '未收到文件');
+    const created = await this.create(
+      dramaId,
+      {
+        title: dto.title,
+        episodeNumber: dto.episodeNumber,
+        isFree: !!dto.isFree,
+        priceCredits: dto.isFree ? 0 : dto.priceCredits ?? 10,
+        thumbnailUrl: dto.thumbnailUrl,
+      },
+      actorId,
+    );
+    return this.uploadVideo(created.id, file, actorId);
+  }
+
+  async listStorage(dramaId: string) {
+    const episodes = await this.prisma.episode.findMany({
+      where: { dramaId: BigInt(dramaId) },
+      orderBy: { episodeNumber: 'asc' },
+      select: {
+        id: true,
+        episodeNumber: true,
+        title: true,
+        hlsUrl: true,
+        originalUrl: true,
+        thumbnailUrl: true,
+        transcodeStatus: true,
+        uploadStatus: true,
+      },
+    });
+    const items: Array<{
+      id: string;
+      episodeNumber: number;
+      title: string | null;
+      hlsUrl: string | null;
+      originalUrl: string | null;
+      thumbnailUrl: string | null;
+      transcodeStatus: string;
+      uploadStatus: string;
+      r2Prefix: string | null;
+      objectCount: number;
+      totalBytes: number;
+      objects: Array<{ key: string; size: number; lastModified?: string }>;
+    }> = [];
+    for (const ep of episodes) {
+      const listed = await this.upload.listEpisodeR2Objects(ep.hlsUrl);
+      items.push({
+        id: ep.id.toString(),
+        episodeNumber: ep.episodeNumber,
+        title: ep.title,
+        hlsUrl: ep.hlsUrl,
+        originalUrl: ep.originalUrl,
+        thumbnailUrl: ep.thumbnailUrl,
+        transcodeStatus: ep.transcodeStatus,
+        uploadStatus: ep.uploadStatus,
+        r2Prefix: listed.prefix,
+        objectCount: listed.objects.length,
+        totalBytes: listed.objects.reduce((s, o) => s + o.size, 0),
+        objects: listed.objects.slice(0, 50),
+      });
+    }
+    return {
+      ...this.upload.storageStatus(),
+      ffmpegReady: !!(await this.upload.detectFfmpeg()),
+      episodes: items,
+    };
   }
 
   async batchUpdate(
@@ -298,18 +462,32 @@ export class AdminEpisodesService {
   async retryTranscode(id: string, actorId?: bigint) {
     const ep = await this.prisma.episode.findUnique({ where: { id: BigInt(id) } });
     if (!ep) throw new BizException(BizCode.NOT_FOUND, 'episode.notFound');
-    const updated = await this.prisma.episode.update({
-      where: { id: BigInt(id) },
+    const inputRel = ep.originalUrl || ep.hlsUrl;
+    if (!inputRel || /^https?:\/\//i.test(inputRel)) {
+      throw new BizException(BizCode.BAD_REQUEST, '无可转码的本地源文件，请重新上传视频');
+    }
+    const abs = this.upload.resolveAbs(inputRel);
+    if (!fs.existsSync(abs)) {
+      throw new BizException(BizCode.BAD_REQUEST, '源文件不存在，请重新上传视频');
+    }
+    await this.prisma.episode.update({
+      where: { id: ep.id },
       data: { transcodeStatus: 'PENDING' },
     });
+    const job = this.upload.enqueueTranscode(inputRel, String(ep.id));
     await this.audit.write({
       actorId,
       action: 'episode.transcode.retry',
       targetType: 'episode',
       targetId: id,
-      payload: { from: ep.transcodeStatus, to: 'PENDING' },
+      payload: { from: ep.transcodeStatus, to: 'PENDING', jobId: job.id },
     });
-    return { id: updated.id.toString(), transcodeStatus: updated.transcodeStatus };
+    return {
+      id: ep.id.toString(),
+      transcodeStatus: 'PENDING' as const,
+      jobId: job.id,
+      ffmpegReady: !!(await this.upload.detectFfmpeg()),
+    };
   }
 
   private resolveMediaUrls(dto: {

@@ -116,6 +116,15 @@ class BatchDramasDto {
   @IsOptional() buyoutCredits?: number | string | null;
 }
 
+class BatchDramaLifecycleDto {
+  @IsArray()
+  @ArrayMinSize(1)
+  ids!: (string | number)[];
+  @IsIn(['offline', 'online', 'delete'])
+  action!: 'offline' | 'online' | 'delete';
+  @IsOptional() @IsString() reason?: string;
+}
+
 class EpisodeUpdateDto {
   @IsOptional() @IsString() title?: string;
   @IsOptional()
@@ -192,6 +201,21 @@ class CreateOnlineDramaDto {
   episodes!: OnlineEpisodeDto[];
 }
 
+class CreateLocalUploadDramaDto {
+  @IsNotEmpty() @IsString() titleZh!: string;
+  @IsOptional() @IsString() titleEn?: string;
+  @IsOptional() @IsString() slug?: string;
+  @IsOptional() @IsString() descriptionZh?: string;
+  @IsOptional() @IsString() descriptionEn?: string;
+  @IsNotEmpty() @IsString() categorySlug!: string;
+  @IsOptional() @IsString() coverUrl?: string;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) freeEpisodeCount?: number;
+  @IsOptional() @IsIn(['FREE_FIRST_N', 'VIP_ALL', 'ALL_FREE'])
+  lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE';
+  @IsOptional() @IsIn(['DRAFT', 'LIVE'])
+  status?: 'DRAFT' | 'LIVE';
+}
+
 class YtdlpProbeDto {
   @IsNotEmpty() @IsString() url!: string;
 }
@@ -206,6 +230,20 @@ class YtdlpResolveDto {
 class YtdlpImportDto {
   @IsNotEmpty() @IsString() url!: string;
   @IsNotEmpty() @IsString() categorySlug!: string;
+  @IsOptional() @IsString() titleZh?: string;
+  @IsOptional() @IsString() titleEn?: string;
+  @IsOptional() @IsIn(['DRAFT', 'LIVE'])
+  status?: 'DRAFT' | 'LIVE';
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) maxEpisodes?: number;
+  @IsOptional() @IsIn(['best_hls', 'best_mp4', 'best'])
+  formatPreference?: 'best_hls' | 'best_mp4' | 'best';
+}
+
+class YtdlpTransferDto {
+  @IsNotEmpty() @IsString() url!: string;
+  @IsNotEmpty() @IsString() categorySlug!: string;
+  @IsNotEmpty() @IsIn(['local', 'r2'])
+  target!: 'local' | 'r2';
   @IsOptional() @IsString() titleZh?: string;
   @IsOptional() @IsString() titleEn?: string;
   @IsOptional() @IsIn(['DRAFT', 'LIVE'])
@@ -249,11 +287,91 @@ export class ContentController {
       kindRaw === 'thumbnail' || kindRaw === 'image' || kindRaw === 'cover'
         ? kindRaw
         : 'cover';
-    const saved = this.upload.saveImage(file, kind);
-    return ok({
-      ...saved,
-      url: `/api/v1/media/${saved.relativePath}`,
-    });
+    const saved = await this.upload.saveImage(file, kind);
+    return ok(saved);
+  }
+
+  @Get('storage/status')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async storageStatus() {
+    const status = this.upload.storageStatus();
+    const ffmpegReady = !!(await this.upload.detectFfmpeg());
+    return ok({ ...status, ffmpegReady });
+  }
+
+  @Get('transcode/:jobId')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async transcodeJob(@Param('jobId') jobId: string) {
+    const job = this.upload.getJob(jobId);
+    if (!job) throw new BizException(BizCode.NOT_FOUND, 'job not found');
+    return ok(job);
+  }
+
+  @Get('dramas/:id/storage')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async dramaStorage(@Param('id') id: string) {
+    return ok(await this.episodes.listStorage(id));
+  }
+
+  /** multipart 视频上传到已有分集 → 本地落盘 → 转码 →（R2 开启时）推送 CDN */
+  @Post('episodes/:id/upload')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 512 * 1024 * 1024 },
+    }),
+  )
+  async uploadEpisodeVideo(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Req() req: any,
+  ) {
+    return ok(await this.episodes.uploadVideo(id, file, getActor(req)));
+  }
+
+  /** 新建分集并上传视频（可无播放 URL） */
+  @Post('dramas/:id/episodes/upload')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 512 * 1024 * 1024 },
+    }),
+  )
+  async createEpisodeWithUpload(
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Body()
+    body: {
+      title?: string;
+      episodeNumber?: string | number;
+      isFree?: string | boolean;
+      priceCredits?: string | number;
+      thumbnailUrl?: string;
+    },
+    @Req() req: any,
+  ) {
+    return ok(
+      await this.episodes.createWithUpload(
+        id,
+        file,
+        {
+          title: body?.title,
+          episodeNumber: body?.episodeNumber != null ? Number(body.episodeNumber) : undefined,
+          isFree: body?.isFree === true || body?.isFree === 'true' || body?.isFree === '1',
+          priceCredits: body?.priceCredits != null ? Number(body.priceCredits) : undefined,
+          thumbnailUrl: body?.thumbnailUrl,
+        },
+        getActor(req),
+      ),
+    );
+  }
+
+  @Post('episodes/:id/media/purge')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async purgeEpisodeMedia(@Param('id') id: string, @Req() req: any) {
+    return ok(await this.episodes.purgeMedia(id, getActor(req)));
   }
 
   @Get('dramas')
@@ -264,10 +382,15 @@ export class ContentController {
     @Query('isOfficial') isOfficial?: string,
     @Query('isFeatured') isFeatured?: string,
     @Query('isHottest') isHottest?: string,
+    @Query('mediaKind') mediaKind?: string,
     @Query('sort') sort?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
   ) {
+    const kind =
+      mediaKind === 'r2' || mediaKind === 'local' || mediaKind === 'online'
+        ? mediaKind
+        : undefined;
     return ok(await this.content.list({
       q,
       status: (status as any) || 'ALL',
@@ -275,6 +398,7 @@ export class ContentController {
       isOfficial: isOfficial as any,
       isFeatured: isFeatured as any,
       isHottest: isHottest as any,
+      mediaKind: kind,
       sort: sort === 'latest' ? 'latest' : 'weight',
       page: page ? Number(page) : 1,
       pageSize: pageSize ? Number(pageSize) : 20,
@@ -306,6 +430,102 @@ export class ContentController {
     return ok(await this.admin.createOnlineDrama(dto as any, getActor(req)));
   }
 
+  /** 创建本地/R2 托管剧壳，随后用 episodes/upload 逐集上传视频 */
+  @Post('dramas/upload')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async createUploadDrama(@Body() dto: CreateLocalUploadDramaDto, @Req() req: any) {
+    return ok(await this.admin.createLocalUploadDrama(dto as any, getActor(req)));
+  }
+
+  /**
+   * 一步创建剧集并上传多个视频文件（按文件名排序）。
+   * 大文件建议改用 dramas/upload + dramas/:id/episodes/upload 逐集上传。
+   */
+  @Post('dramas/upload-with-files')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  @UseInterceptors(
+    FilesInterceptor('files', 30, {
+      storage: memoryStorage(),
+      limits: { fileSize: 512 * 1024 * 1024, files: 30 },
+    }),
+  )
+  async createUploadDramaWithFiles(
+    @UploadedFiles() files: Express.Multer.File[],
+    @Body()
+    body: {
+      titleZh?: string;
+      titleEn?: string;
+      slug?: string;
+      descriptionZh?: string;
+      categorySlug?: string;
+      coverUrl?: string;
+      freeEpisodeCount?: string | number;
+      lockMode?: string;
+      status?: string;
+      isFree?: string | boolean;
+      priceCredits?: string | number;
+    },
+    @Req() req: any,
+  ) {
+    if (!files?.length) {
+      throw new BizException(BizCode.BAD_REQUEST, '请至少上传一个视频文件');
+    }
+    const drama = await this.admin.createLocalUploadDrama(
+      {
+        titleZh: body.titleZh || '',
+        titleEn: body.titleEn,
+        slug: body.slug,
+        descriptionZh: body.descriptionZh,
+        categorySlug: body.categorySlug || '',
+        coverUrl: body.coverUrl,
+        freeEpisodeCount:
+          body.freeEpisodeCount != null ? Number(body.freeEpisodeCount) : undefined,
+        lockMode: body.lockMode as any,
+        status: body.status === 'LIVE' ? 'LIVE' : 'DRAFT',
+      },
+      getActor(req),
+    );
+    const sorted = [...files].sort((a, b) =>
+      String(a.originalname).localeCompare(String(b.originalname), undefined, {
+        numeric: true,
+        sensitivity: 'base',
+      }),
+    );
+    const isFree = body.isFree === true || body.isFree === 'true' || body.isFree === '1';
+    const priceCredits =
+      body.priceCredits != null && body.priceCredits !== ''
+        ? Number(body.priceCredits)
+        : isFree
+          ? 0
+          : 10;
+    const jobs: Array<{ episodeId: string; jobId: string; filename: string }> = [];
+    for (let i = 0; i < sorted.length; i++) {
+      const file = sorted[i];
+      const uploaded = await this.episodes.createWithUpload(
+        drama.id,
+        file,
+        {
+          title: file.originalname.replace(/\.[^.]+$/, '') || `第${i + 1}集`,
+          episodeNumber: i + 1,
+          isFree,
+          priceCredits,
+        },
+        getActor(req),
+      );
+      jobs.push({
+        episodeId: uploaded.episode.id,
+        jobId: uploaded.jobId,
+        filename: file.originalname,
+      });
+    }
+    return ok({
+      ...drama,
+      totalEpisodes: jobs.length,
+      jobs,
+      ffmpegReady: !!(await this.upload.detectFfmpeg()),
+    });
+  }
+
   /** 公开链接解析（本地 yt-dlp，无需 API Key） */
   @Get('ytdlp/status')
   @AdminRoles('SUPER_ADMIN', 'OPS')
@@ -331,6 +551,13 @@ export class ContentController {
     return ok(await this.ytdlp.importDrama(dto, getActor(req)));
   }
 
+  /** yt-dlp 下载落盘 → 转码 HLS → 本地或 R2 */
+  @Post('ytdlp/transfer')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async ytdlpTransfer(@Body() dto: YtdlpTransferDto, @Req() req: any) {
+    return ok(await this.ytdlp.transferDrama(dto, getActor(req)));
+  }
+
   @Post('dramas/hottest/reorder')
   @AdminRoles('SUPER_ADMIN', 'OPS')
   async reorderHottest(@Body() dto: ReorderDto, @Req() req: any) {
@@ -342,6 +569,14 @@ export class ContentController {
   @AdminRoles('SUPER_ADMIN')
   async batchDramas(@Body() dto: BatchDramasDto, @Req() req: any) {
     return ok(await this.ops.batchUpdateDramas(dto, getActor(req)));
+  }
+
+  @Post('dramas/batch-lifecycle')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async batchDramaLifecycle(@Body() dto: BatchDramaLifecycleDto, @Req() req: any) {
+    return ok(
+      await this.admin.batchLifecycle(dto.action, dto.ids, dto.reason, getActor(req)),
+    );
   }
 
   @Get('dramas/:id')

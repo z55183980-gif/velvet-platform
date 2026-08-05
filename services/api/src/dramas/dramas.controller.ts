@@ -40,6 +40,19 @@ export class DramasController {
     return ok(await this.dramas.getHottest());
   }
 
+  /** Mobile home vertical feed: ops hottest pins + 7d heat ranking */
+  @Get('dramas/feed')
+  async feed(
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('pinHottest') pinHottest?: string,
+  ) {
+    const p = Math.max(1, parseInt(page || '1', 10) || 1);
+    const ps = Math.min(50, Math.max(1, parseInt(pageSize || '20', 10) || 20));
+    const pin = Math.min(10, Math.max(0, parseInt(pinHottest || '3', 10) || 3));
+    return ok(await this.dramas.getHomeFeed({ page: p, pageSize: ps, pinHottest: pin }));
+  }
+
   @Get('categories')
   async categories() {
     return ok(await this.dramas.listCategories());

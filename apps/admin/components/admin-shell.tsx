@@ -28,6 +28,7 @@ import {
   LayoutGrid,
   LogOut,
   Menu,
+  Plus,
   Scale,
   Settings2,
   ShieldCheck,
@@ -71,8 +72,9 @@ const NAV_GROUPS: NavGroup[] = [
     titleKey: "navContent",
     items: [
       { href: "/content", key: "content", icon: Clapperboard, end: true },
+      { href: "/content/add", key: "contentAdd", icon: Plus, end: true },
       { href: "/content?sort=latest", key: "contentLatest", icon: Clapperboard, end: true },
-      { href: "/content?status=PENDING_REVIEW", key: "contentPending", icon: ShieldCheck, end: true },
+      { href: "/hottest", key: "hottest", icon: Flame, end: true },
       { href: "/content?modal=categories", key: "categories", icon: FolderTree, end: true },
     ],
   },
@@ -82,7 +84,6 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { href: "/banners", key: "banners", icon: LayoutGrid },
       { href: "/featured", key: "featured", icon: Star, end: true },
-      { href: "/hottest", key: "hottest", icon: Flame, end: true },
       { href: "/messages", key: "messages", icon: Inbox, end: true },
     ],
   },
@@ -95,13 +96,15 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    id: "trade",
-    titleKey: "navTrade",
+    id: "finance",
+    titleKey: "navFinance",
     items: [
       { href: "/orders", key: "orders", icon: CreditCard },
       { href: "/refunds", key: "refunds", icon: Flag, end: true },
       { href: "/vip-plans", key: "vipPlans", icon: Gift, finance: true },
       { href: "/redeem-codes", key: "redeemCodes", icon: Ticket, finance: true },
+      { href: "/wallet", key: "wallet", icon: Coins, finance: true },
+      { href: "/reconcile", key: "reconcile", icon: Scale, finance: true },
     ],
   },
   {
@@ -109,15 +112,8 @@ const NAV_GROUPS: NavGroup[] = [
     titleKey: "navCreators",
     items: [
       { href: "/creators", key: "creators", icon: Handshake },
+      { href: "/content?status=PENDING_REVIEW", key: "contentPending", icon: ShieldCheck, end: true },
       { href: "/withdraws", key: "withdraws", icon: Wallet, finance: true },
-    ],
-  },
-  {
-    id: "finance",
-    titleKey: "navFinance",
-    items: [
-      { href: "/wallet", key: "wallet", icon: Coins, finance: true },
-      { href: "/reconcile", key: "reconcile", icon: Scale, finance: true },
     ],
   },
   {
@@ -146,10 +142,7 @@ function isActive(pathname: string, searchParams: URLSearchParams, item: NavItem
       if (searchParams.get(key) !== value) return false;
     }
     // List-filter nav items should not stay active when a form modal is open.
-    if (!params.has("modal")) {
-      const modal = searchParams.get("modal");
-      if (modal === "add" || modal === "categories") return false;
-    }
+    if (!params.has("modal") && searchParams.get("modal") === "categories") return false;
     return pathname === path;
   }
 
@@ -161,6 +154,10 @@ function isActive(pathname: string, searchParams: URLSearchParams, item: NavItem
       !searchParams.get("sort") &&
       (!modal || modal === "detail")
     );
+  }
+
+  if (path === "/content/add") {
+    return pathname === "/content/add";
   }
 
   if (path === "/users") {

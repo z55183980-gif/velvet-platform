@@ -186,7 +186,7 @@ model Drama {
   likeCount       BigInt      @default(0)
 
   status          DramaStatus @default(DRAFT)
-  /// 内容来源：本地媒资 / 外链转播
+  /// 内容来源：本地托管 / R2 成片 / 外链转播
   sourceType      DramaSourceType @default(LOCAL)
   isOfficial      Boolean     @default(false)
   isFeatured      Boolean     @default(false)
@@ -226,6 +226,8 @@ enum DramaStatus {
 enum DramaSourceType {
   LOCAL
   ONLINE
+  /// 管理端上传并写入 Cloudflare R2 / CDN
+  R2
 }
 
 /// 剧集加锁策略（全局默认见 system_settings.episodeLockMode）
@@ -299,6 +301,7 @@ model UserUnlock {
 
   @@unique([userId, episodeId])
   @@index([userId, unlockedAt(sort: Desc)])
+  @@index([unlockedAt(sort: Desc)])
   @@map("user_unlocks")
 }
 
@@ -366,6 +369,7 @@ model WatchHistory {
 
   @@unique([userId, episodeId])
   @@index([userId, watchedAt(sort: Desc)])
+  @@index([dramaId, watchedAt(sort: Desc)])
   @@map("watch_history")
 }
 

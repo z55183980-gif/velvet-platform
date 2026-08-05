@@ -241,6 +241,43 @@ export async function loadHome(
   );
 }
 
+/** Mobile home vertical feed: ops hottest pins + 7d heat, paginated. */
+export async function loadFeed(
+  page = 1,
+  pageSize = 20,
+  opts?: { pinHottest?: number; signal?: AbortSignal },
+): Promise<{ rows: Drama[]; total: number; hasMore: boolean; page: number }> {
+  const params = new URLSearchParams({
+    page: String(page),
+    pageSize: String(pageSize),
+    pinHottest: String(opts?.pinHottest ?? 3),
+  });
+  try {
+    const r = await request<{
+      rows: any[];
+      total: number;
+      hasMore?: boolean;
+      page?: number;
+      pageSize?: number;
+    }>(`/dramas/feed?${params.toString()}`, { signal: opts?.signal });
+    const rows = (r.rows || []).map(mapDrama);
+    const total = Number(r.total) || rows.length;
+    const hasMore =
+      typeof r.hasMore === "boolean" ? r.hasMore : page * pageSize < total;
+    return { rows, total, hasMore, page: r.page || page };
+  } catch (err) {
+    if (isAbortError(err)) throw err;
+    // Fallback keeps feed usable when the new endpoint is not deployed yet.
+    const hot = await loadHome(page, pageSize, { sort: "hot", signal: opts?.signal });
+    return {
+      rows: hot.rows,
+      total: hot.total,
+      hasMore: page * pageSize < hot.total,
+      page,
+    };
+  }
+}
+
 export async function loadFeatured(opts?: { signal?: AbortSignal }): Promise<Drama[]> {
   return cachedGet(
     "featured",

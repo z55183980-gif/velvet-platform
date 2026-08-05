@@ -2,6 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { execFile } from 'child_process';
 import { createHash } from 'crypto';
+import * as fs from 'fs';
 import * as path from 'path';
 import { promisify } from 'util';
 import { BizCode, BizException } from '../common/biz.exception';
@@ -76,6 +77,11 @@ export class YtdlpProvider implements OnModuleInit {
   private timeoutMs() {
     const n = Number(this.config.get<string>('YTDLP_TIMEOUT_MS') || 90_000);
     return Number.isFinite(n) && n >= 5_000 ? n : 90_000;
+  }
+
+  private downloadTimeoutMs() {
+    const n = Number(this.config.get<string>('YTDLP_DOWNLOAD_TIMEOUT_MS') || 1_800_000);
+    return Number.isFinite(n) && n >= 30_000 ? n : 1_800_000;
   }
 
   private storageRoot() {
@@ -291,6 +297,77 @@ export class YtdlpProvider implements OnModuleInit {
     return lines[0];
   }
 
+  /**
+   * Download a single video (or playlist item) into outputDir as a local file for ffmpeg.
+   * Prefer merged mp4 so the existing upload→HLS pipeline can consume it.
+   */
+  async downloadToFile(
+    url: string,
+    outputDir: string,
+    preference: YtdlpFormatPreference = 'best',
+    playlistIndex?: number,
+  ): Promise<{ absPath: string; filename: string; size: number }> {
+    const pageUrl = this.requireHttpUrl(url);
+    fs.mkdirSync(outputDir, { recursive: true });
+    const stem = `${Date.now()}-${this.hashRef(pageUrl + String(playlistIndex || 0))}`;
+    const template = path.join(outputDir, `${stem}.%(ext)s`);
+    const format = this.downloadFormatSelector(preference);
+    const args = [
+      '-f',
+      format,
+      '-o',
+      template,
+      '--merge-output-format',
+      'mp4',
+      '--no-warnings',
+      '--newline',
+      '--print',
+      'after_move:filepath',
+      '--print',
+      'filepath',
+    ];
+    if (playlistIndex && playlistIndex > 0) {
+      args.push('--playlist-items', String(playlistIndex));
+    } else {
+      args.push('--no-playlist');
+    }
+    args.push(pageUrl);
+
+    const stdout = await this.runText(args, this.downloadTimeoutMs());
+    const lines = stdout
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    let absPath =
+      [...lines].reverse().find((l) => fs.existsSync(l) && fs.statSync(l).isFile()) || '';
+    if (!absPath) {
+      // Fallback: look for stem.* in outputDir
+      const candidates = fs
+        .readdirSync(outputDir)
+        .filter((f) => f.startsWith(stem + '.'))
+        .map((f) => path.join(outputDir, f));
+      absPath =
+        candidates.find((p) => /\.(mp4|mkv|webm|mov|m4v)$/i.test(p)) || candidates[0] || '';
+    }
+    if (!absPath || !fs.existsSync(absPath)) {
+      throw new BizException(BizCode.BAD_REQUEST, 'yt-dlp 下载完成但未找到输出文件');
+    }
+    const ext = path.extname(absPath).toLowerCase();
+    const allowed = new Set(['.mp4', '.mov', '.mkv', '.webm', '.m4v']);
+    if (!allowed.has(ext)) {
+      throw new BizException(
+        BizCode.BAD_REQUEST,
+        `下载格式不受转码支持: ${ext || '(无扩展名)'}`,
+      );
+    }
+    const stat = fs.statSync(absPath);
+    return {
+      absPath,
+      filename: path.basename(absPath),
+      size: stat.size,
+    };
+  }
+
   externalRefFor(webpageUrl: string, extractor: string, id: string) {
     const safeExt = String(extractor || 'unknown')
       .toLowerCase()
@@ -310,6 +387,15 @@ export class YtdlpProvider implements OnModuleInit {
       return 'best/bestvideo+bestaudio';
     }
     return 'best[protocol^=m3u8]/best[ext=m3u8]/best/bestvideo+bestaudio';
+  }
+
+  /** Format selector for disk download (merge to a single file ffmpeg can read). */
+  private downloadFormatSelector(preference: YtdlpFormatPreference) {
+    if (preference === 'best_mp4') {
+      return 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best';
+    }
+    // Compatible with yt-dlp 2023.x (avoid bestvideo* which needs newer builds).
+    return 'bestvideo+bestaudio/best';
   }
 
   private async requireBin() {
@@ -364,11 +450,11 @@ export class YtdlpProvider implements OnModuleInit {
     }
   }
 
-  private async runText(args: string[]): Promise<string> {
+  private async runText(args: string[], timeoutMs?: number): Promise<string> {
     const bin = await this.requireBin();
     try {
       const { stdout, stderr } = await execFileAsync(bin, args, {
-        timeout: this.timeoutMs(),
+        timeout: timeoutMs ?? this.timeoutMs(),
         windowsHide: true,
         maxBuffer: 16 * 1024 * 1024,
         env: { ...process.env, PYTHONIOENCODING: 'utf-8' },

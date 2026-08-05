@@ -151,7 +151,7 @@ export function Skeleton({ className }: { className?: string }) {
 
 export type Column<T> = {
   key: string;
-  header: string;
+  header: ReactNode;
   cell: (row: T) => ReactNode;
   className?: string;
 };

@@ -20,6 +20,7 @@ import {
   adminUpdateDrama,
   adminUpdateEpisode,
   adminUploadImage,
+  adminPurgeEpisodeMedia,
 } from "@velvet/api-client";
 import { Badge, Button, DataTable, Input, Select, cn, fmtNum, type Column } from "@velvet/ui";
 import {
@@ -36,19 +37,24 @@ import {
   ImageIcon,
   ImagePlus,
   LayoutDashboard,
+  ThumbsUp,
   ListVideo,
   LoaderCircle,
   LockKeyhole,
   Plus,
   RotateCcw,
   Save,
-  Settings2,
   Sparkles,
   Trash2,
   UnlockKeyhole,
   Video,
 } from "lucide-react";
 import { ConfirmModal } from "@/components/glass-modal";
+import {
+  DramaStoragePanel,
+  EpisodeVideoUploadButton,
+  NewEpisodeUploadForm,
+} from "@/components/episode-media-panel";
 import { captureVideoFirstFrame } from "@/lib/capture-video-frame";
 import { useI18n, statusLabel } from "@/lib/i18n";
 
@@ -83,6 +89,7 @@ type Drama = {
   viewCount?: number;
   unlockCount?: number;
   favoriteCount?: number;
+  likeCount?: number;
   publishedAt?: string | null;
   sourceType?: string;
   creator?: { displayName?: string };
@@ -297,7 +304,10 @@ export function ContentDetailPanel({
   const [savedDraft, setSavedDraft] = useState<BasicDraft>(emptyDraft);
   const [error, setError] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [offlineOpen, setOfflineOpen] = useState(false);
+  const [onlineOpen, setOnlineOpen] = useState(false);
   const [deleteEpisodeId, setDeleteEpisodeId] = useState<string | null>(null);
+  const [purgeEpisodeId, setPurgeEpisodeId] = useState<string | null>(null);
   const [showAddEpisode, setShowAddEpisode] = useState(false);
   const [selectedEps, setSelectedEps] = useState<Set<string>>(new Set());
   const [batchFree, setBatchFree] = useState<"keep" | "1" | "0">("keep");
@@ -429,22 +439,68 @@ export function ContentDetailPanel({
     },
     {
       key: "transcode", header: t("transcodeStatus"), className: "w-28",
-      cell: (episode) => <Badge tone={episode.transcodeStatus === "FAILED" ? "danger" : episode.transcodeStatus === "READY" ? "success" : "warning"}>{episode.transcodeStatus || "—"}</Badge>,
+      cell: (episode) => (
+        <Badge
+          tone={
+            episode.transcodeStatus === "FAILED"
+              ? "danger"
+              : episode.transcodeStatus === "COMPLETED" || episode.transcodeStatus === "READY"
+                ? "success"
+                : "warning"
+          }
+        >
+          {episode.transcodeStatus || "—"}
+        </Badge>
+      ),
     },
     {
-      key: "actions", header: "", className: "w-32",
-      cell: (episode) => <div className="flex justify-end gap-1">
-        <Button size="sm" variant="ghost" className="!h-8 !w-8 !p-0" title={t("moveUp")} disabled={actionMut.isPending} onClick={() => moveEpisode(String(episode.id), -1)}><ArrowUp className="h-4 w-4" /></Button>
-        <Button size="sm" variant="ghost" className="!h-8 !w-8 !p-0" title={t("moveDown")} disabled={actionMut.isPending} onClick={() => moveEpisode(String(episode.id), 1)}><ArrowDown className="h-4 w-4" /></Button>
-        {["FAILED", "PENDING"].includes(episode.transcodeStatus || "") ? <Button size="sm" variant="ghost" className="!h-8 !w-8 !p-0" title={t("retryTranscode")} onClick={() => act(() => adminRetryTranscode(String(episode.id)))}><RotateCcw className="h-4 w-4" /></Button> : null}
-        <Button size="sm" variant="ghost" className="!h-8 !w-8 !p-0 !text-danger" title={t("delete")} onClick={() => setDeleteEpisodeId(String(episode.id))}><Trash2 className="h-4 w-4" /></Button>
-      </div>,
+      key: "actions", header: "", className: "w-40",
+      cell: (episode) => (
+        <div className="flex justify-end gap-1">
+          <EpisodeVideoUploadButton
+            episodeId={String(episode.id)}
+            disabled={actionMut.isPending}
+            label={episode.hlsUrl || episode.originalUrl ? t("replaceVideo") : t("uploadVideo")}
+            onError={setError}
+            onDone={async () => {
+              await qc.invalidateQueries({ queryKey: ["admin", "drama", id] });
+              await qc.invalidateQueries({ queryKey: ["admin", "drama-storage", id] });
+            }}
+          />
+          <Button size="sm" variant="ghost" className="!h-8 !w-8 !p-0" title={t("moveUp")} disabled={actionMut.isPending} onClick={() => moveEpisode(String(episode.id), -1)}><ArrowUp className="h-4 w-4" /></Button>
+          <Button size="sm" variant="ghost" className="!h-8 !w-8 !p-0" title={t("moveDown")} disabled={actionMut.isPending} onClick={() => moveEpisode(String(episode.id), 1)}><ArrowDown className="h-4 w-4" /></Button>
+          {["FAILED", "PENDING", "PROCESSING"].includes(episode.transcodeStatus || "") ? (
+            <Button size="sm" variant="ghost" className="!h-8 !w-8 !p-0" title={t("retryTranscode")} onClick={() => act(() => adminRetryTranscode(String(episode.id)))}><RotateCcw className="h-4 w-4" /></Button>
+          ) : null}
+          <Button size="sm" variant="ghost" className="!h-8 !w-8 !p-0 !text-danger" title={t("delete")} onClick={() => setDeleteEpisodeId(String(episode.id))}><Trash2 className="h-4 w-4" /></Button>
+        </div>
+      ),
     },
-  ], [t, actionMut.isPending, selectedEps, episodes]);
+  ], [t, actionMut.isPending, selectedEps, episodes, id, qc]);
 
   const handleDeleteDrama = () => actionMut.mutate(() => adminDeleteDrama(id, reason || "admin delete"), {
     onSuccess: async () => { setDeleteOpen(false); setError(null); await qc.invalidateQueries({ queryKey: ["admin", "dramas"] }); onDeleted ? onDeleted() : router.replace("/content"); },
   });
+
+  const handleOfflineDrama = () =>
+    actionMut.mutate(() => adminOfflineDrama(id, "admin force offline"), {
+      onSuccess: async () => {
+        setOfflineOpen(false);
+        setError(null);
+        await qc.invalidateQueries({ queryKey: ["admin", "drama", id] });
+        await qc.invalidateQueries({ queryKey: ["admin", "dramas"] });
+      },
+    });
+
+  const handleOnlineDrama = () =>
+    actionMut.mutate(() => adminOnlineDrama(id, "admin restore online"), {
+      onSuccess: async () => {
+        setOnlineOpen(false);
+        setError(null);
+        await qc.invalidateQueries({ queryKey: ["admin", "drama", id] });
+        await qc.invalidateQueries({ queryKey: ["admin", "dramas"] });
+      },
+    });
 
   if (detailQ.isLoading) return <div className="content-detail-loading"><LoaderCircle className="h-5 w-5 animate-spin text-brand" /><span>{t("loading")}</span></div>;
   if (!drama) return <p className="text-ink-muted">{t("empty")}</p>;
@@ -472,9 +528,29 @@ export function ContentDetailPanel({
           <h1 className="mt-2 truncate text-[22px] font-bold tracking-tight text-ink">{drama.titleZh || drama.titleEn || "—"}</h1>
           <p className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-ink-subtle"><span>{drama.slug}</span><span>·</span><span>{drama.creator?.displayName || "—"}</span><span>·</span><span>{drama.category?.nameZh || drama.category?.nameEn || "—"}</span></p>
         </div>
-        <div className="hidden items-center gap-2 lg:flex">
-          {drama.status === "PENDING_REVIEW" ? <Button size="sm" onClick={() => act(() => adminApproveDrama(id))}><Check className="h-4 w-4" />{t("approveReview")}</Button> : null}
-          {drama.status === "LIVE" ? <Button size="sm" variant="secondary" onClick={() => setTab("overview")}><Settings2 className="h-4 w-4" />{t("manageStatus")}</Button> : null}
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          {drama.status === "PENDING_REVIEW" ? (
+            <Button size="sm" disabled={actionMut.isPending} onClick={() => act(() => adminApproveDrama(id))}>
+              <Check className="h-4 w-4" />
+              {t("approveReview")}
+            </Button>
+          ) : null}
+          {drama.status === "LIVE" ? (
+            <Button size="sm" variant="secondary" disabled={actionMut.isPending} onClick={() => setOfflineOpen(true)}>
+              <LockKeyhole className="h-4 w-4" />
+              {t("forceOffline")}
+            </Button>
+          ) : null}
+          {drama.status === "OFFLINE" || drama.status === "REJECTED" ? (
+            <Button size="sm" disabled={actionMut.isPending} onClick={() => setOnlineOpen(true)}>
+              <UnlockKeyhole className="h-4 w-4" />
+              {t("restoreOnline")}
+            </Button>
+          ) : null}
+          <Button size="sm" variant="danger" disabled={actionMut.isPending} onClick={() => setDeleteOpen(true)}>
+            <Trash2 className="h-4 w-4" />
+            {t("deleteDrama")}
+          </Button>
         </div>
       </section>
 
@@ -505,24 +581,23 @@ export function ContentDetailPanel({
 
       <div className="content-detail-body">
         {tab === "overview" ? <div className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
             <Metric icon={<Eye />} label={t("views")} value={fmtNum(drama.viewCount)} />
             <Metric icon={<UnlockKeyhole />} label={t("unlocks")} value={fmtNum(drama.unlockCount)} />
             <Metric icon={<Heart />} label={t("favorites")} value={fmtNum(drama.favoriteCount)} />
+            <Metric icon={<ThumbsUp />} label={t("likes")} value={fmtNum(drama.likeCount)} />
             <Metric icon={<FileVideo />} label={t("episodeCount")} value={episodes.length} />
           </div>
-          <section className="content-section-card space-y-4">
-            <div className="content-section-heading"><div><h2>{t("statusAndActions")}</h2><p>{t("statusActionHint")}</p></div></div>
-            <FieldLabel label={t("actionReason")}><Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder={t("actionReasonPlaceholder")} /></FieldLabel>
-            <div className="flex flex-wrap gap-2">
-              {drama.status === "PENDING_REVIEW" ? <>
+          {drama.status === "PENDING_REVIEW" ? (
+            <section className="content-section-card space-y-4">
+              <div className="content-section-heading"><div><h2>{t("statusAndActions")}</h2><p>{t("statusActionHint")}</p></div></div>
+              <FieldLabel label={t("actionReason")}><Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder={t("actionReasonPlaceholder")} /></FieldLabel>
+              <div className="flex flex-wrap gap-2">
                 <Button size="sm" disabled={actionMut.isPending} onClick={() => act(() => adminApproveDrama(id))}><Check className="h-4 w-4" />{t("approveReview")}</Button>
                 <Button size="sm" variant="secondary" disabled={actionMut.isPending || !reason.trim()} onClick={() => act(() => adminRejectDrama(id, reason))}><AlertTriangle className="h-4 w-4" />{t("reject")}</Button>
-              </> : null}
-              {drama.status === "LIVE" ? <Button size="sm" variant="secondary" disabled={actionMut.isPending || !reason.trim()} onClick={() => act(() => adminOfflineDrama(id, reason))}><LockKeyhole className="h-4 w-4" />{t("forceOffline")}</Button> : null}
-              {drama.status === "OFFLINE" || drama.status === "REJECTED" ? <Button size="sm" disabled={actionMut.isPending || !reason.trim()} onClick={() => act(() => adminOnlineDrama(id, reason))}><UnlockKeyhole className="h-4 w-4" />{t("restoreOnline")}</Button> : null}
-            </div>
-          </section>
+              </div>
+            </section>
+          ) : null}
           <section className="content-section-card space-y-4">
             <div className="content-section-heading"><div><h2>{t("distributionSettings")}</h2><p>{t("contentSummaryHint")}</p></div></div>
             <div className="grid gap-3 md:grid-cols-2">
@@ -534,7 +609,6 @@ export function ContentDetailPanel({
               <Button size="sm" variant="secondary" disabled={actionMut.isPending || weight === (drama.sortWeight ?? 0)} onClick={() => act(() => adminUpdateDrama(id, { sortWeight: weight }))}>{t("saveSortWeight")}</Button>
             </div>
           </section>
-          <section className="content-danger-zone"><div><h2>{t("dangerZone")}</h2><p>{t("dangerZoneHint")}</p></div><Button size="sm" variant="danger" onClick={() => setDeleteOpen(true)}><Trash2 className="h-4 w-4" />{t("deleteDrama")}</Button></section>
         </div> : null}
 
         {tab === "info" ? <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_19rem]">
@@ -596,7 +670,7 @@ export function ContentDetailPanel({
                 <FieldLabel label={t("colTitle")}>
                   <Input value={newEp.title} onChange={(e) => setNewEp((v) => ({ ...v, title: e.target.value }))} />
                 </FieldLabel>
-                <FieldLabel label={t("playUrl")} required>
+                <FieldLabel label={t("orPastePlayUrl")}>
                   <Input
                     placeholder="https://…m3u8"
                     value={newEp.sourceUrl}
@@ -643,8 +717,26 @@ export function ContentDetailPanel({
                   }
                 >
                   <Plus className="h-4 w-4" />
-                  {t("addEpisode")}
+                  {t("addEpisodeByUrl")}
                 </Button>
+              </div>
+              <div className="border-t border-line pt-4">
+                <NewEpisodeUploadForm
+                  dramaId={id}
+                  title={newEp.title}
+                  isFree={newEp.isFree}
+                  priceCredits={newEp.priceCredits}
+                  thumbnailUrl={newEp.thumbnailUrl || undefined}
+                  disabled={actionMut.isPending}
+                  onError={setError}
+                  onDone={async () => {
+                    setNewEp({ title: "", sourceUrl: "", thumbnailUrl: "", isFree: false, priceCredits: 10 });
+                    setShowAddEpisode(false);
+                    setError(null);
+                    await qc.invalidateQueries({ queryKey: ["admin", "drama", id] });
+                    await qc.invalidateQueries({ queryKey: ["admin", "drama-storage", id] });
+                  }}
+                />
               </div>
               <p className="text-xs leading-5 text-ink-subtle">{t("episodeThumbHint")}</p>
             </section>
@@ -698,6 +790,12 @@ export function ContentDetailPanel({
             </div>
           </div>
           <DataTable className="content-episode-table" columns={episodeColumns} rows={episodes} emptyTitle={t("emptyEpisodes")} />
+          <DramaStoragePanel
+            dramaId={id}
+            onPurge={async (episodeId) => {
+              setPurgeEpisodeId(episodeId);
+            }}
+          />
         </div> : null}
 
         {tab === "policy" ? <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_21rem]">
@@ -706,8 +804,39 @@ export function ContentDetailPanel({
         </div> : null}
       </div>
 
+      <ConfirmModal
+        open={offlineOpen}
+        onClose={() => setOfflineOpen(false)}
+        onConfirm={handleOfflineDrama}
+        message={t("confirmForceOffline")}
+        busy={actionMut.isPending}
+      />
+      <ConfirmModal
+        open={onlineOpen}
+        onClose={() => setOnlineOpen(false)}
+        onConfirm={handleOnlineDrama}
+        message={t("confirmRestoreOnline")}
+        confirmVariant="primary"
+        busy={actionMut.isPending}
+      />
       <ConfirmModal open={deleteOpen} onClose={() => setDeleteOpen(false)} onConfirm={handleDeleteDrama} message={t("confirmDeleteDrama")} busy={actionMut.isPending} />
-      <ConfirmModal open={!!deleteEpisodeId} onClose={() => setDeleteEpisodeId(null)} onConfirm={() => { if (!deleteEpisodeId) return; actionMut.mutate(() => adminDeleteEpisode(deleteEpisodeId), { onSuccess: async () => { setDeleteEpisodeId(null); await qc.invalidateQueries({ queryKey: ["admin", "drama", id] }); } }); }} message={t("confirmDeleteEpisode")} busy={actionMut.isPending} />
+      <ConfirmModal open={!!deleteEpisodeId} onClose={() => setDeleteEpisodeId(null)} onConfirm={() => { if (!deleteEpisodeId) return; actionMut.mutate(() => adminDeleteEpisode(deleteEpisodeId), { onSuccess: async () => { setDeleteEpisodeId(null); await qc.invalidateQueries({ queryKey: ["admin", "drama", id] }); await qc.invalidateQueries({ queryKey: ["admin", "drama-storage", id] }); } }); }} message={t("confirmDeleteEpisode")} busy={actionMut.isPending} />
+      <ConfirmModal
+        open={!!purgeEpisodeId}
+        onClose={() => setPurgeEpisodeId(null)}
+        onConfirm={() => {
+          if (!purgeEpisodeId) return;
+          actionMut.mutate(() => adminPurgeEpisodeMedia(purgeEpisodeId), {
+            onSuccess: async () => {
+              setPurgeEpisodeId(null);
+              await qc.invalidateQueries({ queryKey: ["admin", "drama", id] });
+              await qc.invalidateQueries({ queryKey: ["admin", "drama-storage", id] });
+            },
+          });
+        }}
+        message={t("confirmPurgeMedia")}
+        busy={actionMut.isPending}
+      />
     </div>
   );
 }

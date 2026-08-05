@@ -27,6 +27,8 @@ export interface TranscodeJob {
   outputRel?: string;
   error?: string;
   createdAt: number;
+  /** true=push R2 after HLS; false=keep local; undefined=follow STORAGE_BACKEND */
+  preferR2?: boolean;
 }
 
 @Injectable()
@@ -153,8 +155,11 @@ export class UploadService implements OnModuleInit {
     };
   }
 
-  /** 封面/缩略图上传 → STORAGE_ROOT/covers（实例本地存储，经 /api/v1/media 访问） */
-  saveImage(file: Express.Multer.File, kind: 'cover' | 'thumbnail' | 'image' = 'cover'): UploadResult {
+  /** 封面/缩略图上传 → STORAGE_ROOT/covers；R2 开启时同步推送到 velvet-media */
+  async saveImage(
+    file: Express.Multer.File,
+    kind: 'cover' | 'thumbnail' | 'image' = 'cover',
+  ): Promise<UploadResult & { url: string }> {
     if (!file) throw new BizException(BizCode.BAD_REQUEST, '未收到文件');
     let ext = path.extname(file.originalname || '').toLowerCase();
     const mime = (file.mimetype || '').toLowerCase();
@@ -183,13 +188,90 @@ export class UploadService implements OnModuleInit {
       '.png': 'image/png',
       '.webp': 'image/webp',
     };
-    return {
+    const resolvedMime =
+      mime && mime !== 'application/octet-stream' ? mime : mimeByExt[ext] || 'image/jpeg';
+    const base: UploadResult & { url: string } = {
       relativePath,
       originalUrl: relativePath,
       filename,
       size: file.size,
-      mime: mime && mime !== 'application/octet-stream' ? mime : mimeByExt[ext] || 'image/jpeg',
+      mime: resolvedMime,
+      url: `/api/v1/media/${relativePath}`,
     };
+    if (this.r2.isEnabled() && this.r2.hasCredentials()) {
+      try {
+        const key = relativePath;
+        await this.r2.putFile(this.r2.mediaBucket(), key, abs, resolvedMime);
+        base.url = `${this.r2.cdnBase()}/${key}`;
+        base.originalUrl = base.url;
+        this.logger.log(`image uploaded to R2 → ${base.url}`);
+      } catch (e: any) {
+        this.logger.error(`R2 image upload failed, keeping local: ${e?.message || e}`);
+      }
+    }
+    return base;
+  }
+
+  storageStatus() {
+    return {
+      storageBackend: (this.config.get<string>('STORAGE_BACKEND') || 'local').toLowerCase(),
+      r2Enabled: this.r2.isEnabled(),
+      r2Configured: this.r2.hasCredentials(),
+      mediaBucket: this.r2.mediaBucket(),
+      uploadBucket: this.r2.uploadBucket(),
+      cdnBase: this.r2.cdnBase(),
+      ffmpegReady: !!this.ffmpegPath,
+    };
+  }
+
+  /** Remove local files + R2 objects for episode media URLs. */
+  async purgeMediaUrls(urls: Array<string | null | undefined>): Promise<{
+    r2Deleted: number;
+    localDeleted: number;
+  }> {
+    let localDeleted = 0;
+    for (const url of urls) {
+      if (!url?.trim()) continue;
+      const raw = url.trim();
+      if (/^https?:\/\//i.test(raw)) continue;
+      const rel = raw.replace(/^\/api\/v1\/media\//, '').replace(/^\/+/, '');
+      if (!rel || rel.includes('..')) continue;
+      const abs = this.resolveAbs(rel);
+      try {
+        if (fs.existsSync(abs) && fs.statSync(abs).isFile()) {
+          fs.unlinkSync(abs);
+          localDeleted += 1;
+          // also remove sibling HLS directory when pointing at playlist
+          if (rel.endsWith('.m3u8')) {
+            const dir = path.dirname(abs);
+            if (fs.existsSync(dir) && dir.startsWith(this.getStorageRoot())) {
+              fs.rmSync(dir, { recursive: true, force: true });
+            }
+          }
+        } else if (fs.existsSync(abs) && fs.statSync(abs).isDirectory()) {
+          fs.rmSync(abs, { recursive: true, force: true });
+          localDeleted += 1;
+        }
+      } catch (e: any) {
+        this.logger.warn(`local purge failed for ${rel}: ${e?.message || e}`);
+      }
+    }
+    let r2Deleted = 0;
+    try {
+      r2Deleted = await this.r2.purgeUrls(urls);
+    } catch (e: any) {
+      this.logger.error(`R2 purge failed: ${e?.message || e}`);
+    }
+    return { r2Deleted, localDeleted };
+  }
+
+  async listEpisodeR2Objects(hlsUrl: string | null | undefined) {
+    const prefix = this.r2.mediaPrefixFromUrl(hlsUrl);
+    if (!prefix || !this.r2.hasCredentials()) {
+      return { prefix: prefix || null, objects: [] as { key: string; size: number; lastModified?: string }[] };
+    }
+    const objects = await this.r2.listPrefix(prefix);
+    return { prefix, objects };
   }
 
   resolveAbs(relativePath: string): string {
@@ -206,7 +288,11 @@ export class UploadService implements OnModuleInit {
     return inStorage;
   }
 
-  enqueueTranscode(inputRel: string, episodeId?: string): TranscodeJob {
+  enqueueTranscode(
+    inputRel: string,
+    episodeId?: string,
+    opts?: { preferR2?: boolean },
+  ): TranscodeJob {
     const id = crypto.randomUUID();
     const job: TranscodeJob = {
       id,
@@ -214,6 +300,7 @@ export class UploadService implements OnModuleInit {
       inputRel,
       status: 'queued',
       createdAt: Date.now(),
+      preferR2: opts?.preferR2,
     };
     this.jobs.set(id, job);
     this.queue.push(id);
@@ -286,7 +373,26 @@ export class UploadService implements OnModuleInit {
       const durationSec = await this.probeDurationSec(ffmpeg, inputAbs);
 
       let hlsUrl: string = outputRel;
-      if (this.r2.isEnabled()) {
+      const pushR2 =
+        job.preferR2 === true
+          ? this.r2.hasCredentials()
+          : job.preferR2 === false
+            ? false
+            : this.r2.isEnabled() && this.r2.hasCredentials();
+      if (job.preferR2 === true && !this.r2.hasCredentials()) {
+        job.status = 'failed';
+        job.error = 'R2 credentials not configured';
+        if (job.episodeId) {
+          await this.prisma.episode
+            .update({
+              where: { id: BigInt(job.episodeId) },
+              data: { transcodeStatus: 'FAILED' },
+            })
+            .catch(() => undefined);
+        }
+        return;
+      }
+      if (pushR2) {
         try {
           const prefix = `hls/${job.episodeId || jobId}`;
           hlsUrl = await this.r2.uploadHlsDirectory(outDir, prefix);

@@ -3,16 +3,22 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { adminBatchDramas, adminListCategories, adminListDramas, asRows } from "@velvet/api-client";
+import {
+  adminBatchDramaLifecycle,
+  adminBatchDramas,
+  adminListCategories,
+  adminListDramas,
+  asRows,
+} from "@velvet/api-client";
 import { Button, DataTable, Input, Select, fmtDate, fmtNum, type Column } from "@velvet/ui";
 import { AdminShell } from "@/components/admin-shell";
 import { CategoriesModal } from "@/components/categories-modal";
-import { ContentAddModal } from "@/components/content-add-modal";
 import { ContentDetailModal } from "@/components/content-detail-modal";
 import {
   ContentSearchBar,
   type ContentSearchFilters,
 } from "@/components/content-search-bar";
+import { ConfirmModal } from "@/components/glass-modal";
 import { useI18n, statusLabel } from "@/lib/i18n";
 
 type Drama = {
@@ -31,7 +37,7 @@ type Drama = {
   _count?: { episodes?: number };
 };
 type Category = { slug: string; nameZh?: string; nameEn?: string };
-type ContentModal = "detail" | "add" | "categories";
+type ContentModal = "detail" | "categories";
 
 const statuses = ["ALL", "DRAFT", "PENDING_REVIEW", "LIVE", "OFFLINE", "REJECTED"];
 const pageSize = 20;
@@ -41,14 +47,12 @@ function buildContentHref(opts: {
   sort?: string;
   modal?: ContentModal | null;
   id?: string | null;
-  tab?: string | null;
 }) {
   const qs = new URLSearchParams();
   if (opts.status && opts.status !== "ALL") qs.set("status", opts.status);
   if (opts.sort === "latest") qs.set("sort", "latest");
   if (opts.modal) qs.set("modal", opts.modal);
   if (opts.modal === "detail" && opts.id) qs.set("id", opts.id);
-  if (opts.modal === "add" && opts.tab === "online") qs.set("tab", "online");
   const next = qs.toString();
   return next ? `/content?${next}` : "/content";
 }
@@ -62,17 +66,15 @@ function AdminContentInner() {
   const sortFromUrl = searchParams.get("sort") === "latest" ? "latest" : "weight";
   const modalParam = searchParams.get("modal");
   const modal =
-    modalParam === "detail" || modalParam === "add" || modalParam === "categories"
-      ? modalParam
-      : null;
+    modalParam === "detail" || modalParam === "categories" ? modalParam : null;
   const detailId = modal === "detail" ? searchParams.get("id") : null;
-  const addTab = searchParams.get("tab") === "online" ? "online" : "local";
   const [filters, setFilters] = useState<ContentSearchFilters>({
     q: "",
     status: statusFromUrl,
     categorySlug: "",
     isOfficial: "",
     isFeatured: "",
+    mediaKind: "",
     sort: sortFromUrl as "weight" | "latest",
   });
   const [page, setPage] = useState(1);
@@ -84,6 +86,13 @@ function AdminContentInner() {
     lockMode: "" as "" | "INHERIT" | "FREE_FIRST_N" | "VIP_ALL" | "ALL_FREE",
   });
   const [error, setError] = useState<string | null>(null);
+  const [lifecycleConfirm, setLifecycleConfirm] = useState<"offline" | "online" | "delete" | null>(null);
+
+  useEffect(() => {
+    if (modalParam !== "add") return;
+    const tab = searchParams.get("tab") === "online" ? "?tab=online" : "";
+    router.replace(`/content/add${tab}`);
+  }, [modalParam, router, searchParams]);
 
   useEffect(() => {
     setFilters((prev) => ({
@@ -104,7 +113,6 @@ function AdminContentInner() {
           sort: next.sort,
           modal,
           id: detailId,
-          tab: modal === "add" ? addTab : null,
         }),
       );
     }
@@ -117,7 +125,6 @@ function AdminContentInner() {
         sort: sortFromUrl,
         modal: nextModal,
         id: nextModal === "detail" ? id ?? null : null,
-        tab: nextModal === "add" ? addTab : null,
       }),
     );
   }
@@ -127,17 +134,6 @@ function AdminContentInner() {
       buildContentHref({
         status: statusFromUrl,
         sort: sortFromUrl,
-      }),
-    );
-  }
-
-  function setAddTab(tab: "local" | "online") {
-    router.replace(
-      buildContentHref({
-        status: statusFromUrl,
-        sort: sortFromUrl,
-        modal: "add",
-        tab,
       }),
     );
   }
@@ -155,6 +151,7 @@ function AdminContentInner() {
         categorySlug: filters.categorySlug || undefined,
         isOfficial: filters.isOfficial || undefined,
         isFeatured: filters.isFeatured || undefined,
+        mediaKind: filters.mediaKind || undefined,
         sort: filters.sort,
         page,
         pageSize,
@@ -182,12 +179,66 @@ function AdminContentInner() {
     onError: (e: Error) => setError(e.message),
   });
 
+  const lifecycleMut = useMutation({
+    mutationFn: (action: "offline" | "online" | "delete") =>
+      adminBatchDramaLifecycle({
+        ids: [...selected],
+        action,
+        reason: `admin batch ${action}`,
+      }),
+    onSuccess: async (result) => {
+      setLifecycleConfirm(null);
+      setSelected(new Set());
+      const failed = result?.failed?.length ?? 0;
+      if (failed > 0) {
+        setError(
+          t("batchLifecyclePartial", {
+            ok: result.updated,
+            fail: failed,
+            detail: result.failed.map((f) => `${f.id}: ${f.error}`).join("; "),
+          }),
+        );
+      } else {
+        setError(null);
+      }
+      await qc.invalidateQueries({ queryKey: ["admin", "dramas"] });
+    },
+    onError: (e: Error) => {
+      setLifecycleConfirm(null);
+      setError(e.message);
+    },
+  });
+
   const rows = dramasQ.data?.rows ?? [];
+  const busy = batchMut.isPending || lifecycleMut.isPending;
+  const pageAllSelected = rows.length > 0 && rows.every((row) => selected.has(String(row.id)));
+  const pageSomeSelected = rows.some((row) => selected.has(String(row.id)));
   const columns: Column<Drama>[] = useMemo(
     () => [
       {
         key: "select",
-        header: "",
+        className: "w-[7.5rem] min-w-[7.5rem] max-w-[7.5rem]",
+        header: (
+          <label className="inline-flex cursor-pointer items-center gap-1.5 text-caption font-medium text-ink-muted">
+            <input
+              type="checkbox"
+              checked={pageAllSelected}
+              ref={(el) => {
+                if (el) el.indeterminate = pageSomeSelected && !pageAllSelected;
+              }}
+              disabled={busy || rows.length === 0}
+              onChange={() =>
+                setSelected(
+                  pageAllSelected ? new Set() : new Set(rows.map((row) => String(row.id))),
+                )
+              }
+            />
+            <span>{t("selectAll")}</span>
+            <span className="inline-block w-7 tabular-nums text-ink-subtle">
+              {selected.size > 0 ? `(${selected.size})` : null}
+            </span>
+          </label>
+        ),
         cell: (row) => (
           <input
             type="checkbox"
@@ -246,7 +297,7 @@ function AdminContentInner() {
     ],
     // openModal depends on URL filters; columns refresh when those/i18n/selection change
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [t, selected, statusFromUrl, sortFromUrl],
+    [t, selected, statusFromUrl, sortFromUrl, rows, pageAllSelected, pageSomeSelected, busy],
   );
 
   const title =
@@ -269,11 +320,32 @@ function AdminContentInner() {
         categories={categoriesQ.data ?? []}
         statuses={statuses}
         showAdd={statusFromUrl !== "PENDING_REVIEW"}
-        onAdd={() => openModal("add")}
+        onAdd={() => router.push("/content/add")}
       />
 
       <div className="mb-4 flex flex-wrap items-end gap-2 card glass-card p-3">
-        <span className="text-caption text-ink-muted">{t("selectedCount", { n: selected.size })}</span>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={!selected.size || busy}
+            onClick={() => setLifecycleConfirm("offline")}
+          >
+            {t("batchOffline")}
+          </Button>
+          <Button size="sm" disabled={!selected.size || busy} onClick={() => setLifecycleConfirm("online")}>
+            {t("batchOnline")}
+          </Button>
+          <Button
+            size="sm"
+            variant="danger"
+            disabled={!selected.size || busy}
+            onClick={() => setLifecycleConfirm("delete")}
+          >
+            {t("batchDelete")}
+          </Button>
+        </div>
+        <span className="mx-1 hidden h-6 w-px bg-line sm:block" aria-hidden />
         <label className="text-caption text-ink-muted">
           {t("lockMode")}
           <Select
@@ -310,21 +382,8 @@ function AdminContentInner() {
             />
           </label>
         ))}
-        <Button size="sm" disabled={!selected.size || batchMut.isPending} onClick={() => batchMut.mutate()}>
+        <Button size="sm" disabled={!selected.size || busy} onClick={() => batchMut.mutate()}>
           {t("batchApply")}
-        </Button>
-        <Button
-          size="sm"
-          variant="ghost"
-          onClick={() =>
-            setSelected(
-              rows.length > 0 && rows.every((row) => selected.has(String(row.id)))
-                ? new Set()
-                : new Set(rows.map((row) => String(row.id))),
-            )
-          }
-        >
-          {t("selectAllPage")}
         </Button>
       </div>
 
@@ -346,13 +405,29 @@ function AdminContentInner() {
       </div>
 
       <ContentDetailModal open={modal === "detail"} dramaId={detailId} onClose={closeModal} />
-      <ContentAddModal
-        open={modal === "add"}
-        onClose={closeModal}
-        tab={addTab}
-        onTabChange={setAddTab}
-      />
       <CategoriesModal open={modal === "categories"} onClose={closeModal} />
+      <ConfirmModal
+        open={lifecycleConfirm === "offline"}
+        onClose={() => setLifecycleConfirm(null)}
+        onConfirm={() => lifecycleMut.mutate("offline")}
+        message={t("confirmBatchOffline", { n: selected.size })}
+        busy={lifecycleMut.isPending}
+      />
+      <ConfirmModal
+        open={lifecycleConfirm === "online"}
+        onClose={() => setLifecycleConfirm(null)}
+        onConfirm={() => lifecycleMut.mutate("online")}
+        message={t("confirmBatchOnline", { n: selected.size })}
+        confirmVariant="primary"
+        busy={lifecycleMut.isPending}
+      />
+      <ConfirmModal
+        open={lifecycleConfirm === "delete"}
+        onClose={() => setLifecycleConfirm(null)}
+        onConfirm={() => lifecycleMut.mutate("delete")}
+        message={t("confirmBatchDelete", { n: selected.size })}
+        busy={lifecycleMut.isPending}
+      />
     </AdminShell>
   );
 }

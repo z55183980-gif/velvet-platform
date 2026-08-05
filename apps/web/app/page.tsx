@@ -177,7 +177,6 @@ function HomeInner() {
     return t("sections.trending");
   }, [q, category, sort, t]);
 
-  const feedDramas = hot.length > 0 ? hot : rows;
   const gridDramas = hot.length > 0 ? hot : rows;
 
   // Wait for breakpoint before choosing mobile feed vs desktop grid (avoids layout flash)
@@ -193,16 +192,9 @@ function HomeInner() {
     );
   }
 
-  // Mobile home: Hongguo-style vertical feed (unfiltered)
+  // Mobile home: mixed feed (ops hottest + 7d heat), self-paging
   if (isMobile && !filtered) {
-    if (initialLoading && feedDramas.length === 0) {
-      return (
-        <div className="flex h-full min-h-[50dvh] items-center justify-center bg-base text-ink-muted">
-          …
-        </div>
-      );
-    }
-    return <VerticalFeed dramas={feedDramas} />;
+    return <VerticalFeed source="home" />;
   }
 
   const showSkeleton = initialLoading && gridDramas.length === 0 && rows.length === 0;

@@ -67,6 +67,16 @@ Thumbs.db
 # ===== 工作记忆（不进入仓库）=====
 .workbuddy/
 
+# ===== 本地安装 / 恢复产生的垃圾 =====
+.node_modules_trash_*/
+.tmp_recovered_*.tsx
+.tmp-*/
+.pnpm-install*
+.run-pnpm-install.bat
+.dev-logs/
+services/api/.tmp-*/
+services/api/scripts/tmp-*
+
 # ===== Prisma 本地库 / 临时 SQL =====
 *.db
 *.db-journal

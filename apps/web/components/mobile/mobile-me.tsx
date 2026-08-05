@@ -18,6 +18,7 @@ import {
   Settings,
   SlidersHorizontal,
   Smartphone,
+  Sparkles,
   Sun,
   Ticket,
   X,
@@ -50,6 +51,8 @@ type Props = {
   onAvatar: (file: File | null) => void;
   onLogout: () => void;
   openVip: () => void;
+  openRecharge: () => void;
+  balance: number | null;
   t: (path: string, vars?: Record<string, string | number>) => string;
   locale: string;
   titleOf: TitleOf;
@@ -115,6 +118,8 @@ export function MobileMe(props: Props) {
     onAvatar,
     onLogout,
     openVip,
+    openRecharge,
+    balance,
     t,
     locale,
     titleOf,
@@ -314,37 +319,51 @@ export function MobileMe(props: Props) {
         </div>
       </div>
 
-      {/* VIP card */}
-      <div className="mt-6 px-4">
-        <div
-          className="rounded-2xl border border-gold/25 p-4"
+      {/* Credits + VIP */}
+      <div className="mt-6 grid grid-cols-2 gap-2.5 px-4">
+        <button
+          type="button"
+          onClick={openRecharge}
+          className="rounded-2xl border border-brand/20 bg-surface p-3.5 text-left transition-colors active:bg-surface-2"
           style={{
             background:
-              "radial-gradient(280px 120px at 0% 0%, oklch(0.82 0.11 85 / 0.22), transparent 60%), var(--color-surface)",
+              "radial-gradient(200px 100px at 100% 0%, oklch(0.68 0.19 18 / 0.14), transparent 65%), var(--color-surface)",
           }}
         >
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-overline uppercase tracking-widest text-gold">{t("vip.member")}</p>
-              <p className="mt-1 text-body font-medium text-ink">
-                {user.isVip && user.vipExpireAt
-                  ? t("vip.activeUntil", {
-                      date: new Date(user.vipExpireAt).toLocaleDateString(locale),
-                    })
-                  : t("vip.inactive")}
-              </p>
-              <p className="mt-1 text-caption text-ink-muted">
-                {user.isVip ? t("vip.benefitNoCredits") : t("vip.benefitWatch")}
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={openVip}
-              className="shrink-0 rounded-full bg-gold px-4 py-2 text-body-sm font-semibold text-ink hover:opacity-90"
-            >
-              {user.isVip ? t("vip.renew") : t("vip.open")}
-            </button>
+          <div className="flex items-center gap-1.5">
+            <Sparkles className="h-3.5 w-3.5 text-brand" />
+            <p className="text-overline uppercase tracking-widest text-brand">
+              {t("account.balance")}
+            </p>
           </div>
+          <p className="mt-2 truncate text-[1.35rem] font-bold tabular-nums leading-none text-ink">
+            {balance != null ? balance.toLocaleString(locale) : "—"}
+          </p>
+          <p className="mt-2 text-caption font-medium text-brand">{t("account.recharge")}</p>
+        </button>
+
+        <div
+          className="rounded-2xl border border-gold/25 p-3.5"
+          style={{
+            background:
+              "radial-gradient(200px 100px at 0% 0%, oklch(0.82 0.11 85 / 0.22), transparent 65%), var(--color-surface)",
+          }}
+        >
+          <p className="text-overline uppercase tracking-widest text-gold">{t("vip.member")}</p>
+          <p className="mt-2 line-clamp-2 text-body-sm font-medium leading-snug text-ink">
+            {user.isVip && user.vipExpireAt
+              ? t("vip.activeUntil", {
+                  date: new Date(user.vipExpireAt).toLocaleDateString(locale),
+                })
+              : t("vip.inactive")}
+          </p>
+          <button
+            type="button"
+            onClick={openVip}
+            className="mt-2 text-caption font-semibold text-gold"
+          >
+            {user.isVip ? t("vip.renew") : t("vip.open")}
+          </button>
         </div>
       </div>
 
