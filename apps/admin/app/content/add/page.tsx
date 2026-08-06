@@ -3,29 +3,34 @@
 import { Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AdminShell } from "@/components/admin-shell";
-import { ContentAddPanel, type ContentAddTab } from "@/components/content-add-panel";
+import {
+  ContentAddPanel,
+  contentAddQuery,
+  parseContentAddSelection,
+  type ContentAddSelection,
+} from "@/components/content-add-panel";
 import { useI18n } from "@/lib/i18n";
 
 function AdminContentAddInner() {
   const { t } = useI18n();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const tab: ContentAddTab =
-    searchParams.get("tab") === "online"
-      ? "online"
-      : searchParams.get("tab") === "local"
-        ? "local"
-        : "upload";
+  const selection = parseContentAddSelection({
+    tab: searchParams.get("tab"),
+    method: searchParams.get("method"),
+  });
 
-  function setTab(next: ContentAddTab) {
-    const qs =
-      next === "online" ? "?tab=online" : next === "local" ? "?tab=local" : "?tab=upload";
-    router.replace(`/content/add${qs}`);
+  function setSelection(next: ContentAddSelection) {
+    router.replace(`/content/add${contentAddQuery(next)}`);
   }
 
   return (
     <AdminShell title={t("contentAdd")}>
-      <ContentAddPanel tab={tab} onTabChange={setTab} />
+      <ContentAddPanel
+        tab={selection.tab}
+        method={selection.method}
+        onSelectionChange={setSelection}
+      />
     </AdminShell>
   );
 }

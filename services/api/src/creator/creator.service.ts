@@ -3,10 +3,14 @@ import { PrismaService } from '../prisma/prisma.service';
 import { BizException, BizCode } from '../common/biz.exception';
 import { toBigInt, genOrderNo } from '../common/money.util';
 import { withPrismaGuard } from '../common/prisma-error.util';
+import { ContentReadinessService } from '../common/content-readiness.service';
 
 @Injectable()
 export class CreatorService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly readiness: ContentReadinessService,
+  ) {}
 
   /** 确保当前用户有 creator 记录（首次进入创作者中心时自动建） */
   async ensureCreator(userId: bigint) {
@@ -256,14 +260,15 @@ export class CreatorService {
     if (!ep || ep.drama.creatorId !== creator.id) {
       throw new BizException(BizCode.NOT_FOUND, 'episode.notFound');
     }
-    if (ep.drama.status !== 'DRAFT') {
-      throw new BizException(BizCode.CONFLICT, 'Chỉ xoá được tập của phim DRAFT');
+    if (ep.drama.status !== 'DRAFT' && ep.drama.status !== 'REJECTED') {
+      throw new BizException(BizCode.CONFLICT, 'Chỉ xoá được tập của phim DRAFT/REJECTED');
     }
     await this.prisma.$transaction(async (tx) => {
       await tx.episode.delete({ where: { id: ep.id } });
+      const totalEpisodes = await tx.episode.count({ where: { dramaId: ep.dramaId } });
       await tx.drama.update({
         where: { id: ep.dramaId },
-        data: { totalEpisodes: { decrement: 1 } },
+        data: { totalEpisodes, status: 'DRAFT' },
       });
     });
     return { ok: true };
@@ -375,10 +380,7 @@ export class CreatorService {
         'Trạng thái hiện tại không cho phép gửi duyệt',
       );
     }
-    const epCount = await this.prisma.episode.count({ where: { dramaId: drama.id } });
-    if (epCount === 0) {
-      throw new BizException(BizCode.BAD_REQUEST, 'Phim chưa có tập, không thể gửi duyệt');
-    }
+    await this.readiness.assertDramaReady(drama.id);
     const updated = await this.prisma.drama.update({
       where: { id: BigInt(dramaId) },
       data: { status: 'PENDING_REVIEW' },
@@ -392,6 +394,12 @@ export class CreatorService {
       const drama = await this.prisma.drama.findUnique({ where: { id: BigInt(dto.dramaId) } });
       if (!drama || drama.creatorId !== creator.id) {
         throw new BizException(BizCode.NOT_FOUND, 'drama.notFound');
+      }
+      if (drama.status !== 'DRAFT' && drama.status !== 'REJECTED') {
+        throw new BizException(
+          BizCode.CONFLICT,
+          '审核中或已上线的作品不能追加剧集；请先撤回或下架后修改',
+        );
       }
       if (dto.episodeNumber == null || Number(dto.episodeNumber) < 1) {
         throw new BizException(BizCode.BAD_REQUEST, 'episodeNumber không hợp lệ');
@@ -422,26 +430,40 @@ export class CreatorService {
 
       const priceVnd = toBigInt(priceVndNum);
       const priceCredits = toBigInt(priceCreditsNum);
-      const ep = await this.prisma.episode.create({
-        data: {
-          dramaId: drama.id,
-          episodeNumber: Number(dto.episodeNumber),
-          title: dto.title,
-          isFree,
-          priceVnd: isFree ? 0n : priceVnd,
-          priceCredits: isFree ? 0n : priceCredits,
-          hlsUrl: dto.hlsUrl || dto.originalUrl,
-          originalUrl: dto.originalUrl || dto.hlsUrl,
-          thumbnailUrl: dto.thumbnailUrl,
-          uploadStatus: dto.hlsUrl || dto.originalUrl ? 'COMPLETED' : 'PENDING',
-          transcodeStatus:
-            dto.transcodeStatus ||
-            (dto.hlsUrl?.endsWith('.m3u8') ? 'COMPLETED' : 'PENDING'),
-        },
-      });
-      await this.prisma.drama.update({
-        where: { id: drama.id },
-        data: { totalEpisodes: { increment: 1 } },
+      const source = String(dto.hlsUrl || dto.originalUrl || '').trim() || null;
+      const sourceIsHls = !!source && /\.m3u8(?:\?|$)/i.test(source);
+      if (source && !/^(https?:\/\/|uploads\/|hls\/)/i.test(source)) {
+        throw new BizException(
+          BizCode.BAD_REQUEST,
+          '片源必须是 http(s) 地址，或 uploads/、hls/ 下的已上传文件',
+        );
+      }
+
+      const ep = await this.prisma.$transaction(async (tx) => {
+        const created = await tx.episode.create({
+          data: {
+            dramaId: drama.id,
+            episodeNumber: Number(dto.episodeNumber),
+            title: String(dto.title || '').trim() || `第 ${dto.episodeNumber} 集`,
+            isFree,
+            priceVnd: isFree ? 0n : priceVnd,
+            priceCredits: isFree ? 0n : priceCredits,
+            hlsUrl: source,
+            originalUrl: String(dto.originalUrl || '').trim() || source,
+            thumbnailUrl: String(dto.thumbnailUrl || '').trim() || null,
+            uploadStatus: source ? 'COMPLETED' : 'PENDING',
+            transcodeStatus: sourceIsHls ? 'COMPLETED' : 'PENDING',
+          },
+        });
+        const totalEpisodes = await tx.episode.count({ where: { dramaId: drama.id } });
+        await tx.drama.update({
+          where: { id: drama.id },
+          data: {
+            totalEpisodes,
+            ...(drama.status === 'REJECTED' ? { status: 'DRAFT' as const } : {}),
+          },
+        });
+        return created;
       });
       return {
         id: ep.id.toString(),

@@ -1,10 +1,25 @@
 import { isHlsSource, loadHls } from "@/lib/load-hls";
 
+const CAPTURE_TIMEOUT_MS = 12_000;
+const SEEK_FALLBACK_MS = 450;
+
+/** Serialize frame captures — parallel `<video>` decode often hangs for later files. */
+let captureChain: Promise<unknown> = Promise.resolve();
+
+function enqueueCapture<T>(job: () => Promise<T>): Promise<T> {
+  const run = captureChain.then(job, job);
+  captureChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
 function drawFrame(video: HTMLVideoElement, quality: number): Promise<Blob> {
   return new Promise((resolve, reject) => {
     try {
-      const w = video.videoWidth || 720;
-      const h = video.videoHeight || 1280;
+      const w = video.videoWidth || 0;
+      const h = video.videoHeight || 0;
       if (w < 2 || h < 2) {
         reject(new Error("invalid video dimensions"));
         return;
@@ -32,52 +47,138 @@ function drawFrame(video: HTMLVideoElement, quality: number): Promise<Blob> {
   });
 }
 
-function seekAndDraw(video: HTMLVideoElement, quality: number): Promise<Blob> {
+/**
+ * Attach listeners first, then caller must set `video.src` (or attach HLS).
+ * Avoids the classic race where `loadeddata` fires before handlers exist.
+ */
+function captureFromElement(
+  video: HTMLVideoElement,
+  quality: number,
+  timeoutMs = CAPTURE_TIMEOUT_MS,
+): Promise<Blob> {
   return new Promise((resolve, reject) => {
     let settled = false;
+    let seekFallbackTimer: ReturnType<typeof setTimeout> | undefined;
+    let hardTimer: ReturnType<typeof setTimeout> | undefined;
+    let readyOnce = false;
+
+    const clearTimers = () => {
+      if (seekFallbackTimer !== undefined) clearTimeout(seekFallbackTimer);
+      if (hardTimer !== undefined) clearTimeout(hardTimer);
+      seekFallbackTimer = undefined;
+      hardTimer = undefined;
+    };
+
+    const detach = () => {
+      video.onloadedmetadata = null;
+      video.onloadeddata = null;
+      video.oncanplay = null;
+      video.onseeked = null;
+      video.onerror = null;
+    };
+
+    const cleanupMedia = () => {
+      detach();
+      try {
+        video.removeAttribute("src");
+        video.load();
+      } catch {
+        /* ignore */
+      }
+    };
+
+    const fail = (err: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearTimers();
+      cleanupMedia();
+      reject(err instanceof Error ? err : new Error(String(err)));
+    };
+
     const draw = () => {
       if (settled) return;
       settled = true;
-      drawFrame(video, quality).then(resolve, reject);
+      clearTimers();
+      detach();
+      drawFrame(video, quality)
+        .then((blob) => {
+          cleanupMedia();
+          resolve(blob);
+        })
+        .catch((err) => {
+          cleanupMedia();
+          reject(err instanceof Error ? err : new Error(String(err)));
+        });
     };
-    video.onloadeddata = () => {
-      // Seek slightly past 0 — some codecs return a black frame at t=0.
-      const target = Math.min(0.5, Math.max(0, (video.duration || 1) * 0.02));
+
+    const trySeekOrDraw = () => {
+      if (settled) return;
+      if (video.videoWidth < 2 || video.videoHeight < 2) return;
+
+      const duration = video.duration;
+      // Nudge past 0 — some codecs return a black frame at t=0.
+      const target =
+        Number.isFinite(duration) && duration > 0
+          ? Math.min(0.5, Math.max(0.05, duration * 0.02))
+          : 0.1;
+
       try {
-        if (Number.isFinite(target) && target > 0) video.currentTime = target;
-        else draw();
+        if (Math.abs((video.currentTime || 0) - target) < 0.02) {
+          draw();
+          return;
+        }
+        video.currentTime = target;
+        // Some browsers never fire `seeked` (short clips / HEVC / already buffered).
+        seekFallbackTimer = setTimeout(draw, SEEK_FALLBACK_MS);
       } catch {
         draw();
       }
     };
-    video.onseeked = () => draw();
-    video.onerror = () => {
-      if (settled) return;
-      settled = true;
-      reject(new Error("failed to load video"));
+
+    const onReady = () => {
+      if (settled || readyOnce) return;
+      if (video.videoWidth < 2) return;
+      readyOnce = true;
+      trySeekOrDraw();
     };
+
+    hardTimer = setTimeout(() => fail(new Error("capture timed out")), timeoutMs);
+
+    video.onloadedmetadata = onReady;
+    video.onloadeddata = onReady;
+    video.oncanplay = onReady;
+    video.onseeked = () => {
+      if (seekFallbackTimer !== undefined) clearTimeout(seekFallbackTimer);
+      seekFallbackTimer = undefined;
+      draw();
+    };
+    video.onerror = () => fail(new Error("failed to load video"));
   });
 }
 
 /** Capture approximately the first frame of a local video file as a JPEG blob. */
 export function captureVideoFirstFrame(file: File, quality = 0.86): Promise<Blob> {
-  return new Promise((resolve, reject) => {
+  return enqueueCapture(async () => {
     const objectUrl = URL.createObjectURL(file);
     const video = document.createElement("video");
     video.preload = "auto";
     video.muted = true;
     video.playsInline = true;
-    video.src = objectUrl;
+    video.setAttribute("playsinline", "true");
 
-    seekAndDraw(video, quality)
-      .then((blob) => {
-        URL.revokeObjectURL(objectUrl);
-        resolve(blob);
-      })
-      .catch((err) => {
-        URL.revokeObjectURL(objectUrl);
-        reject(err);
-      });
+    const promise = captureFromElement(video, quality).finally(() => {
+      URL.revokeObjectURL(objectUrl);
+    });
+
+    // Handlers are already attached — set src after to avoid missed events.
+    video.src = objectUrl;
+    try {
+      video.load();
+    } catch {
+      /* ignore */
+    }
+
+    return promise;
   });
 }
 
@@ -94,54 +195,63 @@ export function captureRemoteVideoFrame(
   opts: { isHls?: boolean; quality?: number } = {},
 ): Promise<Blob> {
   const quality = opts.quality ?? 0.86;
-  return new Promise((resolve, reject) => {
+  return enqueueCapture(async () => {
     const video = document.createElement("video");
     video.crossOrigin = "anonymous";
     video.preload = "auto";
     video.muted = true;
     video.playsInline = true;
+    video.setAttribute("playsinline", "true");
 
     let hls: { destroy: () => void } | null = null;
-    let settled = false;
-    const cleanup = () => {
-      hls?.destroy();
-      video.removeAttribute("src");
-      video.load();
-    };
-    const fail = (err: unknown) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(err instanceof Error ? err : new Error(String(err)));
-    };
-    const succeed = (blob: Blob) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      resolve(blob);
-    };
-
-    seekAndDraw(video, quality).then(succeed, fail);
+    const promise = captureFromElement(video, quality).finally(() => {
+      try {
+        hls?.destroy();
+      } catch {
+        /* ignore */
+      }
+      hls = null;
+    });
 
     const isHls = opts.isHls ?? isHlsSource(src);
     if (!isHls || video.canPlayType("application/vnd.apple.mpegurl")) {
       video.src = src;
-      return;
+      try {
+        video.load();
+      } catch {
+        /* ignore */
+      }
+      return promise;
     }
-    void loadHls()
-      .then((Hls) => {
-        if (!Hls.isSupported()) {
-          fail(new Error("HLS not supported in this browser"));
-          return;
+
+    try {
+      const Hls = await loadHls();
+      if (!Hls.isSupported()) {
+        throw new Error("HLS not supported in this browser");
+      }
+      const instance = new Hls({});
+      hls = instance;
+      instance.on(Hls.Events.ERROR, (_e: unknown, data: { fatal?: boolean }) => {
+        if (data?.fatal) {
+          try {
+            instance.destroy();
+          } catch {
+            /* ignore */
+          }
+          video.dispatchEvent(new Event("error"));
         }
-        const instance = new Hls({});
-        hls = instance;
-        instance.on(Hls.Events.ERROR, (_e: unknown, data: { fatal?: boolean }) => {
-          if (data?.fatal) fail(new Error("hls load error"));
-        });
-        instance.loadSource(src);
-        instance.attachMedia(video);
-      })
-      .catch(fail);
+      });
+      instance.loadSource(src);
+      instance.attachMedia(video);
+      return promise;
+    } catch (e) {
+      video.dispatchEvent(new Event("error"));
+      try {
+        await promise;
+      } catch {
+        /* expected after forced error */
+      }
+      throw e instanceof Error ? e : new Error(String(e));
+    }
   });
 }

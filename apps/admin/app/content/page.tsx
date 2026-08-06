@@ -19,6 +19,7 @@ import {
   type ContentSearchFilters,
 } from "@/components/content-search-bar";
 import { ConfirmModal } from "@/components/glass-modal";
+import { parseContentDetailTab } from "@/lib/content-href";
 import { useI18n, statusLabel } from "@/lib/i18n";
 
 type Drama = {
@@ -47,12 +48,16 @@ function buildContentHref(opts: {
   sort?: string;
   modal?: ContentModal | null;
   id?: string | null;
+  tab?: string | null;
 }) {
   const qs = new URLSearchParams();
   if (opts.status && opts.status !== "ALL") qs.set("status", opts.status);
   if (opts.sort === "latest") qs.set("sort", "latest");
   if (opts.modal) qs.set("modal", opts.modal);
-  if (opts.modal === "detail" && opts.id) qs.set("id", opts.id);
+  if (opts.modal === "detail" && opts.id) {
+    qs.set("id", opts.id);
+    if (opts.tab) qs.set("tab", opts.tab);
+  }
   const next = qs.toString();
   return next ? `/content?${next}` : "/content";
 }
@@ -68,6 +73,7 @@ function AdminContentInner() {
   const modal =
     modalParam === "detail" || modalParam === "categories" ? modalParam : null;
   const detailId = modal === "detail" ? searchParams.get("id") : null;
+  const detailTab = modal === "detail" ? parseContentDetailTab(searchParams.get("tab")) : null;
   const [filters, setFilters] = useState<ContentSearchFilters>({
     q: "",
     status: statusFromUrl,
@@ -90,8 +96,16 @@ function AdminContentInner() {
 
   useEffect(() => {
     if (modalParam !== "add") return;
-    const tab = searchParams.get("tab") === "online" ? "?tab=online" : "";
-    router.replace(`/content/add${tab}`);
+    const tab = searchParams.get("tab");
+    const qs =
+      tab === "online"
+        ? "?tab=online"
+        : tab === "transfer"
+          ? "?tab=online&method=transfer"
+          : tab === "owned" || tab === "upload" || tab === "local"
+            ? "?tab=owned"
+            : "?tab=owned";
+    router.replace(`/content/add${qs}`);
   }, [modalParam, router, searchParams]);
 
   useEffect(() => {
@@ -151,7 +165,10 @@ function AdminContentInner() {
         categorySlug: filters.categorySlug || undefined,
         isOfficial: filters.isOfficial || undefined,
         isFeatured: filters.isFeatured || undefined,
-        mediaKind: filters.mediaKind || undefined,
+        mediaKind:
+          filters.mediaKind === "r2" || filters.mediaKind === "local"
+            ? "owned"
+            : filters.mediaKind || undefined,
         sort: filters.sort,
         page,
         pageSize,
@@ -404,7 +421,12 @@ function AdminContentInner() {
         </Button>
       </div>
 
-      <ContentDetailModal open={modal === "detail"} dramaId={detailId} onClose={closeModal} />
+      <ContentDetailModal
+        open={modal === "detail"}
+        dramaId={detailId}
+        initialTab={detailTab ?? undefined}
+        onClose={closeModal}
+      />
       <CategoriesModal open={modal === "categories"} onClose={closeModal} />
       <ConfirmModal
         open={lifecycleConfirm === "offline"}

@@ -8,6 +8,7 @@ import { signMediaPath } from '../common/media-sign.util';
 import { UploadService } from '../upload/upload.service';
 import { AdminService } from './admin.service';
 import { AdminEpisodesService } from './episodes.service';
+import { inferExternalUrlExpiry } from './online-drama.util';
 import {
   YtdlpFormatPreference,
   YtdlpProvider,
@@ -101,6 +102,10 @@ export class YtdlpImportService {
       episodeNumber: number;
       title?: string;
       sourceUrl: string;
+      sourcePageUrl?: string;
+      sourceProvider?: string;
+      externalVideoId?: string;
+      playlistIndex?: number;
       isFree?: boolean;
     }> = [];
     const errors: Array<{ episodeNumber: number; url: string; error: string }> = [];
@@ -116,6 +121,10 @@ export class YtdlpImportService {
           episodeNumber: ep.index,
           title: ep.title || `第 ${ep.index} 集`,
           sourceUrl: playUrl,
+          sourcePageUrl: ep.webpageUrl,
+          sourceProvider: probe.extractor,
+          externalVideoId: ep.id,
+          playlistIndex: ep.playlistIndex,
           isFree: true,
         });
       } catch (e: any) {
@@ -146,7 +155,8 @@ export class YtdlpImportService {
         coverUrl: probe.coverUrl,
         lockMode: 'ALL_FREE',
         freeEpisodeCount: episodes.length,
-        status: opts.status === 'LIVE' ? 'LIVE' : 'DRAFT',
+        // 拉取的第三方内容必须先完成来源/可播审核，不允许直接上线。
+        status: 'DRAFT',
         externalRef,
         sourceTags: ['ytdlp', probe.extractor, `ytdlp:${probe.id}`],
         relaxedPlayUrl: true,
@@ -163,6 +173,77 @@ export class YtdlpImportService {
       resolvedEpisodes: episodes.length,
       failedEpisodes: errors,
     };
+  }
+
+  /** 将公开页面/播放列表解析后追加到已有草稿作品，并按外部视频 ID 去重。 */
+  async appendToDrama(
+    dramaId: string,
+    opts: Pick<YtdlpImportOptions, 'url' | 'maxEpisodes' | 'formatPreference'>,
+    actorId?: bigint,
+  ) {
+    const drama = await this.prisma.drama.findUnique({ where: { id: BigInt(dramaId) } });
+    if (!drama) throw new BizException(BizCode.NOT_FOUND, 'drama.notFound');
+    if (drama.status !== 'DRAFT' && drama.status !== 'REJECTED' && drama.status !== 'OFFLINE') {
+      throw new BizException(BizCode.CONFLICT, '审核中或已上线作品不能追加公开资源');
+    }
+    const probe = await this.provider.probe(opts.url);
+    const limit = opts.maxEpisodes && opts.maxEpisodes > 0
+      ? Math.min(Math.floor(opts.maxEpisodes), probe.episodes.length)
+      : probe.episodes.length;
+    const selected = probe.episodes.slice(0, limit);
+    const existing = await this.prisma.episode.findMany({
+      where: { dramaId: drama.id, sourceProvider: probe.extractor },
+      select: { externalVideoId: true },
+    });
+    const seen = new Set(existing.map((ep) => ep.externalVideoId).filter(Boolean));
+    const added: Array<{ id: string; episodeNumber: number; title?: string }> = [];
+    const skipped: Array<{ externalVideoId: string; reason: string }> = [];
+    const errors: Array<{ externalVideoId: string; error: string }> = [];
+
+    for (const source of selected) {
+      if (seen.has(source.id)) {
+        skipped.push({ externalVideoId: source.id, reason: 'duplicate' });
+        continue;
+      }
+      try {
+        const playUrl = await this.provider.resolvePlayUrl(
+          source.webpageUrl,
+          opts.formatPreference || 'best_hls',
+          source.playlistIndex,
+        );
+        const created = await this.episodes.create(
+          dramaId,
+          {
+            title: source.title,
+            isFree: true,
+            hlsUrl: playUrl,
+            originalUrl: playUrl,
+          },
+          actorId,
+        );
+        await this.prisma.episode.update({
+          where: { id: BigInt(created.id) },
+          data: {
+            sourcePageUrl: source.webpageUrl,
+            sourceProvider: probe.extractor,
+            externalVideoId: source.id,
+            playlistIndex: source.playlistIndex,
+            resolvedAt: new Date(),
+            resolvedExpiresAt: inferExternalUrlExpiry(playUrl),
+            transcodeStatus: 'COMPLETED',
+          },
+        });
+        added.push({ id: created.id, episodeNumber: created.episodeNumber, title: source.title });
+        seen.add(source.id);
+      } catch (e: any) {
+        errors.push({ externalVideoId: source.id, error: e?.message || String(e) });
+      }
+    }
+    await this.prisma.drama.update({
+      where: { id: drama.id },
+      data: { status: 'DRAFT', totalEpisodes: await this.prisma.episode.count({ where: { dramaId: drama.id } }) },
+    });
+    return { added, skipped, errors, extractor: probe.extractor };
   }
 
   /**
@@ -230,7 +311,7 @@ export class YtdlpImportService {
         coverUrl: probe.coverUrl,
         lockMode: 'ALL_FREE',
         freeEpisodeCount: selected.length,
-        status: opts.status === 'LIVE' ? 'LIVE' : 'DRAFT',
+        status: 'DRAFT',
       },
       actorId,
     );
@@ -297,7 +378,7 @@ export class YtdlpImportService {
           },
         });
 
-        const job = this.upload.enqueueTranscode(relativePath, created.id, { preferR2 });
+        const job = await this.upload.enqueueTranscode(relativePath, created.id, { preferR2 });
         jobs.push({
           episodeId: created.id,
           episodeNumber: ep.index,

@@ -23,6 +23,7 @@ import { useLocale } from "@/lib/i18n";
 import { useAuth, type AuthUser } from "@/components/auth-context";
 import { VerticalPlayer } from "@/components/mobile/vertical-player";
 import { VerticalPager } from "@/components/mobile/vertical-pager";
+import { UnlockSheet } from "@/components/unlock-sheet";
 import { FeedEpisodeBar } from "@/components/mobile/feed-episode-bar";
 import { useMobileFeedLock } from "@/components/mobile/mobile-feed-lock";
 import { getPlayUrl, loadDramaDetail, loadFeed, checkFavorite, addFavorite, removeFavorite, checkLike, addLike, removeLike, reportProgress, type DramaDetailPayload } from "@/lib/api";
@@ -593,7 +594,8 @@ function FeedPage({
   registerTogglePlay: (fn: (() => void) | null) => void;
 }) {
   const { locale, t } = useLocale();
-  const { user, unlocked, ready: authReady, openLogin } = useAuth();
+  const { user, unlocked, ready: authReady, openLogin, unlock } = useAuth();
+  const [unlockOpen, setUnlockOpen] = useState(false);
   const authScope = feedAuthScope(user, unlocked.size);
   const { ready: guestReady, canWatch: canGuestWatch, markWatched: markGuestWatched } =
     useGuestWatchQuota();
@@ -887,6 +889,24 @@ function FeedPage({
   const locked = !!episode && !episodeUnlocked;
   const cover = isUrl(drama.cover[0]) ? drama.cover[0] : undefined;
 
+  function openUnlockGate() {
+    if (!authReady) return;
+    if (!user) {
+      openLogin();
+      return;
+    }
+    setUnlockOpen(true);
+  }
+
+  async function handleUnlockConfirm(ep: Episode) {
+    if (ep.id == null) return { ok: false, alreadyUnlocked: false, error: "missing_id" };
+    const r = await unlock(ep.id);
+    if (r.ok) {
+      setEpisode((prev) => (prev ? { ...prev, unlocked: true } : prev));
+    }
+    return r;
+  }
+
   useEffect(() => {
     if (!active) return;
     registerTogglePlay(() => {
@@ -978,7 +998,7 @@ function FeedPage({
               : undefined
           }
           lockActionLabel={t("feed.watch")}
-          onUnlock={undefined}
+          onUnlock={locked ? openUnlockGate : undefined}
           error={active ? playErr : null}
           loading={active && loading}
           showSeek={false}
@@ -1012,24 +1032,6 @@ function FeedPage({
       <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex flex-col">
         <div className="pointer-events-auto absolute bottom-full right-2.5 mb-2 flex flex-col items-center gap-5">
           <SideAction
-            label={muted ? t("player.unmute") : t("player.mute")}
-            count={muted ? t("player.unmute") : t("player.mute")}
-            active={muted}
-            onClick={toggleMuted}
-          >
-            {muted ? (
-              <VolumeX
-                className="h-[30px] w-[30px] text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
-                strokeWidth={1.75}
-              />
-            ) : (
-              <Volume2
-                className="h-[30px] w-[30px] text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
-                strokeWidth={1.75}
-              />
-            )}
-          </SideAction>
-          <SideAction
             label={t("feed.favorite")}
             count={formatCount(favCount, locale)}
             active={favorited}
@@ -1056,6 +1058,24 @@ function FeedPage({
               )}
               strokeWidth={1.75}
             />
+          </SideAction>
+          <SideAction
+            label={muted ? t("player.unmute") : t("player.mute")}
+            count={muted ? t("player.unmute") : t("player.mute")}
+            active={muted}
+            onClick={toggleMuted}
+          >
+            {muted ? (
+              <VolumeX
+                className="h-[30px] w-[30px] text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
+                strokeWidth={1.75}
+              />
+            ) : (
+              <Volume2
+                className="h-[30px] w-[30px] text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
+                strokeWidth={1.75}
+              />
+            )}
           </SideAction>
         </div>
 
@@ -1091,6 +1111,14 @@ function FeedPage({
           onSeekingChange={active ? onSeekingChange : undefined}
         />
       </div>
+
+      <UnlockSheet
+        open={unlockOpen}
+        episode={episode}
+        onClose={() => setUnlockOpen(false)}
+        onConfirmed={handleUnlockConfirm}
+        vipActive={!!user?.isVip}
+      />
     </div>
   );
 }

@@ -266,10 +266,13 @@ export async function adminStorageStatus() {
     storageBackend: string;
     r2Enabled: boolean;
     r2Configured: boolean;
+    r2DirectUpload?: boolean;
     mediaBucket: string;
     uploadBucket: string;
     cdnBase: string;
     ffmpegReady: boolean;
+    transcodeQueue?: "bullmq" | "inline";
+    redisConfigured?: boolean;
   }>("/admin/storage/status");
 }
 
@@ -320,6 +323,48 @@ export async function adminUploadEpisodeVideo(episodeId: string, file: File) {
   }>(`/admin/episodes/${episodeId}/upload`, { method: "POST", body: form });
 }
 
+/** Confirm browser R2 put onto an existing episode (replace media). */
+export async function adminAttachEpisodeFromR2(
+  episodeId: string,
+  body: { key: string; filename?: string },
+) {
+  return adminRequest<{
+    jobId: string;
+    transcodeStatus: string;
+    relativePath: string;
+    ffmpegReady: boolean;
+    episode: { id: string };
+    directUpload?: boolean;
+  }>(`/admin/episodes/${episodeId}/from-r2`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+/**
+ * Prefer R2 direct put for episode replace; fall back to multipart.
+ */
+export async function adminUploadEpisodeVideoSmart(
+  episodeId: string,
+  file: File,
+  opts?: { preferDirect?: boolean },
+) {
+  if (opts?.preferDirect !== false) {
+    try {
+      const contentType = file.type || guessVideoContentType(file.name);
+      const signed = await adminPresignR2Upload(file.name, contentType);
+      await putFileToR2Presigned(signed.uploadUrl, file, signed.contentType || contentType);
+      return await adminAttachEpisodeFromR2(episodeId, {
+        key: signed.key,
+        filename: file.name,
+      });
+    } catch (e) {
+      if (opts?.preferDirect === true) throw e;
+    }
+  }
+  return adminUploadEpisodeVideo(episodeId, file);
+}
+
 /** Create episode + upload video in one request. */
 export async function adminCreateEpisodeWithUpload(
   dramaId: string,
@@ -346,6 +391,130 @@ export async function adminCreateEpisodeWithUpload(
     ffmpegReady: boolean;
     episode: { id: string };
   }>(`/admin/dramas/${dramaId}/episodes/upload`, { method: "POST", body: form });
+}
+
+export type R2PresignResult = {
+  uploadUrl: string;
+  bucket: string;
+  key: string;
+  contentType: string;
+  headers: Record<string, string>;
+  expiresIn: number;
+  expiresAt: string;
+};
+
+/** Presign PUT to R2 velvet-uploads (browser uploads directly, bypassing Next proxy). */
+export async function adminPresignR2Upload(filename: string, contentType?: string) {
+  return adminRequest<R2PresignResult>("/admin/uploads/presign", {
+    method: "POST",
+    body: JSON.stringify({
+      filename,
+      contentType: contentType || guessVideoContentType(filename),
+    }),
+  });
+}
+
+function guessVideoContentType(filename: string) {
+  const ext = filename.split(".").pop()?.toLowerCase();
+  if (ext === "mp4" || ext === "m4v") return "video/mp4";
+  if (ext === "mov") return "video/quicktime";
+  if (ext === "webm") return "video/webm";
+  if (ext === "mkv") return "video/x-matroska";
+  return "application/octet-stream";
+}
+
+/** PUT file bytes straight to R2 (not through /api proxy). */
+export async function putFileToR2Presigned(
+  uploadUrl: string,
+  file: File | Blob,
+  contentType: string,
+) {
+  const res = await fetch(uploadUrl, {
+    method: "PUT",
+    headers: { "Content-Type": contentType },
+    body: file,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `R2 PUT failed HTTP ${res.status}`);
+  }
+}
+
+/** Confirm R2 direct upload: API pulls object → create episode → enqueue transcode. */
+export async function adminCreateEpisodeFromR2(
+  dramaId: string,
+  body: {
+    key: string;
+    filename?: string;
+    title?: string;
+    episodeNumber?: number;
+    isFree?: boolean;
+    priceCredits?: number;
+    thumbnailUrl?: string;
+  },
+) {
+  return adminRequest<{
+    jobId: string;
+    transcodeStatus: string;
+    relativePath: string;
+    ffmpegReady: boolean;
+    episode: { id: string };
+    directUpload?: boolean;
+  }>(`/admin/dramas/${dramaId}/episodes/from-r2`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+/**
+ * Preferred for admin local upload when R2 credentials are configured:
+ * presign → browser PUT R2 → confirm JSON (no large multipart via Next proxy).
+ * Falls back to multipart when `preferDirect` is false.
+ */
+export async function adminCreateEpisodeWithUploadSmart(
+  dramaId: string,
+  file: File,
+  opts?: {
+    title?: string;
+    episodeNumber?: number;
+    isFree?: boolean;
+    priceCredits?: number;
+    thumbnailUrl?: string;
+    preferDirect?: boolean;
+  },
+) {
+  if (opts?.preferDirect !== false) {
+    try {
+      const contentType = file.type || guessVideoContentType(file.name);
+      const signed = await adminPresignR2Upload(file.name, contentType);
+      await putFileToR2Presigned(signed.uploadUrl, file, signed.contentType || contentType);
+      return await adminCreateEpisodeFromR2(dramaId, {
+        key: signed.key,
+        filename: file.name,
+        title: opts?.title,
+        episodeNumber: opts?.episodeNumber,
+        isFree: opts?.isFree,
+        priceCredits: opts?.priceCredits,
+        thumbnailUrl: opts?.thumbnailUrl,
+      });
+    } catch (e) {
+      if (opts?.preferDirect === true) throw e;
+      // fall through to multipart when auto mode
+    }
+  }
+  return adminCreateEpisodeWithUpload(dramaId, file, opts);
+}
+
+export async function adminAppendPublicEpisodes(
+  dramaId: string,
+  body: { url: string; maxEpisodes?: number; formatPreference?: 'best_hls' | 'best_mp4' | 'best' },
+) {
+  return adminRequest<{
+    added: Array<{ id: string; episodeNumber: number; title?: string }>;
+    skipped: Array<{ externalVideoId: string; reason: string }>;
+    errors: Array<{ externalVideoId: string; error: string }>;
+    extractor: string;
+  }>(`/admin/dramas/${dramaId}/ytdlp/append`, { method: 'POST', body: JSON.stringify(body) });
 }
 
 export async function adminPurgeEpisodeMedia(episodeId: string) {
@@ -721,11 +890,16 @@ export async function adminBroadcastNotification(body: {
   });
 }
 
-export async function adminImportUpload(files: FileList | File[], dryRun: boolean) {
+export async function adminImportUpload(
+  files: FileList | File[],
+  dryRun: boolean,
+  targetDramaId?: string,
+) {
   const list = Array.from(files);
   if (!list.length) throw new Error("未选择文件");
   const form = new FormData();
   form.append("dryRun", dryRun ? "true" : "false");
+  if (targetDramaId) form.append("targetDramaId", targetDramaId);
   for (const file of list) {
     form.append("files", file);
     const rel = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
@@ -753,10 +927,14 @@ export async function adminUploadImage(
   }>("/admin/upload/image", { method: "POST", body: form });
 }
 
-export async function adminLocalImport(rootPath?: string, dryRun?: boolean) {
+export async function adminLocalImport(
+  rootPath?: string,
+  dryRun?: boolean,
+  targetDramaId?: string,
+) {
   return adminRequest("/admin/import/local", {
     method: "POST",
-    body: JSON.stringify({ rootPath, dryRun }),
+    body: JSON.stringify({ rootPath, dryRun, targetDramaId }),
   });
 }
 

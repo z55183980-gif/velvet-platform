@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   adminApproveDrama,
   adminBatchEpisodes,
+  adminAppendPublicEpisodes,
   adminCreateEpisode,
   adminDeleteDrama,
   adminDeleteEpisode,
@@ -30,6 +31,7 @@ import {
   ChevronDown,
   CircleDollarSign,
   Clapperboard,
+  Cloud,
   Eye,
   FileVideo,
   Heart,
@@ -54,6 +56,7 @@ import {
   NewEpisodeUploadForm,
 } from "@/components/episode-media-panel";
 import { EpisodeThumbnailField } from "@/components/episode-thumbnail-field";
+import { DramaCoverField } from "@/components/drama-cover-field";
 import { useI18n, statusLabel } from "@/lib/i18n";
 
 type Episode = {
@@ -90,6 +93,11 @@ type Drama = {
   likeCount?: number;
   publishedAt?: string | null;
   sourceType?: string;
+  licenseType?: string;
+  sourcePublisher?: string;
+  attributionText?: string;
+  rightsProofUrl?: string;
+  rightsVerifiedAt?: string | null;
   creator?: { displayName?: string };
   category?: { slug?: string; nameZh?: string; nameEn?: string };
   episodes?: Episode[];
@@ -98,6 +106,38 @@ type Drama = {
 type Category = { slug: string; nameZh?: string; nameEn?: string };
 type DetailTab = "overview" | "info" | "episodes" | "policy";
 type LockMode = "FREE_FIRST_N" | "VIP_ALL" | "ALL_FREE";
+type AddEpisodeMethod = "upload" | "url" | "public";
+type AddEpisodeOption = { key: AddEpisodeMethod; labelKey: "addEpisodeMethodUpload" | "addEpisodeMethodUrl" | "addEpisodeMethodPublic"; advanced?: boolean };
+
+function episodeAddOptions(sourceType?: string, status?: string): {
+  options: AddEpisodeOption[];
+  defaultMethod: AddEpisodeMethod;
+  canPullPublic: boolean;
+} {
+  const canPullPublic =
+    status === "DRAFT" || status === "REJECTED" || status === "OFFLINE";
+  const isOnline = sourceType === "ONLINE";
+
+  if (isOnline) {
+    const options: AddEpisodeOption[] = [
+      { key: "url", labelKey: "addEpisodeMethodUrl" },
+      ...(canPullPublic
+        ? [{ key: "public" as const, labelKey: "addEpisodeMethodPublic" as const }]
+        : []),
+      { key: "upload", labelKey: "addEpisodeMethodUpload", advanced: true },
+    ];
+    return { options, defaultMethod: "url", canPullPublic };
+  }
+
+  const options: AddEpisodeOption[] = [
+    { key: "upload", labelKey: "addEpisodeMethodUpload" },
+    { key: "url", labelKey: "addEpisodeMethodUrl", advanced: true },
+    ...(canPullPublic
+      ? [{ key: "public" as const, labelKey: "addEpisodeMethodPublic" as const, advanced: true }]
+      : []),
+  ];
+  return { options, defaultMethod: "upload", canPullPublic };
+}
 type BasicDraft = {
   titleZh: string;
   titleEn: string;
@@ -105,6 +145,11 @@ type BasicDraft = {
   coverUrl: string;
   descriptionZh: string;
   descriptionEn: string;
+  licenseType: string;
+  sourcePublisher: string;
+  attributionText: string;
+  rightsProofUrl: string;
+  rightsVerified: boolean;
 };
 
 const emptyDraft: BasicDraft = {
@@ -114,6 +159,11 @@ const emptyDraft: BasicDraft = {
   coverUrl: "",
   descriptionZh: "",
   descriptionEn: "",
+  licenseType: "UNKNOWN",
+  sourcePublisher: "",
+  attributionText: "",
+  rightsProofUrl: "",
+  rightsVerified: false,
 };
 
 function draftFromDrama(drama: Drama): BasicDraft {
@@ -124,6 +174,11 @@ function draftFromDrama(drama: Drama): BasicDraft {
     coverUrl: drama.coverUrl || "",
     descriptionZh: drama.descriptionZh || "",
     descriptionEn: drama.descriptionEn || "",
+    licenseType: drama.licenseType || "UNKNOWN",
+    sourcePublisher: drama.sourcePublisher || "",
+    attributionText: drama.attributionText || "",
+    rightsProofUrl: drama.rightsProofUrl || "",
+    rightsVerified: !!drama.rightsVerifiedAt,
   };
 }
 
@@ -182,13 +237,14 @@ export type ContentDetailPanelHandle = {
 
 export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
   id: string;
+  initialTab?: DetailTab;
   onDeleted?: () => void;
   onDirtyChange?: (dirty: boolean) => void;
-}>(function ContentDetailPanel({ id, onDeleted, onDirtyChange }, ref) {
+}>(function ContentDetailPanel({ id, initialTab, onDeleted, onDirtyChange }, ref) {
   const { t } = useI18n();
   const router = useRouter();
   const qc = useQueryClient();
-  const [tab, setTab] = useState<DetailTab>("overview");
+  const [tab, setTab] = useState<DetailTab>(initialTab ?? "overview");
   const [reason, setReason] = useState("");
   const [weight, setWeight] = useState(0);
   const [freeEpisodes, setFreeEpisodes] = useState(3);
@@ -203,12 +259,15 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
   const [deleteEpisodeId, setDeleteEpisodeId] = useState<string | null>(null);
   const [purgeEpisodeId, setPurgeEpisodeId] = useState<string | null>(null);
   const [showAddEpisode, setShowAddEpisode] = useState(false);
+  const [addEpisodeMethod, setAddEpisodeMethod] = useState<AddEpisodeMethod>("upload");
+  const [showAdvancedAdd, setShowAdvancedAdd] = useState(false);
   const [selectedEps, setSelectedEps] = useState<Set<string>>(new Set());
   const [batchFree, setBatchFree] = useState<"keep" | "1" | "0">("keep");
   const [batchPrice, setBatchPrice] = useState("");
   const [newEp, setNewEp] = useState({
     title: "",
     sourceUrl: "",
+    publicPageUrl: "",
     thumbnailUrl: "",
     isFree: false,
     priceCredits: 10,
@@ -225,6 +284,10 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
       return result.items ?? [];
     },
   });
+
+  useEffect(() => {
+    setTab(initialTab ?? "overview");
+  }, [id, initialTab]);
 
   useEffect(() => {
     if (!detailQ.data) return;
@@ -253,6 +316,15 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
   const act = (action: () => Promise<unknown>) => actionMut.mutate(action);
   const drama = detailQ.data;
   const episodes = drama?.episodes ?? [];
+  const addEpisodeConfig = useMemo(
+    () => episodeAddOptions(drama?.sourceType, drama?.status),
+    [drama?.sourceType, drama?.status],
+  );
+
+  useEffect(() => {
+    setAddEpisodeMethod(addEpisodeConfig.defaultMethod);
+    setShowAdvancedAdd(false);
+  }, [addEpisodeConfig.defaultMethod, id]);
 
   const saveBasicInfo = async (): Promise<{ ok: boolean; error?: string }> => {
     if (!draft.titleZh.trim() && !draft.titleEn.trim()) {
@@ -336,7 +408,7 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
     },
     {
       key: "access", header: t("episodeAccess"), className: "w-28",
-      cell: (episode) => <button type="button" className={cn("content-access-pill", episode.isFree && "content-access-pill--free")} onClick={() => act(() => adminUpdateEpisode(String(episode.id), { isFree: !episode.isFree }))}>
+      cell: (episode) => <button type="button" className={cn("content-access-pill", episode.isFree && "content-access-pill--free")} onClick={() => act(() => adminUpdateEpisode(String(episode.id), episode.isFree ? { isFree: false, priceCredits: Math.max(10, Number(episode.priceCredits || 0)), priceVnd: Math.max(10, Number(episode.priceCredits || 0)) } : { isFree: true }))}>
         {episode.isFree ? <UnlockKeyhole className="h-3.5 w-3.5" /> : <LockKeyhole className="h-3.5 w-3.5" />}{episode.isFree ? t("free") : `${Number(episode.priceCredits || 0)} ${t("creditsShort")}`}
       </button>,
     },
@@ -523,30 +595,31 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
             </div>
             <FieldLabel label={t("category")} required><Select value={draft.categorySlug} onChange={(e) => setDraft((v) => ({ ...v, categorySlug: e.target.value }))}><option value="">{t("selectCategory")}</option>{(categoriesQ.data ?? []).map((category) => <option key={category.slug} value={category.slug}>{category.nameZh || category.nameEn || category.slug}</option>)}</Select></FieldLabel>
             <FieldLabel label={t("coverUrlLabel")}>
-              <div className="space-y-3">
-                <div className="relative">
-                  <ImageIcon className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-ink-subtle" />
-                  <Input
-                    className="pl-9"
-                    placeholder="/api/v1/media/… 或 https://…"
-                    value={draft.coverUrl}
-                    onChange={(e) => setDraft((v) => ({ ...v, coverUrl: e.target.value }))}
-                  />
-                </div>
-                <EpisodeThumbnailField
-                  url={draft.coverUrl || undefined}
-                  kind="cover"
-                  size="form"
-                  disabled={actionMut.isPending}
-                  videoSrc={episodes[0]?.hlsUrl || episodes[0]?.originalUrl || undefined}
-                  videoIsHls={!!episodes[0]?.hlsUrl}
-                  fromVideoLabel={t("thumbFromVideo")}
-                  uploadLabel={t("thumbUpload")}
-                  onError={setError}
-                  onUploaded={(url) => setDraft((v) => ({ ...v, coverUrl: url }))}
-                />
-              </div>
+              <DramaCoverField
+                url={draft.coverUrl || undefined}
+                disabled={actionMut.isPending}
+                videoSrc={episodes[0]?.hlsUrl || episodes[0]?.originalUrl || undefined}
+                videoIsHls={!!episodes[0]?.hlsUrl}
+                onChange={(next) => setDraft((v) => ({ ...v, coverUrl: next }))}
+                onError={setError}
+              />
             </FieldLabel>
+            {drama.sourceType === "ONLINE" ? (
+              <section className="rounded-xl border border-line bg-surface-2/40 p-4 space-y-4">
+                <div><h3 className="text-sm font-semibold text-ink">{t("sourceComplianceTitle")}</h3><p className="mt-1 text-xs text-ink-subtle">{t("sourceComplianceHint")}</p></div>
+                <div className="grid gap-4 md:grid-cols-2">
+                  <FieldLabel label={t("licenseType")} required>
+                    <Select value={draft.licenseType} onChange={(e) => setDraft((v) => ({ ...v, licenseType: e.target.value }))}>
+                      {['UNKNOWN', 'PUBLIC_DOMAIN', 'CC0', 'CC_BY', 'CC_BY_SA', 'AUTHORIZED', 'OWNED'].map((value) => <option key={value} value={value}>{value}</option>)}
+                    </Select>
+                  </FieldLabel>
+                  <FieldLabel label={t("sourcePublisher")}><Input value={draft.sourcePublisher} onChange={(e) => setDraft((v) => ({ ...v, sourcePublisher: e.target.value }))} /></FieldLabel>
+                </div>
+                <FieldLabel label={t("attributionText")}><Input value={draft.attributionText} onChange={(e) => setDraft((v) => ({ ...v, attributionText: e.target.value }))} /></FieldLabel>
+                <FieldLabel label={t("rightsProofUrl")}><Input placeholder="https://…" value={draft.rightsProofUrl} onChange={(e) => setDraft((v) => ({ ...v, rightsProofUrl: e.target.value }))} /></FieldLabel>
+                <label className="flex items-center gap-2 text-sm text-ink-muted"><input className="content-checkbox" type="checkbox" checked={draft.rightsVerified} onChange={(e) => setDraft((v) => ({ ...v, rightsVerified: e.target.checked }))} />{t("rightsVerified")}</label>
+              </section>
+            ) : null}
             <div className="grid gap-4 md:grid-cols-2">
               <FieldLabel label={t("descriptionZhLabel")}><textarea className="content-textarea" rows={7} value={draft.descriptionZh} onChange={(e) => setDraft((v) => ({ ...v, descriptionZh: e.target.value }))} /></FieldLabel>
               <FieldLabel label={t("descriptionEnLabel")}><textarea className="content-textarea" rows={7} value={draft.descriptionEn} onChange={(e) => setDraft((v) => ({ ...v, descriptionEn: e.target.value }))} /></FieldLabel>
@@ -554,7 +627,6 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
             <div className="content-save-bar"><span className={cn("text-xs", isDirty ? "text-warning" : "text-ink-subtle")}>{isDirty ? t("unsavedChanges") : t("allChangesSaved")}</span><div className="flex gap-2"><Button size="sm" variant="ghost" disabled={!isDirty || actionMut.isPending} onClick={() => setDraft(savedDraft)}>{t("discardChanges")}</Button><Button size="sm" disabled={!isDirty || actionMut.isPending} onClick={saveBasicInfo}>{actionMut.isPending ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}{actionMut.isPending ? t("saving") : t("saveChanges")}</Button></div></div>
           </section>
           <aside className="space-y-4">
-            <section className="content-section-card"><h3 className="text-sm font-semibold text-ink">{t("coverPreview")}</h3><div className="content-cover-preview">{draft.coverUrl ? <img src={draft.coverUrl} alt="" /> : <><ImageIcon className="h-8 w-8" /><span>{t("noCover")}</span></>}</div><p className="mt-3 text-xs leading-5 text-ink-subtle">{t("coverRecommendation")}</p></section>
             <section className="content-tip-card"><Sparkles className="h-5 w-5" /><div><h3>{t("editingTips")}</h3><p>{t("editingTipsContent")}</p></div></section>
           </aside>
         </div> : null}
@@ -572,29 +644,66 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
           </div>
           {showAddEpisode ? (
             <section className="content-section-card space-y-4">
-              <div className="grid gap-3 lg:grid-cols-[1fr_2fr]">
+              {(() => {
+                const primary = addEpisodeConfig.options.filter((o) => !o.advanced);
+                const advanced = addEpisodeConfig.options.filter((o) => o.advanced);
+                const methodTabs = showAdvancedAdd ? addEpisodeConfig.options : primary;
+                return (
+                  <>
+                    <div className="seg-tabs" role="tablist" aria-label={t("addEpisodeMethods")}>
+                      {methodTabs.map((item) => (
+                        <button
+                          key={item.key}
+                          type="button"
+                          role="tab"
+                          aria-selected={addEpisodeMethod === item.key}
+                          className="seg-tabs__item"
+                          onClick={() => setAddEpisodeMethod(item.key)}
+                        >
+                          {t(item.labelKey)}
+                          {item.advanced ? (
+                            <span className="ml-1 text-[10px] text-ink-subtle">{t("addEpisodeAdvancedTag")}</span>
+                          ) : null}
+                        </button>
+                      ))}
+                    </div>
+                    {advanced.length > 0 ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            setShowAdvancedAdd((v) => {
+                              const next = !v;
+                              if (!next && advanced.some((a) => a.key === addEpisodeMethod)) {
+                                setAddEpisodeMethod(addEpisodeConfig.defaultMethod);
+                              }
+                              return next;
+                            });
+                          }}
+                        >
+                          {showAdvancedAdd ? t("addEpisodeHideAdvanced") : t("addEpisodeShowAdvanced")}
+                        </Button>
+                        {drama.sourceType === "ONLINE" && !addEpisodeConfig.canPullPublic ? (
+                          <span className="text-xs text-ink-subtle">{t("addEpisodePublicBlockedHint")}</span>
+                        ) : null}
+                      </div>
+                    ) : drama.sourceType === "ONLINE" && !addEpisodeConfig.canPullPublic ? (
+                      <p className="text-xs text-ink-subtle">{t("addEpisodePublicBlockedHint")}</p>
+                    ) : null}
+                    {addEpisodeMethod === "upload" && drama.sourceType === "ONLINE" ? (
+                      <p className="text-xs leading-5 text-warning">{t("addEpisodeUploadOnOnlineWarn")}</p>
+                    ) : null}
+                    {addEpisodeMethod === "url" && drama.sourceType !== "ONLINE" ? (
+                      <p className="text-xs leading-5 text-warning">{t("addEpisodeUrlOnOwnedWarn")}</p>
+                    ) : null}
+                  </>
+                );
+              })()}
+
+              <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-end">
                 <FieldLabel label={t("colTitle")}>
                   <Input value={newEp.title} onChange={(e) => setNewEp((v) => ({ ...v, title: e.target.value }))} />
-                </FieldLabel>
-                <FieldLabel label={t("orPastePlayUrl")}>
-                  <Input
-                    placeholder="https://…m3u8"
-                    value={newEp.sourceUrl}
-                    onChange={(e) => setNewEp((v) => ({ ...v, sourceUrl: e.target.value }))}
-                  />
-                </FieldLabel>
-              </div>
-              <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto_auto] lg:items-end">
-                <FieldLabel label={t("episodeThumbnail")}>
-                  <EpisodeThumbnailField
-                    url={newEp.thumbnailUrl || undefined}
-                    disabled={actionMut.isPending}
-                    videoSrc={newEp.sourceUrl || undefined}
-                    fromVideoLabel={t("thumbFromVideo")}
-                    uploadLabel={t("thumbUpload")}
-                    onError={setError}
-                    onUploaded={(url) => setNewEp((v) => ({ ...v, thumbnailUrl: url }))}
-                  />
                 </FieldLabel>
                 <label className="flex items-center gap-2 self-end pb-2 text-sm text-ink-muted">
                   <input
@@ -605,47 +714,117 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
                   />
                   {t("free")}
                 </label>
-                <Button
-                  className="self-end"
-                  size="sm"
-                  disabled={actionMut.isPending || !newEp.sourceUrl.trim()}
-                  onClick={() =>
-                    act(async () => {
-                      await adminCreateEpisode(id, {
-                        title: newEp.title || undefined,
-                        sourceUrl: newEp.sourceUrl.trim(),
-                        thumbnailUrl: newEp.thumbnailUrl || undefined,
-                        isFree: newEp.isFree,
-                        priceCredits: newEp.isFree ? 0 : newEp.priceCredits,
-                      });
-                      setNewEp({ title: "", sourceUrl: "", thumbnailUrl: "", isFree: false, priceCredits: 10 });
+              </div>
+
+              {addEpisodeMethod === "upload" ? (
+                <div className="space-y-4">
+                  <FieldLabel label={t("episodeThumbnail")}>
+                    <EpisodeThumbnailField
+                      url={newEp.thumbnailUrl || undefined}
+                      disabled={actionMut.isPending}
+                      fromVideoLabel={t("thumbFromVideo")}
+                      uploadLabel={t("thumbUpload")}
+                      onError={setError}
+                      onUploaded={(url) => setNewEp((v) => ({ ...v, thumbnailUrl: url }))}
+                    />
+                  </FieldLabel>
+                  <NewEpisodeUploadForm
+                    dramaId={id}
+                    title={newEp.title}
+                    isFree={newEp.isFree}
+                    priceCredits={newEp.priceCredits}
+                    thumbnailUrl={newEp.thumbnailUrl || undefined}
+                    disabled={actionMut.isPending}
+                    onError={setError}
+                    onDone={async () => {
+                      setNewEp({ title: "", sourceUrl: "", publicPageUrl: "", thumbnailUrl: "", isFree: false, priceCredits: 10 });
                       setShowAddEpisode(false);
-                    })
-                  }
-                >
-                  <Plus className="h-4 w-4" />
-                  {t("addEpisodeByUrl")}
-                </Button>
-              </div>
-              <div className="border-t border-line pt-4">
-                <NewEpisodeUploadForm
-                  dramaId={id}
-                  title={newEp.title}
-                  isFree={newEp.isFree}
-                  priceCredits={newEp.priceCredits}
-                  thumbnailUrl={newEp.thumbnailUrl || undefined}
-                  disabled={actionMut.isPending}
-                  onError={setError}
-                  onDone={async () => {
-                    setNewEp({ title: "", sourceUrl: "", thumbnailUrl: "", isFree: false, priceCredits: 10 });
-                    setShowAddEpisode(false);
-                    setError(null);
-                    await qc.invalidateQueries({ queryKey: ["admin", "drama", id] });
-                    await qc.invalidateQueries({ queryKey: ["admin", "drama-storage", id] });
-                  }}
-                />
-              </div>
-              <p className="text-xs leading-5 text-ink-subtle">{t("episodeThumbHint")}</p>
+                      setError(null);
+                      await qc.invalidateQueries({ queryKey: ["admin", "drama", id] });
+                      await qc.invalidateQueries({ queryKey: ["admin", "drama-storage", id] });
+                    }}
+                  />
+                </div>
+              ) : null}
+
+              {addEpisodeMethod === "url" ? (
+                <div className="space-y-4">
+                  <p className="text-xs leading-5 text-ink-subtle">{t("addEpisodeUrlHint")}</p>
+                  <FieldLabel label={t("playUrl")}>
+                    <Input
+                      placeholder="https://…m3u8"
+                      value={newEp.sourceUrl}
+                      onChange={(e) => setNewEp((v) => ({ ...v, sourceUrl: e.target.value }))}
+                    />
+                  </FieldLabel>
+                  <FieldLabel label={t("episodeThumbnail")}>
+                    <EpisodeThumbnailField
+                      url={newEp.thumbnailUrl || undefined}
+                      disabled={actionMut.isPending}
+                      videoSrc={newEp.sourceUrl || undefined}
+                      fromVideoLabel={t("thumbFromVideo")}
+                      uploadLabel={t("thumbUpload")}
+                      onError={setError}
+                      onUploaded={(url) => setNewEp((v) => ({ ...v, thumbnailUrl: url }))}
+                    />
+                  </FieldLabel>
+                  <div className="flex justify-end">
+                    <Button
+                      size="sm"
+                      disabled={actionMut.isPending || !newEp.sourceUrl.trim()}
+                      onClick={() =>
+                        act(async () => {
+                          await adminCreateEpisode(id, {
+                            title: newEp.title || undefined,
+                            sourceUrl: newEp.sourceUrl.trim(),
+                            thumbnailUrl: newEp.thumbnailUrl || undefined,
+                            isFree: newEp.isFree,
+                            priceCredits: newEp.isFree ? 0 : newEp.priceCredits,
+                          });
+                          setNewEp({ title: "", sourceUrl: "", publicPageUrl: "", thumbnailUrl: "", isFree: false, priceCredits: 10 });
+                          setShowAddEpisode(false);
+                        })
+                      }
+                    >
+                      <Plus className="h-4 w-4" />
+                      {t("addEpisodeByUrl")}
+                    </Button>
+                  </div>
+                  <p className="text-xs leading-5 text-ink-subtle">{t("episodeThumbHint")}</p>
+                </div>
+              ) : null}
+
+              {addEpisodeMethod === "public" ? (
+                <div className="space-y-4">
+                  <p className="text-xs leading-5 text-ink-subtle">{t("addEpisodePublicHint")}</p>
+                  <FieldLabel label={t("publicVideoPageUrl")}>
+                    <Input
+                      placeholder="https://…"
+                      value={newEp.publicPageUrl}
+                      onChange={(e) => setNewEp((v) => ({ ...v, publicPageUrl: e.target.value }))}
+                    />
+                  </FieldLabel>
+                  <div className="flex justify-end">
+                    <Button
+                      size="sm"
+                      disabled={actionMut.isPending || !newEp.publicPageUrl.trim() || !addEpisodeConfig.canPullPublic}
+                      onClick={() =>
+                        act(async () => {
+                          await adminAppendPublicEpisodes(id, {
+                            url: newEp.publicPageUrl.trim(),
+                            formatPreference: "best_hls",
+                          });
+                          setNewEp({ title: "", sourceUrl: "", publicPageUrl: "", thumbnailUrl: "", isFree: false, priceCredits: 10 });
+                          setShowAddEpisode(false);
+                        })
+                      }
+                    >
+                      <Cloud className="h-4 w-4" />
+                      {t("pullPublicEpisodes")}
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
             </section>
           ) : null}
           <div className="content-batch-toolbar">

@@ -166,6 +166,13 @@ model Drama {
 
   /// 外部来源去重键，如 ytdlp:{extractor}:{id}
   externalRef     String?     @unique
+  licenseType     ContentLicenseType @default(UNKNOWN)
+  sourcePublisher String?
+  attributionText String?
+  rightsProofUrl  String?
+  rightsVerifiedAt DateTime?
+  takedownAt      DateTime?
+  takedownReason  String?
 
   totalEpisodes   Int         @default(0)
   freeEpisodeCount Int        @default(3)
@@ -260,6 +267,14 @@ model Episode {
   uploadStatus    UploadStatus @default(PENDING)
   transcodeStatus TranscodeStatus @default(PENDING)
   originalUrl     String?
+  /// 可重新解析的原始视频页（不要写临时 CDN 播放地址）
+  sourcePageUrl   String?
+  sourceProvider  String?
+  externalVideoId String?
+  playlistIndex  Int?
+  resolvedAt      DateTime?
+  resolvedExpiresAt DateTime?
+  sourceHeaders   Json?
 
   viewCount       BigInt      @default(0)
   unlockCount     BigInt      @default(0)
@@ -273,7 +288,18 @@ model Episode {
   @@unique([dramaId, episodeNumber])
   @@index([dramaId, episodeNumber])
   @@index([transcodeStatus])
+  @@index([sourceProvider, externalVideoId])
   @@map("episodes")
+}
+
+enum ContentLicenseType {
+  UNKNOWN
+  PUBLIC_DOMAIN
+  CC0
+  CC_BY
+  CC_BY_SA
+  AUTHORIZED
+  OWNED
 }
 
 enum MediaOrientation {
@@ -294,6 +320,33 @@ enum TranscodeStatus {
   PROCESSING
   COMPLETED
   FAILED
+}
+
+enum MediaJobStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+/// 持久化媒体任务；API 重启后 QUEUED/PROCESSING 任务会恢复执行。
+model MediaTranscodeJob {
+  id          String         @id @default(uuid())
+  episodeId   BigInt?
+  inputRel    String
+  status      MediaJobStatus @default(QUEUED)
+  outputRel   String?
+  error       String?
+  preferR2    Boolean?
+  attempts    Int            @default(0)
+  createdAt   DateTime       @default(now()) @db.Timestamptz
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  updatedAt   DateTime       @updatedAt
+
+  @@index([status, createdAt])
+  @@index([episodeId])
+  @@map("media_transcode_jobs")
 }
 
 // ========== 用户解锁记录 ==========

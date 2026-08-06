@@ -64,3 +64,25 @@ export function slugifyTitle(name: string): string {
     .slice(0, 48);
   return base || `online-${Date.now().toString(36)}`;
 }
+
+/** 尽力读取第三方签名 URL 的过期时间；无法识别时使用短缓存，确保可重新解析。 */
+export function inferExternalUrlExpiry(url: string, fallbackMs = 2 * 60 * 60 * 1000): Date {
+  try {
+    const parsed = new URL(url);
+    for (const key of ['expire', 'expires', 'exp', 'Expires']) {
+      const raw = parsed.searchParams.get(key);
+      if (!raw) continue;
+      const numeric = Number(raw);
+      if (Number.isFinite(numeric) && numeric > 0) {
+        const millis = numeric > 10_000_000_000 ? numeric : numeric * 1000;
+        const value = new Date(millis);
+        if (Number.isFinite(value.getTime())) return value;
+      }
+      const value = new Date(raw);
+      if (Number.isFinite(value.getTime())) return value;
+    }
+  } catch {
+    // URL validation is handled by the caller.
+  }
+  return new Date(Date.now() + fallbackMs);
+}

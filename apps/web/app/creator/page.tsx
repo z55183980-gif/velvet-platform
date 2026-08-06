@@ -48,8 +48,8 @@ export default function CreatorPage() {
   const [withdrawAmount, setWithdrawAmount] = useState("100000");
   const [busy, setBusy] = useState(false);
   const [epDramaId, setEpDramaId] = useState("");
-  const [epNo, setEpNo] = useState("4");
-  const [epPrice, setEpPrice] = useState("11000");
+  const [epNo, setEpNo] = useState("1");
+  const [epPrice, setEpPrice] = useState("10");
   const [epHls, setEpHls] = useState("");
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
   const [uploadBusy, setUploadBusy] = useState(false);
@@ -195,22 +195,25 @@ export default function CreatorPage() {
 
   async function addEpisode() {
     if (!epDramaId) return;
+    const episodeNumber = Number(epNo);
+    const selectedDrama = dramas.find((d) => String(d.id) === epDramaId);
+    const isFree = episodeNumber <= Number(selectedDrama?.freeEpisodeCount ?? 3);
+    const sourceIsHls = /\.m3u8(?:\?|$)/i.test(epHls.trim());
     setBusy(true);
     try {
       const ep = await creatorApi<any>(`/dramas/${epDramaId}/episodes`, {
         method: "POST",
         body: JSON.stringify({
-          episodeNumber: Number(epNo),
-          title: `Episode ${epNo}`,
-          isFree: Number(epNo) <= 3,
-          priceVnd: Number(epPrice),
-          priceCredits: Number(epPrice),
-          hlsUrl: epHls || undefined,
-          originalUrl: epHls || undefined,
+          episodeNumber,
+          title: `Episode ${episodeNumber}`,
+          isFree,
+          priceCredits: isFree ? 0 : Number(epPrice),
+          hlsUrl: sourceIsHls ? epHls.trim() : undefined,
+          originalUrl: epHls.trim() || undefined,
         }),
       });
       // 若已上传 mp4 路径，触发转码
-      if (epHls && !epHls.endsWith(".m3u8") && ep?.id) {
+      if (epHls && !sourceIsHls && ep?.id) {
         try {
           await creatorApi("/transcode", {
             method: "POST",
@@ -221,6 +224,9 @@ export default function CreatorPage() {
         }
       }
       await reload();
+      setEpHls("");
+      setUploadStatus(null);
+      setEpNo(String(episodeNumber + 1));
     } catch (e: any) {
       fail(e, "episode failed");
     } finally {
@@ -239,7 +245,6 @@ export default function CreatorPage() {
       if (token) headers.Authorization = `Bearer ${token}`;
       const fd = new FormData();
       fd.append("file", file);
-      fd.append("transcode", "1");
       const res = await fetch(`${API_BASE}/creator/upload`, {
         method: "POST",
         credentials: "include",
@@ -250,36 +255,7 @@ export default function CreatorPage() {
       if (!res.ok || json.code !== 0) throw new ApiError(res.status, json.message || "upload fail");
       const path = json.data?.relativePath as string;
       setEpHls(path || "");
-      setUploadStatus(
-        zh
-          ? `已上传: ${path}${json.data?.jobId ? ` · 转码任务 ${json.data.jobId}` : ""}`
-          : `OK: ${path}`,
-      );
-      if (json.data?.jobId) {
-        // 轮询转码状态
-        const jobId = json.data.jobId as string;
-        for (let i = 0; i < 60; i++) {
-          await new Promise((r) => setTimeout(r, 2000));
-          try {
-            const st = await creatorApi<any>(`/transcode/${jobId}`);
-            setUploadStatus(
-              zh
-                ? `转码: ${st.status}${st.outputRel ? ` → ${st.outputRel}` : ""}`
-                : `Transcode: ${st.status}`,
-            );
-            if (st.status === "completed") {
-              if (st.outputRel) setEpHls(st.outputRel);
-              break;
-            }
-            if (st.status === "failed") {
-              fail(st.error || "transcode failed", "transcode failed");
-              break;
-            }
-          } catch {
-            break;
-          }
-        }
-      }
+      setUploadStatus(zh ? `已上传源文件: ${path}；添加剧集后开始转码` : `Uploaded: ${path}`);
     } catch (e: any) {
       fail(e, "upload failed");
       setUploadStatus(null);
@@ -638,22 +614,35 @@ export default function CreatorPage() {
           <select
             className="rounded-md border border-line bg-surface px-3 py-2 text-body-sm text-ink"
             value={epDramaId}
-            onChange={(e) => setEpDramaId(e.target.value)}
+            onChange={(e) => {
+              const dramaId = e.target.value;
+              setEpDramaId(dramaId);
+              const drama = dramas.find((d) => String(d.id) === dramaId);
+              const maxEpisode = Math.max(
+                0,
+                ...((drama?.episodes || []).map((ep: any) => Number(ep.episodeNumber) || 0)),
+              );
+              setEpNo(String(maxEpisode + 1));
+            }}
           >
             <option value="">{zh ? "选择短剧" : "Chọn phim"}</option>
-            {dramas.map((d) => (
+            {dramas.filter((d) => d.status === "DRAFT" || d.status === "REJECTED").map((d) => (
               <option key={String(d.id)} value={String(d.id)}>
                 {d.titleEn}
               </option>
             ))}
           </select>
           <input
+            type="number"
+            min={1}
             className="rounded-md border border-line bg-surface px-3 py-2 text-body-sm text-ink"
             placeholder="episode #"
             value={epNo}
             onChange={(e) => setEpNo(e.target.value)}
           />
           <input
+            type="number"
+            min={0}
             className="rounded-md border border-line bg-surface px-3 py-2 text-body-sm text-ink"
             placeholder="priceCredits"
             value={epPrice}
@@ -673,7 +662,7 @@ export default function CreatorPage() {
               disabled={uploadBusy}
               onChange={(e) => onUploadFile(e.target.files?.[0] || null)}
             />
-            {uploadBusy ? (zh ? "上传/转码中…" : "Uploading…") : zh ? "上传视频并转码" : "Upload + transcode"}
+            {uploadBusy ? (zh ? "上传中…" : "Uploading…") : zh ? "上传视频源文件" : "Upload source video"}
           </label>
           <button disabled={busy} className={buttonVariants({ variant: "primary" })} onClick={addEpisode}>
             {zh ? "添加剧集" : "Thêm tập"}

@@ -81,6 +81,7 @@ import { UploadModule } from '../upload/upload.module';
     AdminAuthService,
     AdminGuard,
     AdminRoleGuard,
+    YtdlpProvider,
   ],
 })
 export class AdminModule {}

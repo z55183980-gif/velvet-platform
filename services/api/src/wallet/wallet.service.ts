@@ -774,7 +774,9 @@ export class WalletService {
     idem: string,
   ) {
     const existing = await tx.order.findUnique({ where: { idempotencyKey: idem } });
-    if (existing) return existing;
+    // 已退款订单不可复用：否则会被后续解锁误判为同订单重复入账（P2002 吞掉扣款流水），
+    // 且订单状态会被重新置为 PAID，覆盖掉退款记录。已退款视为"未找到"，走新订单。
+    if (existing && existing.paymentStatus !== 'REFUNDED') return existing;
 
     const creator = await tx.creator.findUnique({ where: { id: episode.drama.creatorId } });
     const share = creator?.revenueShare ?? new Prisma.Decimal(0.7);
@@ -785,7 +787,7 @@ export class WalletService {
     return tx.order.create({
       data: {
         orderNo: genOrderNo('UL'),
-        idempotencyKey: idem,
+        idempotencyKey: existing ? `${idem}:r${existing.id}` : idem,
         userId,
         creatorId: episode.drama.creatorId,
         orderType: 'EPISODE_UNLOCK',

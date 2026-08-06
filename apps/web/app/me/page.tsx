@@ -25,6 +25,7 @@ import {
   clearWatchHistory,
   getLikes,
   getMyOrders,
+  getWalletTransactions,
   requestRefund,
   updateMe,
   removeFavorite,
@@ -35,7 +36,7 @@ import {
 } from "@/lib/api";
 import { cn, formatAmount, mediaUrl } from "@/lib/utils";
 
-type DesktopTab = "favorites" | "history" | "orders";
+type DesktopTab = "favorites" | "history" | "orders" | "transactions";
 
 export default function AccountPage() {
   const { user, ready, openLogin, openVip, openRecharge, balance, logout, applySession } = useAuth();
@@ -54,6 +55,7 @@ export default function AccountPage() {
   const [history, setHistory] = useState<any[]>([]);
   const [likes, setLikes] = useState<any[]>([]);
   const [orders, setOrders] = useState<any[]>([]);
+  const [transactions, setTransactions] = useState<any[]>([]);
   const [initialLoading, setInitialLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
@@ -71,7 +73,14 @@ export default function AccountPage() {
   const cacheRef = useRef<
     Map<
       string,
-      { favorites?: any[]; favGroups?: string[]; history?: any[]; likes?: any[]; orders?: any[] }
+      {
+        favorites?: any[];
+        favGroups?: string[];
+        history?: any[];
+        likes?: any[];
+        orders?: any[];
+        transactions?: any[];
+      }
     >
   >(new Map());
 
@@ -81,7 +90,10 @@ export default function AccountPage() {
   }, [user]);
 
   const loadKind = useCallback(
-    async (kind: "favorites" | "history" | "likes" | "orders", opts?: { force?: boolean }) => {
+    async (
+      kind: "favorites" | "history" | "likes" | "orders" | "transactions",
+      opts?: { force?: boolean },
+    ) => {
       if (!user) return;
       const key = `${kind}|${kind === "favorites" ? favGroup : ""}`;
       const cached = cacheRef.current.get(key);
@@ -89,7 +101,8 @@ export default function AccountPage() {
         (kind === "favorites" && cached?.favorites) ||
         (kind === "history" && cached?.history) ||
         (kind === "likes" && cached?.likes) ||
-        (kind === "orders" && cached?.orders);
+        (kind === "orders" && cached?.orders) ||
+        (kind === "transactions" && cached?.transactions);
 
       if (hasCached && !opts?.force) {
         if (kind === "favorites") {
@@ -97,7 +110,8 @@ export default function AccountPage() {
           if (cached!.favGroups) setFavGroups(cached!.favGroups);
         } else if (kind === "history") setHistory(cached!.history || []);
         else if (kind === "likes") setLikes(cached!.likes || []);
-        else setOrders(cached!.orders || []);
+        else if (kind === "orders") setOrders(cached!.orders || []);
+        else setTransactions(cached!.transactions || []);
         return;
       }
 
@@ -122,17 +136,23 @@ export default function AccountPage() {
           const rows = r?.rows || [];
           cacheRef.current.set(key, { likes: rows });
           setLikes(rows);
-        } else {
+        } else if (kind === "orders") {
           const r = await getMyOrders(1);
           const rows = r?.rows || [];
           cacheRef.current.set(key, { orders: rows });
           setOrders(rows);
+        } else {
+          const r = await getWalletTransactions(1);
+          const rows = r?.rows || [];
+          cacheRef.current.set(key, { transactions: rows });
+          setTransactions(rows);
         }
       } catch {
         if (kind === "favorites") setFavorites([]);
         else if (kind === "history") setHistory([]);
         else if (kind === "likes") setLikes([]);
-        else setOrders([]);
+        else if (kind === "orders") setOrders([]);
+        else setTransactions([]);
       }
     },
     [user, favGroup],
@@ -156,6 +176,7 @@ export default function AccountPage() {
           loadKind("history"),
           loadKind("likes"),
           loadKind("orders"),
+          loadKind("transactions"),
         ]);
       } finally {
         if (!cancelled) {
@@ -296,6 +317,7 @@ export default function AccountPage() {
         history={history}
         likes={likes}
         orders={orders}
+        transactions={transactions}
         loading={
           loading &&
           (mobileTab === "history" || mobileTab === "favorites" || mobileTab === "liked")
@@ -615,6 +637,7 @@ export default function AccountPage() {
                 ["favorites", t("account.favorites")],
                 ["history", t("account.history")],
                 ["orders", t("account.orders")],
+                ["transactions", t("account.transactions")],
               ] as const
             ).map(([k, label]) => (
               <button
@@ -864,6 +887,49 @@ export default function AccountPage() {
                 {orders.length > 0 && (
                   <p className="pt-1 text-caption text-ink-muted">{t("account.refundHint")}</p>
                 )}
+              </div>
+            )}
+
+            {desktopTab === "transactions" && (
+              <div
+                className={cn("space-y-2 transition-opacity duration-200", refreshing && "opacity-60")}
+                aria-busy={refreshing}
+              >
+                {transactions.length === 0 && (
+                  <p className="py-8 text-center text-sm text-ink-muted">{t("account.emptyTx")}</p>
+                )}
+                {transactions.map((tx) => {
+                  const amount = Number(tx.amountCredits ?? 0);
+                  const positive = amount > 0;
+                  return (
+                    <div
+                      key={tx.id}
+                      className="flex items-center justify-between gap-2 rounded-lg bg-surface-2/60 px-3 py-2.5"
+                    >
+                      <div className="min-w-0">
+                        <div className="text-sm text-ink">{tx.type}</div>
+                        <div className="truncate text-xs text-ink-muted">
+                          {tx.remark || ""}
+                          {tx.createdAt ? ` · ${new Date(tx.createdAt).toLocaleString(locale)}` : ""}
+                        </div>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <div
+                          className={cn(
+                            "text-sm font-semibold tabular-nums",
+                            positive ? "text-success" : "text-danger",
+                          )}
+                        >
+                          {positive ? "+" : ""}
+                          {formatAmount(amount)}
+                        </div>
+                        <div className="text-xs text-ink-subtle tabular-nums">
+                          {formatAmount(Number(tx.balanceAfter ?? 0))}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>

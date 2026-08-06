@@ -31,6 +31,8 @@ export interface TranscodeJob {
   preferR2?: boolean;
 }
 
+type JobDispatcher = (jobId: string) => Promise<void>;
+
 @Injectable()
 export class UploadService implements OnModuleInit {
   private readonly logger = new Logger(UploadService.name);
@@ -38,6 +40,10 @@ export class UploadService implements OnModuleInit {
   private readonly jobs = new Map<string, TranscodeJob>();
   private running = false;
   private readonly queue: string[] = [];
+  /** When true, this process runs the legacy in-memory pump (no Redis). */
+  private inlinePump = true;
+  /** BullMQ (or other) enqueue hook; set by TranscodeQueueService. */
+  private dispatcher: JobDispatcher | null = null;
 
   constructor(
     private readonly config: ConfigService,
@@ -45,8 +51,50 @@ export class UploadService implements OnModuleInit {
     private readonly r2: R2StorageService,
   ) {}
 
-  onModuleInit() {
-    this.detectFfmpeg().catch(() => undefined);
+  async onModuleInit() {
+    await this.detectFfmpeg().catch(() => undefined);
+    // Pending job recovery is driven by TranscodeQueueService after dispatcher wiring.
+  }
+
+  setJobDispatcher(dispatcher: JobDispatcher | null) {
+    this.dispatcher = dispatcher;
+  }
+
+  enableInlinePump(enabled: boolean) {
+    this.inlinePump = enabled;
+  }
+
+  isInlinePumpEnabled() {
+    return this.inlinePump;
+  }
+
+  /** Recover QUEUED/PROCESSING rows; optional `dispatch` overrides default enqueue. */
+  async recoverPendingJobs(dispatch?: (jobId: string) => Promise<void>) {
+    const recoverable = await this.prisma.mediaTranscodeJob.findMany({
+      where: { status: { in: ['QUEUED', 'PROCESSING'] } },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (!recoverable.length) return;
+    await this.prisma.mediaTranscodeJob.updateMany({
+      where: { id: { in: recoverable.map((job) => job.id) } },
+      data: { status: 'QUEUED', startedAt: null },
+    });
+    for (const saved of recoverable) {
+      this.jobs.set(saved.id, {
+        id: saved.id,
+        episodeId: saved.episodeId?.toString(),
+        inputRel: saved.inputRel,
+        status: 'queued',
+        createdAt: saved.createdAt.getTime(),
+        preferR2: saved.preferR2 ?? undefined,
+      });
+      if (dispatch) {
+        await dispatch(saved.id);
+      } else {
+        await this.dispatchJob(saved.id);
+      }
+    }
+    this.logger.log(`recovered ${recoverable.length} transcode job(s)`);
   }
 
   /** 上传落盘目录：优先 STORAGE_ROOT/uploads，否则 cwd/storage/uploads */
@@ -196,15 +244,16 @@ export class UploadService implements OnModuleInit {
       filename,
       size: file.size,
       mime: resolvedMime,
+      // Covers/thumbnails always use local media path for admin/web <img>.
+      // CDN Worker requires ?sig=&exp= for every object — bare CDN URLs break previews.
       url: `/api/v1/media/${relativePath}`,
     };
     if (this.r2.isEnabled() && this.r2.hasCredentials()) {
       try {
         const key = relativePath;
         await this.r2.putFile(this.r2.mediaBucket(), key, abs, resolvedMime);
-        base.url = `${this.r2.cdnBase()}/${key}`;
-        base.originalUrl = base.url;
-        this.logger.log(`image uploaded to R2 → ${base.url}`);
+        // Keep url on /api/v1/media/… ; R2 is a mirror for durability / future signed CDN reads.
+        this.logger.log(`image mirrored to R2 ${this.r2.mediaBucket()}/${key} (url stays media path)`);
       } catch (e: any) {
         this.logger.error(`R2 image upload failed, keeping local: ${e?.message || e}`);
       }
@@ -217,10 +266,104 @@ export class UploadService implements OnModuleInit {
       storageBackend: (this.config.get<string>('STORAGE_BACKEND') || 'local').toLowerCase(),
       r2Enabled: this.r2.isEnabled(),
       r2Configured: this.r2.hasCredentials(),
+      r2DirectUpload: this.r2.canDirectUpload(),
       mediaBucket: this.r2.mediaBucket(),
       uploadBucket: this.r2.uploadBucket(),
       cdnBase: this.r2.cdnBase(),
       ffmpegReady: !!this.ffmpegPath,
+      transcodeQueue: this.dispatcher && !this.inlinePump ? 'bullmq' : 'inline',
+      redisConfigured: !!(
+        this.config.get<string>('REDIS_URL') || process.env.REDIS_URL
+      )?.trim(),
+    };
+  }
+
+  async createPresignedDirectUpload(opts: {
+    filename: string;
+    contentType?: string;
+    actorId?: bigint;
+  }) {
+    if (!this.r2.canDirectUpload()) {
+      throw new BizException(
+        BizCode.BAD_REQUEST,
+        'R2 未配置凭证，无法直传。请设置 R2_ENDPOINT / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY',
+      );
+    }
+    const filename = opts.filename || 'video.mp4';
+    const ext = path.extname(filename).toLowerCase() || '.mp4';
+    const allowed = new Set(['.mp4', '.mov', '.mkv', '.webm', '.m4v']);
+    if (!allowed.has(ext)) {
+      throw new BizException(BizCode.BAD_REQUEST, `不支持的格式: ${ext}`);
+    }
+    const mimeByExt: Record<string, string> = {
+      '.mp4': 'video/mp4',
+      '.mov': 'video/quicktime',
+      '.mkv': 'video/x-matroska',
+      '.webm': 'video/webm',
+      '.m4v': 'video/x-m4v',
+    };
+    const contentType =
+      (opts.contentType || '').trim() || mimeByExt[ext] || 'application/octet-stream';
+    return this.r2.createPresignedPut({
+      filename,
+      contentType,
+      actorId: opts.actorId,
+    });
+  }
+
+  /**
+   * After browser PUT to velvet-uploads: verify object, download to local uploads/, return path for transcode.
+   */
+  async ingestDirectUploadKey(key: string, originalFilename?: string): Promise<UploadResult> {
+    if (!this.r2.canDirectUpload()) {
+      throw new BizException(BizCode.BAD_REQUEST, 'R2 未配置，无法接收直传对象');
+    }
+    if (!this.r2.isDirectUploadKey(key)) {
+      throw new BizException(BizCode.BAD_REQUEST, '非法上传 key');
+    }
+
+    let head: { size: number; contentType?: string };
+    try {
+      head = await this.r2.headUploadObject(key);
+    } catch {
+      throw new BizException(BizCode.BAD_REQUEST, 'R2 上未找到上传对象，请确认浏览器 PUT 成功');
+    }
+    if (!head.size || head.size <= 0) {
+      throw new BizException(BizCode.BAD_REQUEST, '上传对象为空');
+    }
+    const maxBytes = 512 * 1024 * 1024;
+    if (head.size > maxBytes) {
+      throw new BizException(BizCode.BAD_REQUEST, '文件过大（上限 512MB）');
+    }
+
+    const srcName = originalFilename || path.posix.basename(key);
+    const ext = path.extname(srcName).toLowerCase() || '.mp4';
+    const allowed = new Set(['.mp4', '.mov', '.mkv', '.webm', '.m4v']);
+    if (!allowed.has(ext)) {
+      throw new BizException(BizCode.BAD_REQUEST, `不支持的格式: ${ext}`);
+    }
+
+    const id = crypto.randomUUID().replace(/-/g, '').slice(0, 16);
+    const filename = `${Date.now()}-${id}${ext}`;
+    const abs = path.join(this.getUploadDir(), filename);
+    await this.r2.downloadUploadObjectToFile(key, abs);
+    const relativePath = `uploads/${filename}`;
+    const mimeByExt: Record<string, string> = {
+      '.mp4': 'video/mp4',
+      '.mov': 'video/quicktime',
+      '.mkv': 'video/x-matroska',
+      '.webm': 'video/webm',
+      '.m4v': 'video/x-m4v',
+    };
+    // Best-effort cleanup of temp object in upload bucket
+    void this.r2.deleteUploadObject(key);
+
+    return {
+      relativePath,
+      originalUrl: relativePath,
+      filename,
+      size: fs.statSync(abs).size,
+      mime: head.contentType || mimeByExt[ext] || 'video/mp4',
     };
   }
 
@@ -288,11 +431,11 @@ export class UploadService implements OnModuleInit {
     return inStorage;
   }
 
-  enqueueTranscode(
+  async enqueueTranscode(
     inputRel: string,
     episodeId?: string,
     opts?: { preferR2?: boolean },
-  ): TranscodeJob {
+  ): Promise<TranscodeJob> {
     const id = crypto.randomUUID();
     const job: TranscodeJob = {
       id,
@@ -302,22 +445,81 @@ export class UploadService implements OnModuleInit {
       createdAt: Date.now(),
       preferR2: opts?.preferR2,
     };
+    await this.prisma.mediaTranscodeJob.create({
+      data: {
+        id,
+        episodeId: episodeId ? BigInt(episodeId) : null,
+        inputRel,
+        status: 'QUEUED',
+        preferR2: opts?.preferR2,
+      },
+    });
     this.jobs.set(id, job);
-    this.queue.push(id);
-    this.pump();
+    await this.dispatchJob(id);
     return job;
   }
 
-  getJob(id: string) {
-    return this.jobs.get(id) || null;
+  async getJob(id: string) {
+    const active = this.jobs.get(id);
+    if (active) return active;
+    const saved = await this.prisma.mediaTranscodeJob.findUnique({ where: { id } });
+    if (!saved) return null;
+    return {
+      id: saved.id,
+      episodeId: saved.episodeId?.toString(),
+      inputRel: saved.inputRel,
+      status: saved.status.toLowerCase() as TranscodeJob['status'],
+      outputRel: saved.outputRel ?? undefined,
+      error: saved.error ?? undefined,
+      createdAt: saved.createdAt.getTime(),
+      preferR2: saved.preferR2 ?? undefined,
+    };
+  }
+
+  /** Ensure in-memory job mirror exists (needed for BullMQ workers / recover). */
+  private async hydrateJob(jobId: string): Promise<TranscodeJob | null> {
+    const existing = this.jobs.get(jobId);
+    if (existing) return existing;
+    const saved = await this.prisma.mediaTranscodeJob.findUnique({ where: { id: jobId } });
+    if (!saved) return null;
+    const job: TranscodeJob = {
+      id: saved.id,
+      episodeId: saved.episodeId?.toString(),
+      inputRel: saved.inputRel,
+      status: saved.status.toLowerCase() as TranscodeJob['status'],
+      outputRel: saved.outputRel ?? undefined,
+      error: saved.error ?? undefined,
+      createdAt: saved.createdAt.getTime(),
+      preferR2: saved.preferR2 ?? undefined,
+    };
+    this.jobs.set(jobId, job);
+    return job;
+  }
+
+  private async dispatchJob(jobId: string) {
+    if (this.dispatcher) {
+      await this.dispatcher(jobId);
+      return;
+    }
+    this.enqueueInline(jobId);
+  }
+
+  /** Local in-process queue (no Redis). */
+  enqueueInline(jobId: string) {
+    if (!this.inlinePump) {
+      this.logger.warn(`inline pump disabled but no BullMQ enqueue for job=${jobId}`);
+    }
+    if (!this.queue.includes(jobId)) this.queue.push(jobId);
+    this.pump();
   }
 
   private pump() {
+    if (!this.inlinePump) return;
     if (this.running) return;
     const next = this.queue.shift();
     if (!next) return;
     this.running = true;
-    this.runJob(next)
+    this.processTranscodeJob(next)
       .catch((e) => this.logger.error(e))
       .finally(() => {
         this.running = false;
@@ -325,10 +527,22 @@ export class UploadService implements OnModuleInit {
       });
   }
 
-  private async runJob(jobId: string) {
-    const job = this.jobs.get(jobId);
-    if (!job) return;
+  /** Public entry for BullMQ Worker / inline pump. */
+  async processTranscodeJob(jobId: string) {
+    const job = await this.hydrateJob(jobId);
+    if (!job) {
+      this.logger.warn(`transcode job missing: ${jobId}`);
+      return;
+    }
+    if (job.status === 'completed' || job.status === 'failed') {
+      return;
+    }
+
     job.status = 'processing';
+    await this.prisma.mediaTranscodeJob.update({
+      where: { id: jobId },
+      data: { status: 'PROCESSING', startedAt: new Date(), attempts: { increment: 1 }, error: null },
+    });
 
     if (job.episodeId) {
       await this.prisma.episode
@@ -343,6 +557,7 @@ export class UploadService implements OnModuleInit {
     if (!ffmpeg) {
       job.status = 'failed';
       job.error = 'ffmpeg not found';
+      await this.persistFinishedJob(job);
       if (job.episodeId) {
         await this.prisma.episode
           .update({
@@ -358,6 +573,12 @@ export class UploadService implements OnModuleInit {
     if (!fs.existsSync(inputAbs)) {
       job.status = 'failed';
       job.error = 'input missing';
+      await this.persistFinishedJob(job);
+      if (job.episodeId) {
+        await this.prisma.episode
+          .update({ where: { id: BigInt(job.episodeId) }, data: { transcodeStatus: 'FAILED' } })
+          .catch(() => undefined);
+      }
       return;
     }
 
@@ -374,6 +595,7 @@ export class UploadService implements OnModuleInit {
       const mediaDimensions = await this.probeMediaDimensions(ffmpeg, playlist);
 
       let hlsUrl: string = outputRel;
+      let pushedToR2 = false;
       const pushR2 =
         job.preferR2 === true
           ? this.r2.hasCredentials()
@@ -383,6 +605,7 @@ export class UploadService implements OnModuleInit {
       if (job.preferR2 === true && !this.r2.hasCredentials()) {
         job.status = 'failed';
         job.error = 'R2 credentials not configured';
+        await this.persistFinishedJob(job);
         if (job.episodeId) {
           await this.prisma.episode
             .update({
@@ -397,6 +620,7 @@ export class UploadService implements OnModuleInit {
         try {
           const prefix = `hls/${job.episodeId || jobId}`;
           hlsUrl = await this.r2.uploadHlsDirectory(outDir, prefix);
+          pushedToR2 = true;
           this.logger.log(`transcode uploaded to R2 → ${hlsUrl}`);
         } catch (uploadErr: any) {
           this.logger.error(
@@ -410,6 +634,8 @@ export class UploadService implements OnModuleInit {
           where: { id: BigInt(job.episodeId) },
           data: {
             hlsUrl,
+            // After CDN push, drop local original pointer — source lives on R2 media bucket.
+            ...(pushedToR2 ? { originalUrl: null } : {}),
             transcodeStatus: 'COMPLETED',
             uploadStatus: 'COMPLETED',
             ...(durationSec != null ? { durationSec } : {}),
@@ -418,9 +644,15 @@ export class UploadService implements OnModuleInit {
         });
       }
       this.logger.log(`transcode ok job=${jobId} → ${hlsUrl} duration=${durationSec ?? '?'}`);
+      await this.persistFinishedJob(job);
+
+      if (pushedToR2) {
+        this.cleanupLocalAfterR2({ inputRel: job.inputRel, outDir });
+      }
     } catch (e: any) {
       job.status = 'failed';
       job.error = e?.message || String(e);
+      await this.persistFinishedJob(job).catch(() => undefined);
       if (job.episodeId) {
         await this.prisma.episode
           .update({
@@ -431,6 +663,44 @@ export class UploadService implements OnModuleInit {
       }
       this.logger.error(`transcode fail job=${jobId}: ${job.error}`);
     }
+  }
+
+  /** After HLS is on velvet-media, remove local staging copies. */
+  private cleanupLocalAfterR2(opts: { inputRel?: string; outDir?: string }) {
+    if (opts.outDir) {
+      try {
+        if (fs.existsSync(opts.outDir)) {
+          fs.rmSync(opts.outDir, { recursive: true, force: true });
+          this.logger.log(`cleaned local hls dir ${opts.outDir}`);
+        }
+      } catch (e: any) {
+        this.logger.warn(`cleanup hls failed: ${e?.message || e}`);
+      }
+    }
+    const rel = opts.inputRel?.replace(/\\/g, '/');
+    if (rel && (rel.startsWith('uploads/') || rel.startsWith('uploads\\'))) {
+      try {
+        const abs = this.resolveAbs(rel);
+        if (fs.existsSync(abs) && abs.includes(`${path.sep}uploads${path.sep}`)) {
+          fs.unlinkSync(abs);
+          this.logger.log(`cleaned local upload ${rel}`);
+        }
+      } catch (e: any) {
+        this.logger.warn(`cleanup upload failed: ${e?.message || e}`);
+      }
+    }
+  }
+
+  private async persistFinishedJob(job: TranscodeJob) {
+    await this.prisma.mediaTranscodeJob.update({
+      where: { id: job.id },
+      data: {
+        status: job.status === 'completed' ? 'COMPLETED' : 'FAILED',
+        outputRel: job.outputRel || null,
+        error: job.error || null,
+        finishedAt: new Date(),
+      },
+    });
   }
 
   private async probeDurationSec(ffmpegBin: string, inputAbs: string): Promise<number | null> {

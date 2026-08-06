@@ -23,6 +23,7 @@ import {
 import { useLocale } from "@/lib/i18n";
 import { useAuth } from "@/components/auth-context";
 import { EpisodeList } from "@/components/episode-list";
+import { UnlockSheet } from "@/components/unlock-sheet";
 import { VideoPlayer } from "@/components/video-player";
 import { PLAYER_RATES, VerticalPlayer } from "@/components/mobile/vertical-player";
 import { VerticalPager } from "@/components/mobile/vertical-pager";
@@ -146,7 +147,7 @@ export function DramaDetail({
 }) {
   const router = useRouter();
   const { locale, t } = useLocale();
-  const { user, openLogin, openVip, ready: authReady } = useAuth();
+  const { user, openLogin, unlock, ready: authReady } = useAuth();
   const { ready: guestReady, canWatch: canGuestWatch, markWatched: markGuestWatched } = useGuestWatchQuota();
   const { mobile: isMobile, ready: mobileReady } = useIsMobile();
   const [pendingLandscapeFs, setPendingLandscapeFs] = useState(autoLandscapeFs);
@@ -162,6 +163,8 @@ export function DramaDetail({
   const [notFound, setNotFound] = useState(false);
   const [loading, setLoading] = useState(true);
   const [unlockedNos, setUnlockedNos] = useState<Set<number>>(new Set());
+  const [unlockOpen, setUnlockOpen] = useState(false);
+  const [unlockTarget, setUnlockTarget] = useState<Episode | null>(null);
   const [selected, setSelected] = useState<Episode | null>(null);
   const [playUrl, setPlayUrl] = useState<string | null>(null);
   const [playErr, setPlayErr] = useState<string | null>(null);
@@ -217,6 +220,11 @@ export function DramaDetail({
   const landscapeModeRef = useRef(landscapeMode);
   landscapeModeRef.current = landscapeMode;
   const previousLandscapeModeRef = useRef(landscapeMode);
+  /** CSS landscape immersion is independent from transient WebKit fullscreen events. */
+  const landscapeImmersiveIntentRef = useRef(false);
+  const browserFsRef = useRef(false);
+  /** Do not immediately re-enter while the user exits with the phone still landscape. */
+  const suppressLandscapeAutoEnterRef = useRef(false);
   /** Avoid putting t in the HLS setup effect deps (locale switch would rebuild player). */
   const tRef = useRef(t);
   tRef.current = t;
@@ -287,6 +295,7 @@ export function DramaDetail({
     const nextLandscape = knownLandscape ?? (keepLandscapePlayback || pendingLandscapeFsRef.current);
     setLandscapeMode(nextLandscape);
     if (!nextLandscape || !keepLandscapePlayback) {
+      if (!nextLandscape) landscapeImmersiveIntentRef.current = false;
       setUiImmersive(false);
       setRotateFs(false);
     }
@@ -296,6 +305,8 @@ export function DramaDetail({
 
   useEffect(() => {
     if (!watching) {
+      landscapeImmersiveIntentRef.current = false;
+      browserFsRef.current = false;
       if (!pendingLandscapeFsRef.current) {
         setLandscapeMode(false);
         setRotateFs(false);
@@ -319,13 +330,18 @@ export function DramaDetail({
 
   useEffect(() => {
     const onFs = () => {
+      const wasBrowserFs = browserFsRef.current;
       const fs = !!(
         document.fullscreenElement ||
         (document as Document & { webkitFullscreenElement?: Element | null })
           .webkitFullscreenElement
       );
+      browserFsRef.current = fs;
       setBrowserFs(fs);
-      if (!fs) {
+      // iOS can emit WebKit fullscreen state changes while the device rotates.
+      // Only tear down UI that actually came from a browser-fullscreen session;
+      // a CSS landscape session must survive these transient events.
+      if (!fs && wasBrowserFs && !landscapeImmersiveIntentRef.current) {
         setRotateFs(false);
         setUiImmersive(false);
       }
@@ -492,6 +508,7 @@ export function DramaDetail({
     if (typeof window === "undefined") return;
     const mq = window.matchMedia("(orientation: landscape)");
     const apply = () => {
+      if (!mq.matches) suppressLandscapeAutoEnterRef.current = false;
       setScreenIsLandscape(mq.matches);
       setScreenOrientationReady(true);
     };
@@ -586,6 +603,8 @@ export function DramaDetail({
   ]);
 
   const enterLandscapeImmersive = useCallback(() => {
+    landscapeImmersiveIntentRef.current = true;
+    suppressLandscapeAutoEnterRef.current = false;
     setShowRate(false);
     setShowMore(false);
     setShowQuality(false);
@@ -601,6 +620,8 @@ export function DramaDetail({
   }, []);
 
   const exitImmersiveFs = useCallback(async () => {
+    landscapeImmersiveIntentRef.current = false;
+    suppressLandscapeAutoEnterRef.current = window.matchMedia("(orientation: landscape)").matches;
     setUiImmersive(false);
     setRotateFs(false);
     setLandChromeVisible(true);
@@ -666,7 +687,9 @@ export function DramaDetail({
       setRotateFs(!screenIsLandscape);
       return;
     }
-    if (screenIsLandscape) void enterLandscapeImmersive();
+    if (screenIsLandscape && !suppressLandscapeAutoEnterRef.current) {
+      void enterLandscapeImmersive();
+    }
   }, [
     screenOrientationReady,
     screenIsLandscape,
@@ -691,6 +714,9 @@ export function DramaDetail({
 
   const handleVideoAspectChange = useCallback(
     (isLand: boolean) => {
+      // Intrinsic media dimensions do not change when the phone rotates. Ignore
+      // transient false reports while a CSS landscape session is active.
+      if (landscapeImmersiveIntentRef.current && !isLand) return;
       if (!followVideoAspect || isLand === landscapeModeRef.current) return;
       setLandscapeMode(isLand);
     },
@@ -886,15 +912,39 @@ export function DramaDetail({
     }
   };
 
-  /** Locked episodes → VIP subscription (no per-episode credit unlock). */
-  function openVipGate(_ep?: Episode) {
+  /** Locked episode tap → unlock sheet (pay per-episode with credits, or upgrade to VIP). */
+  function openUnlockGate(ep?: Episode) {
     if (!authReady) return;
     if (!user) {
       openLogin();
       return;
     }
-    openVip();
+    setUnlockTarget(ep ?? selected ?? null);
+    setUnlockOpen(true);
   }
+
+  async function handleUnlockConfirm(ep: Episode) {
+    if (ep.id == null) return { ok: false, alreadyUnlocked: false, error: "missing_id" };
+    const r = await unlock(ep.id);
+    if (r.ok) {
+      setUnlockedNos((prev) => {
+        const next = new Set(prev);
+        next.add(ep.no);
+        return next;
+      });
+    }
+    return r;
+  }
+
+  const unlockSheetEl = (
+    <UnlockSheet
+      open={unlockOpen}
+      episode={unlockTarget}
+      onClose={() => setUnlockOpen(false)}
+      onConfirmed={handleUnlockConfirm}
+      vipActive={!!user?.isVip}
+    />
+  );
 
   function onWatchFree() {
     const f =
@@ -902,7 +952,7 @@ export function DramaDetail({
     if (f) {
       if (isUnlocked(f)) setSelected(f);
       else {
-        openVipGate(f);
+        openUnlockGate(f);
         return;
       }
     }
@@ -948,7 +998,7 @@ export function DramaDetail({
         return;
       }
       setWatching(true);
-    } else openVipGate(ep);
+    } else openUnlockGate(ep);
   };
 
   const tags = (() => {
@@ -1308,7 +1358,7 @@ export function DramaDetail({
                       locked={locked}
                       lockLabel={`${t("detail.episodeList")} ${ep.no}`}
                       lockActionLabel={lockActionLabel}
-                      onUnlock={!isUnlocked(ep) ? () => openVipGate(ep) : undefined}
+                      onUnlock={!isUnlocked(ep) ? () => openUnlockGate(ep) : undefined}
                       error={playErr}
                       loading={playLoading}
                       hasNext={hasNext}
@@ -1682,11 +1732,12 @@ export function DramaDetail({
           episodesCount={drama.episodesCount}
           selectedNo={selected?.no}
           isUnlocked={isUnlocked}
-          onUnlock={openVipGate}
+          onUnlock={openUnlockGate}
           onSelect={selectEpisode}
           favorited={favorited}
           onToggleFavorite={() => void toggleFavorite()}
         />
+        {unlockSheetEl}
       </div>
     );
   }
@@ -1735,7 +1786,7 @@ export function DramaDetail({
                   : t("player.empty")
               }
               lockActionLabel={lockActionLabel}
-              onUnlock={selected && !isUnlocked(selected) ? () => openVipGate(selected) : undefined}
+              onUnlock={selected && !isUnlocked(selected) ? () => openUnlockGate(selected) : undefined}
               error={playErr}
               loading={playLoading}
               hasNext={hasNext}
@@ -1794,7 +1845,7 @@ export function DramaDetail({
                 selectedNo={selected?.no}
                 layout="sidebar"
                 isUnlocked={isUnlocked}
-                onUnlock={openVipGate}
+                onUnlock={openUnlockGate}
                 onSelect={selectEpisode}
               />
             </div>
@@ -1812,12 +1863,12 @@ export function DramaDetail({
           episodesCount={drama.episodesCount}
           selectedNo={selected?.no}
           isUnlocked={isUnlocked}
-          onUnlock={openVipGate}
+          onUnlock={openUnlockGate}
           onSelect={selectEpisode}
           favorited={favorited}
           onToggleFavorite={() => void toggleFavorite()}
         />
-
+        {unlockSheetEl}
       </div>
     );
   }
@@ -2022,6 +2073,7 @@ export function DramaDetail({
             {favorited ? t("detail.favorited") : t("detail.favorite")}
           </button>
         </div>
+        {unlockSheetEl}
       </div>
     );
   }
@@ -2187,7 +2239,7 @@ export function DramaDetail({
             selectedNo={selected?.no}
             layout="grid"
             isUnlocked={isUnlocked}
-            onUnlock={openVipGate}
+            onUnlock={openUnlockGate}
             onSelect={selectEpisode}
           />
         </div>
@@ -2233,6 +2285,7 @@ export function DramaDetail({
         </button>
       </div>
 
+      {unlockSheetEl}
     </div>
   );
 }

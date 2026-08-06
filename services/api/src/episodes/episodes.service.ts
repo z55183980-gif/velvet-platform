@@ -5,14 +5,19 @@ import { DramasService } from '../dramas/dramas.service';
 import { BizException, BizCode } from '../common/biz.exception';
 import { signMediaPath } from '../common/media-sign.util';
 import { LockAccessService } from '../common/lock-access.service';
+import { YtdlpProvider } from '../admin/ytdlp.provider';
+import { inferExternalUrlExpiry } from '../admin/online-drama.util';
 
 @Injectable()
 export class EpisodesService {
+  private readonly refreshes = new Map<string, Promise<string>>();
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly dramas: DramasService,
     private readonly config: ConfigService,
     private readonly lockAccess: LockAccessService,
+    private readonly ytdlp: YtdlpProvider,
   ) {}
 
   /** 生成 HLS/片源短时签名播放地址；未登录仅允许免费集 */
@@ -54,7 +59,8 @@ export class EpisodesService {
       /\/$/,
       '',
     );
-    const raw = episode.hlsUrl || `${base}/v/${episodeId}/index.m3u8`;
+    const refreshed = await this.refreshExternalUrlIfNeeded(episode);
+    const raw = refreshed || episode.hlsUrl || `${base}/v/${episodeId}/index.m3u8`;
     const exp = Math.floor(Date.now() / 1000) + 3600; // 1h
 
     // 本地样片（相对路径）→ /api/v1/media + path HMAC
@@ -106,6 +112,38 @@ export class EpisodesService {
       mediaHeight: episode.mediaHeight,
       mediaOrientation: episode.mediaOrientation,
     };
+  }
+
+  private async refreshExternalUrlIfNeeded(episode: {
+    id: bigint;
+    hlsUrl: string | null;
+    sourcePageUrl: string | null;
+    playlistIndex: number | null;
+    resolvedExpiresAt: Date | null;
+  }) {
+    if (!episode.sourcePageUrl) return episode.hlsUrl;
+    const refreshAt = episode.resolvedExpiresAt?.getTime() ?? 0;
+    if (episode.hlsUrl && refreshAt > Date.now() + 5 * 60 * 1000) return episode.hlsUrl;
+
+    const key = episode.id.toString();
+    const existing = this.refreshes.get(key);
+    if (existing) return existing;
+    const task = this.ytdlp
+      .resolvePlayUrl(episode.sourcePageUrl, 'best_hls', episode.playlistIndex ?? undefined)
+      .then(async (playUrl) => {
+        await this.prisma.episode.update({
+          where: { id: episode.id },
+          data: {
+            hlsUrl: playUrl,
+            resolvedAt: new Date(),
+            resolvedExpiresAt: inferExternalUrlExpiry(playUrl),
+          },
+        });
+        return playUrl;
+      })
+      .finally(() => this.refreshes.delete(key));
+    this.refreshes.set(key, task);
+    return task;
   }
 
   async reportProgress(userId: bigint, episodeId: bigint, progressSec: number) {

@@ -11,7 +11,7 @@ export type ContentSearchFilters = {
   categorySlug: string;
   isOfficial: string;
   isFeatured: string;
-  /** r2 | local | online | "" */
+  /** owned | online | legacy r2|local | "" */
   mediaKind: string;
   sort: "weight" | "latest";
 };
@@ -109,13 +109,11 @@ export function ContentSearchBar({
   }
 
   const mediaKindLabel =
-    value.mediaKind === "r2"
-      ? t("mediaKindR2")
-      : value.mediaKind === "local"
-        ? t("mediaKindLocal")
-        : value.mediaKind === "online"
-          ? t("mediaKindOnline")
-          : "";
+    value.mediaKind === "owned" || value.mediaKind === "r2" || value.mediaKind === "local"
+      ? t("mediaKindOwned")
+      : value.mediaKind === "online"
+        ? t("mediaKindOnlineRef")
+        : "";
 
   const chips: { key: string; label: string; clear: () => void }[] = [];
   if (value.status && value.status !== "ALL") {
@@ -272,13 +270,16 @@ export function ContentSearchBar({
                 <label className="block space-y-1">
                   <span className="text-caption font-medium text-ink-muted">{t("mediaKindFilter")}</span>
                   <Select
-                    value={value.mediaKind}
+                    value={
+                      value.mediaKind === "r2" || value.mediaKind === "local"
+                        ? "owned"
+                        : value.mediaKind
+                    }
                     onChange={(e) => patch({ mediaKind: e.target.value })}
                   >
                     <option value="">{t("mediaKindAll")}</option>
-                    <option value="r2">{t("mediaKindR2")}</option>
-                    <option value="local">{t("mediaKindLocal")}</option>
-                    <option value="online">{t("mediaKindOnline")}</option>
+                    <option value="owned">{t("mediaKindOwned")}</option>
+                    <option value="online">{t("mediaKindOnlineRef")}</option>
                   </Select>
                 </label>
 

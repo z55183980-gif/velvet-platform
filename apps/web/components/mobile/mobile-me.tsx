@@ -14,6 +14,7 @@ import {
   LogOut,
   Moon,
   PenLine,
+  Receipt,
   Search,
   Settings,
   SlidersHorizontal,
@@ -65,6 +66,7 @@ type Props = {
   history: any[];
   likes: any[];
   orders: any[];
+  transactions: any[];
   loading: boolean;
   refreshing: boolean;
   onRefresh: (opts?: { force?: boolean }) => void;
@@ -132,6 +134,7 @@ export function MobileMe(props: Props) {
     history,
     likes,
     orders,
+    transactions,
     loading,
     refreshing,
     onRefresh,
@@ -913,6 +916,49 @@ export function MobileMe(props: Props) {
                   <LogOut className="h-4 w-4 text-ink-muted" />
                   <span className="flex-1 text-body-sm text-ink">{t("account.logout")}</span>
                 </button>
+              </div>
+
+              {/* Wallet transactions kept as secondary section */}
+              <div className="rounded-2xl border border-line/80 bg-surface p-4">
+                <div className="mb-3 flex items-center gap-2">
+                  <Receipt className="h-4 w-4 text-ink-muted" />
+                  <p className="text-body-sm font-medium text-ink">{t("account.transactions")}</p>
+                </div>
+                {transactions.length === 0 ? (
+                  <p className="text-caption text-ink-muted">{t("account.emptyTx")}</p>
+                ) : (
+                  <div className="space-y-2">
+                    {transactions.slice(0, 8).map((tx) => {
+                      const amount = Number(tx.amountCredits ?? 0);
+                      const positive = amount > 0;
+                      return (
+                        <div
+                          key={tx.id}
+                          className="flex items-center justify-between gap-2 rounded-lg bg-surface-2/60 px-3 py-2"
+                        >
+                          <div className="min-w-0">
+                            <div className="text-xs text-ink">{tx.type}</div>
+                            <div className="truncate text-xs text-ink-muted">
+                              {tx.remark || ""}
+                              {tx.createdAt
+                                ? ` · ${new Date(tx.createdAt).toLocaleDateString(locale)}`
+                                : ""}
+                            </div>
+                          </div>
+                          <div
+                            className={cn(
+                              "shrink-0 text-xs font-semibold tabular-nums",
+                              positive ? "text-success" : "text-danger",
+                            )}
+                          >
+                            {positive ? "+" : ""}
+                            {formatAmount(amount)}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* Orders kept as secondary section */}

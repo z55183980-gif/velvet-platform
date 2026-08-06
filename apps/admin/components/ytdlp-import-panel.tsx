@@ -2,6 +2,7 @@
 
 import { useMutation, useQuery } from "@tanstack/react-query";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import {
   adminListCategories,
@@ -14,20 +15,28 @@ import {
 } from "@velvet/api-client";
 import { Button, Input, Select } from "@velvet/ui";
 import { StreamPreview } from "@/components/stream-preview";
+import { contentDetailHref } from "@/lib/content-href";
 import { useI18n } from "@/lib/i18n";
 
 type Category = { slug: string; nameZh?: string; nameEn?: string };
 type ProbeResult = Awaited<ReturnType<typeof adminYtdlpProbe>>;
 type FormatPreference = "best_hls" | "best_mp4" | "best";
 type TransferTarget = "local" | "r2";
+/** import = 链接直播；transfer = 转存本地托管；all = 兼容旧入口（少用） */
+export type YtdlpPanelMode = "import" | "transfer" | "all";
 
-export function YtdlpImportPanel() {
+export function YtdlpImportPanel({ mode = "all" }: { mode?: YtdlpPanelMode } = {}) {
   const { t } = useI18n();
+  const router = useRouter();
+  const showImport = mode === "import" || mode === "all";
+  const showTransfer = mode === "transfer" || mode === "all";
   const [url, setUrl] = useState("");
   const [probe, setProbe] = useState<ProbeResult | null>(null);
   const [categorySlug, setCategorySlug] = useState("");
   const [maxEpisodes, setMaxEpisodes] = useState("");
-  const [formatPreference, setFormatPreference] = useState<FormatPreference>("best_hls");
+  const [formatPreference, setFormatPreference] = useState<FormatPreference>(
+    mode === "transfer" ? "best" : "best_hls",
+  );
   const [error, setError] = useState<string | null>(null);
   const [previewEpIndex, setPreviewEpIndex] = useState<number | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -111,6 +120,8 @@ export function YtdlpImportPanel() {
         failedCount: data.failedEpisodes?.length ?? 0,
         mode: "online",
       });
+      // 链接直播：进详情做权利核验（基础信息）
+      router.push(contentDetailHref(data.id, "info"));
     },
     onError: (e: Error) => setError(e.message),
   });
@@ -150,6 +161,8 @@ export function YtdlpImportPanel() {
         setPreviewUrl(null);
         setPreviewEpIndex(first.episodeNumber);
       }
+      // 转存：进分集看转码任务
+      router.push(contentDetailHref(data.id, "episodes"));
     },
     onError: (e: Error) => setError(e.message),
   });
@@ -165,11 +178,16 @@ export function YtdlpImportPanel() {
 
   const activePreviewSrc = localMediaUrl || previewUrl;
 
+  const panelTitle =
+    mode === "transfer" ? t("ytdlpTransferTitle") : mode === "import" ? t("ytdlpImportTitle") : t("ytdlpImportTitle");
+  const panelHint =
+    mode === "transfer" ? t("ytdlpTransferPanelHint") : mode === "import" ? t("ytdlpImportOnlyHint") : t("ytdlpImportHint");
+
   return (
     <div className="space-y-4">
       <div className="upload-panel space-y-2">
-        <h3 className="text-h4 font-semibold">{t("ytdlpImportTitle")}</h3>
-        <p className="text-body-sm text-ink-muted">{t("ytdlpImportHint")}</p>
+        <h3 className="text-h4 font-semibold">{panelTitle}</h3>
+        <p className="text-body-sm text-ink-muted">{panelHint}</p>
         {!configured ? (
           <p className="text-body-sm text-danger">
             {t("ytdlpNotConfigured")}
@@ -202,7 +220,7 @@ export function YtdlpImportPanel() {
                   failed: result.failedCount,
                 })}
           </span>
-          <Link href={`/content/${result.id}`} className="text-brand hover:underline">
+          <Link href={contentDetailHref(result.id, result.mode === "transfer" ? "episodes" : "info")} className="text-brand hover:underline">
             {t("onlineViewDrama")}
           </Link>
         </div>
@@ -354,47 +372,55 @@ export function YtdlpImportPanel() {
           </div>
 
           <div className="flex flex-wrap gap-2 border-t border-line/50 pt-3">
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={busy}
-              onClick={() => importMut.mutate("DRAFT")}
-            >
-              {t("importDraft")}
-            </Button>
-            <Button size="sm" disabled={busy} onClick={() => importMut.mutate("LIVE")}>
-              {t("importLive")}
-            </Button>
-            <span className="mx-1 hidden h-8 w-px bg-line/60 sm:block" aria-hidden />
-            <Button
-              size="sm"
-              variant="secondary"
-              disabled={busy || !ffmpegReady}
-              title={!ffmpegReady ? t("ytdlpNeedFfmpeg") : undefined}
-              onClick={() => transferMut.mutate({ target: "local", status: "DRAFT" })}
-            >
-              {transferMut.isPending && transferMut.variables?.target === "local"
-                ? t("ytdlpTransferring")
-                : t("ytdlpTransferLocal")}
-            </Button>
-            <Button
-              size="sm"
-              disabled={busy || !ffmpegReady || !r2Ready}
-              title={
-                !r2Ready
-                  ? t("ytdlpNeedR2")
-                  : !ffmpegReady
-                    ? t("ytdlpNeedFfmpeg")
-                    : undefined
-              }
-              onClick={() => transferMut.mutate({ target: "r2", status: "DRAFT" })}
-            >
-              {transferMut.isPending && transferMut.variables?.target === "r2"
-                ? t("ytdlpTransferring")
-                : t("ytdlpTransferR2")}
-            </Button>
+            {showImport ? (
+              <Button
+                size="sm"
+                variant={showTransfer ? "secondary" : "primary"}
+                disabled={busy}
+                onClick={() => importMut.mutate("DRAFT")}
+              >
+                {t("importDraft")}
+              </Button>
+            ) : null}
+            {showImport && showTransfer ? (
+              <span className="mx-1 hidden h-8 w-px bg-line/60 sm:block" aria-hidden />
+            ) : null}
+            {showTransfer ? (
+              <>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={busy || !ffmpegReady}
+                  title={!ffmpegReady ? t("ytdlpNeedFfmpeg") : undefined}
+                  onClick={() => transferMut.mutate({ target: "local", status: "DRAFT" })}
+                >
+                  {transferMut.isPending && transferMut.variables?.target === "local"
+                    ? t("ytdlpTransferring")
+                    : t("ytdlpTransferLocal")}
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={busy || !ffmpegReady || !r2Ready}
+                  title={
+                    !r2Ready
+                      ? t("ytdlpNeedR2")
+                      : !ffmpegReady
+                        ? t("ytdlpNeedFfmpeg")
+                        : undefined
+                  }
+                  onClick={() => transferMut.mutate({ target: "r2", status: "DRAFT" })}
+                >
+                  {transferMut.isPending && transferMut.variables?.target === "r2"
+                    ? t("ytdlpTransferring")
+                    : t("ytdlpTransferR2")}
+                </Button>
+              </>
+            ) : null}
           </div>
-          <p className="text-caption text-ink-muted">{t("ytdlpTransferHint")}</p>
+          {showImport && !showTransfer ? (
+            <p className="text-caption text-ink-muted">{t("ytdlpImportComplianceHint")}</p>
+          ) : null}
+          {showTransfer ? <p className="text-caption text-ink-muted">{t("ytdlpTransferHint")}</p> : null}
         </div>
       ) : null}
     </div>

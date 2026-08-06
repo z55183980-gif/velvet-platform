@@ -65,9 +65,6 @@ class CreateEpisodeDto {
   @IsString()
   thumbnailUrl?: string;
 
-  @IsOptional()
-  @IsString()
-  transcodeStatus?: string;
 }
 
 class SubmitKycDto {

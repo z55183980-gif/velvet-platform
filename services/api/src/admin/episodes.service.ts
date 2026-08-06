@@ -67,7 +67,9 @@ export class AdminEpisodesService {
     const isFree = !!dto.isFree;
     const priceCredits = isFree ? 0n : toBigIntCredits(dto.priceCredits, 0n);
     const priceVnd = isFree ? 0n : toBigIntCredits(dto.priceVnd ?? dto.priceCredits, 0n);
-    if (!isFree && priceCredits <= 0n && priceVnd <= 0n) {
+    // 实际扣款只认 priceCredits（priceVnd 是遗留展示字段），必须单独校验，
+    // 否则只填 priceVnd 就能让付费集通过校验但按 0 积分解锁。
+    if (!isFree && priceCredits <= 0n) {
       throw new BizException(BizCode.BAD_REQUEST, '付费集需设置积分价 > 0');
     }
 
@@ -88,7 +90,7 @@ export class AdminEpisodesService {
           hlsUrl: urls.hlsUrl,
           originalUrl: urls.originalUrl,
           uploadStatus: urls.hlsUrl || urls.originalUrl ? 'COMPLETED' : 'PENDING',
-          transcodeStatus: urls.hlsUrl?.endsWith('.m3u8')
+          transcodeStatus: /^https?:\/\//i.test(urls.hlsUrl || '') || urls.hlsUrl?.endsWith('.m3u8')
             ? 'COMPLETED'
             : urls.originalUrl || urls.hlsUrl
               ? 'PENDING'
@@ -166,6 +168,13 @@ export class AdminEpisodesService {
 
     if (Object.keys(data).length === 0) {
       throw new BizException(BizCode.BAD_REQUEST, 'common.noFieldsToUpdate');
+    }
+    const effectiveFree = data.isFree != null ? Boolean(data.isFree) : ep.isFree;
+    const effectiveCredits = typeof data.priceCredits === 'bigint' ? data.priceCredits : ep.priceCredits;
+    // 实际扣款只认 priceCredits（priceVnd 是遗留展示字段），必须单独校验，
+    // 否则只填 priceVnd 就能让付费集通过校验但按 0 积分解锁。
+    if (!effectiveFree && effectiveCredits <= 0n) {
+      throw new BizException(BizCode.BAD_REQUEST, '付费集需设置积分价 > 0');
     }
     const updated = await this.prisma.episode.update({
       where: { id: BigInt(id) },
@@ -274,7 +283,7 @@ export class AdminEpisodesService {
         transcodeStatus: 'PENDING',
       },
     });
-    const job = this.upload.enqueueTranscode(saved.relativePath, String(ep.id));
+    const job = await this.upload.enqueueTranscode(saved.relativePath, String(ep.id));
     await this.audit.write({
       actorId,
       action: 'episode.upload',
@@ -323,6 +332,94 @@ export class AdminEpisodesService {
       actorId,
     );
     return this.uploadVideo(created.id, file, actorId);
+  }
+
+  /**
+   * Browser PUT → R2 (velvet-uploads) → confirm: API pulls object to local uploads/ and enqueues transcode.
+   */
+  async createWithR2DirectUpload(
+    dramaId: string,
+    dto: {
+      key: string;
+      filename?: string;
+      title?: string;
+      episodeNumber?: number;
+      isFree?: boolean;
+      priceCredits?: number | string;
+      thumbnailUrl?: string;
+    },
+    actorId?: bigint,
+  ) {
+    const key = String(dto.key || '').trim();
+    if (!key) throw new BizException(BizCode.BAD_REQUEST, '缺少 R2 object key');
+
+    const created = await this.create(
+      dramaId,
+      {
+        title: dto.title,
+        episodeNumber: dto.episodeNumber,
+        isFree: !!dto.isFree,
+        priceCredits: dto.isFree ? 0 : dto.priceCredits ?? 10,
+        thumbnailUrl: dto.thumbnailUrl,
+      },
+      actorId,
+    );
+
+    try {
+      return await this.attachDirectUpload(created.id, key, dto.filename, actorId);
+    } catch (e) {
+      // Avoid orphan occupied episode numbers on confirm failure
+      await this.delete(created.id, actorId).catch(() => undefined);
+      throw e;
+    }
+  }
+
+  async attachDirectUpload(
+    episodeId: string,
+    key: string,
+    originalFilename?: string,
+    actorId?: bigint,
+  ) {
+    const ep = await this.prisma.episode.findUnique({ where: { id: BigInt(episodeId) } });
+    if (!ep) throw new BizException(BizCode.NOT_FOUND, 'episode.notFound');
+
+    await this.upload.purgeMediaUrls([ep.hlsUrl, ep.originalUrl]).catch(() => undefined);
+    const saved = await this.upload.ingestDirectUploadKey(key, originalFilename);
+    await this.prisma.episode.update({
+      where: { id: ep.id },
+      data: {
+        originalUrl: saved.relativePath,
+        hlsUrl: saved.relativePath,
+        mediaWidth: null,
+        mediaHeight: null,
+        mediaOrientation: null,
+        uploadStatus: 'COMPLETED',
+        transcodeStatus: 'PENDING',
+      },
+    });
+    const job = await this.upload.enqueueTranscode(saved.relativePath, String(ep.id));
+    await this.audit.write({
+      actorId,
+      action: 'episode.upload.r2Direct',
+      targetType: 'episode',
+      targetId: episodeId,
+      payload: { key, relativePath: saved.relativePath, jobId: job.id, size: saved.size },
+    });
+    return {
+      episode: this.serialize({
+        ...ep,
+        originalUrl: saved.relativePath,
+        hlsUrl: saved.relativePath,
+        uploadStatus: 'COMPLETED',
+        transcodeStatus: 'PENDING',
+      }),
+      ...saved,
+      jobId: job.id,
+      transcodeStatus: job.status,
+      storage: this.upload.storageStatus(),
+      ffmpegReady: !!(await this.upload.detectFfmpeg()),
+      directUpload: true,
+    };
   }
 
   async listStorage(dramaId: string) {
@@ -392,6 +489,9 @@ export class AdminEpisodesService {
     if (dto.isFree == null && dto.priceCredits == null) {
       throw new BizException(BizCode.BAD_REQUEST, '请指定 isFree 或 priceCredits');
     }
+    if (dto.isFree === false && toBigIntCredits(dto.priceCredits, 0n) <= 0n) {
+      throw new BizException(BizCode.BAD_REQUEST, '批量设为付费时必须同时设置积分价 > 0');
+    }
 
     const episodes = await this.prisma.episode.findMany({
       where: { dramaId: BigInt(dramaId), id: { in: ids.map((id) => BigInt(id)) } },
@@ -451,6 +551,13 @@ export class AdminEpisodesService {
       throw new BizException(BizCode.BAD_REQUEST, '排序列表须包含全部当前分集');
     }
     await this.prisma.$transaction(async (tx) => {
+      // 两阶段编号避免交换 1/2 集时触发 (dramaId, episodeNumber) 临时唯一键冲突。
+      for (let i = 0; i < ids.length; i++) {
+        await tx.episode.update({
+          where: { id: BigInt(ids[i]) },
+          data: { episodeNumber: -(i + 1) },
+        });
+      }
       for (let i = 0; i < ids.length; i++) {
         await tx.episode.update({
           where: { id: BigInt(ids[i]) },
@@ -483,7 +590,7 @@ export class AdminEpisodesService {
       where: { id: ep.id },
       data: { transcodeStatus: 'PENDING' },
     });
-    const job = this.upload.enqueueTranscode(inputRel, String(ep.id));
+    const job = await this.upload.enqueueTranscode(inputRel, String(ep.id));
     await this.audit.write({
       actorId,
       action: 'episode.transcode.retry',
@@ -507,7 +614,7 @@ export class AdminEpisodesService {
     const source = dto.sourceUrl?.trim();
     if (source) {
       try {
-        const { playUrl, originalUrl } = convertExternalPlayUrl(source, { relaxed: true });
+        const { playUrl, originalUrl } = convertExternalPlayUrl(source);
         return { hlsUrl: playUrl, originalUrl };
       } catch (e: any) {
         throw new BizException(BizCode.BAD_REQUEST, e?.message || '无效播放地址');

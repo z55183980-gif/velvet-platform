@@ -49,7 +49,14 @@ export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElem
 
 export function Select({ className, children, ...props }: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
-    <select className={cn(fieldBase, "h-10", className)} {...props}>
+    <select
+      className={cn(
+        fieldBase,
+        "velvet-select h-10 cursor-pointer appearance-none pr-9 hover:border-brand/25 hover:bg-white/75 hover:shadow-sm disabled:cursor-not-allowed disabled:opacity-60",
+        className,
+      )}
+      {...props}
+    >
       {children}
     </select>
   );

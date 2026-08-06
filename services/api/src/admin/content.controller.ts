@@ -47,8 +47,29 @@ class ReasonDto {
   @IsOptional() @IsString() reason?: string;
 }
 
+class R2PresignDto {
+  @IsNotEmpty() @IsString() filename!: string;
+  @IsOptional() @IsString() contentType?: string;
+}
+
+class R2DirectEpisodeDto {
+  @IsNotEmpty() @IsString() key!: string;
+  @IsOptional() @IsString() filename?: string;
+  @IsOptional() @IsString() title?: string;
+  @IsOptional() episodeNumber?: string | number;
+  @IsOptional() isFree?: string | boolean;
+  @IsOptional() priceCredits?: string | number;
+  @IsOptional() @IsString() thumbnailUrl?: string;
+}
+
+class R2AttachEpisodeDto {
+  @IsNotEmpty() @IsString() key!: string;
+  @IsOptional() @IsString() filename?: string;
+}
+
 class LocalImportDto {
   @IsOptional() @IsString() rootPath?: string;
+  @IsOptional() @IsString() targetDramaId?: string;
   @IsOptional()
   @Transform(({ value }) => value === true || value === 'true' || value === 1)
   @IsBoolean()
@@ -94,6 +115,15 @@ class DramaUpdateDto {
   @IsOptional() @IsString() descriptionZh?: string;
   @IsOptional() @IsString() categorySlug?: string;
   @IsOptional() @IsString() coverUrl?: string;
+  @IsOptional() @IsIn(['UNKNOWN', 'PUBLIC_DOMAIN', 'CC0', 'CC_BY', 'CC_BY_SA', 'AUTHORIZED', 'OWNED'])
+  licenseType?: 'UNKNOWN' | 'PUBLIC_DOMAIN' | 'CC0' | 'CC_BY' | 'CC_BY_SA' | 'AUTHORIZED' | 'OWNED';
+  @IsOptional() @IsString() sourcePublisher?: string;
+  @IsOptional() @IsString() attributionText?: string;
+  @IsOptional() @IsString() rightsProofUrl?: string;
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true' || value === 1)
+  @IsBoolean()
+  rightsVerified?: boolean;
   @IsOptional() @Type(() => Number) @IsNumber() freeEpisodeCount?: number;
   @IsOptional()
   @ValidateIf((_, v) => v !== null && v !== '')
@@ -259,6 +289,13 @@ class YtdlpTransferDto {
   formatPreference?: 'best_hls' | 'best_mp4' | 'best';
 }
 
+class YtdlpAppendDto {
+  @IsNotEmpty() @IsString() url!: string;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) maxEpisodes?: number;
+  @IsOptional() @IsIn(['best_hls', 'best_mp4', 'best'])
+  formatPreference?: 'best_hls' | 'best_mp4' | 'best';
+}
+
 @Controller('v1/admin')
 @UseGuards(AdminGuard, AdminRoleGuard)
 export class ContentController {
@@ -305,10 +342,47 @@ export class ContentController {
     return ok({ ...status, ffmpegReady });
   }
 
+  /** 预签名：浏览器直传 R2（velvet-uploads），不经 Next/API 代理传大文件 */
+  @Post('uploads/presign')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async presignDirectUpload(@Body() dto: R2PresignDto, @Req() req: any) {
+    return ok(
+      await this.upload.createPresignedDirectUpload({
+        filename: dto.filename,
+        contentType: dto.contentType,
+        actorId: getActor(req),
+      }),
+    );
+  }
+
+  /**
+   * 确认直传：API 从 R2 拉取对象落盘 → 建集 → 排队转码。
+   * 浏览器只 PUT 到 R2；此接口为小 JSON。
+   */
+  @Post('dramas/:id/episodes/from-r2')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async createEpisodeFromR2(@Param('id') id: string, @Body() dto: R2DirectEpisodeDto, @Req() req: any) {
+    return ok(
+      await this.episodes.createWithR2DirectUpload(
+        id,
+        {
+          key: dto.key,
+          filename: dto.filename,
+          title: dto.title,
+          episodeNumber: dto.episodeNumber != null ? Number(dto.episodeNumber) : undefined,
+          isFree: dto.isFree === true || dto.isFree === 'true' || dto.isFree === '1',
+          priceCredits: dto.priceCredits != null ? Number(dto.priceCredits) : undefined,
+          thumbnailUrl: dto.thumbnailUrl,
+        },
+        getActor(req),
+      ),
+    );
+  }
+
   @Get('transcode/:jobId')
   @AdminRoles('SUPER_ADMIN', 'OPS')
   async transcodeJob(@Param('jobId') jobId: string) {
-    const job = this.upload.getJob(jobId);
+    const job = await this.upload.getJob(jobId);
     if (!job) throw new BizException(BizCode.NOT_FOUND, 'job not found');
     return ok(job);
   }
@@ -319,7 +393,22 @@ export class ContentController {
     return ok(await this.episodes.listStorage(id));
   }
 
-  /** multipart 视频上传到已有分集 → 本地落盘 → 转码 →（R2 开启时）推送 CDN */
+  /**
+   * 确认直传到已有分集：浏览器 PUT velvet-uploads 后，API 拉取落盘 → 排队转码。
+   */
+  @Post('episodes/:id/from-r2')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async attachEpisodeFromR2(
+    @Param('id') id: string,
+    @Body() dto: R2AttachEpisodeDto,
+    @Req() req: any,
+  ) {
+    return ok(
+      await this.episodes.attachDirectUpload(id, dto.key, dto.filename, getActor(req)),
+    );
+  }
+
+  /** multipart 视频上传到已有分集（无 R2 直传时的回退） */
   @Post('episodes/:id/upload')
   @AdminRoles('SUPER_ADMIN', 'OPS')
   @UseInterceptors(
@@ -394,7 +483,10 @@ export class ContentController {
     @Query('pageSize') pageSize?: string,
   ) {
     const kind =
-      mediaKind === 'r2' || mediaKind === 'local' || mediaKind === 'online'
+      mediaKind === 'owned' ||
+      mediaKind === 'online' ||
+      mediaKind === 'r2' ||
+      mediaKind === 'local'
         ? mediaKind
         : undefined;
     return ok(await this.content.list({
@@ -487,7 +579,8 @@ export class ContentController {
         freeEpisodeCount:
           body.freeEpisodeCount != null ? Number(body.freeEpisodeCount) : undefined,
         lockMode: body.lockMode as any,
-        status: body.status === 'LIVE' ? 'LIVE' : 'DRAFT',
+        // 与 createLocalUploadDrama 一致：创建强制草稿
+        status: 'DRAFT',
       },
       getActor(req),
     );
@@ -562,6 +655,16 @@ export class ContentController {
   @AdminRoles('SUPER_ADMIN', 'OPS')
   async ytdlpTransfer(@Body() dto: YtdlpTransferDto, @Req() req: any) {
     return ok(await this.ytdlp.transferDrama(dto, getActor(req)));
+  }
+
+  @Post('dramas/:id/ytdlp/append')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async ytdlpAppend(
+    @Param('id') id: string,
+    @Body() dto: YtdlpAppendDto,
+    @Req() req: any,
+  ) {
+    return ok(await this.ytdlp.appendToDrama(id, dto, getActor(req)));
   }
 
   @Post('dramas/hottest/reorder')
@@ -700,7 +803,13 @@ export class ContentController {
 
   @Post('import/local')
   async importLocal(@Body() dto: LocalImportDto) {
-    return ok(await this.admin.importLocal({ rootPath: dto.rootPath, dryRun: dto.dryRun }));
+    return ok(
+      await this.admin.importLocal({
+        rootPath: dto.rootPath,
+        dryRun: dto.dryRun,
+        targetDramaId: dto.targetDramaId,
+      }),
+    );
   }
 
   @Post('import/upload')
@@ -710,7 +819,12 @@ export class ContentController {
   }))
   async importUpload(
     @UploadedFiles() files: Express.Multer.File[],
-    @Body() body: { relativePaths?: string | string[]; dryRun?: string | boolean },
+    @Body()
+    body: {
+      relativePaths?: string | string[];
+      dryRun?: string | boolean;
+      targetDramaId?: string;
+    },
   ) {
     const raw = body?.relativePaths;
     const relativePaths = Array.isArray(raw)
@@ -722,7 +836,14 @@ export class ContentController {
     if (!files?.length) {
       throw new BizException(BizCode.BAD_REQUEST, '请选择要导入的文件夹');
     }
-    return ok(await this.admin.importUploadedFiles(files, relativePaths, dryRun));
+    return ok(
+      await this.admin.importUploadedFiles(
+        files,
+        relativePaths,
+        dryRun,
+        body?.targetDramaId?.trim() || undefined,
+      ),
+    );
   }
 
   @Get('banners')

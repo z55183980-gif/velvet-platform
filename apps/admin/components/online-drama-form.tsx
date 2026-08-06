@@ -1,10 +1,12 @@
 "use client";
 
 import { useMutation, useQuery } from "@tanstack/react-query";
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { adminCreateOnlineDrama, adminListCategories } from "@velvet/api-client";
 import { Button, Input, Select } from "@velvet/ui";
+import { DramaCoverField } from "@/components/drama-cover-field";
+import { contentDetailHref } from "@/lib/content-href";
 import { useI18n } from "@/lib/i18n";
 
 type Category = { slug: string; nameZh?: string; nameEn?: string };
@@ -23,6 +25,7 @@ const emptyEpisode = (n: number): EpisodeRow => ({
 
 export function OnlineDramaForm() {
   const { t } = useI18n();
+  const router = useRouter();
   const [titleZh, setTitleZh] = useState("");
   const [slug, setSlug] = useState("");
   const [categorySlug, setCategorySlug] = useState("");
@@ -40,7 +43,7 @@ export function OnlineDramaForm() {
   });
 
   const createMut = useMutation({
-    mutationFn: (status: "LIVE" | "DRAFT") => {
+    mutationFn: () => {
       const fromRows = episodes
         .map((ep) => ({
           episodeNumber: ep.episodeNumber,
@@ -61,6 +64,7 @@ export function OnlineDramaForm() {
       if (!titleZh.trim()) throw new Error(t("onlineNeedTitle"));
       if (!categorySlug) throw new Error(t("onlineNeedCategory"));
       if (!all.length) throw new Error(t("onlineNeedEpisodes"));
+      // 后端强制 DRAFT；外链须先权利核验再恢复上架
       return adminCreateOnlineDrama({
         titleZh: titleZh.trim(),
         slug: slug.trim() || undefined,
@@ -69,7 +73,7 @@ export function OnlineDramaForm() {
         descriptionZh: descriptionZh.trim() || undefined,
         lockMode: "ALL_FREE",
         freeEpisodeCount: all.length,
-        status,
+        status: "DRAFT",
         episodes: all,
       });
     },
@@ -77,20 +81,25 @@ export function OnlineDramaForm() {
       setError(null);
       setCreatedId(data.id);
       setCreatedCount(data.totalEpisodes);
+      router.push(contentDetailHref(data.id, "info"));
     },
     onError: (e: Error) => setError(e.message),
   });
 
   return (
     <div className="space-y-4">
-      <p className="text-body-sm text-ink-muted">{t("contentAddOnlineHint")}</p>
       {error ? <p className="text-body-sm text-danger">{error}</p> : null}
       {createdId ? (
-        <div className="upload-panel flex flex-wrap items-center gap-3 text-body-sm">
-          <span>{t("onlineCreated", { n: createdCount })}</span>
-          <Link href={`/content/${createdId}`} className="text-brand hover:underline">
-            {t("onlineViewDrama")}
-          </Link>
+        <div className="upload-panel space-y-2 text-body-sm">
+          <p>{t("onlineCreatedDraft", { n: createdCount })}</p>
+          <p className="text-caption text-ink-muted">{t("onlineNextRightsHint")}</p>
+          <button
+            type="button"
+            className="font-medium text-brand hover:underline"
+            onClick={() => router.push(contentDetailHref(createdId, "info"))}
+          >
+            {t("onlineOpenForRights")}
+          </button>
         </div>
       ) : null}
 
@@ -118,10 +127,19 @@ export function OnlineDramaForm() {
             ))}
           </Select>
         </label>
-        <label className="text-caption text-ink-muted">
-          {t("onlineCoverUrl")}
-          <Input className="mt-1" value={coverUrl} onChange={(e) => setCoverUrl(e.target.value)} />
-        </label>
+        <div className="text-caption text-ink-muted md:col-span-2">
+          <span className="mb-1 block">{t("uploadSectionCover")}</span>
+          <DramaCoverField
+            url={coverUrl || undefined}
+            disabled={createMut.isPending}
+            videoSrc={episodes.find((ep) => ep.sourceUrl.trim())?.sourceUrl || undefined}
+            videoIsHls={/\.m3u8(\?|$)/i.test(
+              episodes.find((ep) => ep.sourceUrl.trim())?.sourceUrl || "",
+            )}
+            onChange={setCoverUrl}
+            onError={setError}
+          />
+        </div>
         <label className="text-caption text-ink-muted md:col-span-2">
           {t("onlineDescZh")}
           <textarea
@@ -208,18 +226,11 @@ export function OnlineDramaForm() {
         </Button>
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        <Button size="sm" disabled={createMut.isPending} onClick={() => createMut.mutate("LIVE")}>
-          {t("onlineSubmit")}
-        </Button>
-        <Button
-          size="sm"
-          variant="secondary"
-          disabled={createMut.isPending}
-          onClick={() => createMut.mutate("DRAFT")}
-        >
+      <div className="flex flex-wrap items-center gap-3">
+        <Button size="sm" disabled={createMut.isPending} onClick={() => createMut.mutate()}>
           {t("onlineSubmitDraft")}
         </Button>
+        <p className="text-caption text-ink-muted">{t("onlineDraftOnlyHint")}</p>
       </div>
     </div>
   );

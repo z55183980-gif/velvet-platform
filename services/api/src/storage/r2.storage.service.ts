@@ -2,18 +2,33 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
   PutObjectCommand,
+  GetObjectCommand,
   S3Client,
   HeadObjectCommand,
   ListObjectsV2Command,
   DeleteObjectsCommand,
 } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { Readable } from 'stream';
+import { pipeline } from 'stream/promises';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as crypto from 'crypto';
 
 export type R2ObjectInfo = {
   key: string;
   size: number;
   lastModified?: string;
+};
+
+export type R2PresignPutResult = {
+  uploadUrl: string;
+  bucket: string;
+  key: string;
+  contentType: string;
+  headers: Record<string, string>;
+  expiresIn: number;
+  expiresAt: string;
 };
 
 /** Thin R2 (S3-compatible) helper. Only uses configured Velvet buckets. */
@@ -34,6 +49,11 @@ export class R2StorageService {
       this.config.get<string>('R2_ACCESS_KEY_ID') &&
       this.config.get<string>('R2_SECRET_ACCESS_KEY')
     );
+  }
+
+  /** Ready for browser direct PUT (needs credentials; bucket CORS must allow admin origin). */
+  canDirectUpload(): boolean {
+    return this.hasCredentials();
   }
 
   mediaBucket(): string {
@@ -66,6 +86,98 @@ export class R2StorageService {
       forcePathStyle: true,
     });
     return this.client;
+  }
+
+  private safeUploadFilename(name: string): string {
+    const base = path.basename(String(name || 'video.mp4')).replace(/[^\w.\u4e00-\u9fff()-]+/g, '_');
+    const cleaned = base.replace(/^\.+/, '') || 'video.mp4';
+    return cleaned.slice(0, 120);
+  }
+
+  /** Build a one-time direct-upload object key under velvet-uploads. */
+  buildDirectUploadKey(filename: string, actorId?: string | number | bigint): string {
+    const id = crypto.randomUUID().replace(/-/g, '').slice(0, 16);
+    const day = new Date().toISOString().slice(0, 10);
+    const actor = actorId != null ? String(actorId) : 'anon';
+    return `direct-uploads/${day}/${actor}/${id}-${this.safeUploadFilename(filename)}`;
+  }
+
+  isDirectUploadKey(key: string): boolean {
+    const k = String(key || '').replace(/^\/+/, '');
+    return (
+      k.startsWith('direct-uploads/') &&
+      !k.includes('..') &&
+      !k.includes('\\') &&
+      k.length < 512
+    );
+  }
+
+  async createPresignedPut(opts: {
+    filename: string;
+    contentType: string;
+    actorId?: string | number | bigint;
+    expiresIn?: number;
+  }): Promise<R2PresignPutResult> {
+    if (!this.hasCredentials()) {
+      throw new Error('R2 credentials incomplete');
+    }
+    const contentType = (opts.contentType || 'application/octet-stream').trim();
+    const expiresIn = Math.min(Math.max(opts.expiresIn ?? 3600, 60), 7200);
+    const key = this.buildDirectUploadKey(opts.filename, opts.actorId);
+    const bucket = this.uploadBucket();
+    const command = new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      ContentType: contentType,
+    });
+    const uploadUrl = await getSignedUrl(this.getClient(), command, { expiresIn });
+    return {
+      uploadUrl,
+      bucket,
+      key,
+      contentType,
+      headers: { 'Content-Type': contentType },
+      expiresIn,
+      expiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
+    };
+  }
+
+  async headUploadObject(key: string): Promise<{ size: number; contentType?: string }> {
+    if (!this.isDirectUploadKey(key)) {
+      throw new Error('invalid direct-upload key');
+    }
+    const res = await this.getClient().send(
+      new HeadObjectCommand({ Bucket: this.uploadBucket(), Key: key }),
+    );
+    return {
+      size: Number(res.ContentLength || 0),
+      contentType: res.ContentType,
+    };
+  }
+
+  /** Stream an upload-bucket object to a local absolute path. */
+  async downloadUploadObjectToFile(key: string, absPath: string): Promise<{ size: number }> {
+    if (!this.isDirectUploadKey(key)) {
+      throw new Error('invalid direct-upload key');
+    }
+    const res = await this.getClient().send(
+      new GetObjectCommand({ Bucket: this.uploadBucket(), Key: key }),
+    );
+    if (!res.Body) throw new Error('empty R2 object body');
+    fs.mkdirSync(path.dirname(absPath), { recursive: true });
+    const body = res.Body as Readable;
+    await pipeline(body, fs.createWriteStream(absPath));
+    const size = fs.statSync(absPath).size;
+    return { size };
+  }
+
+  async deleteUploadObject(key: string): Promise<void> {
+    if (!this.isDirectUploadKey(key)) return;
+    try {
+      await this.deleteKeys([key], this.uploadBucket());
+    } catch (e: any) {
+      this.logger.warn(`delete upload object failed ${key}: ${e?.message || e}`);
+    }
   }
 
   async putFile(bucket: string, key: string, absPath: string, contentType?: string) {
@@ -191,7 +303,11 @@ export class R2StorageService {
       if (/^https?:\/\//i.test(raw)) {
         const u = new URL(raw);
         const cdnHost = new URL(this.cdnBase()).host;
-        if (u.host !== cdnHost && !u.host.endsWith('.r2.dev') && !u.host.includes('r2.cloudflarestorage.com')) {
+        if (
+          u.host !== cdnHost &&
+          !u.host.endsWith('.r2.dev') &&
+          !u.host.includes('r2.cloudflarestorage.com')
+        ) {
           return null;
         }
         raw = u.pathname;
@@ -210,7 +326,6 @@ export class R2StorageService {
     if (raw.includes('/')) {
       const dir = path.posix.dirname(raw);
       if (dir === '.' || dir === '/') return raw;
-      // covers/foo.jpg → delete single object (return full key as "prefix" handled separately)
       if (raw.startsWith('covers/') || raw.startsWith('uploads/') || raw.startsWith('docs/')) {
         return raw;
       }

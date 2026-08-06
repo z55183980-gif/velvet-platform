@@ -15,29 +15,38 @@ import {
   resolveDramaDef,
   normName,
 } from './local-import.util';
-import { convertExternalPlayUrl, slugifyTitle } from './online-drama.util';
+import { convertExternalPlayUrl, inferExternalUrlExpiry, slugifyTitle } from './online-drama.util';
 import { AuditService } from '../common/audit.service';
 import { UploadService } from '../upload/upload.service';
+import { ContentReadinessService } from '../common/content-readiness.service';
 
 export interface LocalImportOptions {
   rootPath?: string;
   dryRun?: boolean;
   /** 写入 DB 的媒体相对路径前缀（相对 STORAGE_ROOT），如 `imports/{batchId}` */
   mediaPrefix?: string;
+  /** 指定后把扫描到的视频追加到该剧，而不是按子目录新建剧 */
+  targetDramaId?: string;
 }
 
 export interface LocalImportItemResult {
   folder: string;
   slug: string;
   titleZh: string;
-  action: 'imported' | 'skipped' | 'would_import' | 'error';
+  action: 'imported' | 'skipped' | 'would_import' | 'appended' | 'would_append' | 'error';
   reason?: string;
   episodes?: number;
   dramaId?: string;
+  fromEpisode?: number;
+  toEpisode?: number;
 }
 
 export interface OnlineEpisodeInput {
   sourceUrl: string;
+  sourcePageUrl?: string;
+  sourceProvider?: string;
+  externalVideoId?: string;
+  playlistIndex?: number;
   title?: string;
   episodeNumber?: number;
   isFree?: boolean;
@@ -86,6 +95,7 @@ export class AdminService {
     private readonly config: ConfigService,
     private readonly audit: AuditService,
     private readonly upload: UploadService,
+    private readonly readiness: ContentReadinessService,
   ) {
     this.pitRate = Number(config.get('PIT_RATE') || 0.05);
     this.defaultImportRoot =
@@ -108,6 +118,7 @@ export class AdminService {
     if (existing.status !== 'PENDING_REVIEW') {
       throw new BizException(BizCode.CONFLICT, 'request.alreadyProcessed');
     }
+    await this.readiness.assertDramaReady(existing.id);
     const drama = await this.prisma.drama.update({
       where: { id: BigInt(id) },
       data: { status: 'LIVE', publishedAt: new Date() },
@@ -418,6 +429,7 @@ export class AdminService {
     files: Express.Multer.File[],
     relativePaths: string[],
     dryRun = false,
+    targetDramaId?: string,
   ) {
     if (!files?.length) {
       throw new BizException(BizCode.BAD_REQUEST, '未收到上传文件');
@@ -454,6 +466,7 @@ export class AdminService {
       rootPath: batchRoot,
       dryRun,
       mediaPrefix,
+      targetDramaId,
     });
     return { ...result, batchId, mediaPrefix, filesWritten: files.length };
   }
@@ -494,8 +507,204 @@ export class AdminService {
   }
 
   /**
+   * 将单个剧文件夹内的视频追加到已有剧（集号接在当前最大集之后）。
+   * 支持：root 下直接放视频，或 root 下恰好一个子文件夹。
+   */
+  private async appendLocalVideosToDrama(opts: {
+    rootPath: string;
+    dryRun: boolean;
+    mediaPrefix: string;
+    targetDramaId: string;
+  }) {
+    const { rootPath, dryRun, mediaPrefix, targetDramaId } = opts;
+    if (!/^\d+$/.test(targetDramaId)) {
+      throw new BizException(BizCode.BAD_REQUEST, 'targetDramaId 无效');
+    }
+
+    const drama = await this.prisma.drama.findUnique({
+      where: { id: BigInt(targetDramaId) },
+      select: {
+        id: true,
+        slug: true,
+        titleZh: true,
+        titleEn: true,
+        coverUrl: true,
+        freeEpisodeCount: true,
+        lockMode: true,
+      },
+    });
+    if (!drama) throw new BizException(BizCode.NOT_FOUND, 'drama.notFound');
+
+    let folderAbs = rootPath;
+    let folderLabel = path.basename(rootPath);
+    let videos = listVideoFiles(rootPath);
+
+    if (!videos.length) {
+      const dirs = listDramaDirs(rootPath);
+      if (dirs.length > 1) {
+        throw new BizException(
+          BizCode.BAD_REQUEST,
+          '挂到已有剧时请选择单部剧文件夹（内含视频），不要选择多剧根目录',
+        );
+      }
+      if (dirs.length === 1) {
+        folderLabel = dirs[0];
+        folderAbs = path.join(rootPath, dirs[0]);
+        videos = listVideoFiles(folderAbs);
+      }
+    }
+
+    if (!videos.length) {
+      return {
+        rootPath,
+        dryRun,
+        scanned: 1,
+        imported: 0,
+        skipped: 1,
+        errors: 0,
+        items: [
+          {
+            folder: folderLabel,
+            slug: drama.slug,
+            titleZh: drama.titleZh || drama.titleEn || drama.slug,
+            action: 'skipped' as const,
+            reason: '无视频文件',
+            dramaId: drama.id.toString(),
+          },
+        ],
+        hint: '已指定已有剧，但目录中未找到视频。',
+      };
+    }
+
+    const maxAgg = await this.prisma.episode.aggregate({
+      where: { dramaId: drama.id },
+      _max: { episodeNumber: true },
+    });
+    const startEp = (maxAgg._max.episodeNumber ?? 0) + 1;
+    const endEp = startEp + videos.length - 1;
+
+    const paidSample = await this.prisma.episode.findFirst({
+      where: { dramaId: drama.id, isFree: false },
+      select: { priceCredits: true, priceVnd: true },
+      orderBy: { episodeNumber: 'desc' },
+    });
+    const paidCredits = paidSample?.priceCredits && paidSample.priceCredits > 0n
+      ? paidSample.priceCredits
+      : 10n;
+    const paidVnd = paidSample?.priceVnd && paidSample.priceVnd > 0n
+      ? paidSample.priceVnd
+      : paidCredits;
+
+    const freeCount = Math.max(0, drama.freeEpisodeCount ?? 0);
+    const lockMode = drama.lockMode || 'FREE_FIRST_N';
+    const episodeIsFree = (ep: number) => {
+      if (lockMode === 'ALL_FREE') return true;
+      if (lockMode === 'VIP_ALL') return false;
+      return ep <= freeCount;
+    };
+
+    const titleZh = drama.titleZh || drama.titleEn || drama.slug;
+    if (dryRun) {
+      return {
+        rootPath,
+        dryRun: true,
+        scanned: 1,
+        imported: 1,
+        skipped: 0,
+        errors: 0,
+        items: [
+          {
+            folder: folderLabel,
+            slug: drama.slug,
+            titleZh,
+            action: 'would_append' as const,
+            episodes: videos.length,
+            dramaId: drama.id.toString(),
+            fromEpisode: startEp,
+            toEpisode: endEp,
+          },
+        ],
+        hint: `将追加到已有剧「${titleZh}」第 ${startEp}–${endEp} 集。`,
+      };
+    }
+
+    const coverFile = pickCoverFile(folderAbs);
+    const mediaRel = (fileName: string) => {
+      const relFromRoot = path
+        .relative(rootPath, path.join(folderAbs, fileName))
+        .split(path.sep)
+        .join('/');
+      return mediaPrefix ? `${mediaPrefix}/${relFromRoot}` : relFromRoot;
+    };
+    const coverUrl = coverFile
+      ? `/api/v1/media/${mediaRel(coverFile)
+          .split('/')
+          .map((s) => encodeURIComponent(s))
+          .join('/')}`
+      : null;
+
+    for (let i = 0; i < videos.length; i++) {
+      const f = videos[i];
+      const ep = startEp + i;
+      const isFree = episodeIsFree(ep);
+      const rel = mediaRel(f);
+      await this.prisma.episode.create({
+        data: {
+          dramaId: drama.id,
+          episodeNumber: ep,
+          title: `Episode ${ep}`,
+          isFree,
+          priceVnd: isFree ? 0n : paidVnd,
+          priceCredits: isFree ? 0n : paidCredits,
+          durationSec: 120,
+          hlsUrl: rel,
+          thumbnailUrl: coverUrl,
+          uploadStatus: 'COMPLETED',
+          transcodeStatus: 'COMPLETED',
+        },
+      });
+    }
+
+    const total = await this.prisma.episode.count({ where: { dramaId: drama.id } });
+    await this.prisma.drama.update({
+      where: { id: drama.id },
+      data: {
+        totalEpisodes: total,
+        ...(coverUrl && !drama.coverUrl ? { coverUrl } : {}),
+      },
+    });
+
+    this.logger.log(
+      `local-import append: drama=${drama.id} +${videos.length} eps → ${startEp}-${endEp}`,
+    );
+
+    return {
+      rootPath,
+      dryRun: false,
+      scanned: 1,
+      imported: 1,
+      skipped: 0,
+      errors: 0,
+      items: [
+        {
+          folder: folderLabel,
+          slug: drama.slug,
+          titleZh,
+          action: 'appended' as const,
+          episodes: videos.length,
+          dramaId: drama.id.toString(),
+          fromEpisode: startEp,
+          toEpisode: endEp,
+        },
+      ],
+      hint: `已追加到「${titleZh}」第 ${startEp}–${endEp} 集。`,
+    };
+  }
+
+  /**
    * 管理员本地目录批量导入：扫描 rootPath 下每个子文件夹为一剧，
    * 按 slug / titleZh / 归一化文件夹名去重；幂等，已存在则 skip。
+   * 若指定 targetDramaId，则把目录内视频追加到该剧（单部剧文件夹）。
    */
   async importLocal(opts: LocalImportOptions = {}) {
     const rootPath = path.resolve(opts.rootPath || this.defaultImportRoot);
@@ -504,6 +713,15 @@ export class AdminService {
 
     if (!fs.existsSync(rootPath) || !fs.statSync(rootPath).isDirectory()) {
       throw new BizException(BizCode.BAD_REQUEST, `导入目录不存在: ${rootPath}`);
+    }
+
+    if (opts.targetDramaId?.trim()) {
+      return this.appendLocalVideosToDrama({
+        rootPath,
+        dryRun,
+        mediaPrefix,
+        targetDramaId: opts.targetDramaId.trim(),
+      });
     }
 
     for (const c of IMPORT_CATEGORIES) {
@@ -627,12 +845,13 @@ export class AdminService {
             freeEpisodeCount: def.freeCount,
             isOfficial: !!def.isOfficial,
             isFeatured: !!def.isFeatured,
-            status: 'LIVE',
+            // 与上传/在线一致：导入先入草稿，经就绪检查后再恢复上架
+            status: 'DRAFT',
             sourceType: 'LOCAL',
-            publishedAt: new Date(),
+            publishedAt: null,
             totalEpisodes: videos.length,
-            viewCount: BigInt(Math.floor(Math.random() * 5000) + 500),
-            unlockCount: BigInt(Math.floor(Math.random() * 500) + 50),
+            viewCount: 0n,
+            unlockCount: 0n,
           },
         });
 
@@ -929,6 +1148,11 @@ export class AdminService {
     if (dto.descriptionZh != null) data.descriptionZh = dto.descriptionZh;
     if (dto.categorySlug != null) data.categorySlug = dto.categorySlug;
     if (dto.coverUrl != null) data.coverUrl = dto.coverUrl;
+    if (dto.licenseType != null) data.licenseType = dto.licenseType;
+    if (dto.sourcePublisher != null) data.sourcePublisher = String(dto.sourcePublisher).trim() || null;
+    if (dto.attributionText != null) data.attributionText = String(dto.attributionText).trim() || null;
+    if (dto.rightsProofUrl != null) data.rightsProofUrl = String(dto.rightsProofUrl).trim() || null;
+    if (dto.rightsVerified != null) data.rightsVerifiedAt = dto.rightsVerified ? new Date() : null;
     if (dto.freeEpisodeCount != null) data.freeEpisodeCount = Number(dto.freeEpisodeCount);
     if (dto.lockMode !== undefined) {
       if (dto.lockMode === null || dto.lockMode === '' || dto.lockMode === 'INHERIT') {
@@ -996,6 +1220,7 @@ export class AdminService {
     if (!reason || !String(reason).trim()) {
       throw new BizException(BizCode.BAD_REQUEST, 'common.reasonRequired');
     }
+    await this.readiness.assertDramaReady(BigInt(id));
     const drama = await this.prisma.drama.update({
       where: { id: BigInt(id) },
       data: { status: 'LIVE', publishedAt: new Date() },
@@ -1055,6 +1280,10 @@ export class AdminService {
       playUrl: string;
       originalUrl: string;
       isFree: boolean;
+      sourcePageUrl: string | null;
+      sourceProvider: string | null;
+      externalVideoId: string | null;
+      playlistIndex: number | null;
     }> = [];
 
     for (let i = 0; i < dto.episodes.length; i++) {
@@ -1073,6 +1302,10 @@ export class AdminService {
           playUrl,
           originalUrl,
           isFree: ep.isFree !== false,
+          sourcePageUrl: ep.sourcePageUrl?.trim() || null,
+          sourceProvider: ep.sourceProvider?.trim() || null,
+          externalVideoId: ep.externalVideoId?.trim() || null,
+          playlistIndex: ep.playlistIndex && ep.playlistIndex > 0 ? Math.floor(ep.playlistIndex) : null,
         });
       } catch (e: any) {
         throw new BizException(
@@ -1113,7 +1346,8 @@ export class AdminService {
 
     const freeEpisodeCount = Math.max(0, Math.floor(Number(dto.freeEpisodeCount ?? converted.length)));
     const lockMode = dto.lockMode || 'ALL_FREE';
-    const status = dto.status === 'DRAFT' ? 'DRAFT' : 'LIVE';
+    // 外部资源必须先完成来源和权利审核，禁止创建时直接上线。
+    const status = 'DRAFT' as const;
 
     const drama = await this.prisma.$transaction(async (tx) => {
       const created = await tx.drama.create({
@@ -1135,7 +1369,7 @@ export class AdminService {
             ? dto.sourceTags.map(String).filter(Boolean)
             : [],
           status,
-          publishedAt: status === 'LIVE' ? new Date() : null,
+          publishedAt: null,
           totalEpisodes: converted.length,
         } as any,
       });
@@ -1152,6 +1386,12 @@ export class AdminService {
             priceVnd: isFree ? 0n : 10000n,
             hlsUrl: ep.playUrl,
             originalUrl: ep.originalUrl,
+            sourcePageUrl: ep.sourcePageUrl,
+            sourceProvider: ep.sourceProvider,
+            externalVideoId: ep.externalVideoId,
+            playlistIndex: ep.playlistIndex,
+            resolvedAt: new Date(),
+            resolvedExpiresAt: ep.sourcePageUrl ? inferExternalUrlExpiry(ep.playUrl) : null,
             uploadStatus: 'COMPLETED',
             transcodeStatus: 'COMPLETED',
           },
@@ -1240,7 +1480,8 @@ export class AdminService {
 
     const freeEpisodeCount = Math.max(0, Math.floor(Number(dto.freeEpisodeCount ?? 3)));
     const lockMode = dto.lockMode || 'FREE_FIRST_N';
-    const status = dto.status === 'LIVE' ? 'LIVE' : 'DRAFT';
+    // 创建时一律草稿；转码完成后再经 assertDramaReady 恢复上架，禁止绕过就绪门禁。
+    const status = 'DRAFT' as const;
 
     const drama = await this.prisma.drama.create({
       data: {
@@ -1258,7 +1499,7 @@ export class AdminService {
         sourceType: 'R2',
         tags: ['upload', 'r2'],
         status,
-        publishedAt: status === 'LIVE' ? new Date() : null,
+        publishedAt: null,
         totalEpisodes: 0,
       } as any,
     });

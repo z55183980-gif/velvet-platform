@@ -8,10 +8,12 @@ import { useI18n } from "@/lib/i18n";
 export function ContentDetailModal({
   open,
   dramaId,
+  initialTab,
   onClose,
 }: {
   open: boolean;
   dramaId: string | null;
+  initialTab?: "overview" | "info" | "episodes" | "policy";
   onClose: () => void;
 }) {
   const { t } = useI18n();
@@ -67,7 +69,13 @@ export function ContentDetailModal({
         className="content-detail-modal"
       >
         {dramaId ? (
-          <ContentDetailPanel ref={panelRef} id={dramaId} onDeleted={onClose} onDirtyChange={setDirty} />
+          <ContentDetailPanel
+            ref={panelRef}
+            id={dramaId}
+            initialTab={initialTab}
+            onDeleted={onClose}
+            onDirtyChange={setDirty}
+          />
         ) : null}
       </GlassModal>
       <ConfirmModal

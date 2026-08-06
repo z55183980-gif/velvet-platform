@@ -10,6 +10,7 @@ import {
   adminSetUserVip,
   adminWalletAdjust,
   asRows,
+  adminUserStatistics,
 } from "@velvet/api-client";
 import { AdminShell } from "@/components/admin-shell";
 import { GlassModal } from "@/components/glass-modal";
@@ -383,12 +384,16 @@ export default function AdminUsersPage() {
   const statusFromUrl = searchParams.get("status") || "ALL";
   const [q, setQ] = useState("");
   const [status, setStatus] = useState(statusFromUrl);
-  const [applied, setApplied] = useState({ q: "", status: statusFromUrl });
+  const [localeFilter, setLocaleFilter] = useState("ALL");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [applied, setApplied] = useState({ q: "", status: statusFromUrl, locale: "ALL", page: 1, pageSize: 20 });
   const [modal, setModal] = useState<ModalState>(null);
 
   useEffect(() => {
     setStatus(statusFromUrl);
-    setApplied((prev) => ({ ...prev, status: statusFromUrl }));
+    setApplied((prev) => ({ ...prev, status: statusFromUrl, page: 1 }));
+    setPage(1);
   }, [statusFromUrl]);
 
   const { data, error, isFetching, refetch } = useQuery({
@@ -397,12 +402,25 @@ export default function AdminUsersPage() {
       const res = await adminListUsers({
         q: applied.q || undefined,
         status: applied.status,
-        page: 1,
-        pageSize: 40,
+        locale: applied.locale === "ALL" ? undefined : applied.locale,
+        page: applied.page,
+        pageSize: applied.pageSize,
       });
       return { rows: asRows<Row>(res), total: (res as { total?: number })?.total ?? 0 };
     },
   });
+
+  const statsQ = useQuery({
+    queryKey: ["admin", "users", "statistics", "7d"],
+    queryFn: () => adminUserStatistics({ range: "7d" }),
+    staleTime: 60_000,
+  });
+  const summary = statsQ.data?.summary;
+  const totalPages = Math.max(1, Math.ceil((data?.total ?? 0) / pageSize));
+  const applyFilters = () => {
+    setPage(1);
+    setApplied({ q: q.trim(), status, locale: localeFilter, page: 1, pageSize });
+  };
 
   const columns: Column<Row>[] = useMemo(
     () => [
@@ -439,9 +457,10 @@ export default function AdminUsersPage() {
           const formatted = formatRegion(r.region, locale);
           if (!formatted) return <span className="text-caption text-ink-subtle">—</span>;
           return (
-            <div className="min-w-[7.5rem]">
-              <div className="font-mono text-caption tabular-nums text-ink">{formatted.ip}</div>
-              <div className="text-caption text-ink-subtle">{formatted.place}</div>
+            <div className="max-w-[11rem] truncate" title={`${formatted.ip} · ${formatted.place}`}>
+              <span className="text-caption text-ink">{formatted.place}</span>
+              <span className="mx-1 text-ink-subtle/50">·</span>
+              <span className="font-mono text-caption tabular-nums text-ink-muted">{formatted.ip}</span>
             </div>
           );
         },
@@ -505,7 +524,14 @@ export default function AdminUsersPage() {
     <AdminShell title={title}>
       {error ? <p className="mb-3 text-body-sm text-danger">{(error as Error).message}</p> : null}
 
-      <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard label={t("userStatsTotal")} value={fmtNum(summary?.totalUsers)} />
+        <StatCard label={t("userStatsNew")} value={fmtNum(summary?.newUsers)} />
+        <StatCard label={t("userStatsPaidUsers")} value={fmtNum(summary?.paidUsers)} />
+        <StatCard label={t("userStatsActiveVip")} value={fmtNum(summary?.activeVipUsers)} />
+      </div>
+
+      <div className="mb-4 flex flex-col gap-3 rounded-xl border border-line bg-white/45 p-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-2">
           <Input
             className="w-full sm:w-64"
@@ -513,7 +539,7 @@ export default function AdminUsersPage() {
             value={q}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") setApplied({ q, status });
+              if (e.key === "Enter") applyFilters();
             }}
           />
           <Select className="w-36" value={status} onChange={(e) => setStatus(e.target.value)}>
@@ -523,19 +549,47 @@ export default function AdminUsersPage() {
               </option>
             ))}
           </Select>
-          <Button size="sm" onClick={() => setApplied({ q, status })}>
+          <Select className="w-32" value={localeFilter} onChange={(e) => setLocaleFilter(e.target.value)}>
+            <option value="ALL">{t("localeAll")}</option>
+            <option value="zh">{t("localeZh")}</option>
+            <option value="en">{t("localeEn")}</option>
+            <option value="fr">{t("localeFr")}</option>
+          </Select>
+          <Button size="sm" onClick={applyFilters}>
             {t("query")}
           </Button>
           <Button size="sm" variant="secondary" onClick={() => refetch()} disabled={isFetching}>
             {t("refresh")}
           </Button>
         </div>
-        <p className="text-caption font-medium text-ink-subtle">
-          {t("totalCount", { n: data?.total ?? 0 })}
-        </p>
+        <div className="flex items-center gap-3 text-caption font-medium text-ink-subtle">
+          <span>{t("totalCount", { n: data?.total ?? 0 })}</span>
+          <Select className="h-8 w-24 text-caption" value={String(pageSize)} onChange={(e) => {
+            const next = Number(e.target.value);
+            setPageSize(next);
+            setPage(1);
+            setApplied((prev) => ({ ...prev, page: 1, pageSize: next }));
+          }}>
+            {[10, 20, 50].map((n) => <option key={n} value={n}>{n} / {t("page")}</option>)}
+          </Select>
+        </div>
       </div>
 
       <DataTable columns={columns} rows={data?.rows || []} loading={isFetching} emptyTitle={t("empty")} />
+
+      {(data?.total ?? 0) > 0 ? (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-white/45 px-3 py-2 text-caption text-ink-muted">
+          <span>{t("pageSummary", { page, totalPages })}</span>
+          <div className="flex items-center gap-1">
+            <Button size="sm" variant="secondary" disabled={page <= 1 || isFetching} onClick={() => {
+              const next = page - 1; setPage(next); setApplied((prev) => ({ ...prev, page: next }));
+            }}>{t("previousPage")}</Button>
+            <Button size="sm" variant="secondary" disabled={page >= totalPages || isFetching} onClick={() => {
+              const next = page + 1; setPage(next); setApplied((prev) => ({ ...prev, page: next }));
+            }}>{t("nextPage")}</Button>
+          </div>
+        </div>
+      ) : null}
 
       {modal?.mode === "detail" ? (
         <UserDetailModal

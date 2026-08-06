@@ -43,7 +43,7 @@ export class UploadController {
     await this.creator.ensureCreator(user.userId);
     const saved = this.upload.saveUpload(file);
 
-    let job: ReturnType<UploadService['enqueueTranscode']> | null = null;
+    let job: Awaited<ReturnType<UploadService['enqueueTranscode']>> | null = null;
     if (body?.episodeId) {
       const ep = await this.prisma.episode.findUnique({
         where: { id: BigInt(body.episodeId) },
@@ -54,6 +54,9 @@ export class UploadController {
       if (ep.drama.creatorId !== creator.id) {
         throw new BizException(BizCode.FORBIDDEN, 'common.forbidden');
       }
+      if (ep.drama.status !== 'DRAFT' && ep.drama.status !== 'REJECTED') {
+        throw new BizException(BizCode.CONFLICT, '审核中或已上线的作品不能替换片源');
+      }
       await this.prisma.episode.update({
         where: { id: ep.id },
         data: {
@@ -63,9 +66,9 @@ export class UploadController {
           transcodeStatus: 'PENDING',
         },
       });
-      job = this.upload.enqueueTranscode(saved.relativePath, String(ep.id));
+      job = await this.upload.enqueueTranscode(saved.relativePath, String(ep.id));
     } else if (body?.transcode === '1' || body?.transcode === 'true') {
-      job = this.upload.enqueueTranscode(saved.relativePath);
+      job = await this.upload.enqueueTranscode(saved.relativePath);
     }
 
     return ok({
@@ -85,6 +88,9 @@ export class UploadController {
     if (!body?.relativePath) {
       throw new BizException(BizCode.BAD_REQUEST, 'relativePath required');
     }
+    if (!body.episodeId) {
+      throw new BizException(BizCode.BAD_REQUEST, 'episodeId required');
+    }
     if (body.episodeId) {
       const ep = await this.prisma.episode.findUnique({
         where: { id: BigInt(body.episodeId) },
@@ -95,6 +101,9 @@ export class UploadController {
       if (ep.drama.creatorId !== creator.id) {
         throw new BizException(BizCode.FORBIDDEN, 'common.forbidden');
       }
+      if (ep.drama.status !== 'DRAFT' && ep.drama.status !== 'REJECTED') {
+        throw new BizException(BizCode.CONFLICT, '审核中或已上线的作品不能启动转码');
+      }
       await this.prisma.episode.update({
         where: { id: ep.id },
         data: {
@@ -104,13 +113,13 @@ export class UploadController {
         },
       });
     }
-    const job = this.upload.enqueueTranscode(body.relativePath, body.episodeId);
+    const job = await this.upload.enqueueTranscode(body.relativePath, body.episodeId);
     return ok(job);
   }
 
   @Get('transcode/:jobId')
   async jobStatus(@Param('jobId') jobId: string, @CurrentUser() _user: AuthUser) {
-    const job = this.upload.getJob(jobId);
+    const job = await this.upload.getJob(jobId);
     if (!job) throw new BizException(BizCode.NOT_FOUND, 'job not found');
     return ok(job);
   }

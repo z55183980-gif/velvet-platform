@@ -3,10 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
-  adminCreateEpisodeWithUpload,
+  adminCreateEpisodeWithUploadSmart,
   adminDramaStorage,
+  adminStorageStatus,
   adminTranscodeJob,
-  adminUploadEpisodeVideo,
+  adminUploadEpisodeVideoSmart,
 } from "@velvet/api-client";
 import { Badge, Button, cn } from "@velvet/ui";
 import { Cloud, HardDrive, LoaderCircle, RefreshCw, Trash2, Upload } from "lucide-react";
@@ -45,6 +46,13 @@ export function EpisodeVideoUploadButton({
   const [busy, setBusy] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
   const { t } = useI18n();
+  const storageQ = useQuery({
+    queryKey: ["admin", "storage-status"],
+    queryFn: () => adminStorageStatus(),
+    staleTime: 60_000,
+  });
+  const preferDirect =
+    !!storageQ.data?.r2DirectUpload || !!storageQ.data?.r2Configured;
 
   useEffect(() => {
     if (!jobId) return;
@@ -100,7 +108,9 @@ export function EpisodeVideoUploadButton({
           setBusy(true);
           void (async () => {
             try {
-              const res = await adminUploadEpisodeVideo(episodeId, file);
+              const res = await adminUploadEpisodeVideoSmart(episodeId, file, {
+                preferDirect,
+              });
               if (res.jobId) {
                 setJobId(res.jobId);
                 await onDone();
@@ -258,6 +268,13 @@ export function NewEpisodeUploadForm({
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [fileName, setFileName] = useState("");
+  const storageQ = useQuery({
+    queryKey: ["admin", "storage-status"],
+    queryFn: () => adminStorageStatus(),
+    staleTime: 60_000,
+  });
+  const preferDirect =
+    !!storageQ.data?.r2DirectUpload || !!storageQ.data?.r2Configured;
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -285,11 +302,12 @@ export function NewEpisodeUploadForm({
           setBusy(true);
           void (async () => {
             try {
-              await adminCreateEpisodeWithUpload(dramaId, file, {
+              await adminCreateEpisodeWithUploadSmart(dramaId, file, {
                 title: title || undefined,
                 isFree,
                 priceCredits: isFree ? 0 : priceCredits,
                 thumbnailUrl: thumbnailUrl || undefined,
+                preferDirect,
               });
               setFileName("");
               await onDone();
