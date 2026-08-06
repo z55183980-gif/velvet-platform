@@ -325,6 +325,7 @@ function buildFeedMeta(
 const FEED_PAGE_SIZE = 20;
 const FEED_PIN_HOTTEST = 3;
 const FEED_LOAD_MORE_THRESHOLD = 4;
+const HOME_FEED_MUTED_KEY = "velvet_home_feed_muted";
 
 type HomeFeedSnapshot = {
   dramas: Drama[];
@@ -356,7 +357,8 @@ export function VerticalFeed({
       : 0,
   );
   // Browser autoplay policies require the first feed item to begin muted.
-  const [muted, setMuted] = useState(() => restoredHomeFeed?.muted ?? true);
+  const [muted, setMuted] = useState(true);
+  const [restoreSound, setRestoreSound] = useState(false);
   const [pagerBlocked, setPagerBlocked] = useState(false);
   const shellRef = useRef<HTMLDivElement>(null);
   const togglePlayRef = useRef<(() => void) | null>(null);
@@ -374,6 +376,23 @@ export function VerticalFeed({
   const [loadingMore, setLoadingMore] = useState(false);
   const loadMoreLock = useRef(false);
   const shouldRestoreHomeFeed = !!(restoredHomeFeed && restoredHomeFeed.dramas.length > 0);
+
+  useEffect(() => {
+    try {
+      setRestoreSound(localStorage.getItem(HOME_FEED_MUTED_KEY) === "0");
+    } catch {
+      setRestoreSound(false);
+    }
+  }, []);
+
+  const handleMutedChange = useCallback((next: boolean) => {
+    setMuted(next);
+    try {
+      localStorage.setItem(HOME_FEED_MUTED_KEY, next ? "1" : "0");
+    } catch {
+      /* Storage can be unavailable in private/restricted contexts. */
+    }
+  }, []);
 
   useEffect(() => {
     if (source === "home") return;
@@ -536,7 +555,8 @@ export function VerticalFeed({
               drama={drama}
               active={active}
               muted={muted}
-              onMutedChange={setMuted}
+              onMutedChange={handleMutedChange}
+              restoreSound={restoreSound}
               onSeekingChange={onSeekingChange}
               registerTogglePlay={registerTogglePlay}
             />
@@ -557,6 +577,7 @@ function FeedPage({
   active,
   muted,
   onMutedChange,
+  restoreSound,
   onSeekingChange,
   registerTogglePlay,
 }: {
@@ -564,6 +585,7 @@ function FeedPage({
   active: boolean;
   muted: boolean;
   onMutedChange: (m: boolean) => void;
+  restoreSound: boolean;
   onSeekingChange: (seeking: boolean) => void;
   registerTogglePlay: (fn: (() => void) | null) => void;
 }) {
@@ -586,6 +608,19 @@ function FeedPage({
   /** Home feed only: sticky center Pause after user tap-to-pause (not scroll-away auto-pause). */
   const [userPaused, setUserPaused] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!active || !restoreSound || !playUrl || !video) return;
+    const restore = () => {
+      if (!video.muted) return;
+      video.muted = false;
+      onMutedChange(false);
+    };
+    video.addEventListener("playing", restore, { once: true });
+    if (!video.paused && video.readyState >= 2) restore();
+    return () => video.removeEventListener("playing", restore);
+  }, [active, restoreSound, playUrl, onMutedChange]);
 
   const meta = useMemo(() => buildFeedMeta(drama, locale, t), [drama, locale, t]);
 

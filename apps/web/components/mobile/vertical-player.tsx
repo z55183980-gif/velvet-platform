@@ -371,8 +371,16 @@ export function VerticalPlayer({
   };
 
   const toggleMute = () => {
+    const v = videoRef.current;
     const next = !muted;
     setMuted(next);
+    if (v) {
+      v.muted = next;
+      if (!next && v.volume === 0) v.volume = 1;
+      if (!next && v.paused && src && !locked && !loginRequired) {
+        void safePlay(v);
+      }
+    }
     onMutedChange?.(next);
     bumpChrome();
   };

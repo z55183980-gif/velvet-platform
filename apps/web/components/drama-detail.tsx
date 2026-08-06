@@ -281,9 +281,15 @@ export function DramaDetail({
     setFollowVideoAspect(true);
     // Prefer persisted media metadata; runtime video dimensions remain the fallback.
     const knownLandscape = episodeIsLandscape(selected);
-    setLandscapeMode(knownLandscape ?? pendingLandscapeFsRef.current);
-    setUiImmersive(false);
-    setRotateFs(false);
+    // A new episode replaces the media element. Keep the surrounding immersive
+    // shell alive while the previous episode was already in landscape mode.
+    const keepLandscapePlayback = landscapeModeRef.current;
+    const nextLandscape = knownLandscape ?? (keepLandscapePlayback || pendingLandscapeFsRef.current);
+    setLandscapeMode(nextLandscape);
+    if (!nextLandscape || !keepLandscapePlayback) {
+      setUiImmersive(false);
+      setRotateFs(false);
+    }
     setQualityIndex(-1);
     setQualities([]);
   }, [selected]);
