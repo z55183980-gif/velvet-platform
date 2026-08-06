@@ -137,7 +137,7 @@ export function DramaDetail({
   initialEpisodeNo,
 }: {
   id: string;
-  /** Feed「全屏观看」入口：进播放后自动触发真横屏沉浸 */
+  /** Feed「全屏观看」入口：进播放后自动触发 CSS 横屏沉浸 */
   autoLandscapeFs?: boolean;
   /** `/drama/[id]/play` — open watch immediately (Hongguo direct-play entry) */
   autoStartWatch?: boolean;
@@ -187,9 +187,9 @@ export function DramaDetail({
   const [landscapeMode, setLandscapeMode] = useState(!!autoLandscapeFs);
   const [followVideoAspect, setFollowVideoAspect] = useState(true);
   const [browserFs, setBrowserFs] = useState(false);
-  /** Fullscreen API 不可用时仍进入竖屏沉浸 UI（如部分 iOS Safari） */
+  /** CSS 沉浸层：不依赖 iOS 原生 video fullscreen，切集时保持外层 UI。 */
   const [uiImmersive, setUiImmersive] = useState(false);
-  /** iOS 等无法 lock 横屏时的 CSS 强制横屏全屏（仅横屏全屏路径） */
+  /** 设备仍为竖屏时，将 CSS 沉浸层顺时针旋转为横屏。 */
   const [rotateFs, setRotateFs] = useState(false);
   /** 红果横屏全屏：操作条显隐（点击画面切换，不暂停） */
   const [landChromeVisible, setLandChromeVisible] = useState(true);
@@ -501,6 +501,31 @@ export function DramaDetail({
   }, []);
 
   useEffect(() => {
+    if (!isMobile || !watching || (!uiImmersive && !rotateFs)) return;
+    const root = document.documentElement;
+    const body = document.body;
+    const previous = {
+      rootOverflow: root.style.overflow,
+      rootOverscroll: root.style.overscrollBehavior,
+      bodyOverflow: body.style.overflow,
+      bodyOverscroll: body.style.overscrollBehavior,
+      bodyTouchAction: body.style.touchAction,
+    };
+    root.style.overflow = "hidden";
+    root.style.overscrollBehavior = "none";
+    body.style.overflow = "hidden";
+    body.style.overscrollBehavior = "none";
+    body.style.touchAction = "none";
+    return () => {
+      root.style.overflow = previous.rootOverflow;
+      root.style.overscrollBehavior = previous.rootOverscroll;
+      body.style.overflow = previous.bodyOverflow;
+      body.style.overscrollBehavior = previous.bodyOverscroll;
+      body.style.touchAction = previous.bodyTouchAction;
+    };
+  }, [isMobile, watching, uiImmersive, rotateFs]);
+
+  useEffect(() => {
     if (!mobileReady || !isMobile) return;
     if (watching && landscapeMode) unlockScreenOrientation();
     else void lockPortraitOrientation();
@@ -560,99 +585,19 @@ export function DramaDetail({
     drawerOpen,
   ]);
 
-  const tryEnterLandscapeFs = useCallback(async () => {
+  const enterLandscapeImmersive = useCallback(() => {
     setShowRate(false);
     setShowMore(false);
     setShowQuality(false);
-    setUiImmersive(false);
     setLandChromeVisible(true);
-    const el = watchShellRef.current;
-    let lockedOrient = false;
-    let fsOk = false;
-    let nativeVideoFs = false;
-    const appleTouchDevice =
-      /iPad|iPhone|iPod/.test(navigator.userAgent) ||
-      (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-    try {
-      const req =
-        !appleTouchDevice &&
-        el &&
-        (el.requestFullscreen?.bind(el) ||
-          (
-            el as HTMLElement & {
-              webkitRequestFullscreen?: () => Promise<void> | void;
-            }
-          ).webkitRequestFullscreen?.bind(el));
-      if (req && !document.fullscreenElement) {
-        await req();
-        fsOk = !!(
-          document.fullscreenElement ||
-          (document as Document & { webkitFullscreenElement?: Element | null })
-            .webkitFullscreenElement
-        );
-      }
-    } catch {
-      fsOk = false;
-    }
-    if (appleTouchDevice && !fsOk) {
-      const video = videoRef.current as
-        | (HTMLVideoElement & {
-            webkitEnterFullscreen?: () => void;
-            webkitDisplayingFullscreen?: boolean;
-          })
-        | null;
-      try {
-        if (video?.webkitEnterFullscreen) {
-          video.webkitEnterFullscreen();
-          nativeVideoFs = video.webkitDisplayingFullscreen !== false;
-        }
-      } catch {
-        nativeVideoFs = false;
-      }
-    }
-    if (nativeVideoFs) {
-      setRotateFs(false);
-      setUiImmersive(false);
-      return;
-    }
-    if (!fsOk) {
-      setRotateFs(false);
-      setUiImmersive(false);
-      void lockPortraitOrientation();
-      return;
-    }
-    try {
-      const orient = screen.orientation as ScreenOrientation & {
-        lock?: (orientation: string) => Promise<void>;
-      };
-      if (orient.lock) {
-        try {
-          await orient.lock("landscape");
-          lockedOrient = true;
-        } catch {
-          try {
-            await orient.lock("landscape-primary");
-            lockedOrient = true;
-          } catch {
-            lockedOrient = false;
-          }
-        }
-      }
-    } catch {
-      lockedOrient = false;
-    }
-    const nowLand =
-      lockedOrient ||
-      (typeof window !== "undefined" && window.matchMedia("(orientation: landscape)").matches);
-    // Prefer native FS+orientation; CSS rotate only when device stays portrait.
-    if (nowLand || (fsOk && window.matchMedia("(orientation: landscape)").matches)) {
-      setRotateFs(false);
-      setScreenIsLandscape(true);
-      setUiImmersive(!fsOk);
-    } else {
-      setRotateFs(true);
-      setUiImmersive(true);
-    }
+    // Keep playback inline and make the stable outer shell fill the visual viewport.
+    // This avoids iOS replacing our UI with the native video player and allows the
+    // same immersive shell to survive src/episode changes.
+    unlockScreenOrientation();
+    const nowLand = window.matchMedia("(orientation: landscape)").matches;
+    setScreenIsLandscape(nowLand);
+    setRotateFs(!nowLand);
+    setUiImmersive(true);
   }, []);
 
   const exitImmersiveFs = useCallback(async () => {
@@ -692,8 +637,7 @@ export function DramaDetail({
     });
   }, [watching, isMobile, landscapeMode, exitImmersiveFs]);
 
-  // A routed fullscreen request may lack user activation. Never substitute the
-  // deprecated page-style landscape shell when the browser rejects fullscreen.
+  // The routed entry may run without user activation; CSS immersion does not need it.
   useEffect(() => {
     if (!pendingLandscapeFs || !watching || !isMobile) return;
     if (!landscapeMode || !playUrl) return;
@@ -701,7 +645,7 @@ export function DramaDetail({
     const allowed = !!(user || (episodeId && canGuestWatch(episodeId)));
     if (!playerReady || !allowed) return;
     setPendingLandscapeFs(false);
-    void tryEnterLandscapeFs();
+    void enterLandscapeImmersive();
   }, [
     pendingLandscapeFs,
     watching,
@@ -712,28 +656,26 @@ export function DramaDetail({
     selected?.id,
     user,
     canGuestWatch,
-    tryEnterLandscapeFs,
+    enterLandscapeImmersive,
   ]);
 
   useEffect(() => {
     if (!screenOrientationReady || !watching || !isMobile || !landscapeMode) return;
-    if (screenIsLandscape) {
-      if (!browserFs && !uiImmersive && !rotateFs) void tryEnterLandscapeFs();
+    if (uiImmersive || rotateFs) {
+      setUiImmersive(true);
+      setRotateFs(!screenIsLandscape);
       return;
     }
-    unlockScreenOrientation();
-    if (browserFs || uiImmersive || rotateFs) void exitImmersiveFs();
+    if (screenIsLandscape) void enterLandscapeImmersive();
   }, [
     screenOrientationReady,
     screenIsLandscape,
     watching,
     isMobile,
     landscapeMode,
-    browserFs,
     uiImmersive,
     rotateFs,
-    tryEnterLandscapeFs,
-    exitImmersiveFs,
+    enterLandscapeImmersive,
   ]);
 
   const applyResumeSeek = (video: HTMLVideoElement) => {
@@ -1111,7 +1053,7 @@ export function DramaDetail({
             : undefined
         }
       >
-        {/* Top chrome — 竖屏常态；横屏真全屏见下方红果条 */}
+        {/* Top chrome — 竖屏常态；横屏 CSS 沉浸见下方参考图式操作条 */}
         {!landscapeImmersive ? (
         <div className="absolute left-0 right-0 top-0 z-40 flex items-center justify-between bg-gradient-to-b from-black/65 via-black/25 to-transparent px-2.5 pb-3 pt-[max(0.4rem,env(safe-area-inset-top))]">
           <button
@@ -1400,7 +1342,7 @@ export function DramaDetail({
         {landscapeMode && !landscapeImmersive ? (
           <button
             type="button"
-            onClick={() => void tryEnterLandscapeFs()}
+            onClick={() => void enterLandscapeImmersive()}
             className="absolute left-1/2 top-[calc(50%+min(30vw,8rem))] z-30 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-[#2a2c2c]/88 px-4 py-2 text-[13px] font-medium text-white/95 backdrop-blur-sm"
           >
             <Smartphone className="h-4 w-4 rotate-90" strokeWidth={1.75} />
@@ -1458,111 +1400,115 @@ export function DramaDetail({
                 />
               </div>
               <LandVideoTime videoRef={videoRef} kind="duration" />
-              <div className={cn("relative shrink-0", landscapeControlWidth < 520 && "hidden")}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowQuality(false);
-                    setShowMore(false);
-                    setShowRate((v) => !v);
-                  }}
-                  className="px-1.5 text-[13px] font-medium text-white/95"
-                >
-                  {t("player.speed")}
-                </button>
-                {showRate ? (
-                  <div className="absolute bottom-full right-0 mb-2 min-w-[92px] overflow-hidden rounded-xl bg-[#2a2c2c]/96 py-1 shadow-lg ring-1 ring-white/10">
-                    {PLAYER_RATES.map((r) => (
-                      <button
-                        key={r}
-                        type="button"
-                        onClick={() => {
-                          setRate(r);
-                          setShowRate(false);
-                        }}
-                        className={cn(
-                          "flex w-full items-center justify-center px-3 py-2.5 text-[13px]",
-                          r === rate ? "font-semibold text-[#ff7e0d]" : "text-white/85",
-                        )}
-                      >
-                        {r === 1 ? t("player.speedNormal") : `${r}x`}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-              <div className={cn("relative shrink-0", landscapeControlWidth < 640 && "hidden")}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowRate(false);
-                    setShowMore(false);
-                    setShowQuality((v) => !v);
-                  }}
-                  className="px-1.5 text-[13px] font-medium text-white/95"
-                >
-                  {qualityIndex < 0
-                    ? t("player.qualityAuto")
-                    : qualities.find((q) => q.index === qualityIndex)?.label ||
-                      t("player.qualityAuto")}
-                </button>
-                {showQuality ? (
-                  <div className="absolute bottom-full right-0 mb-2 min-w-[112px] overflow-hidden rounded-xl bg-[#2a2c2c]/96 py-1 shadow-lg ring-1 ring-white/10">
-                    <button
-                      type="button"
-                      onClick={() => applyQuality(-1)}
-                      className={cn(
-                        "flex w-full items-center justify-center px-3 py-2.5 text-[13px]",
-                        qualityIndex < 0 ? "font-semibold text-[#ff7e0d]" : "text-white/85",
-                      )}
-                    >
-                      {t("player.qualityAuto")}
-                    </button>
-                    {qualities.map((q) => (
-                      <button
-                        key={q.index}
-                        type="button"
-                        onClick={() => applyQuality(q.index)}
-                        className={cn(
-                          "flex w-full items-center justify-center px-3 py-2.5 text-[13px]",
-                          qualityIndex === q.index
-                            ? "font-semibold text-[#ff7e0d]"
-                            : "text-white/85",
-                        )}
-                      >
-                        {q.label}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
             </div>
-            <div className="mt-2.5 flex items-center gap-5 pb-0.5 text-[12px] text-white/90">
-              <button
-                type="button"
-                className="inline-flex items-center gap-1.5"
-                onClick={() => void toggleLike()}
-              >
-                <Heart
-                  className={cn("h-4 w-4", liked ? "fill-[#ff4d6d] text-[#ff4d6d]" : "text-white")}
-                  strokeWidth={1.75}
-                />
-                {formatCount(likeCount, locale)}
-              </button>
-              <button
-                type="button"
-                className="inline-flex items-center gap-1.5"
-                onClick={() => void toggleFavorite()}
-              >
-                <Star
-                  className={cn(
-                    "h-4 w-4",
-                    favorited ? "fill-[#ffb000] text-[#ffb000]" : "text-white",
-                  )}
-                  strokeWidth={1.75}
-                />
-                {formatCount(favCount, locale)}
-              </button>
+            <div className="mt-2.5 flex items-center justify-between gap-4 pb-0.5 text-[12px] text-white/90">
+              <div className="flex min-w-0 items-center gap-5">
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5"
+                  onClick={() => void toggleLike()}
+                >
+                  <Heart
+                    className={cn("h-4 w-4", liked ? "fill-[#ff4d6d] text-[#ff4d6d]" : "text-white")}
+                    strokeWidth={1.75}
+                  />
+                  {formatCount(likeCount, locale)}
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5"
+                  onClick={() => void toggleFavorite()}
+                >
+                  <Star
+                    className={cn(
+                      "h-4 w-4",
+                      favorited ? "fill-[#ffb000] text-[#ffb000]" : "text-white",
+                    )}
+                    strokeWidth={1.75}
+                  />
+                  {formatCount(favCount, locale)}
+                </button>
+              </div>
+              <div className="flex shrink-0 items-center gap-4">
+                <div className={cn("relative", landscapeControlWidth < 420 && "hidden")}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowQuality(false);
+                      setShowMore(false);
+                      setShowRate((v) => !v);
+                    }}
+                    className="px-1 text-[13px] font-medium text-white/95"
+                  >
+                    {t("player.speed")}
+                  </button>
+                  {showRate ? (
+                    <div className="absolute bottom-full right-0 mb-2 min-w-[92px] overflow-hidden rounded-xl bg-[#2a2c2c]/96 py-1 shadow-lg ring-1 ring-white/10">
+                      {PLAYER_RATES.map((r) => (
+                        <button
+                          key={r}
+                          type="button"
+                          onClick={() => {
+                            setRate(r);
+                            setShowRate(false);
+                          }}
+                          className={cn(
+                            "flex w-full items-center justify-center px-3 py-2.5 text-[13px]",
+                            r === rate ? "font-semibold text-[#ff7e0d]" : "text-white/85",
+                          )}
+                        >
+                          {r === 1 ? t("player.speedNormal") : `${r}x`}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+                <div className={cn("relative", landscapeControlWidth < 500 && "hidden")}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowRate(false);
+                      setShowMore(false);
+                      setShowQuality((v) => !v);
+                    }}
+                    className="px-1 text-[13px] font-medium text-white/95"
+                  >
+                    {qualityIndex < 0
+                      ? t("player.qualityAuto")
+                      : qualities.find((q) => q.index === qualityIndex)?.label ||
+                        t("player.qualityAuto")}
+                  </button>
+                  {showQuality ? (
+                    <div className="absolute bottom-full right-0 mb-2 min-w-[112px] overflow-hidden rounded-xl bg-[#2a2c2c]/96 py-1 shadow-lg ring-1 ring-white/10">
+                      <button
+                        type="button"
+                        onClick={() => applyQuality(-1)}
+                        className={cn(
+                          "flex w-full items-center justify-center px-3 py-2.5 text-[13px]",
+                          qualityIndex < 0 ? "font-semibold text-[#ff7e0d]" : "text-white/85",
+                        )}
+                      >
+                        {t("player.qualityAuto")}
+                      </button>
+                      {qualities.map((q) => (
+                        <button
+                          key={q.index}
+                          type="button"
+                          onClick={() => applyQuality(q.index)}
+                          className={cn(
+                            "flex w-full items-center justify-center px-3 py-2.5 text-[13px]",
+                            qualityIndex === q.index
+                              ? "font-semibold text-[#ff7e0d]"
+                              : "text-white/85",
+                          )}
+                        >
+                          {q.label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
             </div>
           </div>
         ) : null}
@@ -1693,7 +1639,7 @@ export function DramaDetail({
                       if (uiImmersive) {
                         void exitImmersiveFs();
                       } else if (landscapeMode) {
-                        void tryEnterLandscapeFs();
+                        void enterLandscapeImmersive();
                       } else {
                         void enterPortraitFullscreen();
                       }

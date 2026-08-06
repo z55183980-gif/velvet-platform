@@ -507,11 +507,11 @@ export function VerticalPlayer({
       onPointerUp={onTapPointerUp}
       onPointerCancel={onTapPointerCancel}
     >
-      {src && !locked && !loginRequired ? (
+      {!locked && !loginRequired ? (
         <video
           ref={videoRef}
-          key={src}
-          src={/\.m3u8(\?|$)/i.test(src) ? undefined : src}
+          src={src && !/\.m3u8(\?|$)/i.test(src) ? src : undefined}
+          poster={poster && isImg(poster) ? poster : undefined}
           autoPlay={autoPlay && active}
           playsInline
           muted={muted}

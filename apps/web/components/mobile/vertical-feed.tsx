@@ -16,6 +16,8 @@ import {
   Pause,
   Smartphone,
   Star,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { useAuth, type AuthUser } from "@/components/auth-context";
@@ -387,6 +389,7 @@ export function VerticalFeed({
 
   const handleMutedChange = useCallback((next: boolean) => {
     setMuted(next);
+    setRestoreSound(!next);
     try {
       localStorage.setItem(HOME_FEED_MUTED_KEY, next ? "1" : "0");
     } catch {
@@ -938,6 +941,20 @@ function FeedPage({
     }
   };
 
+  const toggleMuted = () => {
+    const next = !muted;
+    const video = videoRef.current;
+    if (video) {
+      // Apply this inside the click gesture so mobile browsers allow audio immediately.
+      video.muted = next;
+      if (!next && video.volume === 0) video.volume = 1;
+      if (!next && video.paused && playUrl && canPlay && !locked && !needsLogin) {
+        void video.play().catch(() => undefined);
+      }
+    }
+    onMutedChange(next);
+  };
+
   return (
     <div className="relative h-full min-h-0 overflow-hidden bg-base">
       <VerticalPlayer
@@ -994,6 +1011,24 @@ function FeedPage({
       {/* Bottom info stack: title → tags → episode bar; side actions hug the top */}
       <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex flex-col">
         <div className="pointer-events-auto absolute bottom-full right-2.5 mb-2 flex flex-col items-center gap-5">
+          <SideAction
+            label={muted ? t("player.unmute") : t("player.mute")}
+            count={muted ? t("player.unmute") : t("player.mute")}
+            active={muted}
+            onClick={toggleMuted}
+          >
+            {muted ? (
+              <VolumeX
+                className="h-[30px] w-[30px] text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
+                strokeWidth={1.75}
+              />
+            ) : (
+              <Volume2
+                className="h-[30px] w-[30px] text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
+                strokeWidth={1.75}
+              />
+            )}
+          </SideAction>
           <SideAction
             label={t("feed.favorite")}
             count={formatCount(favCount, locale)}
