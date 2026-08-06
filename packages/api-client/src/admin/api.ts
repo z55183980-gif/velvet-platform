@@ -1,4 +1,4 @@
-import { asRows, toQuery } from "../types";
+﻿import { asRows, toQuery } from "../types";
 import { adminDownloadBlob, adminRequest, type AdminProfile } from "./http";
 import { clearAdminToken, setAdminToken } from "./http";
 
@@ -59,7 +59,7 @@ export async function adminUpdateProfile(input: {
   });
 }
 
-export type DashboardRange = "today" | "7d" | "30d";
+export type DashboardRange = "today" | "7d" | "30d" | "custom";
 
 export type DashboardKpi = {
   newUsers: number;
@@ -71,6 +71,8 @@ export type DashboardKpi = {
 
 export type DashboardOverview = {
   range: DashboardRange;
+  from: string | null;
+  to: string | null;
   period: DashboardKpi;
   previous: DashboardKpi;
   deltas: {
@@ -129,10 +131,20 @@ export type DashboardOverview = {
     unlock: { count: number; credits: string; amountVnd: string };
     dramaBuyout: { count: number; credits: string; amountVnd: string };
   };
+  meta: { dramaCount: number };
 };
 
-export async function adminDashboard(range: DashboardRange = "7d") {
-  return adminRequest<DashboardOverview>(`/admin/dashboard/overview${toQuery({ range })}`);
+export async function adminDashboard(
+  range: DashboardRange = "7d",
+  opts?: { from?: string; to?: string },
+) {
+  return adminRequest<DashboardOverview>(
+    `/admin/dashboard/overview${toQuery({
+      range,
+      from: range === "custom" ? opts?.from : undefined,
+      to: range === "custom" ? opts?.to : undefined,
+    })}`,
+  );
 }
 
 export async function adminListDramas(params: Record<string, string | number | undefined> = {}) {
@@ -276,6 +288,45 @@ export async function adminStorageStatus() {
   }>("/admin/storage/status");
 }
 
+export type AdminStorageProbe = {
+  ok: boolean;
+  skipped: boolean;
+  skipReason?: "r2_disabled" | "not_configured";
+  latencyMs: number | null;
+  error: string | null;
+  mediaBucket: string;
+  uploadBucket: string;
+  mediaReachable: boolean | null;
+  uploadReachable: boolean | null;
+  endpointHost: string | null;
+  region: string;
+  checkedAt: string;
+  /** media + upload total bytes when measurable; null if unavailable. */
+  storageBytes?: number | null;
+  mediaBytes?: number | null;
+  uploadBytes?: number | null;
+  /** True when size is partial / from a bounded ListObjects scan. */
+  storageApprox?: boolean;
+  storageSource?: "cloudflare_usage" | "cloudflare_graphql" | "list_approx" | null;
+};
+
+/** Live R2 connectivity check (skipped when STORAGE_BACKEND is local). */
+export async function adminStorageProbe() {
+  return adminRequest<{
+    storageBackend: string;
+    r2Enabled: boolean;
+    r2Configured: boolean;
+    r2DirectUpload?: boolean;
+    mediaBucket: string;
+    uploadBucket: string;
+    cdnBase: string;
+    ffmpegReady: boolean;
+    transcodeQueue?: "bullmq" | "inline";
+    redisConfigured?: boolean;
+    probe: AdminStorageProbe;
+  }>("/admin/storage/probe");
+}
+
 export async function adminDramaStorage(dramaId: string) {
   return adminRequest<{
     storageBackend: string;
@@ -373,6 +424,7 @@ export async function adminCreateEpisodeWithUpload(
     title?: string;
     episodeNumber?: number;
     isFree?: boolean;
+    previewSeconds?: number;
     priceCredits?: number;
     thumbnailUrl?: string;
   },
@@ -382,6 +434,7 @@ export async function adminCreateEpisodeWithUpload(
   if (opts?.title) form.append("title", opts.title);
   if (opts?.episodeNumber != null) form.append("episodeNumber", String(opts.episodeNumber));
   if (opts?.isFree != null) form.append("isFree", opts.isFree ? "true" : "false");
+  if (opts?.previewSeconds != null) form.append("previewSeconds", String(opts.previewSeconds));
   if (opts?.priceCredits != null) form.append("priceCredits", String(opts.priceCredits));
   if (opts?.thumbnailUrl) form.append("thumbnailUrl", opts.thumbnailUrl);
   return adminRequest<{
@@ -420,6 +473,15 @@ function guessVideoContentType(filename: string) {
   if (ext === "mov") return "video/quicktime";
   if (ext === "webm") return "video/webm";
   if (ext === "mkv") return "video/x-matroska";
+  if (ext === "avi") return "video/x-msvideo";
+  if (ext === "3gp") return "video/3gpp";
+  if (ext === "3g2") return "video/3gpp2";
+  if (ext === "wmv") return "video/x-ms-wmv";
+  if (ext === "flv" || ext === "f4v") return "video/x-flv";
+  if (ext === "ts" || ext === "m2ts" || ext === "mts") return "video/mp2t";
+  if (ext === "mpg" || ext === "mpeg") return "video/mpeg";
+  if (ext === "ogv") return "video/ogg";
+  if (ext === "asf") return "video/x-ms-asf";
   return "application/octet-stream";
 }
 
@@ -449,6 +511,7 @@ export async function adminCreateEpisodeFromR2(
     title?: string;
     episodeNumber?: number;
     isFree?: boolean;
+    previewSeconds?: number;
     priceCredits?: number;
     thumbnailUrl?: string;
   },
@@ -478,6 +541,7 @@ export async function adminCreateEpisodeWithUploadSmart(
     title?: string;
     episodeNumber?: number;
     isFree?: boolean;
+    previewSeconds?: number;
     priceCredits?: number;
     thumbnailUrl?: string;
     preferDirect?: boolean;
@@ -494,6 +558,7 @@ export async function adminCreateEpisodeWithUploadSmart(
         title: opts?.title,
         episodeNumber: opts?.episodeNumber,
         isFree: opts?.isFree,
+        previewSeconds: opts?.previewSeconds,
         priceCredits: opts?.priceCredits,
         thumbnailUrl: opts?.thumbnailUrl,
       });
@@ -948,8 +1013,10 @@ export async function adminCreateOnlineDrama(body: {
   coverUrl?: string;
   freeEpisodeCount?: number;
   lockMode?: "FREE_FIRST_N" | "VIP_ALL" | "ALL_FREE";
-  status?: "DRAFT" | "LIVE";
+  status?: "DRAFT";
   externalRef?: string;
+  /** Align with yt-dlp import: accept CDN/signed URLs without media extension. */
+  relaxedPlayUrl?: boolean;
   episodes: Array<{
     sourceUrl: string;
     title?: string;
@@ -982,6 +1049,9 @@ export async function adminCreateUploadDrama(body: {
   freeEpisodeCount?: number;
   lockMode?: "FREE_FIRST_N" | "VIP_ALL" | "ALL_FREE";
   status?: "DRAFT" | "LIVE";
+  sourceTags?: string[];
+  /** Announced/planned total (> uploaded inventory) for consumer placeholders. */
+  totalEpisodes?: number;
 }) {
   return adminRequest<{
     id: string;
@@ -1085,7 +1155,6 @@ export async function adminYtdlpImport(body: {
   categorySlug: string;
   titleZh?: string;
   titleEn?: string;
-  status?: "DRAFT" | "LIVE";
   maxEpisodes?: number;
   formatPreference?: "best_hls" | "best_mp4" | "best";
 }) {
@@ -1119,20 +1188,49 @@ export async function adminYtdlpResolve(body: {
   });
 }
 
+export type YtdlpTransferJob = {
+  id: string;
+  dramaId: string;
+  slug: string;
+  status: "queued" | "running" | "completed" | "failed";
+  target: "local" | "r2";
+  preferR2: boolean;
+  total: number;
+  transferred: number;
+  currentEpisode: number | null;
+  failedEpisodes: Array<{ episodeNumber: number; url: string; error: string }>;
+  jobs: Array<{
+    episodeId: string;
+    episodeNumber: number;
+    jobId: string;
+    filename: string;
+    size: number;
+  }>;
+  previewUrl?: string;
+  extractor?: string;
+  kind?: "single" | "playlist";
+  externalRef?: string;
+  sourceType?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export async function adminYtdlpTransfer(body: {
   url: string;
   categorySlug: string;
   target: "local" | "r2";
   titleZh?: string;
   titleEn?: string;
-  status?: "DRAFT" | "LIVE";
   maxEpisodes?: number;
   formatPreference?: "best_hls" | "best_mp4" | "best";
 }) {
   return adminRequest<{
+    jobId: string;
     id: string;
     slug: string;
     status: string;
+    jobStatus: "queued" | "running" | "completed" | "failed";
     sourceType: string;
     target: "local" | "r2";
     preferR2: boolean;
@@ -1152,11 +1250,17 @@ export async function adminYtdlpTransfer(body: {
       filename: string;
       size: number;
     }>;
-    previewUrl?: string;
+    async: true;
   }>("/admin/ytdlp/transfer", {
     method: "POST",
     body: JSON.stringify(body),
   });
+}
+
+export async function adminYtdlpTransferJob(jobId: string) {
+  return adminRequest<YtdlpTransferJob>(
+    `/admin/ytdlp/transfer/${encodeURIComponent(jobId)}`,
+  );
 }
 
 export async function adminSettleT7(days = 0) {

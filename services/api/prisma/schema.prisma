@@ -261,6 +261,7 @@ model Episode {
   mediaOrientation MediaOrientation?
 
   isFree          Boolean     @default(false)
+  previewSeconds  Int         @default(0)           // 付费分集允许普通用户试看秒数，0=不可试看
   priceVnd        BigInt      @default(0)           // 法币参考价（创作者分润 / 展示回退用）
   priceCredits    BigInt      @default(0)           // 平台原子定价（积分），解锁按此扣款
 

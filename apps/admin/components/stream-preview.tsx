@@ -11,10 +11,13 @@ export function StreamPreview({
   src,
   poster,
   className,
+  failHint,
 }: {
   src: string;
   poster?: string;
   className?: string;
+  /** Shown when browser cannot play (CORS / hotlink). */
+  failHint?: string;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState<string | null>(null);
@@ -78,6 +81,11 @@ export function StreamPreview({
     };
   }, [src]);
 
+  const defaultFail =
+    error === "browser_no_hls" || error === "hls_load_failed" || error === "hls_fatal"
+      ? "HLS 预览失败（CORS/格式）。可改用「优先 MP4」，或转存后预览本地文件。预览失败不代表入库失败。"
+      : "直链预览失败（防盗链/CORS 可能导致浏览器无法播放）。服务端入库/转存不受影响。";
+
   return (
     <div className={className}>
       <video
@@ -89,11 +97,7 @@ export function StreamPreview({
         onError={() => setError((e) => e || "play_error")}
       />
       {error ? (
-        <p className="mt-1 text-caption text-danger">
-          {error === "browser_no_hls" || error === "hls_load_failed" || error === "hls_fatal"
-            ? "HLS 预览失败（CORS/格式）。可改用「优先 MP4」，或转存后预览本地文件。"
-            : "直链预览失败（防盗链/CORS 可能导致浏览器无法播放）。服务端转存不受影响。"}
-        </p>
+        <p className="mt-1 text-caption text-danger">{failHint || defaultFail}</p>
       ) : null}
     </div>
   );

@@ -1,7 +1,49 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-export const VIDEO_EXT = new Set(['.mp4', '.mov', '.webm', '.mkv', '.m4v']);
+/** Containers accepted for local upload / folder import (ffmpeg may transcode after ingest). */
+export const VIDEO_EXT = new Set([
+  '.mp4',
+  '.mov',
+  '.webm',
+  '.mkv',
+  '.m4v',
+  '.avi',
+  '.3gp',
+  '.3g2',
+  '.wmv',
+  '.flv',
+  '.f4v',
+  '.ts',
+  '.m2ts',
+  '.mts',
+  '.mpg',
+  '.mpeg',
+  '.ogv',
+  '.asf',
+]);
+
+export const VIDEO_MIME_BY_EXT: Record<string, string> = {
+  '.mp4': 'video/mp4',
+  '.mov': 'video/quicktime',
+  '.mkv': 'video/x-matroska',
+  '.webm': 'video/webm',
+  '.m4v': 'video/x-m4v',
+  '.avi': 'video/x-msvideo',
+  '.3gp': 'video/3gpp',
+  '.3g2': 'video/3gpp2',
+  '.wmv': 'video/x-ms-wmv',
+  '.flv': 'video/x-flv',
+  '.f4v': 'video/x-f4v',
+  '.ts': 'video/mp2t',
+  '.m2ts': 'video/mp2t',
+  '.mts': 'video/mp2t',
+  '.mpg': 'video/mpeg',
+  '.mpeg': 'video/mpeg',
+  '.ogv': 'video/ogg',
+  '.asf': 'video/x-ms-asf',
+};
+
 export const IMG_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
 
 export function normName(s: string) {

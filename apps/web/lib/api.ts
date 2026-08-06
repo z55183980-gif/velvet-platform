@@ -1,4 +1,5 @@
 import type { Category, Drama, Episode } from "./mock-data";
+import { toPublicDramaTags } from "./drama-tags";
 
 // 相对路径：dev 下由 next.config 代理到 :4000；静态导出无后端时回退 mock
 const API_BASE = "/api/v1";
@@ -160,9 +161,10 @@ function mapDrama(d: any): Drama {
     descEn: d.descriptionEn || "",
     descZh: d.descriptionZh || "",
     categorySlug: d.categorySlug || "",
-    tags: Array.isArray(d.tags)
-      ? d.tags.map((t: unknown) => String(t).trim()).filter(Boolean)
-      : undefined,
+    tags: (() => {
+      const cleaned = toPublicDramaTags(d.tags);
+      return cleaned.length ? cleaned : undefined;
+    })(),
     cover: [cover, cover],
     isVip: !!d.isOfficial,
     rating: 0,
@@ -190,6 +192,7 @@ function mapEpisode(e: any): Episode {
     titleEn: e.title || `Episode ${e.episodeNumber}`,
     titleZh: e.title || `第 ${e.episodeNumber} 集`,
     isFree: !!e.isFree,
+    previewSeconds: Math.max(0, Number(e.previewSeconds) || 0),
     // 平台原子定价为积分（priceCredits）；回退 priceVnd
     price: Number(e.priceCredits ?? e.priceVnd ?? 0),
     unlocked: e.unlocked != null ? !!e.unlocked : !!e.isFree,
@@ -764,6 +767,8 @@ export async function getPlayUrl(episodeId: string | number, opts?: { signal?: A
     playUrl: string;
     expiresAt: string;
     durationSec: number;
+    previewSeconds: number;
+    previewOnly: boolean;
     mediaWidth: number | null;
     mediaHeight: number | null;
     mediaOrientation: "LANDSCAPE" | "PORTRAIT" | "SQUARE" | null;

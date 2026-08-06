@@ -35,6 +35,7 @@ import {
   redeemCode,
 } from "@/lib/api";
 import { cn, formatAmount, mediaUrl } from "@/lib/utils";
+import { pickTitleText } from "@/lib/languages";
 
 type DesktopTab = "favorites" | "history" | "orders" | "transactions";
 
@@ -282,7 +283,7 @@ export default function AccountPage() {
   }
 
   const titleOf = (d: any) =>
-    locale === "zh" ? d?.titleZh || d?.titleEn : d?.titleEn || d?.titleZh || "—";
+    pickTitleText(locale, d?.titleEn || "", d?.titleZh || "") || "—";
   const avatar = mediaUrl(user.avatarUrl);
 
   return (

@@ -7,7 +7,26 @@ const prisma = new PrismaClient();
 const SAMPLE_ROOT =
   process.env.SAMPLE_ROOT || '/Users/ahs/Downloads/aidym宣传视频/历史成品';
 
-const VIDEO_EXT = new Set(['.mp4', '.mov', '.webm', '.mkv', '.m4v']);
+const VIDEO_EXT = new Set([
+  '.mp4',
+  '.mov',
+  '.webm',
+  '.mkv',
+  '.m4v',
+  '.avi',
+  '.3gp',
+  '.3g2',
+  '.wmv',
+  '.flv',
+  '.f4v',
+  '.ts',
+  '.m2ts',
+  '.mts',
+  '.mpg',
+  '.mpeg',
+  '.ogv',
+  '.asf',
+]);
 const IMG_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
 
 function norm(s: string) {

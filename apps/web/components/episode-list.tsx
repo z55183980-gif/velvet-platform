@@ -4,7 +4,8 @@ import { useMemo, useState } from "react";
 import { Lock, Crown, Play } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import type { Episode } from "@/lib/mock-data";
-import { pickContentText } from "@/lib/languages";
+import { buildEpisodeSlots, filterSlotsByRange } from "@/lib/episode-slots";
+import { pickTitleText } from "@/lib/languages";
 import { cn } from "@/lib/utils";
 
 const SEG_SIZE = 30;
@@ -42,11 +43,13 @@ export function EpisodeList({
   layout?: "list" | "rail" | "grid" | "sidebar";
 }) {
   const { locale, t } = useLocale();
-  const epTitle = (ep: Episode) => pickContentText(locale, ep.titleEn, ep.titleZh);
+  const epTitle = (ep: Episode) => pickTitleText(locale, ep.titleEn, ep.titleZh);
   const unlocked = (ep: Episode) =>
     isUnlocked?.(ep) ?? !!(ep.isFree || ep.unlocked);
+  const comingSoon = t("detail.episodeComingSoon");
 
-  const total = episodesCount ?? episodes.length;
+  const total = Math.max(episodesCount ?? 0, episodes.length);
+  const slots = useMemo(() => buildEpisodeSlots(episodes, total), [episodes, total]);
 
   const segments = useMemo(() => {
     const size = layout === "sidebar" ? SIDEBAR_SEG : SEG_SIZE;
@@ -60,10 +63,10 @@ export function EpisodeList({
 
   const [segIndex, setSegIndex] = useState(0);
   const activeSeg = segments[Math.min(segIndex, segments.length - 1)] ?? segments[0];
-  const gridEpisodes =
+  const gridSlots =
     (layout === "grid" || layout === "sidebar") && activeSeg
-      ? episodes.filter((ep) => ep.no >= activeSeg.start && ep.no <= activeSeg.end)
-      : episodes;
+      ? filterSlotsByRange(slots, activeSeg.start, activeSeg.end)
+      : slots;
 
   if (layout === "sidebar") {
     return (
@@ -97,25 +100,39 @@ export function EpisodeList({
         )}
 
         <ul className="grid grid-cols-4 gap-2.5">
-          {gridEpisodes.map((ep) => {
-            const canPlay = unlocked(ep);
-            const active = selectedNo === ep.no;
+          {gridSlots.map((slot) => {
+            const active = slot.kind === "episode" && selectedNo === slot.no;
             return (
-              <li key={ep.no}>
-                <button
-                  type="button"
-                  onClick={() => (canPlay ? onSelect?.(ep) : onUnlock(ep))}
-                  className={cn(
-                    "relative flex h-[54px] w-full items-center justify-center rounded-lg text-[15px] transition-colors duration-150",
-                    active
-                      ? "bg-[rgba(250,119,5,0.12)] text-[#ff7e0d]"
-                      : "bg-white/[0.08] text-white/90 hover:bg-white/[0.14]",
-                  )}
-                  title={canPlay ? undefined : t("vip.open")}
-                >
-                  {!canPlay && <VipLockBadge />}
-                  {ep.no}
-                </button>
+              <li key={slot.no}>
+                {slot.kind === "placeholder" ? (
+                  <button
+                    type="button"
+                    disabled
+                    title={comingSoon}
+                    className="relative flex h-[54px] w-full cursor-default flex-col items-center justify-center gap-0.5 rounded-lg bg-white/[0.04] text-white/30"
+                  >
+                    <span className="text-[15px] tabular-nums">{slot.no}</span>
+                    <span className="text-[9px] leading-none">{comingSoon}</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const ep = slot.episode;
+                      unlocked(ep) ? onSelect?.(ep) : onUnlock(ep);
+                    }}
+                    className={cn(
+                      "relative flex h-[54px] w-full items-center justify-center rounded-lg text-[15px] transition-colors duration-150",
+                      active
+                        ? "bg-[rgba(250,119,5,0.12)] text-[#ff7e0d]"
+                        : "bg-white/[0.08] text-white/90 hover:bg-white/[0.14]",
+                    )}
+                    title={unlocked(slot.episode) ? undefined : t("vip.open")}
+                  >
+                    {!unlocked(slot.episode) && <VipLockBadge />}
+                    {slot.no}
+                  </button>
+                )}
               </li>
             );
           })}
@@ -166,25 +183,39 @@ export function EpisodeList({
             "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
           )}
         >
-          {gridEpisodes.map((ep) => {
-            const canPlay = unlocked(ep);
-            const active = selectedNo === ep.no;
+          {gridSlots.map((slot) => {
+            const active = slot.kind === "episode" && selectedNo === slot.no;
             return (
-              <li key={ep.no} className="shrink-0">
-                <button
-                  type="button"
-                  onClick={() => (canPlay ? onSelect?.(ep) : onUnlock(ep))}
-                  className={cn(
-                    "relative flex h-[52px] min-w-[53px] items-center justify-center rounded-lg px-3 text-[14px] transition-colors",
-                    active
-                      ? "bg-white/20 text-white"
-                      : "bg-white/[0.06] text-white hover:bg-white/20",
-                  )}
-                  title={canPlay ? undefined : t("vip.open")}
-                >
-                  {!canPlay && <VipLockBadge />}
-                  {ep.no}
-                </button>
+              <li key={slot.no} className="shrink-0">
+                {slot.kind === "placeholder" ? (
+                  <button
+                    type="button"
+                    disabled
+                    title={comingSoon}
+                    className="relative flex h-[52px] min-w-[53px] cursor-default flex-col items-center justify-center gap-0.5 rounded-lg bg-white/[0.04] px-3 text-white/30"
+                  >
+                    <span className="text-[14px] tabular-nums">{slot.no}</span>
+                    <span className="text-[9px] leading-none">{comingSoon}</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const ep = slot.episode;
+                      unlocked(ep) ? onSelect?.(ep) : onUnlock(ep);
+                    }}
+                    className={cn(
+                      "relative flex h-[52px] min-w-[53px] items-center justify-center rounded-lg px-3 text-[14px] transition-colors",
+                      active
+                        ? "bg-white/20 text-white"
+                        : "bg-white/[0.06] text-white hover:bg-white/20",
+                    )}
+                    title={unlocked(slot.episode) ? undefined : t("vip.open")}
+                  >
+                    {!unlocked(slot.episode) && <VipLockBadge />}
+                    {slot.no}
+                  </button>
+                )}
               </li>
             );
           })}
@@ -197,25 +228,41 @@ export function EpisodeList({
             "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
           )}
         >
-          {gridEpisodes.map((ep) => {
-            const canPlay = unlocked(ep);
-            const active = selectedNo === ep.no;
+          {gridSlots.map((slot) => {
+            const active = slot.kind === "episode" && selectedNo === slot.no;
             return (
-              <li key={ep.no}>
-                <button
-                  type="button"
-                  onClick={() => (canPlay ? onSelect?.(ep) : onUnlock(ep))}
-                  className={cn(
-                    "relative flex h-12 w-[120px] items-center justify-center rounded-lg text-[16px] tracking-wide transition-colors duration-150",
-                    active
-                      ? "bg-[rgba(250,119,5,0.12)] text-[#ff7e0d]"
-                      : "bg-white/[0.06] text-white/90 hover:bg-white/20",
-                  )}
-                  title={canPlay ? undefined : t("vip.open")}
-                >
-                  {!canPlay && <VipLockBadge />}
-                  <span className="opacity-90">{t("detail.episodeLabel", { n: ep.no })}</span>
-                </button>
+              <li key={slot.no}>
+                {slot.kind === "placeholder" ? (
+                  <button
+                    type="button"
+                    disabled
+                    title={comingSoon}
+                    className="relative flex h-12 w-[120px] cursor-default flex-col items-center justify-center gap-0.5 rounded-lg bg-white/[0.04] text-white/30"
+                  >
+                    <span className="text-[15px] tracking-wide">
+                      {t("detail.episodeLabel", { n: slot.no })}
+                    </span>
+                    <span className="text-[10px] leading-none">{comingSoon}</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const ep = slot.episode;
+                      unlocked(ep) ? onSelect?.(ep) : onUnlock(ep);
+                    }}
+                    className={cn(
+                      "relative flex h-12 w-[120px] items-center justify-center rounded-lg text-[16px] tracking-wide transition-colors duration-150",
+                      active
+                        ? "bg-[rgba(250,119,5,0.12)] text-[#ff7e0d]"
+                        : "bg-white/[0.06] text-white/90 hover:bg-white/20",
+                    )}
+                    title={unlocked(slot.episode) ? undefined : t("vip.open")}
+                  >
+                    {!unlocked(slot.episode) && <VipLockBadge />}
+                    <span className="opacity-90">{t("detail.episodeLabel", { n: slot.no })}</span>
+                  </button>
+                )}
               </li>
             );
           })}
@@ -240,11 +287,27 @@ export function EpisodeList({
             "[scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
           )}
         >
-          {episodes.map((ep) => {
+          {slots.map((slot) => {
+            if (slot.kind === "placeholder") {
+              return (
+                <li key={slot.no} className="shrink-0">
+                  <button
+                    type="button"
+                    disabled
+                    title={comingSoon}
+                    className="flex min-w-[4.5rem] cursor-default flex-col items-center gap-1.5 rounded-md bg-surface-2/60 px-3 py-3 text-ink-subtle/50"
+                  >
+                    <span className="text-h4 font-semibold tabular-nums">{slot.no}</span>
+                    <span className="text-caption">{comingSoon}</span>
+                  </button>
+                </li>
+              );
+            }
+            const ep = slot.episode;
             const canPlay = unlocked(ep);
             const active = selectedNo === ep.no;
             return (
-              <li key={ep.no} className="shrink-0">
+              <li key={slot.no} className="shrink-0">
                 <button
                   type="button"
                   onClick={() => (canPlay ? onSelect?.(ep) : onUnlock(ep))}
@@ -273,11 +336,29 @@ export function EpisodeList({
         </ul>
       ) : (
         <ul className="flex flex-col gap-1">
-          {episodes.map((ep) => {
+          {slots.map((slot) => {
+            if (slot.kind === "placeholder") {
+              return (
+                <li key={slot.no}>
+                  <div className="flex w-full items-center gap-4 rounded-md px-3 py-3 text-left opacity-55">
+                    <span className="grid h-9 w-9 flex-none place-items-center rounded-full bg-surface-2 text-body-sm font-medium text-ink-subtle/60">
+                      {slot.no}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-body text-ink-subtle">
+                        {t("detail.episodeLabel", { n: slot.no })}
+                      </p>
+                      <p className="mt-0.5 text-caption text-ink-subtle/70">{comingSoon}</p>
+                    </div>
+                  </div>
+                </li>
+              );
+            }
+            const ep = slot.episode;
             const canPlay = unlocked(ep);
             const active = selectedNo === ep.no;
             return (
-              <li key={ep.no}>
+              <li key={slot.no}>
                 <button
                   type="button"
                   onClick={() => (canPlay ? onSelect?.(ep) : onUnlock(ep))}

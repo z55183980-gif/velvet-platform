@@ -39,9 +39,11 @@ type Row = {
   nickname?: string | null;
   email?: string | null;
   phone?: string | null;
+  avatarUrl?: string | null;
   locale?: string;
   status?: string;
   createdAt?: string;
+  vipExpireAt?: string | null;
   wallet?: { balanceCredits?: string | number };
   region?: {
     ipAddress?: string | null;
@@ -70,6 +72,18 @@ type DetailUser = {
 type Detail = { user?: DetailUser };
 
 type ModalState = { mode: "detail" | "edit"; id: string } | null;
+
+function paginationItems(page: number, total: number): Array<number | "ellipsis"> {
+  if (total <= 7) return Array.from({ length: total }, (_, index) => index + 1);
+  const visible = new Set([1, total, page - 1, page, page + 1]);
+  const pages = [...visible].filter((value) => value >= 1 && value <= total).sort((a, b) => a - b);
+  const result: Array<number | "ellipsis"> = [];
+  pages.forEach((value, index) => {
+    if (index > 0 && value - pages[index - 1] > 1) result.push("ellipsis");
+    result.push(value);
+  });
+  return result;
+}
 
 const COUNTRY_ZH: Record<string, string> = {
   LOCAL: "本地",
@@ -382,19 +396,44 @@ export default function AdminUsersPage() {
   const { t, locale } = useI18n();
   const searchParams = useLocationSearchParams();
   const statusFromUrl = searchParams.get("status") || "ALL";
-  const [q, setQ] = useState("");
+  const initialPage = Math.max(1, Number(searchParams.get("page")) || 1);
+  const initialPageSize = [10, 20, 50].includes(Number(searchParams.get("pageSize")))
+    ? Number(searchParams.get("pageSize"))
+    : 20;
+  const initialLocale = searchParams.get("locale") || "ALL";
+  const initialQuery = searchParams.get("q") || "";
+  const [q, setQ] = useState(initialQuery);
   const [status, setStatus] = useState(statusFromUrl);
-  const [localeFilter, setLocaleFilter] = useState("ALL");
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
-  const [applied, setApplied] = useState({ q: "", status: statusFromUrl, locale: "ALL", page: 1, pageSize: 20 });
+  const [localeFilter, setLocaleFilter] = useState(initialLocale);
+  const [page, setPage] = useState(initialPage);
+  const [pageSize, setPageSize] = useState(initialPageSize);
+  const [jumpPage, setJumpPage] = useState("");
+  const [applied, setApplied] = useState({
+    q: initialQuery,
+    status: statusFromUrl,
+    locale: initialLocale,
+    page: initialPage,
+    pageSize: initialPageSize,
+  });
   const [modal, setModal] = useState<ModalState>(null);
 
   useEffect(() => {
-    setStatus(statusFromUrl);
-    setApplied((prev) => ({ ...prev, status: statusFromUrl, page: 1 }));
-    setPage(1);
-  }, [statusFromUrl]);
+    const nextStatus = searchParams.get("status") || "ALL";
+    const nextLocale = searchParams.get("locale") || "ALL";
+    const nextQuery = searchParams.get("q") || "";
+    const nextPage = Math.max(1, Number(searchParams.get("page")) || 1);
+    const rawPageSize = Number(searchParams.get("pageSize"));
+    const nextPageSize = [10, 20, 50].includes(rawPageSize) ? rawPageSize : 20;
+    setQ(nextQuery);
+    setStatus(nextStatus);
+    setLocaleFilter(nextLocale);
+    setPage(nextPage);
+    setPageSize(nextPageSize);
+    setApplied((prev) => {
+      const next = { q: nextQuery, status: nextStatus, locale: nextLocale, page: nextPage, pageSize: nextPageSize };
+      return JSON.stringify(prev) === JSON.stringify(next) ? prev : next;
+    });
+  }, [searchParams]);
 
   const { data, error, isFetching, refetch } = useQuery({
     queryKey: ["admin", "users", applied],
@@ -417,10 +456,38 @@ export default function AdminUsersPage() {
   });
   const summary = statsQ.data?.summary;
   const totalPages = Math.max(1, Math.ceil((data?.total ?? 0) / pageSize));
+  const goToPage = (nextPage: number) => {
+    const next = Math.min(totalPages, Math.max(1, Math.floor(nextPage)));
+    setPage(next);
+    setApplied((prev) => ({ ...prev, page: next }));
+  };
   const applyFilters = () => {
     setPage(1);
     setApplied({ q: q.trim(), status, locale: localeFilter, page: 1, pageSize });
   };
+
+  useEffect(() => {
+    if (isFetching || !data || page <= totalPages) return;
+    goToPage(totalPages);
+  }, [data, isFetching, page, totalPages]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const setOrDelete = (key: string, value: string, defaultValue = "") => {
+      if (!value || value === defaultValue) params.delete(key);
+      else params.set(key, value);
+    };
+    setOrDelete("q", applied.q);
+    setOrDelete("status", applied.status, "ALL");
+    setOrDelete("locale", applied.locale, "ALL");
+    setOrDelete("page", String(applied.page), "1");
+    setOrDelete("pageSize", String(applied.pageSize), "20");
+    const nextSearch = params.toString();
+    const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}`;
+    if (`${window.location.pathname}${window.location.search}` !== nextUrl) {
+      window.history.replaceState(window.history.state, "", nextUrl);
+    }
+  }, [applied]);
 
   const columns: Column<Row>[] = useMemo(
     () => [
@@ -435,9 +502,24 @@ export default function AdminUsersPage() {
         key: "user",
         header: t("colUser"),
         cell: (r) => (
-          <div className="min-w-[9rem] max-w-[14rem]">
-            <div className="truncate text-body-sm font-medium text-ink">{r.nickname || "—"}</div>
-            <div className="truncate text-caption text-ink-subtle">{r.email || r.phone || "—"}</div>
+          <div className="flex min-w-[12rem] max-w-[16rem] items-center gap-2.5">
+            {r.avatarUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={r.avatarUrl} alt="" className="h-8 w-8 shrink-0 rounded-full object-cover ring-1 ring-line" />
+            ) : (
+              <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-brand-soft text-caption font-semibold text-brand">
+                {(r.nickname || r.email || "?").charAt(0).toUpperCase()}
+              </span>
+            )}
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 truncate text-body-sm font-medium text-ink">
+                <span className="truncate">{r.nickname || "—"}</span>
+                {r.vipExpireAt && new Date(r.vipExpireAt).getTime() > Date.now() ? (
+                  <span className="shrink-0 rounded-md bg-warning-soft px-1.5 py-0.5 text-[10px] font-semibold text-warning">VIP</span>
+                ) : null}
+              </div>
+              <div className="truncate text-caption text-ink-subtle">{r.email || r.phone || `ID ${r.id}`}</div>
+            </div>
           </div>
         ),
       },
@@ -575,18 +657,62 @@ export default function AdminUsersPage() {
         </div>
       </div>
 
-      <DataTable columns={columns} rows={data?.rows || []} loading={isFetching} emptyTitle={t("empty")} />
+      <DataTable className="users-table" columns={columns} rows={data?.rows || []} loading={isFetching} emptyTitle={t("empty")} />
 
       {(data?.total ?? 0) > 0 ? (
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-white/45 px-3 py-2 text-caption text-ink-muted">
-          <span>{t("pageSummary", { page, totalPages })}</span>
+          <span>{data?.total ? `${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, data.total)} / ${data.total}` : "0"}</span>
           <div className="flex items-center gap-1">
             <Button size="sm" variant="secondary" disabled={page <= 1 || isFetching} onClick={() => {
-              const next = page - 1; setPage(next); setApplied((prev) => ({ ...prev, page: next }));
+              goToPage(page - 1);
             }}>{t("previousPage")}</Button>
+            <div className="hidden items-center gap-1 sm:flex">
+              {paginationItems(page, totalPages).map((item, index) => item === "ellipsis" ? (
+                <span key={`ellipsis-${index}`} className="grid h-9 w-7 place-items-center text-ink-subtle">…</span>
+              ) : (
+                <button
+                  key={item}
+                  type="button"
+                  aria-current={item === page ? "page" : undefined}
+                  disabled={isFetching}
+                  onClick={() => goToPage(item)}
+                  className={[
+                    "grid h-9 min-w-9 place-items-center rounded-xl px-2 font-medium transition",
+                    item === page
+                      ? "bg-brand text-white shadow-brand"
+                      : "border border-white/70 bg-white/65 text-ink-muted hover:-translate-y-0.5 hover:bg-white hover:text-ink hover:shadow-sm",
+                  ].join(" ")}
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
             <Button size="sm" variant="secondary" disabled={page >= totalPages || isFetching} onClick={() => {
-              const next = page + 1; setPage(next); setApplied((prev) => ({ ...prev, page: next }));
+              goToPage(page + 1);
             }}>{t("nextPage")}</Button>
+            {totalPages > 1 ? (
+              <div className="ml-2 hidden items-center gap-1 lg:flex">
+                <Input
+                  type="number"
+                  min={1}
+                  max={totalPages}
+                  className="h-9 w-16 px-2 text-center text-caption"
+                  value={jumpPage}
+                  placeholder={String(page)}
+                  onChange={(event) => setJumpPage(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && jumpPage) {
+                      goToPage(Number(jumpPage));
+                      setJumpPage("");
+                    }
+                  }}
+                />
+                <Button size="sm" variant="ghost" disabled={!jumpPage || isFetching} onClick={() => {
+                  goToPage(Number(jumpPage));
+                  setJumpPage("");
+                }}>{t("goToPage")}</Button>
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}

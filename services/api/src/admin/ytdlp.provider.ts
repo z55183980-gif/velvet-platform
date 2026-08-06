@@ -8,6 +8,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { promisify } from 'util';
 import { BizCode, BizException } from '../common/biz.exception';
+import { VIDEO_EXT } from './local-import.util';
 import {
   defaultYtdlpBinDir,
   ensureYtdlpBinary,
@@ -349,14 +350,13 @@ export class YtdlpProvider implements OnModuleInit {
         .filter((f) => f.startsWith(stem + '.'))
         .map((f) => path.join(outputDir, f));
       absPath =
-        candidates.find((p) => /\.(mp4|mkv|webm|mov|m4v)$/i.test(p)) || candidates[0] || '';
+        candidates.find((p) => VIDEO_EXT.has(path.extname(p).toLowerCase())) || candidates[0] || '';
     }
     if (!absPath || !fs.existsSync(absPath)) {
       throw new BizException(BizCode.BAD_REQUEST, 'yt-dlp 下载完成但未找到输出文件');
     }
     const ext = path.extname(absPath).toLowerCase();
-    const allowed = new Set(['.mp4', '.mov', '.mkv', '.webm', '.m4v']);
-    if (!allowed.has(ext)) {
+    if (!VIDEO_EXT.has(ext)) {
       throw new BizException(
         BizCode.BAD_REQUEST,
         `下载格式不受转码支持: ${ext || '(无扩展名)'}`,

@@ -1,0 +1,2 @@
+ALTER TABLE "episodes"
+ADD COLUMN "previewSeconds" INTEGER NOT NULL DEFAULT 0;

@@ -12,6 +12,7 @@ import {
 import { Badge, Button, cn } from "@velvet/ui";
 import { Cloud, HardDrive, LoaderCircle, RefreshCw, Trash2, Upload } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
+import { VIDEO_ACCEPT } from "@/lib/video-formats";
 
 function fmtBytes(n: number) {
   if (!Number.isFinite(n) || n <= 0) return "0 B";
@@ -98,7 +99,7 @@ export function EpisodeVideoUploadButton({
       <input
         ref={inputRef}
         type="file"
-        accept="video/mp4,video/quicktime,video/webm,video/x-matroska,.mp4,.mov,.mkv,.webm,.m4v"
+        accept={VIDEO_ACCEPT}
         className="sr-only"
         tabIndex={-1}
         onChange={(e) => {
@@ -291,7 +292,7 @@ export function NewEpisodeUploadForm({
       <input
         ref={inputRef}
         type="file"
-        accept="video/mp4,video/quicktime,video/webm,video/x-matroska,.mp4,.mov,.mkv,.webm,.m4v"
+        accept={VIDEO_ACCEPT}
         className="sr-only"
         tabIndex={-1}
         onChange={(e) => {

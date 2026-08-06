@@ -64,7 +64,6 @@ export function OnlineDramaForm() {
       if (!titleZh.trim()) throw new Error(t("onlineNeedTitle"));
       if (!categorySlug) throw new Error(t("onlineNeedCategory"));
       if (!all.length) throw new Error(t("onlineNeedEpisodes"));
-      // 后端强制 DRAFT；外链须先权利核验再恢复上架
       return adminCreateOnlineDrama({
         titleZh: titleZh.trim(),
         slug: slug.trim() || undefined,
@@ -74,6 +73,8 @@ export function OnlineDramaForm() {
         lockMode: "ALL_FREE",
         freeEpisodeCount: all.length,
         status: "DRAFT",
+        // Align with yt-dlp import: accept signed/CDN URLs without file extension.
+        relaxedPlayUrl: true,
         episodes: all,
       });
     },
@@ -159,11 +160,12 @@ export function OnlineDramaForm() {
           {t("onlineEpisodesBulk")}
           <textarea
             className="mt-1 min-h-24 w-full rounded-md border border-line bg-surface px-3 py-2 font-mono text-caption"
-            placeholder="https://cdn.example.com/ep1/index.m3u8"
+            placeholder={"https://cdn.example.com/ep1/index.m3u8\nhttps://cdn.example.com/ep2.mp4?token=…"}
             value={bulk}
             onChange={(e) => setBulk(e.target.value)}
           />
         </label>
+        <p className="text-caption text-ink-muted">{t("onlineManualUrlTip")}</p>
         {episodes.map((ep, index) => (
           <div key={index} className="flex flex-wrap items-end gap-2">
             <label className="text-caption text-ink-muted">

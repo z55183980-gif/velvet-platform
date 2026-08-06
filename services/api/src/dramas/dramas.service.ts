@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { LockAccessService } from '../common/lock-access.service';
+import { escapeIlikePattern, toPublicDramaTags } from './drama-tags';
 
 type FeedRankCache = {
   at: number;
@@ -32,12 +33,18 @@ export class DramasService {
     const where: any = { status: 'LIVE' };
     if (opts.category) where.categorySlug = opts.category;
     if (opts.tag) where.tags = { has: opts.tag };
-    if (opts.q) {
-      where.OR = [
-        { titleEn: { contains: opts.q, mode: 'insensitive' } },
-        { titleZh: { contains: opts.q, mode: 'insensitive' } },
-      ];
+
+    const q = typeof opts.q === 'string' ? opts.q.trim() : '';
+    if (q) {
+      // Title substring OR public (non-system) tag substring. Prisma cannot express
+      // "array element ILIKE", so prefetch matching ids then filter with findMany.
+      const ids = await this.findLiveDramaIdsByQuery(q);
+      if (ids.length === 0) {
+        return { rows: [], total: 0, page, pageSize };
+      }
+      where.id = { in: ids };
     }
+
     const orderBy =
       opts.sort === 'hot'
         ? [{ viewCount: 'desc' as const }, { unlockCount: 'desc' as const }]
@@ -68,6 +75,33 @@ export class DramasService {
       page,
       pageSize,
     };
+  }
+
+  /**
+   * LIVE dramas whose EN/ZH title or a public user tag contains `q` (case-insensitive).
+   * System provenance tags (upload/r2/type:/completion:/ytdlp*) are ignored.
+   */
+  private async findLiveDramaIdsByQuery(q: string): Promise<bigint[]> {
+    const pattern = `%${escapeIlikePattern(q)}%`;
+    const rows = await this.prisma.$queryRaw<Array<{ id: bigint }>>`
+      SELECT d.id
+        FROM dramas d
+       WHERE d.status = 'LIVE'
+         AND (
+           d."titleEn" ILIKE ${pattern} ESCAPE '\'
+           OR d."titleZh" ILIKE ${pattern} ESCAPE '\'
+           OR EXISTS (
+             SELECT 1
+               FROM unnest(d.tags) AS t(tag)
+              WHERE t.tag ILIKE ${pattern} ESCAPE '\'
+                AND t.tag NOT IN ('upload', 'r2', 'transfer', 'ytdlp')
+                AND t.tag NOT LIKE 'ytdlp%'
+                AND t.tag NOT LIKE 'type:%'
+                AND t.tag NOT LIKE 'completion:%'
+           )
+         )
+    `;
+    return rows.map((r) => r.id);
   }
 
   /**
@@ -202,10 +236,12 @@ export class DramasService {
       creatorType: string;
       user?: { avatarUrl: string | null } | null;
     } | null;
+    tags?: unknown;
     [key: string]: unknown;
   }) {
     return {
       ...d,
+      tags: toPublicDramaTags(d.tags),
       creator: d.creator
         ? {
             displayName: d.creator.displayName,
@@ -235,6 +271,7 @@ export class DramasService {
             episodeNumber: true,
             title: true,
             isFree: true,
+            previewSeconds: true,
             priceVnd: true,
             priceCredits: true,
             durationSec: true,
@@ -250,6 +287,7 @@ export class DramasService {
     if (!drama || drama.status !== 'LIVE') return null;
     return {
       ...drama,
+      tags: toPublicDramaTags(drama.tags),
       creator: drama.creator
         ? {
             displayName: drama.creator.displayName,
@@ -303,6 +341,7 @@ export class DramasService {
         episodeNumber: ep.episodeNumber,
         title: ep.title,
         isFree: free,
+        previewSeconds: free ? 0 : ep.previewSeconds,
         priceVnd: ep.priceVnd.toString(),
         priceCredits: ep.priceCredits.toString(),
         durationSec: ep.durationSec,
@@ -328,7 +367,7 @@ export class DramasService {
   }
 
   async getFeatured(limit = 12) {
-    return this.prisma.drama.findMany({
+    const rows = await this.prisma.drama.findMany({
       where: { status: 'LIVE', OR: [{ isOfficial: true }, { isFeatured: true }] },
       // 运营可调 sortWeight（越大越靠前）；其次官方 → 发布时间
       orderBy: [
@@ -339,6 +378,7 @@ export class DramasService {
       take: limit,
       include: { creator: { select: { displayName: true, creatorType: true } }, category: true },
     });
+    return rows.map((d) => this.mapListDrama(d));
   }
 
   async getHottest(limit = 48) {

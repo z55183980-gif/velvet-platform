@@ -1,5 +1,6 @@
 export type { Locale } from "./languages";
 import { pickContentText, type Locale } from "./languages";
+import { publicTagsMatchQuery } from "./drama-tags";
 
 export interface Category {
   slug: string;
@@ -13,6 +14,7 @@ export interface Episode {
   titleEn: string;
   titleZh: string;
   isFree: boolean;
+  previewSeconds?: number;
   price: number;
   unlocked?: boolean;
   mediaWidth?: number;
@@ -248,12 +250,12 @@ export function mockHome(
   let list = dramas;
   if (opts?.category) list = list.filter((d) => d.categorySlug === opts.category);
   if (opts?.q) {
-    const q = opts.q.toLowerCase();
+    const q = opts.q.trim().toLowerCase();
     list = list.filter(
       (d) =>
         d.titleEn.toLowerCase().includes(q) ||
         d.titleZh.toLowerCase().includes(q) ||
-        d.descEn.toLowerCase().includes(q),
+        publicTagsMatchQuery(d.tags, q),
     );
   }
   if (opts?.sort === "latest") {

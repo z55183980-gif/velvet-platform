@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { BizException, BizCode } from '../common/biz.exception';
 import { R2StorageService } from '../storage/r2.storage.service';
+import { VIDEO_EXT, VIDEO_MIME_BY_EXT } from '../admin/local-import.util';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
@@ -143,21 +144,13 @@ export class UploadService implements OnModuleInit {
   saveUpload(file: Express.Multer.File): UploadResult {
     if (!file) throw new BizException(BizCode.BAD_REQUEST, '未收到文件');
     const ext = path.extname(file.originalname || '').toLowerCase() || '.mp4';
-    const allowed = new Set(['.mp4', '.mov', '.mkv', '.webm', '.m4v']);
-    if (!allowed.has(ext)) {
+    if (!VIDEO_EXT.has(ext)) {
       throw new BizException(BizCode.BAD_REQUEST, `不支持的格式: ${ext}`);
     }
-    const mimeByExt: Record<string, string> = {
-      '.mp4': 'video/mp4',
-      '.mov': 'video/quicktime',
-      '.mkv': 'video/x-matroska',
-      '.webm': 'video/webm',
-      '.m4v': 'video/x-m4v',
-    };
     const rawMime = file.mimetype || '';
     const mime =
       !rawMime || rawMime === 'application/octet-stream'
-        ? mimeByExt[ext] || 'video/mp4'
+        ? VIDEO_MIME_BY_EXT[ext] || 'video/mp4'
         : rawMime;
     const id = crypto.randomUUID().replace(/-/g, '').slice(0, 16);
     const filename = `${Date.now()}-${id}${ext}`;
@@ -278,6 +271,16 @@ export class UploadService implements OnModuleInit {
     };
   }
 
+  /** Config flags + live R2 ListObjectsV2 probe (skipped when local / unconfigured). */
+  async storageProbe() {
+    const status = this.storageStatus();
+    const probe = await this.r2.probeConnectivity();
+    return {
+      ...status,
+      probe,
+    };
+  }
+
   async createPresignedDirectUpload(opts: {
     filename: string;
     contentType?: string;
@@ -291,19 +294,11 @@ export class UploadService implements OnModuleInit {
     }
     const filename = opts.filename || 'video.mp4';
     const ext = path.extname(filename).toLowerCase() || '.mp4';
-    const allowed = new Set(['.mp4', '.mov', '.mkv', '.webm', '.m4v']);
-    if (!allowed.has(ext)) {
+    if (!VIDEO_EXT.has(ext)) {
       throw new BizException(BizCode.BAD_REQUEST, `不支持的格式: ${ext}`);
     }
-    const mimeByExt: Record<string, string> = {
-      '.mp4': 'video/mp4',
-      '.mov': 'video/quicktime',
-      '.mkv': 'video/x-matroska',
-      '.webm': 'video/webm',
-      '.m4v': 'video/x-m4v',
-    };
     const contentType =
-      (opts.contentType || '').trim() || mimeByExt[ext] || 'application/octet-stream';
+      (opts.contentType || '').trim() || VIDEO_MIME_BY_EXT[ext] || 'application/octet-stream';
     return this.r2.createPresignedPut({
       filename,
       contentType,
@@ -338,8 +333,7 @@ export class UploadService implements OnModuleInit {
 
     const srcName = originalFilename || path.posix.basename(key);
     const ext = path.extname(srcName).toLowerCase() || '.mp4';
-    const allowed = new Set(['.mp4', '.mov', '.mkv', '.webm', '.m4v']);
-    if (!allowed.has(ext)) {
+    if (!VIDEO_EXT.has(ext)) {
       throw new BizException(BizCode.BAD_REQUEST, `不支持的格式: ${ext}`);
     }
 
@@ -348,13 +342,6 @@ export class UploadService implements OnModuleInit {
     const abs = path.join(this.getUploadDir(), filename);
     await this.r2.downloadUploadObjectToFile(key, abs);
     const relativePath = `uploads/${filename}`;
-    const mimeByExt: Record<string, string> = {
-      '.mp4': 'video/mp4',
-      '.mov': 'video/quicktime',
-      '.mkv': 'video/x-matroska',
-      '.webm': 'video/webm',
-      '.m4v': 'video/x-m4v',
-    };
     // Best-effort cleanup of temp object in upload bucket
     void this.r2.deleteUploadObject(key);
 
@@ -363,7 +350,7 @@ export class UploadService implements OnModuleInit {
       originalUrl: relativePath,
       filename,
       size: fs.statSync(abs).size,
-      mime: head.contentType || mimeByExt[ext] || 'video/mp4',
+      mime: head.contentType || VIDEO_MIME_BY_EXT[ext] || 'video/mp4',
     };
   }
 

@@ -12,6 +12,18 @@ const MIME: Record<string, string> = {
   '.mov': 'video/quicktime',
   '.mkv': 'video/x-matroska',
   '.m4v': 'video/mp4',
+  '.avi': 'video/x-msvideo',
+  '.3gp': 'video/3gpp',
+  '.3g2': 'video/3gpp2',
+  '.wmv': 'video/x-ms-wmv',
+  '.flv': 'video/x-flv',
+  '.f4v': 'video/x-f4v',
+  '.m2ts': 'video/mp2t',
+  '.mts': 'video/mp2t',
+  '.mpg': 'video/mpeg',
+  '.mpeg': 'video/mpeg',
+  '.ogv': 'video/ogg',
+  '.asf': 'video/x-ms-asf',
   '.m3u8': 'application/vnd.apple.mpegurl',
   '.ts': 'video/mp2t',
   '.png': 'image/png',
@@ -21,7 +33,27 @@ const MIME: Record<string, string> = {
   '.webp': 'image/webp',
 };
 
-const VIDEO_EXTS = new Set(['.mp4', '.webm', '.mov', '.mkv', '.m4v', '.m3u8', '.ts']);
+const VIDEO_EXTS = new Set([
+  '.mp4',
+  '.webm',
+  '.mov',
+  '.mkv',
+  '.m4v',
+  '.avi',
+  '.3gp',
+  '.3g2',
+  '.wmv',
+  '.flv',
+  '.f4v',
+  '.m2ts',
+  '.mts',
+  '.mpg',
+  '.mpeg',
+  '.ogv',
+  '.asf',
+  '.m3u8',
+  '.ts',
+]);
 
 /**
  * 本地媒体静态服务。

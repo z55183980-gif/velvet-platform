@@ -57,6 +57,18 @@ import {
 } from "@/components/episode-media-panel";
 import { EpisodeThumbnailField } from "@/components/episode-thumbnail-field";
 import { DramaCoverField } from "@/components/drama-cover-field";
+import {
+  DEFAULT_COMPLETION,
+  DEFAULT_CONTENT_TYPE,
+  MAX_DRAMA_TAGS,
+  composeDramaSourceTags,
+  normalizeCompletion,
+  normalizeContentType,
+  parseDramaTags,
+  type DramaCompletion,
+  type DramaContentType,
+} from "@/lib/drama-tags";
+import { contentDetailHref } from "@/lib/content-href";
 import { useI18n, statusLabel } from "@/lib/i18n";
 
 type Episode = {
@@ -98,6 +110,7 @@ type Drama = {
   attributionText?: string;
   rightsProofUrl?: string;
   rightsVerifiedAt?: string | null;
+  tags?: string[];
   creator?: { displayName?: string };
   category?: { slug?: string; nameZh?: string; nameEn?: string };
   episodes?: Episode[];
@@ -105,6 +118,11 @@ type Drama = {
 
 type Category = { slug: string; nameZh?: string; nameEn?: string };
 type DetailTab = "overview" | "info" | "episodes" | "policy";
+/** Marker returned by delete mutation so shared onSuccess skips detail refetch. */
+type DramaDeletedResult = { __velvetDramaDeleted: true };
+function isDramaDeletedResult(data: unknown): data is DramaDeletedResult {
+  return !!data && typeof data === "object" && (data as DramaDeletedResult).__velvetDramaDeleted === true;
+}
 type LockMode = "FREE_FIRST_N" | "VIP_ALL" | "ALL_FREE";
 type AddEpisodeMethod = "upload" | "url" | "public";
 type AddEpisodeOption = { key: AddEpisodeMethod; labelKey: "addEpisodeMethodUpload" | "addEpisodeMethodUrl" | "addEpisodeMethodPublic"; advanced?: boolean };
@@ -150,6 +168,9 @@ type BasicDraft = {
   attributionText: string;
   rightsProofUrl: string;
   rightsVerified: boolean;
+  tags: string[];
+  contentType: DramaContentType;
+  completion: DramaCompletion;
 };
 
 const emptyDraft: BasicDraft = {
@@ -164,9 +185,13 @@ const emptyDraft: BasicDraft = {
   attributionText: "",
   rightsProofUrl: "",
   rightsVerified: false,
+  tags: [],
+  contentType: DEFAULT_CONTENT_TYPE,
+  completion: DEFAULT_COMPLETION,
 };
 
 function draftFromDrama(drama: Drama): BasicDraft {
+  const meta = parseDramaTags(drama.tags);
   return {
     titleZh: drama.titleZh || "",
     titleEn: drama.titleEn || "",
@@ -179,6 +204,9 @@ function draftFromDrama(drama: Drama): BasicDraft {
     attributionText: drama.attributionText || "",
     rightsProofUrl: drama.rightsProofUrl || "",
     rightsVerified: !!drama.rightsVerifiedAt,
+    tags: meta.displayTags,
+    contentType: meta.contentType,
+    completion: meta.completion,
   };
 }
 
@@ -193,7 +221,7 @@ function isEpisodeFreeByPolicy(opts: {
   return opts.episodeNumber <= Math.max(0, Math.floor(opts.freeEpisodeCount || 0));
 }
 
-function FieldLabel({ label, required, children }: { label: string; required?: boolean; children: ReactNode }) {
+function FieldLabel({ label, required, children }: { label: ReactNode; required?: boolean; children: ReactNode }) {
   return (
     <label className="block text-[13px] font-medium text-ink-muted">
       <span className="mb-1.5 block">
@@ -252,6 +280,7 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
   const [buyoutCredits, setBuyoutCredits] = useState(0);
   const [draft, setDraft] = useState<BasicDraft>(emptyDraft);
   const [savedDraft, setSavedDraft] = useState<BasicDraft>(emptyDraft);
+  const [tagInput, setTagInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [offlineOpen, setOfflineOpen] = useState(false);
@@ -305,7 +334,15 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
 
   const actionMut = useMutation({
     mutationFn: (action: () => Promise<unknown>) => action(),
-    onSuccess: async () => {
+    onSuccess: async (data) => {
+      // After hard-delete, invalidating detail would refetch GET /dramas/:id → 404
+      // and paint a false "找不到短剧" while stale cache still shows the title.
+      if (isDramaDeletedResult(data)) {
+        qc.removeQueries({ queryKey: ["admin", "drama", id] });
+        qc.removeQueries({ queryKey: ["admin", "drama-storage", id] });
+        await qc.invalidateQueries({ queryKey: ["admin", "dramas"] });
+        return;
+      }
       setError(null);
       setSelectedEps(new Set());
       await qc.invalidateQueries({ queryKey: ["admin", "drama", id] });
@@ -331,9 +368,24 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
       setError(t("dramaTitleRequired"));
       return { ok: false, error: t("dramaTitleRequired") };
     }
+    if (draft.tags.length > MAX_DRAMA_TAGS) {
+      setError(t("dramaTagsTooMany"));
+      return { ok: false, error: t("dramaTagsTooMany") };
+    }
     try {
+      const {
+        tags,
+        contentType,
+        completion,
+        ...rest
+      } = draft;
       await actionMut.mutateAsync(() =>
-        adminUpdateDrama(id, { ...draft, titleZh: draft.titleZh.trim(), titleEn: draft.titleEn.trim() }),
+        adminUpdateDrama(id, {
+          ...rest,
+          titleZh: draft.titleZh.trim(),
+          titleEn: draft.titleEn.trim(),
+          sourceTags: composeDramaSourceTags(tags, contentType, completion),
+        }),
       );
       setSavedDraft(draft);
       return { ok: true };
@@ -453,9 +505,16 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
     },
   ], [t, actionMut.isPending, selectedEps, episodes, id, qc]);
 
-  const handleDeleteDrama = () => actionMut.mutate(() => adminDeleteDrama(id, reason || "admin delete"), {
-    onSuccess: async () => { setDeleteOpen(false); setError(null); await qc.invalidateQueries({ queryKey: ["admin", "dramas"] }); onDeleted ? onDeleted() : router.replace("/content"); },
-  });
+  const handleDeleteDrama = () =>
+    actionMut.mutate(async () => {
+      await adminDeleteDrama(id, reason || "admin delete");
+      // Close before shared onSuccess clears caches so the panel never paints post-delete 404.
+      setDeleteOpen(false);
+      setError(null);
+      if (onDeleted) onDeleted();
+      else router.replace("/content");
+      return { __velvetDramaDeleted: true as const };
+    });
 
   const handleOfflineDrama = () =>
     actionMut.mutate(() => adminOfflineDrama(id, "admin force offline"), {
@@ -516,7 +575,7 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
               {t("forceOffline")}
             </Button>
           ) : null}
-          {drama.status === "OFFLINE" || drama.status === "REJECTED" ? (
+          {drama.status === "OFFLINE" || drama.status === "REJECTED" || drama.status === "DRAFT" ? (
             <Button size="sm" disabled={actionMut.isPending} onClick={() => setOnlineOpen(true)}>
               <UnlockKeyhole className="h-4 w-4" />
               {t("restoreOnline")}
@@ -594,6 +653,69 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
               <FieldLabel label={t("titleEnLabel")}><Input value={draft.titleEn} onChange={(e) => setDraft((v) => ({ ...v, titleEn: e.target.value }))} /></FieldLabel>
             </div>
             <FieldLabel label={t("category")} required><Select value={draft.categorySlug} onChange={(e) => setDraft((v) => ({ ...v, categorySlug: e.target.value }))}><option value="">{t("selectCategory")}</option>{(categoriesQ.data ?? []).map((category) => <option key={category.slug} value={category.slug}>{category.nameZh || category.nameEn || category.slug}</option>)}</Select></FieldLabel>
+            <FieldLabel
+              label={
+                <>
+                  {t("dramaTags")}
+                  <em className="float-right not-italic text-ink-subtle">{draft.tags.length}/{MAX_DRAMA_TAGS}</em>
+                </>
+              }
+            >
+              <div className="flex flex-wrap gap-1.5 rounded-md border border-line bg-surface px-2 py-1.5">
+                {draft.tags.map((tag) => (
+                  <button
+                    type="button"
+                    key={tag}
+                    className="rounded-full bg-brand/10 px-2 py-0.5 text-xs text-brand"
+                    onClick={() => setDraft((v) => ({ ...v, tags: v.tags.filter((item) => item !== tag) }))}
+                  >
+                    {tag} ×
+                  </button>
+                ))}
+                <input
+                  className="min-w-24 flex-1 bg-transparent text-sm outline-none"
+                  value={tagInput}
+                  maxLength={12}
+                  placeholder={t("dramaTagsPlaceholder")}
+                  onChange={(e) => setTagInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === ",") {
+                      e.preventDefault();
+                      const tag = tagInput.trim();
+                      if (tag && !draft.tags.includes(tag) && draft.tags.length < MAX_DRAMA_TAGS) {
+                        setDraft((v) => ({ ...v, tags: [...v.tags, tag] }));
+                      }
+                      setTagInput("");
+                    }
+                  }}
+                />
+              </div>
+            </FieldLabel>
+            <div className="grid gap-4 md:grid-cols-2">
+              <FieldLabel label={t("contentType")} required>
+                <Select
+                  value={draft.contentType}
+                  onChange={(e) =>
+                    setDraft((v) => ({ ...v, contentType: normalizeContentType(e.target.value) }))
+                  }
+                >
+                  <option value="漫剧">{t("contentTypeComic")}</option>
+                  <option value="真人短剧">{t("contentTypeLive")}</option>
+                  <option value="AI短剧">{t("contentTypeAi")}</option>
+                </Select>
+              </FieldLabel>
+              <FieldLabel label={t("completionStatus")} required>
+                <Select
+                  value={draft.completion}
+                  onChange={(e) =>
+                    setDraft((v) => ({ ...v, completion: normalizeCompletion(e.target.value) }))
+                  }
+                >
+                  <option value="连载中">{t("completionOngoing")}</option>
+                  <option value="已完结">{t("completionFinished")}</option>
+                </Select>
+              </FieldLabel>
+            </div>
             <FieldLabel label={t("coverUrlLabel")}>
               <DramaCoverField
                 url={draft.coverUrl || undefined}

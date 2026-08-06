@@ -36,6 +36,7 @@ export class AdminEpisodesService {
       title?: string;
       episodeNumber?: number;
       isFree?: boolean;
+      previewSeconds?: number;
       priceCredits?: number | string;
       priceVnd?: number | string;
       thumbnailUrl?: string;
@@ -65,6 +66,7 @@ export class AdminEpisodesService {
     }
 
     const isFree = !!dto.isFree;
+    const previewSeconds = isFree ? 0 : Math.max(0, Math.floor(Number(dto.previewSeconds) || 0));
     const priceCredits = isFree ? 0n : toBigIntCredits(dto.priceCredits, 0n);
     const priceVnd = isFree ? 0n : toBigIntCredits(dto.priceVnd ?? dto.priceCredits, 0n);
     // 实际扣款只认 priceCredits（priceVnd 是遗留展示字段），必须单独校验，
@@ -84,6 +86,7 @@ export class AdminEpisodesService {
           episodeNumber,
           title: dto.title?.trim() || `第${episodeNumber}集`,
           isFree,
+          previewSeconds,
           priceCredits,
           priceVnd,
           thumbnailUrl: dto.thumbnailUrl?.trim() || null,
@@ -97,9 +100,11 @@ export class AdminEpisodesService {
               : 'PENDING',
         },
       });
+      // Preserve announced/planned total when it is already ahead of inventory.
+      const count = await tx.episode.count({ where: { dramaId: drama.id } });
       await tx.drama.update({
         where: { id: drama.id },
-        data: { totalEpisodes: { increment: 1 } },
+        data: { totalEpisodes: Math.max(drama.totalEpisodes ?? 0, count) },
       });
       return created;
     });
@@ -119,6 +124,7 @@ export class AdminEpisodesService {
     dto: {
       title?: string;
       isFree?: boolean;
+      previewSeconds?: number;
       priceCredits?: number | string;
       priceVnd?: number | string;
       thumbnailUrl?: string;
@@ -136,9 +142,13 @@ export class AdminEpisodesService {
     if (dto.isFree != null) {
       data.isFree = !!dto.isFree;
       if (data.isFree) {
+        data.previewSeconds = 0;
         data.priceCredits = 0n;
         data.priceVnd = 0n;
       }
+    }
+    if (dto.previewSeconds != null && !data.isFree) {
+      data.previewSeconds = Math.max(0, Math.floor(Number(dto.previewSeconds) || 0));
     }
     if (dto.priceCredits != null) data.priceCredits = toBigIntCredits(dto.priceCredits);
     if (dto.priceVnd != null) data.priceVnd = toBigIntCredits(dto.priceVnd);
@@ -213,9 +223,16 @@ export class AdminEpisodesService {
           data: { episodeNumber: i + 1 },
         });
       }
+      const drama = await tx.drama.findUnique({
+        where: { id: ep.dramaId },
+        select: { totalEpisodes: true },
+      });
+      const prev = drama?.totalEpisodes ?? remaining.length;
+      // If prev was only tracking inventory (prev == count before delete), shrink with deletes.
+      // If prev was an announced future total (prev > count+1), keep it for placeholders.
       await tx.drama.update({
         where: { id: ep.dramaId },
-        data: { totalEpisodes: remaining.length },
+        data: { totalEpisodes: prev > remaining.length + 1 ? prev : remaining.length },
       });
     });
 
@@ -314,6 +331,7 @@ export class AdminEpisodesService {
       title?: string;
       episodeNumber?: number;
       isFree?: boolean;
+      previewSeconds?: number;
       priceCredits?: number | string;
       thumbnailUrl?: string;
     },
@@ -326,6 +344,7 @@ export class AdminEpisodesService {
         title: dto.title,
         episodeNumber: dto.episodeNumber,
         isFree: !!dto.isFree,
+        previewSeconds: dto.previewSeconds,
         priceCredits: dto.isFree ? 0 : dto.priceCredits ?? 10,
         thumbnailUrl: dto.thumbnailUrl,
       },
@@ -345,6 +364,7 @@ export class AdminEpisodesService {
       title?: string;
       episodeNumber?: number;
       isFree?: boolean;
+      previewSeconds?: number;
       priceCredits?: number | string;
       thumbnailUrl?: string;
     },
@@ -359,6 +379,7 @@ export class AdminEpisodesService {
         title: dto.title,
         episodeNumber: dto.episodeNumber,
         isFree: !!dto.isFree,
+        previewSeconds: dto.previewSeconds,
         priceCredits: dto.isFree ? 0 : dto.priceCredits ?? 10,
         thumbnailUrl: dto.thumbnailUrl,
       },

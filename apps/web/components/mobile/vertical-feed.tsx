@@ -29,7 +29,7 @@ import { useMobileFeedLock } from "@/components/mobile/mobile-feed-lock";
 import { getPlayUrl, loadDramaDetail, loadFeed, checkFavorite, addFavorite, removeFavorite, checkLike, addLike, removeLike, reportProgress, type DramaDetailPayload } from "@/lib/api";
 import type { Drama, Episode } from "@/lib/mock-data";
 import { categories, episodeIsLandscape } from "@/lib/mock-data";
-import { pickContentText, type Locale } from "@/lib/languages";
+import { pickContentText, pickTitleText, type Locale } from "@/lib/languages";
 import { cn, formatCredits } from "@/lib/utils";
 import { useGuestWatchQuota } from "@/lib/use-guest-watch-quota";
 import { useDocumentScrollLock } from "@/hooks/use-document-scroll-lock";
@@ -298,7 +298,7 @@ function buildFeedMeta(
   locale: Locale,
   t: (key: string, vars?: Record<string, string | number>) => string,
 ) {
-  const title = pickContentText(locale, drama.titleEn, drama.titleZh);
+  const title = pickTitleText(locale, drama.titleEn, drama.titleZh);
   const cat = categories.find((c) => c.slug === drama.categorySlug);
   const catName = cat ? pickContentText(locale, cat.nameEn, cat.nameZh) : "";
   const ratingLabel = formatRating(drama.rating);

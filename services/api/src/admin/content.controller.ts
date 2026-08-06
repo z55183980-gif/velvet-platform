@@ -58,6 +58,7 @@ class R2DirectEpisodeDto {
   @IsOptional() @IsString() title?: string;
   @IsOptional() episodeNumber?: string | number;
   @IsOptional() isFree?: string | boolean;
+  @IsOptional() previewSeconds?: string | number;
   @IsOptional() priceCredits?: string | number;
   @IsOptional() @IsString() thumbnailUrl?: string;
 }
@@ -139,6 +140,8 @@ class DramaUpdateDto {
   @Transform(({ value }) => value === true || value === 'true' || value === 1)
   @IsBoolean()
   isOfficial?: boolean;
+  /** Display tags + optional `type:` / `completion:` markers; provenance tags are preserved server-side. */
+  @IsOptional() @IsArray() @IsString({ each: true }) sourceTags?: string[];
 }
 
 class BatchDramasDto {
@@ -230,6 +233,8 @@ class CreateOnlineDramaDto {
   @IsOptional() @IsIn(['DRAFT', 'LIVE'])
   status?: 'DRAFT' | 'LIVE';
   @IsOptional() @IsString() externalRef?: string;
+  /** Accept signed/CDN URLs without media extension (same as yt-dlp import). */
+  @IsOptional() @IsBoolean() relaxedPlayUrl?: boolean;
   @IsArray()
   @ArrayMinSize(1)
   @ValidateNested({ each: true })
@@ -250,6 +255,12 @@ class CreateLocalUploadDramaDto {
   lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE';
   @IsOptional() @IsIn(['DRAFT', 'LIVE'])
   status?: 'DRAFT' | 'LIVE';
+  @IsOptional() @IsArray() @IsString({ each: true }) sourceTags?: string[];
+  @IsOptional() @IsIn(['LOCAL', 'R2'])
+  sourceType?: 'LOCAL' | 'R2';
+  @IsOptional() @IsString() externalRef?: string;
+  /** Announced/planned episode count (serialization); must be > uploaded if set by admin UI. */
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) totalEpisodes?: number;
 }
 
 class YtdlpProbeDto {
@@ -268,8 +279,6 @@ class YtdlpImportDto {
   @IsNotEmpty() @IsString() categorySlug!: string;
   @IsOptional() @IsString() titleZh?: string;
   @IsOptional() @IsString() titleEn?: string;
-  @IsOptional() @IsIn(['DRAFT', 'LIVE'])
-  status?: 'DRAFT' | 'LIVE';
   @IsOptional() @Type(() => Number) @IsNumber() @Min(1) maxEpisodes?: number;
   @IsOptional() @IsIn(['best_hls', 'best_mp4', 'best'])
   formatPreference?: 'best_hls' | 'best_mp4' | 'best';
@@ -282,8 +291,6 @@ class YtdlpTransferDto {
   target!: 'local' | 'r2';
   @IsOptional() @IsString() titleZh?: string;
   @IsOptional() @IsString() titleEn?: string;
-  @IsOptional() @IsIn(['DRAFT', 'LIVE'])
-  status?: 'DRAFT' | 'LIVE';
   @IsOptional() @Type(() => Number) @IsNumber() @Min(1) maxEpisodes?: number;
   @IsOptional() @IsIn(['best_hls', 'best_mp4', 'best'])
   formatPreference?: 'best_hls' | 'best_mp4' | 'best';
@@ -342,6 +349,13 @@ export class ContentController {
     return ok({ ...status, ffmpegReady });
   }
 
+  /** Live R2 bucket reachability (ListObjectsV2 MaxKeys=1) + latency + storage size. */
+  @Get('storage/probe')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async storageProbe() {
+    return ok(await this.upload.storageProbe());
+  }
+
   /** 预签名：浏览器直传 R2（velvet-uploads），不经 Next/API 代理传大文件 */
   @Post('uploads/presign')
   @AdminRoles('SUPER_ADMIN', 'OPS')
@@ -371,6 +385,7 @@ export class ContentController {
           title: dto.title,
           episodeNumber: dto.episodeNumber != null ? Number(dto.episodeNumber) : undefined,
           isFree: dto.isFree === true || dto.isFree === 'true' || dto.isFree === '1',
+          previewSeconds: dto.previewSeconds != null ? Number(dto.previewSeconds) : undefined,
           priceCredits: dto.priceCredits != null ? Number(dto.priceCredits) : undefined,
           thumbnailUrl: dto.thumbnailUrl,
         },
@@ -442,6 +457,7 @@ export class ContentController {
       title?: string;
       episodeNumber?: string | number;
       isFree?: string | boolean;
+      previewSeconds?: string | number;
       priceCredits?: string | number;
       thumbnailUrl?: string;
     },
@@ -455,6 +471,7 @@ export class ContentController {
           title: body?.title,
           episodeNumber: body?.episodeNumber != null ? Number(body.episodeNumber) : undefined,
           isFree: body?.isFree === true || body?.isFree === 'true' || body?.isFree === '1',
+          previewSeconds: body?.previewSeconds != null ? Number(body.previewSeconds) : undefined,
           priceCredits: body?.priceCredits != null ? Number(body.priceCredits) : undefined,
           thumbnailUrl: body?.thumbnailUrl,
         },
@@ -650,11 +667,17 @@ export class ContentController {
     return ok(await this.ytdlp.importDrama(dto, getActor(req)));
   }
 
-  /** yt-dlp 下载落盘 → 转码 HLS → 本地或 R2 */
+  /** yt-dlp 下载落盘 → 转码 HLS → 本地或 R2（异步任务，立刻返回 jobId） */
   @Post('ytdlp/transfer')
   @AdminRoles('SUPER_ADMIN', 'OPS')
   async ytdlpTransfer(@Body() dto: YtdlpTransferDto, @Req() req: any) {
     return ok(await this.ytdlp.transferDrama(dto, getActor(req)));
+  }
+
+  @Get('ytdlp/transfer/:jobId')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async ytdlpTransferJob(@Param('jobId') jobId: string) {
+    return ok(this.ytdlp.getTransferJob(jobId));
   }
 
   @Post('dramas/:id/ytdlp/append')

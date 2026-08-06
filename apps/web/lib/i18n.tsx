@@ -111,6 +111,7 @@ const en = {
     heatValue: "Heat {n}",
     heatBadge: "{n} heat",
     pickEpisodes: "Episodes",
+    episodeComingSoon: "Ongoing",
   },
   unlock: {
     title: "Unlock episode",
@@ -524,6 +525,7 @@ const zh: typeof en = {
     heatValue: "热度值{n}",
     heatBadge: "{n}热度",
     pickEpisodes: "选集",
+    episodeComingSoon: "连载中",
   },
   unlock: {
     title: "解锁本集",
@@ -937,6 +939,7 @@ const fr: typeof en = {
     heatValue: "Popularité {n}",
     heatBadge: "{n} popularité",
     pickEpisodes: "Épisodes",
+    episodeComingSoon: "En cours",
   },
   unlock: {
     title: "Débloquer l’épisode",

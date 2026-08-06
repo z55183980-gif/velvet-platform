@@ -83,6 +83,10 @@ export function contentLocale(locale: Locale): "en" | "zh" {
   return locale === "zh" ? "zh" : "en";
 }
 
+/**
+ * General content (descriptions, category names, …): locale field, then the other language.
+ * Prefer {@link pickTitleText} for drama/episode titles.
+ */
 export function pickContentText(
   locale: Locale,
   enText: string,
@@ -92,4 +96,18 @@ export function pickContentText(
     return zhText || enText;
   }
   return enText || zhText;
+}
+
+/**
+ * Drama / episode titles: prefer the UI locale field, then English as the global fallback.
+ * Chinese is only a last resort for legacy rows that lack titleEn.
+ */
+export function pickTitleText(
+  locale: Locale,
+  enText: string,
+  zhText: string,
+): string {
+  const preferred =
+    contentLocale(locale) === "zh" ? zhText : enText;
+  return preferred || enText || zhText;
 }

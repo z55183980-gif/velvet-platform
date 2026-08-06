@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Play } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { categoryName, type Drama } from "@/lib/mock-data";
-import { pickContentText, type Locale } from "@/lib/languages";
+import { pickContentText, pickTitleText, type Locale } from "@/lib/languages";
 import { cn } from "@/lib/utils";
 
 function isImg(s: string) {
@@ -92,7 +92,7 @@ export function Hero({ slides }: { slides: HeroSlide[] }) {
   if (items.length === 0) return null;
 
   const current = items[index] ?? items[0];
-  const title = pickContentText(locale, current.titleEn, current.titleZh);
+  const title = pickTitleText(locale, current.titleEn, current.titleZh);
   const desc = pickContentText(locale, current.descEn || "", current.descZh || "");
   const tags = current.tags ?? [];
   const cover = current.cover[0];
@@ -204,7 +204,7 @@ export function Hero({ slides }: { slides: HeroSlide[] }) {
               {items.map((d, i) => {
                 const active = i === index;
                 const thumb = d.cover[0];
-                const tip = pickContentText(locale, d.titleEn, d.titleZh);
+                const tip = pickTitleText(locale, d.titleEn, d.titleZh);
                 return (
                   <button
                     key={d.id}

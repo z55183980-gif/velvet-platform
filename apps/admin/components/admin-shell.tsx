@@ -44,6 +44,8 @@ import {
 import { useI18n, type LabelKey } from "@/lib/i18n";
 import { AdminSessionProvider, useAdminSession } from "@/lib/admin-session";
 import { useLocationSearchParams } from "@/lib/use-location-search";
+import { UploadQueueProvider } from "@/lib/upload-queue";
+import { UploadTaskPanel } from "@/components/upload-task-panel";
 
 type NavItem = {
   href: string;
@@ -541,9 +543,12 @@ function AdminShellNested({ children, title }: { children: ReactNode; title?: st
 export function AdminShellRoot({ children }: { children: ReactNode }) {
   return (
     <AdminSessionProvider>
-      <ShellNestedContext.Provider value={true}>
-        <AdminShellFrame>{children}</AdminShellFrame>
-      </ShellNestedContext.Provider>
+      <UploadQueueProvider>
+        <ShellNestedContext.Provider value={true}>
+          <AdminShellFrame>{children}</AdminShellFrame>
+          <UploadTaskPanel />
+        </ShellNestedContext.Provider>
+      </UploadQueueProvider>
     </AdminSessionProvider>
   );
 }

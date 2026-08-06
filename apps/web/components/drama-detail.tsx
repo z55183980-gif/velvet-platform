@@ -45,7 +45,7 @@ import {
 import { categoryName, episodeIsLandscape, type Drama, type Episode } from "@/lib/mock-data";
 import { useGuestWatchQuota } from "@/lib/use-guest-watch-quota";
 import { canGoBackInApp } from "@/lib/nav-history";
-import { pickContentText } from "@/lib/languages";
+import { pickContentText, pickTitleText } from "@/lib/languages";
 import { WatchSeekBar } from "@/components/mobile/watch-seek-bar";
 import { mediaUrl, cn } from "@/lib/utils";
 import { DramaCard } from "@/components/drama-card";
@@ -167,6 +167,7 @@ export function DramaDetail({
   const [unlockTarget, setUnlockTarget] = useState<Episode | null>(null);
   const [selected, setSelected] = useState<Episode | null>(null);
   const [playUrl, setPlayUrl] = useState<string | null>(null);
+  const [previewLimit, setPreviewLimit] = useState(0);
   const [playErr, setPlayErr] = useState<string | null>(null);
   const [resumeHint, setResumeHint] = useState<{ epNo: number; progressSec: number } | null>(null);
   const [seekTo, setSeekTo] = useState<number | null>(null);
@@ -409,7 +410,8 @@ export function DramaDetail({
 
   const isUnlocked = (ep: Episode) =>
     ep.isFree || !!ep.unlocked || unlockedNos.has(ep.no) || !!data?.vipActive || !!data?.dramaUnlocked || !!user?.isVip;
-  const playerReady = !!(selected && isUnlocked(selected));
+  const selectedTrialAvailable = !!(selected && !isUnlocked(selected) && (selected.previewSeconds || 0) > 0);
+  const playerReady = !!(selected && (isUnlocked(selected) || selectedTrialAvailable));
   const lockActionLabel =
     selected && !selected.isFree && !isUnlocked(selected) ? t("vip.open") : undefined;
 
@@ -422,6 +424,7 @@ export function DramaDetail({
   useEffect(() => {
     if (!playerReady || !selected?.id) {
       setPlayUrl(null);
+      setPreviewLimit(0);
       setPlayErr(null);
       return;
     }
@@ -431,7 +434,7 @@ export function DramaDetail({
       return;
     }
     const episodeId = String(selected.id);
-    const allowed = !!(user || canGuestWatch(episodeId));
+    const allowed = !!(user || selectedTrialAvailable || canGuestWatch(episodeId));
     if (!allowed) {
       setPlayUrl(null);
       setPlayErr(null);
@@ -445,6 +448,7 @@ export function DramaDetail({
       .then((r) => {
         if (ac.signal.aborted) return;
         setPlayUrl(r.playUrl);
+        setPreviewLimit(r.previewOnly ? r.previewSeconds : 0);
         if (!user) markGuestWatched(episodeId);
       })
       .catch((e) => {
@@ -453,7 +457,21 @@ export function DramaDetail({
         else setPlayErr(e?.message || t("player.error"));
       });
     return () => ac.abort();
-  }, [playerReady, selected?.id, user, authReady, guestReady, canGuestWatch, markGuestWatched, t]);
+  }, [playerReady, selected?.id, selectedTrialAvailable, user, authReady, guestReady, canGuestWatch, markGuestWatched, t]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || previewLimit <= 0 || !selected || isUnlocked(selected)) return;
+    const onTimeUpdate = () => {
+      if (video.currentTime < previewLimit) return;
+      video.pause();
+      video.currentTime = previewLimit;
+      setUnlockTarget(selected);
+      setUnlockOpen(true);
+    };
+    video.addEventListener("timeupdate", onTimeUpdate);
+    return () => video.removeEventListener("timeupdate", onTimeUpdate);
+  }, [playUrl, previewLimit, selected, unlockedNos, data?.vipActive, data?.dramaUnlocked, user?.isVip]);
 
   useEffect(() => {
     if (!data?.drama.categorySlug) return;
@@ -870,7 +888,7 @@ export function DramaDetail({
   }
 
   const { drama } = data;
-  const title = pickContentText(locale, drama.titleEn, drama.titleZh);
+  const title = pickTitleText(locale, drama.titleEn, drama.titleZh);
   const desc = pickContentText(locale, drama.descEn, drama.descZh);
   const cat = categoryName(drama.categorySlug, locale);
   const coverIsImg = isUrl(drama.cover[0]);
@@ -983,14 +1001,14 @@ export function DramaDetail({
   })();
 
   // session 未就绪时不要误显示「请登录」（V3-01）
-  const needsLogin = authReady && guestReady && playerReady && !user && !(selected?.id && canGuestWatch(String(selected.id)));
-  const guestAllowed = !user && guestReady && playerReady && !!selected?.id && canGuestWatch(String(selected.id));
+  const needsLogin = authReady && guestReady && playerReady && !user && !selectedTrialAvailable && !(selected?.id && canGuestWatch(String(selected.id)));
+  const guestAllowed = !user && guestReady && playerReady && (selectedTrialAvailable || (!!selected?.id && canGuestWatch(String(selected.id))));
   const canPlay = playerReady && !!(user || guestAllowed);
   const locked = !playerReady;
   const playLoading = !authReady || !guestReady || (canPlay && !playUrl && !playErr);
 
   const selectEpisode = (ep: Episode) => {
-    if (isUnlocked(ep)) {
+    if (isUnlocked(ep) || (ep.previewSeconds || 0) > 0) {
       setSelected(ep);
       setDrawerOpen(false);
       if (isMobile && !autoStartWatch && !watching) {
@@ -1010,7 +1028,7 @@ export function DramaDetail({
   /* ---- Watching: mobile vertical ---- */
   if (watching && isMobile) {
     const epTitle = selected
-      ? pickContentText(locale, selected.titleEn, selected.titleZh)
+      ? pickTitleText(locale, selected.titleEn, selected.titleZh)
       : "";
     const epLine = selected
       ? `${t("detail.episodeLabel", { n: selected.no })}${epTitle ? ` | ${epTitle}` : ""}`
@@ -1999,7 +2017,7 @@ export function DramaDetail({
               <h2 className="mb-3.5 text-[16px] font-medium text-white">{t("detail.guessYouLike")}</h2>
               <div className="grid grid-cols-2 gap-x-3 gap-y-5">
                 {related.map((d) => {
-                  const rTitle = pickContentText(locale, d.titleEn, d.titleZh);
+                  const rTitle = pickTitleText(locale, d.titleEn, d.titleZh);
                   const rCover = isUrl(d.cover[0]);
                   const rTags = (d.tags || []).filter(Boolean).slice(0, 3);
                   const rCat = categoryName(d.categorySlug, locale);

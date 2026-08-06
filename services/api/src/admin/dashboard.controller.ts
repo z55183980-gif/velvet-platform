@@ -10,12 +10,20 @@ export class DashboardController {
   constructor(private readonly dashboard: DashboardService) {}
 
   @Get('dashboard/overview')
-  async dashboardOverview(@Query('range') range?: string) {
-    return ok(await this.dashboard.overview(range));
+  async dashboardOverview(
+    @Query('range') range?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return ok(await this.dashboard.overview(range, from, to));
   }
 
   @Get('stats/overview')
-  async stats(@Query('range') range?: string) {
-    return ok(await this.dashboard.overview(range));
+  async stats(
+    @Query('range') range?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return ok(await this.dashboard.overview(range, from, to));
   }
 }

@@ -34,24 +34,26 @@ export class EpisodesService {
     const policy = await this.lockAccess.resolveForDrama(episode.drama);
     const free = this.lockAccess.isFree(episode, policy);
     let unlocked = free;
+    let previewOnly = false;
     if (!free) {
-      if (!userId) {
-        throw new BizException(BizCode.UNAUTHORIZED, 'Chưa đăng nhập');
+      if (userId) {
+        const [u, user, dramaUnlock] = await Promise.all([
+          this.prisma.userUnlock.findUnique({
+            where: { userId_episodeId: { userId, episodeId } },
+          }),
+          this.prisma.user.findUnique({ where: { id: userId }, select: { vipExpireAt: true } }),
+          this.prisma.userDramaUnlock.findUnique({
+            where: { userId_dramaId: { userId, dramaId: episode.dramaId } },
+          }),
+        ]);
+        const vipActive = !!(user?.vipExpireAt && user.vipExpireAt.getTime() > Date.now());
+        unlocked = !!u || vipActive || !!dramaUnlock;
       }
-      const [u, user, dramaUnlock] = await Promise.all([
-        this.prisma.userUnlock.findUnique({
-          where: { userId_episodeId: { userId, episodeId } },
-        }),
-        this.prisma.user.findUnique({ where: { id: userId }, select: { vipExpireAt: true } }),
-        this.prisma.userDramaUnlock.findUnique({
-          where: { userId_dramaId: { userId, dramaId: episode.dramaId } },
-        }),
-      ]);
-      const vipActive = !!(user?.vipExpireAt && user.vipExpireAt.getTime() > Date.now());
-      unlocked = !!u || vipActive || !!dramaUnlock;
     }
     if (!unlocked) {
-      throw new BizException(BizCode.FORBIDDEN, 'Tập này cần mở khóa để xem', 402 as any);
+      if (episode.previewSeconds > 0) previewOnly = true;
+      else if (!userId) throw new BizException(BizCode.UNAUTHORIZED, 'Chưa đăng nhập');
+      else throw new BizException(BizCode.FORBIDDEN, 'Tập này cần mở khóa để xem', 402 as any);
     }
 
     const key = this.config.get('CDN_SIGN_KEY') || 'dev';
@@ -72,6 +74,8 @@ export class EpisodesService {
         playUrl: `/api/v1/media/${encoded}?sig=${sig}&exp=${exp}`,
         expiresAt: new Date(exp * 1000).toISOString(),
         durationSec: episode.durationSec,
+        previewSeconds: previewOnly ? episode.previewSeconds : 0,
+        previewOnly,
         mediaWidth: episode.mediaWidth,
         mediaHeight: episode.mediaHeight,
         mediaOrientation: episode.mediaOrientation,
@@ -85,6 +89,8 @@ export class EpisodesService {
         playUrl: raw,
         expiresAt: new Date(exp * 1000).toISOString(),
         durationSec: episode.durationSec,
+        previewSeconds: previewOnly ? episode.previewSeconds : 0,
+        previewOnly,
         mediaWidth: episode.mediaWidth,
         mediaHeight: episode.mediaHeight,
         mediaOrientation: episode.mediaOrientation,
@@ -108,6 +114,8 @@ export class EpisodesService {
       playUrl,
       expiresAt: new Date(exp * 1000).toISOString(),
       durationSec: episode.durationSec,
+      previewSeconds: previewOnly ? episode.previewSeconds : 0,
+      previewOnly,
       mediaWidth: episode.mediaWidth,
       mediaHeight: episode.mediaHeight,
       mediaOrientation: episode.mediaOrientation,

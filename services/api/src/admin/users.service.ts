@@ -47,6 +47,7 @@ export class AdminUsersService {
           locale: true,
           status: true,
           createdAt: true,
+          vipExpireAt: true,
           wallet: {
             select: { balanceCredits: true, totalRechargedCredits: true, totalSpentCredits: true },
           },

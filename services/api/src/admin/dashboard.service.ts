@@ -1,7 +1,12 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import { BizCode, BizException } from '../common/biz.exception';
 import { PrismaService } from '../prisma/prisma.service';
 
-export type DashboardRange = 'today' | '7d' | '30d';
+export type DashboardRange = 'today' | '7d' | '30d' | 'custom';
+
+/** Inclusive calendar-day span for custom ranges (from..to). */
+const CUSTOM_MAX_DAYS = 90;
 
 type KpiBlock = {
   newUsers: number;
@@ -11,26 +16,43 @@ type KpiBlock = {
   paidOrders: number;
 };
 
+type WindowSpec = {
+  range: DashboardRange;
+  periodStart: Date;
+  periodEnd: Date;
+  prevStart: Date;
+  prevEnd: Date;
+  trendDays: number;
+  from?: string;
+  to?: string;
+};
+
 @Injectable()
 export class DashboardService {
   constructor(private readonly prisma: PrismaService) {}
 
   /** 主仪表盘：周期 KPI + 环比 + 趋势 + 待办 + 排行 + 经营拆分 */
-  async overview(rangeInput?: string) {
-    const range = this.parseRange(rangeInput);
-    const { periodStart, periodEnd, prevStart, prevEnd, trendDays } = this.windowFor(range);
+  async overview(rangeInput?: string, fromInput?: string, toInput?: string) {
+    const window = this.resolveWindow(rangeInput, fromInput, toInput);
+    const { range, periodStart, periodEnd, prevStart, prevEnd, trendDays, from, to } = window;
 
-    const [period, previous, trends, todos, rankings, bizBreakdown] = await Promise.all([
-      this.kpi(periodStart, periodEnd),
-      this.kpi(prevStart, prevEnd),
-      this.trends(range === 'today' ? prevStart : periodStart, periodEnd, trendDays),
-      this.todoCounts(),
-      this.rankings(periodStart, periodEnd),
-      this.bizBreakdown(periodStart, periodEnd),
-    ]);
+    const trendStart = range === 'today' ? prevStart : periodStart;
+
+    const [period, previous, trends, todos, rankings, bizBreakdown, dramaCount] =
+      await Promise.all([
+        this.kpi(periodStart, periodEnd),
+        this.kpi(prevStart, prevEnd),
+        this.trends(trendStart, periodEnd, trendDays),
+        this.todoCounts(),
+        this.rankings(periodStart, periodEnd),
+        this.bizBreakdown(periodStart, periodEnd),
+        this.prisma.drama.count(),
+      ]);
 
     return {
       range,
+      from: from ?? null,
+      to: to ?? null,
       period,
       previous,
       deltas: {
@@ -44,16 +66,27 @@ export class DashboardService {
       todos,
       rankings,
       bizBreakdown,
+      meta: { dramaCount },
     };
   }
 
-  private parseRange(input?: string): DashboardRange {
-    if (input === 'today' || input === '7d' || input === '30d') return input;
-    return '7d';
+  private resolveWindow(rangeInput?: string, fromInput?: string, toInput?: string): WindowSpec {
+    const preset =
+      rangeInput === 'today' || rangeInput === '7d' || rangeInput === '30d' ? rangeInput : null;
+
+    if (preset) {
+      return { range: preset, ...this.windowForPreset(preset) };
+    }
+
+    if (rangeInput === 'custom' || (fromInput?.trim() && toInput?.trim())) {
+      return this.windowForCustom(fromInput, toInput);
+    }
+
+    return { range: '7d', ...this.windowForPreset('7d') };
   }
 
   /** 半开区间 [start, end)；趋势天数 = 当前窗口自然日数 */
-  private windowFor(range: DashboardRange) {
+  private windowForPreset(range: Exclude<DashboardRange, 'custom'>) {
     const now = new Date();
     const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const dayEnd = new Date(dayStart);
@@ -84,6 +117,47 @@ export class DashboardService {
       prevStart,
       prevEnd,
       trendDays: days,
+    };
+  }
+
+  private windowForCustom(fromInput?: string, toInput?: string): WindowSpec {
+    const from = parseDay(fromInput);
+    const to = parseDay(toInput);
+    if (!from || !to) {
+      throw new BizException(BizCode.BAD_REQUEST, 'dashboard.customRangeRequired');
+    }
+    if (from.getTime() > to.getTime()) {
+      throw new BizException(BizCode.BAD_REQUEST, 'dashboard.customRangeOrder');
+    }
+
+    const todayStart = startOfLocalDay(new Date());
+    if (from.getTime() > todayStart.getTime()) {
+      throw new BizException(BizCode.BAD_REQUEST, 'dashboard.customRangeFuture');
+    }
+
+    const toClamped = to.getTime() > todayStart.getTime() ? todayStart : to;
+    const periodStart = from;
+    const periodEnd = addDays(toClamped, 1); // exclusive end of inclusive `to`
+    const trendDays = Math.round((periodEnd.getTime() - periodStart.getTime()) / 86_400_000);
+    if (trendDays < 1) {
+      throw new BizException(BizCode.BAD_REQUEST, 'dashboard.customRangeOrder');
+    }
+    if (trendDays > CUSTOM_MAX_DAYS) {
+      throw new BizException(BizCode.BAD_REQUEST, 'dashboard.customRangeMax');
+    }
+
+    const prevEnd = periodStart;
+    const prevStart = addDays(periodStart, -trendDays);
+
+    return {
+      range: 'custom',
+      periodStart,
+      periodEnd,
+      prevStart,
+      prevEnd,
+      trendDays,
+      from: dayKey(periodStart),
+      to: dayKey(toClamped),
     };
   }
 
@@ -208,27 +282,32 @@ export class DashboardService {
     };
   }
 
+  /**
+   * 浏览/解锁/销售排行均按 [start, end) 时间窗统计。
+   * 浏览：watch_history 在窗内有进度的 user×episode 次数（按剧聚合）。
+   * 解锁：user_unlocks.unlockedAt 落在窗内的次数（经 episodes 归到剧）。
+   */
   private async rankings(start: Date, end: Date) {
-    const dramaSelect = {
-      id: true,
-      titleEn: true,
-      titleZh: true,
-      slug: true,
-      unlockCount: true,
-      viewCount: true,
-    } as const;
-
-    const [topByView, topByUnlock, salesGrouped] = await Promise.all([
-      this.prisma.drama.findMany({
-        orderBy: { viewCount: 'desc' },
-        take: 10,
-        select: dramaSelect,
-      }),
-      this.prisma.drama.findMany({
-        orderBy: { unlockCount: 'desc' },
-        take: 10,
-        select: dramaSelect,
-      }),
+    const [viewRows, unlockRows, salesGrouped] = await Promise.all([
+      this.prisma.$queryRaw<Array<{ drama_id: bigint; cnt: bigint }>>`
+        SELECT "dramaId" AS drama_id, COUNT(*)::bigint AS cnt
+          FROM watch_history
+         WHERE "watchedAt" >= ${start}
+           AND "watchedAt" < ${end}
+         GROUP BY "dramaId"
+         ORDER BY cnt DESC
+         LIMIT 10
+      `,
+      this.prisma.$queryRaw<Array<{ drama_id: bigint; cnt: bigint }>>`
+        SELECT e."dramaId" AS drama_id, COUNT(*)::bigint AS cnt
+          FROM user_unlocks u
+          INNER JOIN episodes e ON e.id = u."episodeId"
+         WHERE u."unlockedAt" >= ${start}
+           AND u."unlockedAt" < ${end}
+         GROUP BY e."dramaId"
+         ORDER BY cnt DESC
+         LIMIT 10
+      `,
       this.prisma.order.groupBy({
         by: ['dramaId'],
         where: {
@@ -244,31 +323,85 @@ export class DashboardService {
       }),
     ]);
 
+    const viewIdSet = new Set(viewRows.map((r) => r.drama_id.toString()));
+    const unlockIdSet = new Set(unlockRows.map((r) => r.drama_id.toString()));
     const salesIds = salesGrouped.map((g) => g.dramaId!).filter(Boolean);
-    const salesDramas = salesIds.length
+    const allIds = [
+      ...viewRows.map((r) => r.drama_id),
+      ...unlockRows.map((r) => r.drama_id),
+      ...salesIds,
+    ];
+    const uniqueIds = [...new Map(allIds.map((id) => [id.toString(), id])).values()];
+
+    const dramas = uniqueIds.length
       ? await this.prisma.drama.findMany({
-          where: { id: { in: salesIds } },
+          where: { id: { in: uniqueIds } },
           select: { id: true, titleEn: true, titleZh: true, slug: true },
         })
       : [];
-    const salesMap = new Map(salesDramas.map((d) => [d.id.toString(), d]));
+    const dramaMap = new Map(dramas.map((d) => [d.id.toString(), d]));
 
-    const mapDrama = (d: (typeof topByView)[number]) => ({
-      id: d.id.toString(),
-      titleZh: d.titleZh,
-      titleEn: d.titleEn,
-      slug: d.slug,
-      viewCount: Number(d.viewCount),
-      unlockCount: Number(d.unlockCount),
-    });
+    // 排行行需要同时展示窗内浏览与解锁，互为补全计数
+    const needUnlockSide = viewRows
+      .map((r) => r.drama_id)
+      .filter((id) => !unlockIdSet.has(id.toString()));
+    const needViewSide = unlockRows
+      .map((r) => r.drama_id)
+      .filter((id) => !viewIdSet.has(id.toString()));
+
+    const [unlockSide, viewSide] = await Promise.all([
+      needUnlockSide.length
+        ? this.prisma.$queryRaw<Array<{ drama_id: bigint; cnt: bigint }>>`
+            SELECT e."dramaId" AS drama_id, COUNT(*)::bigint AS cnt
+              FROM user_unlocks u
+              INNER JOIN episodes e ON e.id = u."episodeId"
+             WHERE u."unlockedAt" >= ${start}
+               AND u."unlockedAt" < ${end}
+               AND e."dramaId" IN (${Prisma.join(needUnlockSide)})
+             GROUP BY e."dramaId"
+          `
+        : Promise.resolve([] as Array<{ drama_id: bigint; cnt: bigint }>),
+      needViewSide.length
+        ? this.prisma.$queryRaw<Array<{ drama_id: bigint; cnt: bigint }>>`
+            SELECT "dramaId" AS drama_id, COUNT(*)::bigint AS cnt
+              FROM watch_history
+             WHERE "watchedAt" >= ${start}
+               AND "watchedAt" < ${end}
+               AND "dramaId" IN (${Prisma.join(needViewSide)})
+             GROUP BY "dramaId"
+          `
+        : Promise.resolve([] as Array<{ drama_id: bigint; cnt: bigint }>),
+    ]);
+
+    const viewCountMap = new Map<string, number>();
+    for (const r of viewRows) viewCountMap.set(r.drama_id.toString(), Number(r.cnt));
+    for (const r of viewSide) viewCountMap.set(r.drama_id.toString(), Number(r.cnt));
+
+    const unlockCountMap = new Map<string, number>();
+    for (const r of unlockRows) unlockCountMap.set(r.drama_id.toString(), Number(r.cnt));
+    for (const r of unlockSide) unlockCountMap.set(r.drama_id.toString(), Number(r.cnt));
+
+    const mapRankRow = (dramaId: bigint) => {
+      const id = dramaId.toString();
+      const d = dramaMap.get(id);
+      return {
+        id,
+        titleZh: d?.titleZh ?? null,
+        titleEn: d?.titleEn ?? null,
+        slug: d?.slug ?? null,
+        viewCount: viewCountMap.get(id) ?? 0,
+        unlockCount: unlockCountMap.get(id) ?? 0,
+      };
+    };
 
     return {
-      topByView: topByView.map(mapDrama),
-      topByUnlock: topByUnlock.map(mapDrama),
+      topByView: viewRows.map((r) => mapRankRow(r.drama_id)),
+      topByUnlock: unlockRows.map((r) => mapRankRow(r.drama_id)),
       topBySales: salesGrouped.map((g) => {
-        const d = salesMap.get(g.dramaId!.toString());
+        const id = g.dramaId!.toString();
+        const d = dramaMap.get(id);
         return {
-          dramaId: g.dramaId!.toString(),
+          dramaId: id,
           titleZh: d?.titleZh ?? null,
           titleEn: d?.titleEn ?? null,
           slug: d?.slug ?? null,
@@ -342,6 +475,31 @@ function dayKey(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
   return `${y}-${m}-${day}`;
+}
+
+function startOfLocalDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+function addDays(d: Date, n: number): Date {
+  const out = new Date(d);
+  out.setDate(out.getDate() + n);
+  return out;
+}
+
+/** Parse YYYY-MM-DD as local calendar day start. */
+function parseDay(raw?: string): Date | null {
+  const s = raw?.trim();
+  if (!s) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const day = Number(m[3]);
+  if (mo < 1 || mo > 12 || day < 1 || day > 31) return null;
+  const d = new Date(y, mo - 1, day);
+  if (d.getFullYear() !== y || d.getMonth() !== mo - 1 || d.getDate() !== day) return null;
+  return d;
 }
 
 function pctDelta(curr: number | bigint, prev: number | bigint): number | null {

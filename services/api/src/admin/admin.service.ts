@@ -19,6 +19,7 @@ import { convertExternalPlayUrl, inferExternalUrlExpiry, slugifyTitle } from './
 import { AuditService } from '../common/audit.service';
 import { UploadService } from '../upload/upload.service';
 import { ContentReadinessService } from '../common/content-readiness.service';
+import { mergeDramaSourceTags } from '../dramas/drama-tags';
 
 export interface LocalImportOptions {
   rootPath?: string;
@@ -82,6 +83,13 @@ export interface CreateLocalUploadDramaInput {
   freeEpisodeCount?: number;
   lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE';
   status?: 'DRAFT' | 'LIVE';
+  sourceTags?: string[];
+  /** local disk vs R2 CDN shell — listing filters use this. */
+  sourceType?: 'LOCAL' | 'R2';
+  /** Dedup key for transferred/online sources */
+  externalRef?: string;
+  /** Announced/planned total; kept ahead of uploaded count for consumer placeholders. */
+  totalEpisodes?: number;
 }
 
 @Injectable()
@@ -1180,6 +1188,19 @@ export class AdminService {
     if (dto.sortWeight != null) data.sortWeight = Math.floor(Number(dto.sortWeight));
     if (dto.isFeatured != null) data.isFeatured = !!dto.isFeatured;
     if (dto.isOfficial != null) data.isOfficial = !!dto.isOfficial;
+    if (dto.sourceTags !== undefined) {
+      const existing = await this.prisma.drama.findUnique({
+        where: { id: BigInt(id) },
+        select: { tags: true },
+      });
+      if (!existing) {
+        throw new BizException(BizCode.NOT_FOUND, 'common.recordNotFound');
+      }
+      data.tags = mergeDramaSourceTags(
+        existing.tags,
+        Array.isArray(dto.sourceTags) ? dto.sourceTags.map(String) : [],
+      );
+    }
     if (Object.keys(data).length === 0) {
       throw new BizException(BizCode.BAD_REQUEST, 'common.noFieldsToUpdate');
     }
@@ -1258,10 +1279,14 @@ export class AdminService {
     const titleEn = String(dto.titleEn || titleZh).trim();
     let slug = String(dto.slug || slugifyTitle(titleZh)).trim();
     if (!slug) slug = slugifyTitle(titleZh);
-
-    const existing = await this.prisma.drama.findUnique({ where: { slug } });
-    if (existing) {
-      throw new BizException(BizCode.CONFLICT, `slug 已存在: ${slug}`);
+    // Explicit slug from operator still conflicts; auto-derived slugs get a unique suffix.
+    if (dto.slug?.trim()) {
+      const existing = await this.prisma.drama.findUnique({ where: { slug } });
+      if (existing) {
+        throw new BizException(BizCode.CONFLICT, `slug 已存在: ${slug}`);
+      }
+    } else {
+      slug = await this.ensureUniqueSlug(slug);
     }
 
     const externalRef = dto.externalRef?.trim() || null;
@@ -1448,10 +1473,23 @@ export class AdminService {
     const titleEn = String(dto.titleEn || titleZh).trim();
     let slug = String(dto.slug || slugifyTitle(titleZh)).trim();
     if (!slug) slug = slugifyTitle(titleZh);
+    if (dto.slug?.trim()) {
+      const existing = await this.prisma.drama.findUnique({ where: { slug } });
+      if (existing) {
+        throw new BizException(BizCode.CONFLICT, `slug 已存在: ${slug}`);
+      }
+    } else {
+      slug = await this.ensureUniqueSlug(slug);
+    }
 
-    const existing = await this.prisma.drama.findUnique({ where: { slug } });
-    if (existing) {
-      throw new BizException(BizCode.CONFLICT, `slug 已存在: ${slug}`);
+    const externalRef = dto.externalRef?.trim() || null;
+    if (externalRef) {
+      const byRef = await this.prisma.drama.findFirst({
+        where: { externalRef } as any,
+      });
+      if (byRef) {
+        throw new BizException(BizCode.CONFLICT, `externalRef 已存在: ${externalRef}`);
+      }
     }
 
     let creator = await this.prisma.creator.findFirst({
@@ -1482,6 +1520,11 @@ export class AdminService {
     const lockMode = dto.lockMode || 'FREE_FIRST_N';
     // 创建时一律草稿；转码完成后再经 assertDramaReady 恢复上架，禁止绕过就绪门禁。
     const status = 'DRAFT' as const;
+    const announcedTotal = Math.max(0, Math.floor(Number(dto.totalEpisodes ?? 0)));
+    const sourceType = dto.sourceType === 'LOCAL' ? 'LOCAL' : 'R2';
+    const baseTags = sourceType === 'LOCAL' ? ['upload', 'local'] : ['upload', 'r2'];
+    const extraTags = (dto.sourceTags || []).map(String).filter(Boolean);
+    const tags = [...baseTags, ...extraTags.filter((t) => !baseTags.includes(t))];
 
     const drama = await this.prisma.drama.create({
       data: {
@@ -1496,11 +1539,12 @@ export class AdminService {
         freeEpisodeCount,
         lockMode,
         isOfficial: true,
-        sourceType: 'R2',
-        tags: ['upload', 'r2'],
+        sourceType,
+        externalRef,
+        tags,
         status,
         publishedAt: null,
-        totalEpisodes: 0,
+        totalEpisodes: announcedTotal,
       } as any,
     });
 
@@ -1509,7 +1553,12 @@ export class AdminService {
       action: 'drama.createUpload',
       targetType: 'drama',
       targetId: drama.id.toString(),
-      payload: { slug: drama.slug, status, storageBackend: this.config.get('STORAGE_BACKEND') || 'local' },
+      payload: {
+        slug: drama.slug,
+        status,
+        totalEpisodes: announcedTotal,
+        storageBackend: this.config.get('STORAGE_BACKEND') || 'local',
+      },
     });
 
     return {
@@ -1517,7 +1566,7 @@ export class AdminService {
       slug: drama.slug,
       status: drama.status,
       sourceType: drama.sourceType,
-      totalEpisodes: 0,
+      totalEpisodes: announcedTotal,
       storageBackend: (this.config.get<string>('STORAGE_BACKEND') || 'local').toLowerCase(),
       r2Enabled: (this.config.get<string>('STORAGE_BACKEND') || 'local').toLowerCase() === 'r2',
     };
@@ -1626,5 +1675,20 @@ export class AdminService {
       payload: { ids: uniqueIds, reason: reasonText, updated, failed },
     });
     return { action, updated, failed };
+  }
+
+  /** Auto-derived titles often collide; bump suffix until free. Explicit operator slugs still conflict. */
+  private async ensureUniqueSlug(base: string): Promise<string> {
+    const root = (base || 'drama').slice(0, 48);
+    let slug = root;
+    for (let n = 0; n < 50; n++) {
+      const hit = await this.prisma.drama.findUnique({
+        where: { slug },
+        select: { id: true },
+      });
+      if (!hit) return slug;
+      slug = `${root.slice(0, 44)}-${n + 1}`;
+    }
+    return `${root.slice(0, 40)}-${Date.now().toString(36)}`;
   }
 }

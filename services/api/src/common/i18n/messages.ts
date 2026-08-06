@@ -39,6 +39,7 @@ const en = {
 
   // Prisma / generic data ops
   'common.dataOpFailed': 'Data operation failed',
+  'common.dataOpFailedCode': 'Data operation failed ({code})',
   'common.recordExists': 'Record already exists',
   'common.recordExistsField': 'Record already exists ({field})',
   'common.invalidReference': 'Invalid reference',
@@ -125,6 +126,7 @@ const zh: Record<MessageKey, string> = {
   'common.ok': 'ok',
 
   'common.dataOpFailed': '数据操作失败',
+  'common.dataOpFailedCode': '数据操作失败（{code}）',
   'common.recordExists': '数据已存在',
   'common.recordExistsField': '数据已存在（{field}）',
   'common.invalidReference': '引用无效',
@@ -207,6 +209,7 @@ const vi: Record<MessageKey, string> = {
   'common.ok': 'ok',
 
   'common.dataOpFailed': 'Thao tác dữ liệu thất bại',
+  'common.dataOpFailedCode': 'Thao tác dữ liệu thất bại ({code})',
   'common.recordExists': 'Dữ liệu đã tồn tại',
   'common.recordExistsField': 'Dữ liệu đã tồn tại ({field})',
   'common.invalidReference': 'Tham chiếu không hợp lệ',
@@ -289,6 +292,7 @@ const fr: Record<MessageKey, string> = {
   'common.ok': 'ok',
 
   'common.dataOpFailed': 'Échec de l’opération sur les données',
+  'common.dataOpFailedCode': 'Échec de l’opération sur les données ({code})',
   'common.recordExists': 'Enregistrement déjà existant',
   'common.recordExistsField': 'Enregistrement déjà existant ({field})',
   'common.invalidReference': 'Référence invalide',
@@ -371,6 +375,7 @@ const ru: Record<MessageKey, string> = {
   'common.ok': 'ok',
 
   'common.dataOpFailed': 'Ошибка операции с данными',
+  'common.dataOpFailedCode': 'Ошибка операции с данными ({code})',
   'common.recordExists': 'Запись уже существует',
   'common.recordExistsField': 'Запись уже существует ({field})',
   'common.invalidReference': 'Недопустимая ссылка',

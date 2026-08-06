@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { PrismaService } from '../prisma/prisma.service';
@@ -19,6 +20,7 @@ export type YtdlpImportOptions = {
   categorySlug: string;
   titleZh?: string;
   titleEn?: string;
+  /** Ignored — imports always create DRAFT. Kept for API compatibility. */
   status?: 'DRAFT' | 'LIVE';
   maxEpisodes?: number;
   formatPreference?: YtdlpFormatPreference;
@@ -29,9 +31,44 @@ export type YtdlpTransferOptions = YtdlpImportOptions & {
   target: 'local' | 'r2';
 };
 
+export type YtdlpEpisodeFailure = {
+  episodeNumber: number;
+  url: string;
+  error: string;
+};
+
+export type YtdlpTransferJobState = {
+  id: string;
+  dramaId: string;
+  slug: string;
+  status: 'queued' | 'running' | 'completed' | 'failed';
+  target: 'local' | 'r2';
+  preferR2: boolean;
+  total: number;
+  transferred: number;
+  currentEpisode: number | null;
+  failedEpisodes: YtdlpEpisodeFailure[];
+  jobs: Array<{
+    episodeId: string;
+    episodeNumber: number;
+    jobId: string;
+    filename: string;
+    size: number;
+  }>;
+  previewUrl?: string;
+  extractor?: string;
+  kind?: 'single' | 'playlist';
+  externalRef?: string;
+  sourceType?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 @Injectable()
 export class YtdlpImportService {
   private readonly logger = new Logger(YtdlpImportService.name);
+  private readonly transferJobs = new Map<string, YtdlpTransferJobState>();
 
   constructor(
     private readonly provider: YtdlpProvider,
@@ -61,6 +98,12 @@ export class YtdlpImportService {
         playUrl,
         originalUrl: url,
       }));
+  }
+
+  getTransferJob(jobId: string): YtdlpTransferJobState {
+    const job = this.transferJobs.get(String(jobId || '').trim());
+    if (!job) throw new BizException(BizCode.NOT_FOUND, '转存任务不存在或已过期');
+    return job;
   }
 
   async importDrama(opts: YtdlpImportOptions, actorId?: bigint) {
@@ -108,7 +151,7 @@ export class YtdlpImportService {
       playlistIndex?: number;
       isFree?: boolean;
     }> = [];
-    const errors: Array<{ episodeNumber: number; url: string; error: string }> = [];
+    const errors: YtdlpEpisodeFailure[] = [];
 
     for (const ep of selected) {
       try {
@@ -117,9 +160,10 @@ export class YtdlpImportService {
           preference,
           ep.playlistIndex,
         );
+        // Consecutive 1..n so partial resolve failures do not leave publish gaps.
         episodes.push({
-          episodeNumber: ep.index,
-          title: ep.title || `第 ${ep.index} 集`,
+          episodeNumber: episodes.length + 1,
+          title: ep.title || `第 ${episodes.length + 1} 集`,
           sourceUrl: playUrl,
           sourcePageUrl: ep.webpageUrl,
           sourceProvider: probe.extractor,
@@ -247,8 +291,8 @@ export class YtdlpImportService {
   }
 
   /**
-   * Download episodes via yt-dlp → local uploads → enqueue HLS transcode.
-   * target=local keeps HLS on disk; target=r2 pushes to R2 after ffmpeg (requires credentials).
+   * Start async transfer: create drama shell immediately, download+transcode in background.
+   * Poll GET /ytdlp/transfer/:jobId for progress.
    */
   async transferDrama(opts: YtdlpTransferOptions, actorId?: bigint) {
     const pageUrl = String(opts.url || '').trim();
@@ -293,7 +337,8 @@ export class YtdlpImportService {
       throw new BizException(BizCode.BAD_REQUEST, '未解析到分集，无法转存');
     }
 
-    const preference = opts.formatPreference || 'best';
+    const preference =
+      opts.formatPreference === 'best_hls' ? 'best' : opts.formatPreference || 'best';
     const limit =
       opts.maxEpisodes && opts.maxEpisodes > 0
         ? Math.min(opts.maxEpisodes, probe.episodes.length)
@@ -301,6 +346,7 @@ export class YtdlpImportService {
     const selected = probe.episodes.slice(0, limit);
 
     const titleZh = (opts.titleZh || probe.title || '').trim();
+    const sourceType = target === 'r2' ? 'R2' : 'LOCAL';
     const drama = await this.admin.createLocalUploadDrama(
       {
         titleZh,
@@ -312,39 +358,101 @@ export class YtdlpImportService {
         lockMode: 'ALL_FREE',
         freeEpisodeCount: selected.length,
         status: 'DRAFT',
+        sourceType,
+        sourceTags: ['ytdlp', 'transfer', target, probe.extractor, `ytdlp:${probe.id}`],
+        totalEpisodes: selected.length,
+        externalRef,
       },
       actorId,
     );
 
-    await this.prisma.drama.update({
-      where: { id: BigInt(drama.id) },
-      data: {
-        externalRef,
-        tags: ['ytdlp', 'transfer', target, probe.extractor, `ytdlp:${probe.id}`],
-      } as any,
+    const preferR2 = target === 'r2';
+    const now = new Date().toISOString();
+    const jobId = randomUUID();
+    const job: YtdlpTransferJobState = {
+      id: jobId,
+      dramaId: drama.id,
+      slug: drama.slug,
+      status: 'queued',
+      target,
+      preferR2,
+      total: selected.length,
+      transferred: 0,
+      currentEpisode: null,
+      failedEpisodes: [],
+      jobs: [],
+      extractor: probe.extractor,
+      kind: probe.kind,
+      externalRef,
+      sourceType: drama.sourceType,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.transferJobs.set(jobId, job);
+    this.pruneTransferJobs();
+
+    void this.runTransferJob(jobId, {
+      selected,
+      preference,
+      preferR2,
+      dramaId: drama.id,
+      actorId,
     });
 
-    const preferR2 = target === 'r2';
-    const uploadDir = this.upload.getUploadDir();
-    const jobs: Array<{
-      episodeId: string;
-      episodeNumber: number;
-      jobId: string;
-      filename: string;
-      size: number;
-    }> = [];
-    const errors: Array<{ episodeNumber: number; url: string; error: string }> = [];
+    return {
+      jobId,
+      id: drama.id,
+      slug: drama.slug,
+      status: drama.status,
+      jobStatus: job.status,
+      sourceType: drama.sourceType,
+      target,
+      preferR2,
+      storageBackend: storage.storageBackend,
+      r2Configured: storage.r2Configured,
+      ffmpegReady: true,
+      extractor: probe.extractor,
+      kind: probe.kind,
+      externalRef,
+      totalEpisodes: selected.length,
+      transferredEpisodes: 0,
+      failedEpisodes: [] as YtdlpEpisodeFailure[],
+      jobs: [] as YtdlpTransferJobState['jobs'],
+      async: true as const,
+    };
+  }
 
-    for (const ep of selected) {
+  private async runTransferJob(
+    jobId: string,
+    ctx: {
+      selected: Awaited<ReturnType<YtdlpProvider['probe']>>['episodes'];
+      preference: YtdlpFormatPreference;
+      preferR2: boolean;
+      dramaId: string;
+      actorId?: bigint;
+    },
+  ) {
+    const job = this.transferJobs.get(jobId);
+    if (!job) return;
+
+    job.status = 'running';
+    job.updatedAt = new Date().toISOString();
+    const uploadDir = this.upload.getUploadDir();
+
+    for (const ep of ctx.selected) {
+      const current = this.transferJobs.get(jobId);
+      if (!current) return;
+      current.currentEpisode = ep.index;
+      current.updatedAt = new Date().toISOString();
+
       try {
         const downloaded = await this.provider.downloadToFile(
           ep.webpageUrl,
           uploadDir,
-          preference,
+          ctx.preference,
           ep.playlistIndex,
         );
         const relativePath = `uploads/${path.basename(downloaded.absPath)}`;
-        // Ensure file lives under uploads/ even if yt-dlp wrote to a sibling path
         const absInUploads = this.upload.resolveAbs(relativePath);
         if (path.resolve(downloaded.absPath) !== path.resolve(absInUploads)) {
           fs.copyFileSync(downloaded.absPath, absInUploads);
@@ -355,16 +463,18 @@ export class YtdlpImportService {
           }
         }
 
+        // Consecutive episode numbers for successful transfers only.
+        const episodeNumber = current.jobs.length + 1;
         const created = await this.episodes.create(
-          drama.id,
+          ctx.dramaId,
           {
-            title: ep.title || `第 ${ep.index} 集`,
-            episodeNumber: ep.index,
+            title: ep.title || `第 ${episodeNumber} 集`,
+            episodeNumber,
             isFree: true,
             originalUrl: relativePath,
             hlsUrl: relativePath,
           },
-          actorId,
+          ctx.actorId,
         );
 
         await this.prisma.episode.update({
@@ -378,53 +488,66 @@ export class YtdlpImportService {
           },
         });
 
-        const job = await this.upload.enqueueTranscode(relativePath, created.id, { preferR2 });
-        jobs.push({
+        const mediaJob = await this.upload.enqueueTranscode(relativePath, created.id, {
+          preferR2: ctx.preferR2,
+        });
+        current.jobs.push({
           episodeId: created.id,
-          episodeNumber: ep.index,
-          jobId: job.id,
+          episodeNumber,
+          jobId: mediaJob.id,
           filename: path.basename(absInUploads),
           size: downloaded.size,
         });
+        current.transferred = current.jobs.length;
+        if (!current.previewUrl) {
+          current.previewUrl = this.signLocalMedia(path.basename(absInUploads));
+        }
+        current.updatedAt = new Date().toISOString();
       } catch (e: any) {
         this.logger.warn(`transfer ep ${ep.index} failed: ${e?.message || e}`);
-        errors.push({
+        current.failedEpisodes.push({
           episodeNumber: ep.index,
           url: ep.webpageUrl,
           error: e?.message || 'download failed',
         });
+        current.updatedAt = new Date().toISOString();
       }
     }
 
-    if (!jobs.length) {
-      await this.prisma.drama.delete({ where: { id: BigInt(drama.id) } }).catch(() => undefined);
-      throw new BizException(
-        BizCode.BAD_REQUEST,
-        `全部分集下载失败（${errors.length}）`,
-      );
+    const finalJob = this.transferJobs.get(jobId);
+    if (!finalJob) return;
+
+    if (!finalJob.jobs.length) {
+      await this.prisma.drama.delete({ where: { id: BigInt(ctx.dramaId) } }).catch(() => undefined);
+      finalJob.status = 'failed';
+      finalJob.error = `全部分集下载失败（${finalJob.failedEpisodes.length}）`;
+      finalJob.currentEpisode = null;
+      finalJob.updatedAt = new Date().toISOString();
+      return;
     }
 
-    const firstPreviewUrl = this.signLocalMedia(jobs[0].filename);
+    await this.prisma.drama
+      .update({
+        where: { id: BigInt(ctx.dramaId) },
+        data: { totalEpisodes: finalJob.jobs.length },
+      })
+      .catch(() => undefined);
 
-    return {
-      id: drama.id,
-      slug: drama.slug,
-      status: drama.status,
-      sourceType: drama.sourceType,
-      target,
-      preferR2,
-      storageBackend: storage.storageBackend,
-      r2Configured: storage.r2Configured,
-      ffmpegReady: true,
-      extractor: probe.extractor,
-      kind: probe.kind,
-      externalRef,
-      totalEpisodes: jobs.length,
-      transferredEpisodes: jobs.length,
-      failedEpisodes: errors,
-      jobs,
-      previewUrl: firstPreviewUrl,
-    };
+    finalJob.status = 'completed';
+    finalJob.currentEpisode = null;
+    finalJob.updatedAt = new Date().toISOString();
+  }
+
+  /** Drop oldest completed/failed jobs when map grows. */
+  private pruneTransferJobs(maxKeep = 40) {
+    if (this.transferJobs.size <= maxKeep) return;
+    const done = [...this.transferJobs.entries()]
+      .filter(([, j]) => j.status === 'completed' || j.status === 'failed')
+      .sort((a, b) => a[1].updatedAt.localeCompare(b[1].updatedAt));
+    const overflow = this.transferJobs.size - maxKeep;
+    for (let i = 0; i < overflow && i < done.length; i++) {
+      this.transferJobs.delete(done[i][0]);
+    }
   }
 
   private signLocalMedia(filename: string): string {

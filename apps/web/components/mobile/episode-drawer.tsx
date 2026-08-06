@@ -5,6 +5,7 @@ import { AudioLines, ChevronRight, Lock, Star } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { useTheme } from "@/components/theme-provider";
 import type { Episode } from "@/lib/mock-data";
+import { buildEpisodeSlots, filterSlotsByRange } from "@/lib/episode-slots";
 import { cn, mediaUrl } from "@/lib/utils";
 
 const SEG_SIZE = 30;
@@ -43,7 +44,9 @@ export function EpisodeDrawer({
   const { resolved } = useTheme();
   const dark = resolved === "dark";
   const [tab, setTab] = useState<"about" | "episodes">("episodes");
-  const total = episodesCount || episodes.length;
+  const comingSoon = t("detail.episodeComingSoon");
+  const total = Math.max(episodesCount || 0, episodes.length);
+  const slots = useMemo(() => buildEpisodeSlots(episodes, total), [episodes, total]);
 
   const segments = useMemo(() => {
     const count = Math.max(1, Math.ceil(total / SEG_SIZE));
@@ -56,9 +59,9 @@ export function EpisodeDrawer({
 
   const [segIndex, setSegIndex] = useState(0);
   const activeSeg = segments[Math.min(segIndex, segments.length - 1)] ?? segments[0];
-  const gridEpisodes = activeSeg
-    ? episodes.filter((ep) => ep.no >= activeSeg.start && ep.no <= activeSeg.end)
-    : episodes;
+  const gridSlots = activeSeg
+    ? filterSlotsByRange(slots, activeSeg.start, activeSeg.end)
+    : slots;
 
   const cover = coverUrl ? mediaUrl(coverUrl) : "";
 
@@ -193,11 +196,34 @@ export function EpisodeDrawer({
               )}
 
               <ul className="grid grid-cols-6 gap-2.5">
-                {gridEpisodes.map((ep) => {
+                {gridSlots.map((slot) => {
+                  if (slot.kind === "placeholder") {
+                    return (
+                      <li key={slot.no}>
+                        <button
+                          type="button"
+                          disabled
+                          title={comingSoon}
+                          className={cn(
+                            "relative flex aspect-square w-full cursor-default flex-col items-center justify-center gap-0.5 rounded-lg text-[12px] font-medium tabular-nums",
+                            dark
+                              ? "bg-white/[0.04] text-white/30"
+                              : "bg-[#ececec] text-[#aaa]",
+                          )}
+                        >
+                          <span className="text-[15px]">{slot.no}</span>
+                          <span className="px-0.5 text-center text-[8px] leading-tight">
+                            {comingSoon}
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  }
+                  const ep = slot.episode;
                   const canPlay = isUnlocked(ep);
                   const active = selectedNo === ep.no;
                   return (
-                    <li key={ep.no}>
+                    <li key={slot.no}>
                       <button
                         type="button"
                         onClick={() => (canPlay ? onSelect(ep) : onUnlock(ep))}

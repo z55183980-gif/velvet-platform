@@ -52,6 +52,7 @@ export function ContentAddPanel({
   const { t } = useI18n();
   const [tab, setTab] = useState<ContentAddTab>(controlledTab ?? "owned");
   const [method, setMethod] = useState<ContentAddMethod>(controlledMethod ?? "stream");
+  const [manualOpen, setManualOpen] = useState(false);
 
   useEffect(() => {
     if (controlledTab) setTab(controlledTab);
@@ -60,6 +61,10 @@ export function ContentAddPanel({
   useEffect(() => {
     if (controlledMethod) setMethod(controlledMethod);
   }, [controlledMethod]);
+
+  useEffect(() => {
+    setManualOpen(false);
+  }, [method]);
 
   function select(next: ContentAddSelection) {
     setTab(next.tab);
@@ -120,16 +125,35 @@ export function ContentAddPanel({
               </button>
             ))}
           </div>
+          <p className="text-caption text-ink-muted">
+            {method === "transfer" ? t("contentOnlineTransferLead") : t("contentOnlineStreamLead")}
+          </p>
 
           {method === "transfer" ? (
             <YtdlpImportPanel mode="transfer" />
           ) : (
-            <div className="space-y-8">
+            <div className="space-y-6">
               <YtdlpImportPanel mode="import" />
-              <div className="border-t border-line pt-6">
-                <h3 className="mb-1 text-h4 font-semibold">{t("onlineManualTitle")}</h3>
-                <p className="mb-3 text-body-sm text-ink-muted">{t("onlineManualHint")}</p>
-                <OnlineDramaForm />
+              <div className="border-t border-line pt-4">
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between gap-2 text-left"
+                  onClick={() => setManualOpen((v) => !v)}
+                  aria-expanded={manualOpen}
+                >
+                  <div>
+                    <h3 className="text-h4 font-semibold">{t("onlineManualTitle")}</h3>
+                    <p className="text-body-sm text-ink-muted">{t("onlineManualHint")}</p>
+                  </div>
+                  <span className="shrink-0 text-ink-muted" aria-hidden>
+                    {manualOpen ? "▾" : "▸"}
+                  </span>
+                </button>
+                {manualOpen ? (
+                  <div className="mt-4">
+                    <OnlineDramaForm />
+                  </div>
+                ) : null}
               </div>
             </div>
           )}

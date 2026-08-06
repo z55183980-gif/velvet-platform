@@ -31,6 +31,41 @@ export type R2PresignPutResult = {
   expiresAt: string;
 };
 
+export type R2StorageSizeSource = 'cloudflare_usage' | 'cloudflare_graphql' | 'list_approx' | null;
+
+export type R2ConnectivityProbe = {
+  ok: boolean;
+  skipped: boolean;
+  skipReason?: 'r2_disabled' | 'not_configured';
+  latencyMs: number | null;
+  error: string | null;
+  mediaBucket: string;
+  uploadBucket: string;
+  mediaReachable: boolean | null;
+  uploadReachable: boolean | null;
+  endpointHost: string | null;
+  region: string;
+  checkedAt: string;
+  /** Sum of media + upload payload (+ metadata when from CF analytics). null when unavailable. */
+  storageBytes: number | null;
+  mediaBytes: number | null;
+  uploadBytes: number | null;
+  /** True when size came from a bounded ListObjects scan (may undercount). */
+  storageApprox: boolean;
+  storageSource: R2StorageSizeSource;
+};
+
+const emptyStorageSize = {
+  storageBytes: null as number | null,
+  mediaBytes: null as number | null,
+  uploadBytes: null as number | null,
+  storageApprox: false,
+  storageSource: null as R2StorageSizeSource,
+};
+
+/** Bounded ListObjectsV2 pages when CF metrics token is missing (MaxKeys=1000 each). */
+const LIST_SIZE_MAX_PAGES = 3;
+
 /** Thin R2 (S3-compatible) helper. Only uses configured Velvet buckets. */
 @Injectable()
 export class R2StorageService {
@@ -69,6 +104,308 @@ export class R2StorageService {
       /\/$/,
       '',
     );
+  }
+
+  region(): string {
+    return this.config.get<string>('R2_REGION') || 'auto';
+  }
+
+  endpointHost(): string | null {
+    const endpoint = (this.config.get<string>('R2_ENDPOINT') || '').trim();
+    if (!endpoint) return null;
+    try {
+      return new URL(endpoint).host;
+    } catch {
+      return endpoint.replace(/^https?:\/\//i, '').split('/')[0] || null;
+    }
+  }
+
+  /** Prefer R2_ACCOUNT_ID; else parse from R2_ENDPOINT host (`{id}.r2.cloudflarestorage.com`). */
+  accountId(): string | null {
+    const configured = (this.config.get<string>('R2_ACCOUNT_ID') || '').trim();
+    if (configured) return configured;
+    const host = this.endpointHost();
+    if (!host) return null;
+    const m = /^([a-f0-9]{32})\.r2\.cloudflarestorage\.com$/i.exec(host);
+    return m?.[1] || null;
+  }
+
+  /** Cloudflare API token for R2 usage / GraphQL analytics (optional). */
+  private cloudflareApiToken(): string | null {
+    const token = (
+      this.config.get<string>('CLOUDFLARE_API_TOKEN') ||
+      this.config.get<string>('R2_API_TOKEN') ||
+      ''
+    ).trim();
+    return token || null;
+  }
+
+  /**
+   * Light live check: ListObjectsV2 MaxKeys=1 on media + upload buckets,
+   * plus best-effort storage size (CF usage/GraphQL, else bounded List).
+   */
+  async probeConnectivity(): Promise<R2ConnectivityProbe> {
+    const mediaBucket = this.mediaBucket();
+    const uploadBucket = this.uploadBucket();
+    const base = {
+      mediaBucket,
+      uploadBucket,
+      endpointHost: this.endpointHost(),
+      region: this.region(),
+      checkedAt: new Date().toISOString(),
+      ...emptyStorageSize,
+    };
+
+    if (!this.isEnabled()) {
+      return {
+        ok: true,
+        skipped: true,
+        skipReason: 'r2_disabled',
+        latencyMs: null,
+        error: null,
+        mediaReachable: null,
+        uploadReachable: null,
+        ...base,
+      };
+    }
+
+    if (!this.hasCredentials()) {
+      return {
+        ok: false,
+        skipped: true,
+        skipReason: 'not_configured',
+        latencyMs: null,
+        error: 'R2 credentials incomplete',
+        mediaReachable: null,
+        uploadReachable: null,
+        ...base,
+      };
+    }
+
+    const started = Date.now();
+    const [media, upload, cfSize] = await Promise.all([
+      this.probeBucket(mediaBucket),
+      this.probeBucket(uploadBucket),
+      this.fetchStorageSizeViaCloudflare(mediaBucket, uploadBucket).catch((e: any) => {
+        this.logger.warn(`R2 size via Cloudflare failed: ${e?.message || e}`);
+        return null;
+      }),
+    ]);
+    let size: typeof emptyStorageSize = cfSize ?? { ...emptyStorageSize };
+    if (!cfSize && media.ok && upload.ok) {
+      try {
+        size = await this.fetchStorageSizeViaListApprox(mediaBucket, uploadBucket);
+      } catch (e: any) {
+        this.logger.warn(`R2 size via ListObjects failed: ${e?.message || e}`);
+      }
+    }
+    const latencyMs = Date.now() - started;
+    const ok = media.ok && upload.ok;
+    const errors = [media.error, upload.error].filter(Boolean);
+    return {
+      ok,
+      skipped: false,
+      latencyMs,
+      error: ok ? null : errors.join('; ') || 'R2 unreachable',
+      mediaReachable: media.ok,
+      uploadReachable: upload.ok,
+      ...base,
+      ...size,
+      checkedAt: new Date().toISOString(),
+    };
+  }
+
+  private async probeBucket(
+    bucket: string,
+  ): Promise<{ ok: boolean; error: string | null }> {
+    try {
+      await this.getClient().send(
+        new ListObjectsV2Command({
+          Bucket: bucket,
+          MaxKeys: 1,
+        }),
+      );
+      return { ok: true, error: null };
+    } catch (e: any) {
+      const name = e?.name || e?.Code || 'Error';
+      const message = e?.message || String(e);
+      return { ok: false, error: `${bucket}: ${name}: ${message}` };
+    }
+  }
+
+  /**
+   * Best-effort bucket usage for media + upload via Cloudflare analytics.
+   * Returns null when token/account missing or APIs fail (caller may List-approx).
+   */
+  private async fetchStorageSizeViaCloudflare(
+    mediaBucket: string,
+    uploadBucket: string,
+  ): Promise<typeof emptyStorageSize | null> {
+    const accountId = this.accountId();
+    const token = this.cloudflareApiToken();
+    if (!accountId || !token) return null;
+
+    const [mediaViaUsage, uploadViaUsage] = await Promise.all([
+      this.fetchBucketUsageRest(accountId, token, mediaBucket),
+      this.fetchBucketUsageRest(accountId, token, uploadBucket),
+    ]);
+    if (mediaViaUsage != null && uploadViaUsage != null) {
+      return {
+        mediaBytes: mediaViaUsage,
+        uploadBytes: uploadViaUsage,
+        storageBytes: mediaViaUsage + uploadViaUsage,
+        storageApprox: false,
+        storageSource: 'cloudflare_usage',
+      };
+    }
+
+    const [mediaViaGql, uploadViaGql] = await Promise.all([
+      mediaViaUsage != null
+        ? Promise.resolve(mediaViaUsage)
+        : this.fetchBucketSizeGraphQl(accountId, token, mediaBucket),
+      uploadViaUsage != null
+        ? Promise.resolve(uploadViaUsage)
+        : this.fetchBucketSizeGraphQl(accountId, token, uploadBucket),
+    ]);
+    if (mediaViaGql == null && uploadViaGql == null) return null;
+    const partial = mediaViaGql == null || uploadViaGql == null;
+    return {
+      mediaBytes: mediaViaGql,
+      uploadBytes: uploadViaGql,
+      storageBytes: (mediaViaGql ?? 0) + (uploadViaGql ?? 0),
+      storageApprox: partial,
+      storageSource: 'cloudflare_graphql',
+    };
+  }
+
+  /** GET /accounts/{id}/r2/buckets/{bucket}/usage — payloadSize (+ metadataSize). */
+  private async fetchBucketUsageRest(
+    accountId: string,
+    token: string,
+    bucket: string,
+  ): Promise<number | null> {
+    const url = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(accountId)}/r2/buckets/${encodeURIComponent(bucket)}/usage`;
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+      },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!res.ok) return null;
+    const body: any = await res.json().catch(() => null);
+    if (!body?.success || !body?.result) return null;
+    const payload = Number(body.result.payloadSize ?? 0);
+    const metadata = Number(body.result.metadataSize ?? 0);
+    if (!Number.isFinite(payload) && !Number.isFinite(metadata)) return null;
+    return (Number.isFinite(payload) ? payload : 0) + (Number.isFinite(metadata) ? metadata : 0);
+  }
+
+  /** GraphQL r2StorageAdaptiveGroups — same source as the Cloudflare dashboard. */
+  private async fetchBucketSizeGraphQl(
+    accountId: string,
+    token: string,
+    bucket: string,
+  ): Promise<number | null> {
+    const end = new Date();
+    const start = new Date(end.getTime() - 48 * 60 * 60 * 1000);
+    const query = `
+      query getR2StorageMetrics($accountTag: String, $filter: R2StorageAdaptiveGroupsFilter_InputObject) {
+        viewer {
+          accounts(filter: { accountTag: $accountTag }) {
+            r2StorageAdaptiveGroups(
+              limit: 1
+              filter: $filter
+              orderBy: [datetime_DESC]
+            ) {
+              max {
+                objectCount
+                payloadSize
+                metadataSize
+              }
+            }
+          }
+        }
+      }
+    `;
+    const res = await fetch('https://api.cloudflare.com/client/v4/graphql', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        query,
+        operationName: 'getR2StorageMetrics',
+        variables: {
+          accountTag: accountId,
+          filter: {
+            datetime_geq: start.toISOString(),
+            datetime_leq: end.toISOString(),
+            bucketName: bucket,
+          },
+        },
+      }),
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!res.ok) return null;
+    const body: any = await res.json().catch(() => null);
+    const row = body?.data?.viewer?.accounts?.[0]?.r2StorageAdaptiveGroups?.[0]?.max;
+    if (!row) return null;
+    const payload = Number(row.payloadSize ?? 0);
+    const metadata = Number(row.metadataSize ?? 0);
+    if (!Number.isFinite(payload) && !Number.isFinite(metadata)) return null;
+    return (Number.isFinite(payload) ? payload : 0) + (Number.isFinite(metadata) ? metadata : 0);
+  }
+
+  /**
+   * Approximate size via ListObjectsV2: up to LIST_SIZE_MAX_PAGES × 1000 keys per bucket.
+   * Marks storageApprox when either bucket is truncated.
+   */
+  private async fetchStorageSizeViaListApprox(
+    mediaBucket: string,
+    uploadBucket: string,
+  ): Promise<typeof emptyStorageSize> {
+    const [media, upload] = await Promise.all([
+      this.sumBucketListBytes(mediaBucket),
+      this.sumBucketListBytes(uploadBucket),
+    ]);
+    return {
+      mediaBytes: media.bytes,
+      uploadBytes: upload.bytes,
+      storageBytes: media.bytes + upload.bytes,
+      storageApprox: media.truncated || upload.truncated,
+      storageSource: 'list_approx',
+    };
+  }
+
+  private async sumBucketListBytes(
+    bucket: string,
+  ): Promise<{ bytes: number; truncated: boolean }> {
+    let bytes = 0;
+    let token: string | undefined;
+    let pages = 0;
+    let truncated = false;
+    do {
+      const res = await this.getClient().send(
+        new ListObjectsV2Command({
+          Bucket: bucket,
+          ContinuationToken: token,
+          MaxKeys: 1000,
+        }),
+      );
+      for (const obj of res.Contents || []) {
+        bytes += Number(obj.Size || 0);
+      }
+      pages += 1;
+      if (res.IsTruncated && pages >= LIST_SIZE_MAX_PAGES) {
+        truncated = true;
+        break;
+      }
+      token = res.IsTruncated ? res.NextContinuationToken : undefined;
+    } while (token);
+    return { bytes, truncated };
   }
 
   private getClient(): S3Client {
@@ -363,8 +700,12 @@ export class R2StorageService {
 
   private guessContentType(key: string): string {
     if (key.endsWith('.m3u8')) return 'application/vnd.apple.mpegurl';
-    if (key.endsWith('.ts')) return 'video/mp2t';
-    if (key.endsWith('.mp4')) return 'video/mp4';
+    if (key.endsWith('.ts') || key.endsWith('.m2ts') || key.endsWith('.mts')) return 'video/mp2t';
+    if (key.endsWith('.mp4') || key.endsWith('.m4v')) return 'video/mp4';
+    if (key.endsWith('.webm')) return 'video/webm';
+    if (key.endsWith('.mov')) return 'video/quicktime';
+    if (key.endsWith('.mkv')) return 'video/x-matroska';
+    if (key.endsWith('.avi')) return 'video/x-msvideo';
     if (key.endsWith('.jpg') || key.endsWith('.jpeg')) return 'image/jpeg';
     if (key.endsWith('.png')) return 'image/png';
     if (key.endsWith('.webp')) return 'image/webp';

@@ -37,6 +37,11 @@ export function DramaCoverField({
   const videoRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [showUrl, setShowUrl] = useState(false);
+  const [cropSource, setCropSource] = useState<string | null>(null);
+  const [cropFileName, setCropFileName] = useState("cover");
+  const [cropZoom, setCropZoom] = useState(1);
+  const [cropX, setCropX] = useState(50);
+  const [cropY, setCropY] = useState(50);
 
   const hasKnownVideo = !!(videoFile || videoSrc);
 
@@ -55,6 +60,36 @@ export function DramaCoverField({
     const saved = await adminUploadImage(blob, { kind: "cover", filename: `${name}-cover.jpg` });
     if (!saved?.url) throw new Error(t("coverUploadNoUrl"));
     onChange(saved.url);
+  };
+
+  const applyCrop = () => {
+    if (!cropSource) return;
+    void run(async () => {
+      const image = new Image();
+      image.src = cropSource;
+      await new Promise<void>((resolve, reject) => {
+        image.onload = () => resolve();
+        image.onerror = () => reject(new Error(t("coverCropFailed")));
+      });
+      const targetW = 900;
+      const targetH = 1200;
+      const aspect = targetW / targetH;
+      const sourceAspect = image.width / image.height;
+      const baseW = sourceAspect > aspect ? image.height * aspect : image.width;
+      const baseH = sourceAspect > aspect ? image.height : image.width / aspect;
+      const cropW = baseW / cropZoom;
+      const cropH = baseH / cropZoom;
+      const sx = Math.max(0, Math.min(image.width - cropW, (image.width - cropW) * cropX / 100));
+      const sy = Math.max(0, Math.min(image.height - cropH, (image.height - cropH) * cropY / 100));
+      const canvas = document.createElement("canvas");
+      canvas.width = targetW;
+      canvas.height = targetH;
+      canvas.getContext("2d")?.drawImage(image, sx, sy, cropW, cropH, 0, 0, targetW, targetH);
+      const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error(t("coverCropFailed"))), "image/jpeg", 0.9));
+      await uploadBlob(blob, cropFileName.replace(/\.[^.]+$/, "") || "cover");
+      URL.revokeObjectURL(cropSource);
+      setCropSource(null);
+    });
   };
 
   const captureFromKnown = () => {
@@ -131,6 +166,16 @@ export function DramaCoverField({
 
       <p className="drama-cover-field__hint">{t("coverRecommendation")}</p>
 
+      {cropSource ? (
+        <div className="drama-cover-field__crop" role="dialog" aria-label={t("coverCropTitle")}>
+          <div className="drama-cover-field__crop-preview" style={{ backgroundImage: `url(${cropSource})`, backgroundSize: `${cropZoom * 100}%`, backgroundPosition: `${cropX}% ${cropY}%` }} />
+          <label>{t("coverCropZoom")}<input type="range" min="1" max="2.5" step="0.05" value={cropZoom} onChange={(e) => setCropZoom(Number(e.target.value))} /></label>
+          <label>{t("coverCropHorizontal")}<input type="range" min="0" max="100" value={cropX} onChange={(e) => setCropX(Number(e.target.value))} /></label>
+          <label>{t("coverCropVertical")}<input type="range" min="0" max="100" value={cropY} onChange={(e) => setCropY(Number(e.target.value))} /></label>
+          <div className="drama-cover-field__crop-actions"><button type="button" className="drama-cover-field__btn" onClick={() => { URL.revokeObjectURL(cropSource); setCropSource(null); }}>{t("cancel")}</button><button type="button" className="drama-cover-field__btn drama-cover-field__btn--primary" onClick={applyCrop} disabled={busy}>{t("coverCropApply")}</button></div>
+        </div>
+      ) : null}
+
       {showAdvancedUrl ? (
         <div className="drama-cover-field__advanced">
           <button
@@ -166,9 +211,12 @@ export function DramaCoverField({
           e.target.value = "";
           if (!file) return;
           void run(async () => {
-            const saved = await adminUploadImage(file, { kind: "cover", filename: file.name });
-            if (!saved?.url) throw new Error(t("coverUploadNoUrl"));
-            onChange(saved.url);
+            const source = URL.createObjectURL(file);
+            setCropFileName(file.name);
+            setCropZoom(1);
+            setCropX(50);
+            setCropY(50);
+            setCropSource(source);
           });
         }}
       />
