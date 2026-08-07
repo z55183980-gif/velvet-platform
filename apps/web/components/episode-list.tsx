@@ -39,7 +39,7 @@ export function EpisodeList({
   onSelect?: (ep: Episode) => void;
   isUnlocked?: (ep: Episode) => boolean;
   selectedNo?: number;
-  /** sidebar = Hongguo player right-rail number tiles */
+  /** sidebar = desktop theater right-rail number tiles */
   layout?: "list" | "rail" | "grid" | "sidebar";
 }) {
   const { locale, t } = useLocale();
@@ -99,7 +99,7 @@ export function EpisodeList({
           </div>
         )}
 
-        <ul className="grid grid-cols-4 gap-2.5">
+        <ul className="grid grid-cols-6 gap-2">
           {gridSlots.map((slot) => {
             const active = slot.kind === "episode" && selectedNo === slot.no;
             return (
@@ -109,10 +109,10 @@ export function EpisodeList({
                     type="button"
                     disabled
                     title={comingSoon}
-                    className="relative flex h-[54px] w-full cursor-default flex-col items-center justify-center gap-0.5 rounded-lg bg-white/[0.04] text-white/30"
+                    className="relative flex h-11 w-full cursor-default flex-col items-center justify-center gap-0.5 rounded-md bg-white/[0.04] text-white/30"
                   >
-                    <span className="text-[15px] tabular-nums">{slot.no}</span>
-                    <span className="text-[9px] leading-none">{comingSoon}</span>
+                    <span className="text-[14px] tabular-nums">{slot.no}</span>
+                    <span className="text-[8px] leading-none">{comingSoon}</span>
                   </button>
                 ) : (
                   <button
@@ -122,7 +122,7 @@ export function EpisodeList({
                       unlocked(ep) ? onSelect?.(ep) : onUnlock(ep);
                     }}
                     className={cn(
-                      "relative flex h-[54px] w-full items-center justify-center rounded-lg text-[15px] transition-colors duration-150",
+                      "relative flex h-11 w-full items-center justify-center rounded-md text-[14px] transition-colors duration-150",
                       active
                         ? "bg-[rgba(250,119,5,0.12)] text-[#ff7e0d]"
                         : "bg-white/[0.08] text-white/90 hover:bg-white/[0.14]",

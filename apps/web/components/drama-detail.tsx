@@ -15,6 +15,7 @@ import {
   Maximize,
   Minimize2,
   MoreVertical,
+  Share2,
   Smartphone,
   Star,
   Volume2,
@@ -415,11 +416,11 @@ export function DramaDetail({
   const lockActionLabel =
     selected && !selected.isFree && !isUnlocked(selected) ? t("vip.open") : undefined;
 
-  /** `/drama/[id]/play` only: enter watch as soon as data is ready. */
+  /** Desktop: open theater on /drama/[id]. Mobile: only via /play (autoStartWatch). */
   useEffect(() => {
     if (!mobileReady || loading || !data) return;
-    if (autoStartWatch) setWatching(true);
-  }, [mobileReady, loading, data, autoStartWatch]);
+    if (autoStartWatch || !isMobile) setWatching(true);
+  }, [mobileReady, loading, data, autoStartWatch, isMobile]);
 
   useEffect(() => {
     if (!playerReady || !selected?.id) {
@@ -860,21 +861,24 @@ export function DramaDetail({
       );
     }
     return (
-      <div className="mx-auto max-w-[1280px] px-4 pb-24 pt-6 md:px-10 md:pt-10">
-        <div className="flex gap-4 md:gap-9">
-          <div className="h-[138px] w-[98px] shrink-0 animate-pulse rounded-xl bg-white/[0.06] md:h-[238px] md:w-[168px] md:rounded-2xl" />
-          <div className="flex-1 space-y-3 pt-1">
-            <div className="h-7 w-2/3 animate-pulse rounded bg-white/[0.06]" />
-            <div className="flex gap-2">
-              <div className="h-7 w-16 animate-pulse rounded-md bg-white/[0.06]" />
-              <div className="h-7 w-20 animate-pulse rounded-md bg-white/[0.06]" />
-            </div>
-            <div className="mt-6 hidden h-[45px] w-[162px] animate-pulse rounded-xl bg-white/[0.06] md:block" />
-          </div>
+      <div className="fixed inset-0 z-[70] bg-[#181a1a]" aria-busy="true">
+        <div className="flex h-14 items-center border-b border-white/[0.06] px-5">
+          <div className="h-5 w-40 animate-pulse rounded bg-white/[0.06]" />
         </div>
-        <div className="mt-8 space-y-3">
-          <div className="h-5 w-24 animate-pulse rounded bg-white/[0.06]" />
-          <div className="h-16 w-full animate-pulse rounded bg-white/[0.06]" />
+        <div className="flex h-[calc(100%-3.5rem)]">
+          <div className="flex flex-1 items-center justify-center bg-black">
+            <div className="aspect-[9/16] h-[min(100%,calc(100vh-3.5rem))] max-h-full animate-pulse rounded-sm bg-white/[0.04]" />
+          </div>
+          <div className="hidden w-[420px] shrink-0 border-l border-white/[0.06] bg-[#121212] p-5 lg:block">
+            <div className="mb-4 h-3 w-48 animate-pulse rounded bg-white/[0.06]" />
+            <div className="mb-3 h-6 w-3/4 animate-pulse rounded bg-white/[0.06]" />
+            <div className="mb-6 h-16 w-full animate-pulse rounded bg-white/[0.06]" />
+            <div className="grid grid-cols-6 gap-2">
+              {Array.from({ length: 12 }, (_, i) => (
+                <div key={i} className="h-11 animate-pulse rounded-md bg-white/[0.06]" />
+              ))}
+            </div>
+          </div>
         </div>
       </div>
     );
@@ -1760,21 +1764,41 @@ export function DramaDetail({
     );
   }
 
-  /* ---- Watching: desktop theater (Hongguo split: player + sidebar) ---- */
+  /* ---- Watching: desktop theater (ReelShort-style: vertical player + sidebar) ---- */
   if (watching && !isMobile) {
+    const epTitleText = selected
+      ? pickTitleText(locale, selected.titleEn, selected.titleZh)
+      : "";
+    const theaterHeadline = selected
+      ? `${t("detail.episodeLabel", { n: selected.no })}${epTitleText && epTitleText !== title ? ` - ${epTitleText}` : ` - ${title}`}`
+      : title;
+    const shareTheater = async () => {
+      const url = typeof window !== "undefined" ? window.location.href.split("?")[0] : "";
+      try {
+        if (navigator.share) {
+          await navigator.share({ title, url });
+          return;
+        }
+      } catch {
+        /* ignore cancel */
+      }
+      try {
+        await navigator.clipboard.writeText(url);
+      } catch {
+        /* ignore */
+      }
+    };
+    const exitTheater = () => {
+      if (canGoBackInApp()) router.back();
+      else router.push("/");
+    };
+
     return (
       <div className="fixed inset-0 z-[70] flex flex-col bg-[#181a1a]">
         <div className="flex h-14 shrink-0 items-center justify-between border-b border-white/[0.06] px-4 md:px-5">
           <button
             type="button"
-            onClick={() => {
-              if (autoStartWatch) {
-                if (canGoBackInApp()) router.back();
-                else router.push(`/drama/${id}`);
-                return;
-              }
-              setWatching(false);
-            }}
+            onClick={exitTheater}
             className="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-[14px] text-white/85 transition-colors hover:bg-white/10 hover:text-white"
           >
             <ChevronLeft className="h-5 w-5" />
@@ -1786,76 +1810,114 @@ export function DramaDetail({
         </div>
 
         <div className="flex min-h-0 flex-1">
-          <div className="relative min-w-0 flex-1 bg-black">
-            <VideoPlayer
-              fill
-              videoRef={videoRef}
-              src={canPlay && playUrl ? playUrl : null}
-              poster={coverIsImg ? drama.cover[0] : undefined}
-              autoPlay
-              seekTo={resumeApplied.current ? null : seekTo}
-              loginRequired={needsLogin}
-              onLogin={() => openLogin("login")}
-              onRegister={() => openLogin("register")}
-              locked={locked}
-              lockLabel={
-                selected
-                  ? t("detail.episodeLabel", { n: selected.no })
-                  : t("player.empty")
-              }
-              lockActionLabel={lockActionLabel}
-              onUnlock={selected && !isUnlocked(selected) ? () => openUnlockGate(selected) : undefined}
-              error={playErr}
-              loading={playLoading}
-              hasNext={hasNext}
-              onNext={playNext}
-              onEnded={playNext}
-              title={selected ? `${title} · ${t("detail.episodeLabel", { n: selected.no })}` : title}
-              onOpenEpisodes={() => setDrawerOpen(true)}
-            />
+          <div className="relative flex min-w-0 flex-1 items-center justify-center overflow-hidden bg-black px-3 py-3">
+            <div className="relative h-full max-h-full w-full max-w-[min(100%,calc((100vh-3.5rem-1.5rem)*9/16))] aspect-[9/16]">
+              <VideoPlayer
+                fill
+                videoRef={videoRef}
+                src={canPlay && playUrl ? playUrl : null}
+                poster={coverIsImg ? drama.cover[0] : undefined}
+                autoPlay
+                seekTo={resumeApplied.current ? null : seekTo}
+                loginRequired={needsLogin}
+                onLogin={() => openLogin("login")}
+                onRegister={() => openLogin("register")}
+                locked={locked}
+                lockLabel={
+                  selected
+                    ? t("detail.episodeLabel", { n: selected.no })
+                    : t("player.empty")
+                }
+                lockActionLabel={lockActionLabel}
+                onUnlock={selected && !isUnlocked(selected) ? () => openUnlockGate(selected) : undefined}
+                error={playErr}
+                loading={playLoading}
+                hasNext={hasNext}
+                onNext={playNext}
+                onEnded={playNext}
+                title={selected ? `${title} · ${t("detail.episodeLabel", { n: selected.no })}` : title}
+                onOpenEpisodes={() => setDrawerOpen(true)}
+              />
+            </div>
           </div>
 
-          <aside className="hidden w-[360px] shrink-0 flex-col overflow-hidden border-l border-white/[0.06] bg-[#121212] lg:flex">
+          <aside className="hidden w-[420px] shrink-0 flex-col overflow-hidden border-l border-white/[0.06] bg-[#121212] lg:flex">
             <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-6 pt-5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-              <div className="mb-5 flex gap-3">
-                <div className="relative h-[84px] w-[60px] shrink-0 overflow-hidden rounded-md bg-white/[0.06]">
-                  {coverIsImg ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={drama.cover[0]} alt="" className="h-full w-full object-cover" />
-                  ) : (
-                    <div
-                      className="h-full w-full"
-                      style={{
-                        background: `linear-gradient(150deg, ${drama.cover[0]}, ${drama.cover[1]})`,
-                      }}
-                    />
-                  )}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <h1 className="line-clamp-2 text-[18px] font-medium leading-7 text-white/90">
-                    {title}
-                  </h1>
-                  {tags.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-1.5">
-                      {tags.slice(0, 4).map((tag) => (
-                        <span
-                          key={tag}
-                          className="rounded bg-white/[0.08] px-2 py-0.5 text-[12px] text-white/65"
-                        >
-                          {tag}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
+              <nav className="mb-3 flex flex-wrap items-center gap-x-1.5 text-[12px] text-white/40">
+                <Link href="/" className="transition-colors hover:text-white/70">
+                  {t("nav.home")}
+                </Link>
+                <span aria-hidden>/</span>
+                <span className="max-w-[10rem] truncate text-white/55">{title}</span>
+                {selected ? (
+                  <>
+                    <span aria-hidden>/</span>
+                    <span className="text-white/70">
+                      {t("detail.episodeLabel", { n: selected.no })}
+                    </span>
+                  </>
+                ) : null}
+              </nav>
+
+              <h1 className="mb-3 text-[20px] font-semibold leading-7 text-white">
+                {theaterHeadline}
+              </h1>
 
               {desc ? (
-                <div className="mb-6">
-                  <h2 className="mb-2 text-[14px] font-medium text-white/80">{t("detail.basicInfo")}</h2>
-                  <p className="line-clamp-3 text-[13px] leading-6 text-white/40">{desc}</p>
-                </div>
+                <p className="mb-4 line-clamp-4 text-[13px] leading-6 text-white/45">{desc}</p>
               ) : null}
+
+              {tags.length > 0 && (
+                <div className="mb-5 flex flex-wrap gap-1.5">
+                  {tags.map((tag) => (
+                    <span
+                      key={tag}
+                      className="rounded-md bg-white/[0.08] px-2.5 py-1 text-[12px] text-white/65"
+                    >
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              <div className="mb-6 flex items-center gap-5 text-[13px] text-white/75">
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5 transition-colors hover:text-white"
+                  onClick={() => void toggleLike()}
+                >
+                  <Heart
+                    className={cn(
+                      "h-4 w-4",
+                      liked ? "fill-[#ff4d6d] text-[#ff4d6d]" : "text-white/80",
+                    )}
+                    strokeWidth={1.75}
+                  />
+                  {formatCount(likeCount, locale)}
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5 transition-colors hover:text-white"
+                  onClick={() => void toggleFavorite()}
+                >
+                  <Star
+                    className={cn(
+                      "h-4 w-4",
+                      favorited ? "fill-[#ffb000] text-[#ffb000]" : "text-white/80",
+                    )}
+                    strokeWidth={1.75}
+                  />
+                  {formatCount(favCount, locale)}
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5 transition-colors hover:text-white"
+                  onClick={() => void shareTheater()}
+                  aria-label="Share"
+                >
+                  <Share2 className="h-4 w-4 text-white/80" strokeWidth={1.75} />
+                </button>
+              </div>
 
               <EpisodeList
                 episodes={data.episodes}

@@ -100,12 +100,12 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
   return (
     <div className="fixed inset-0 z-[80] flex items-end justify-center p-0 sm:items-center sm:p-4">
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => !busy && onClose()} />
-      <div className="relative w-full max-w-md overflow-hidden rounded-t-2xl bg-surface shadow-3 sm:rounded-2xl max-h-[92vh] overflow-y-auto">
+      <div className="relative w-full max-w-md overflow-hidden rounded-t-2xl bg-surface shadow-3 sm:max-w-2xl sm:rounded-2xl max-h-[92vh] overflow-y-auto">
         <div
           className="relative px-6 pb-4 pt-6"
           style={{
             background:
-              "radial-gradient(560px 200px at 12% -30%, oklch(0.82 0.11 85 / 0.28), transparent 55%), radial-gradient(400px 160px at 90% 0%, oklch(0.68 0.19 18 / 0.12), transparent 50%)",
+              "radial-gradient(600px 200px at 10% -20%, oklch(0.68 0.19 18 / 0.22), transparent 55%)",
           }}
         >
           <button
@@ -120,7 +120,7 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
               <Crown className="h-[18px] w-[18px]" />
             </span>
             <div>
-              <p className="text-overline uppercase tracking-widest text-gold">{t("vip.title")}</p>
+              <p className="text-overline uppercase tracking-widest text-brand">{t("vip.title")}</p>
               <h2 className="text-h3 font-bold text-ink">{t("vip.subtitle")}</h2>
             </div>
           </div>
@@ -145,7 +145,7 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
             <p className="mt-5 text-h3 font-semibold text-ink">{t("vip.success")}</p>
           </div>
         ) : (
-          <div className="space-y-5 px-6 pb-6">
+          <div className="space-y-6 px-6 pb-6">
             <div>
               <label className="text-caption uppercase text-ink-subtle">{t("vip.plans")}</label>
               {loading ? (
@@ -153,7 +153,7 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
               ) : plans.length === 0 ? (
                 <p className="mt-3 text-body-sm text-ink-muted">{t("vip.emptyPlans")}</p>
               ) : (
-                <div className="mt-3 grid gap-3">
+                <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
                   {plans.map((p) => {
                     const active = p.id === planId;
                     const original = p.originalPrice != null ? Number(p.originalPrice) : null;
@@ -168,42 +168,50 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
                         type="button"
                         onClick={() => setPlanId(p.id)}
                         className={cn(
-                          "relative overflow-hidden rounded-2xl px-4 py-4 text-left transition-all",
+                          "relative flex h-full flex-col overflow-hidden rounded-xl px-4 py-4 text-left transition-all duration-[var(--dur-base)]",
                           active
-                            ? "bg-gradient-to-br from-[#f6e7c8] to-[#efe0b8] ring-2 ring-gold shadow-md"
-                            : "bg-gradient-to-br from-[#f8f1df]/90 to-[#f3e7c8]/80 hover:brightness-[1.02]",
+                            ? "bg-brand/15 ring-2 ring-brand"
+                            : "bg-surface-2 hover:bg-surface-3",
                         )}
                       >
                         {p.badge?.trim() ? (
-                          <span className="absolute right-0 top-0 rounded-bl-xl bg-danger px-2.5 py-1 text-[10px] font-bold tracking-wide text-white">
+                          <span className="absolute right-0 top-0 rounded-bl-lg bg-danger px-2 py-0.5 text-[10px] font-bold text-white">
                             {p.badge.trim()}
                           </span>
                         ) : null}
-                        <p className="pr-16 text-body font-semibold text-[#5b4a2a]">
-                          {p.name || t("vip.days", { n: String(p.durationDays) })}
-                        </p>
-                        <div className="mt-2 flex items-end gap-2">
-                          <span className="text-h2 font-bold tabular-nums text-[#8a2a1a]">
+                        <div className="flex items-center gap-2 pr-12">
+                          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gold/20 text-gold">
+                            <Crown className="h-4 w-4" />
+                          </span>
+                          <span className="truncate text-body font-semibold text-ink">
+                            {p.name || t("vip.days", { n: String(p.durationDays) })}
+                          </span>
+                        </div>
+                        <div className="mt-3 flex flex-wrap items-baseline gap-2">
+                          <span className="text-h3 font-bold tabular-nums text-gold">
                             {formatUsd(price)}
                           </span>
                           {original != null && Number.isFinite(original) && original > price ? (
-                            <span className="mb-1 text-body-sm tabular-nums text-[#9a8970] line-through">
+                            <span className="text-caption tabular-nums text-ink-subtle line-through">
                               {formatUsd(original)}
                             </span>
                           ) : null}
                         </div>
-                        <p className="mt-2 text-caption leading-5 text-[#7a6848]">
-                          {p.desc || p.descEn || t("vip.renewHint")}
-                        </p>
-                        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 border-t border-[#d9c69a]/70 pt-3">
+                        <div className="mt-2 space-y-0.5 text-caption text-ink-muted">
+                          <p>{t("vip.days", { n: String(p.durationDays) })}</p>
+                          <p className="line-clamp-3 leading-5">
+                            {p.desc || p.descEn || t("vip.renewHint")}
+                          </p>
+                        </div>
+                        <div className="mt-auto flex flex-wrap gap-x-3 gap-y-1.5 border-t border-line pt-3 mt-3">
                           {benefits.slice(0, 4).map((text) => {
                             const Icon = benefitIcon(text);
                             return (
                               <span
                                 key={text}
-                                className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[#6d5a3a]"
+                                className="inline-flex items-center gap-1.5 text-[11px] text-ink-muted"
                               >
-                                <Icon className="h-3.5 w-3.5 text-[#8a2a1a]" />
+                                <Icon className="h-3.5 w-3.5 text-brand" />
                                 {text}
                               </span>
                             );
@@ -236,11 +244,30 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
               </div>
             ) : null}
 
+            {selected && (
+              <div className="flex items-center justify-between gap-4 rounded-xl bg-surface-2 px-5 py-4">
+                <div className="flex items-center gap-2 text-ink-muted">
+                  <Crown className="h-4 w-4 text-gold" />
+                  <span className="text-body-sm">
+                    {selected.name || t("vip.days", { n: String(selected.durationDays) })}
+                  </span>
+                </div>
+                <div className="text-right">
+                  <p className="text-h3 font-bold tabular-nums text-gold">
+                    {formatUsd(payAmount)}
+                  </p>
+                  <p className="text-caption text-ink-subtle">
+                    {t("vip.days", { n: String(selected.durationDays) })}
+                  </p>
+                </div>
+              </div>
+            )}
+
             <button
               type="button"
               onClick={confirm}
               disabled={busy || !selected || loading}
-              className={cn(buttonVariants({ variant: "gold", size: "lg" }), "w-full")}
+              className={cn(buttonVariants({ variant: "primary", size: "lg" }), "w-full shadow-brand")}
             >
               {busy ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
