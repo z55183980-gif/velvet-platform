@@ -5,30 +5,41 @@ import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
+const DEFAULT_BENEFITS = ['Unlimited Viewing', '1080p High Quality'];
+
 const VIP_PLANS = [
   {
-    name: 'Monthly',
+    name: 'Weekly VIP',
+    durationDays: 7,
+    baseCurrency: 'USD',
+    basePrice: 5.99 as any,
+    originalPrice: 12.99 as any,
+    sortOrder: 10,
+    badge: '54% OFF' as string | null,
+    descEn: '$5.99 for the first week, then $12.99/week. Cancel anytime.',
+    benefits: DEFAULT_BENEFITS,
+  },
+  {
+    name: 'Monthly VIP',
     durationDays: 30,
     baseCurrency: 'USD',
-    basePrice: 4.99 as any,
-    sortOrder: 10,
-    badge: 'Popular' as string | null,
-  },
-  {
-    name: 'Quarterly',
-    durationDays: 90,
-    baseCurrency: 'USD',
-    basePrice: 11.99 as any,
+    basePrice: 15.99 as any,
+    originalPrice: null as any,
     sortOrder: 20,
     badge: null as string | null,
+    descEn: 'Auto-renew. Cancel anytime.',
+    benefits: DEFAULT_BENEFITS,
   },
   {
-    name: 'Yearly',
+    name: 'Yearly VIP',
     durationDays: 365,
     baseCurrency: 'USD',
-    basePrice: 29.99 as any,
+    basePrice: 99.99 as any,
+    originalPrice: null as any,
     sortOrder: 30,
-    badge: 'Best value' as string | null,
+    badge: null as string | null,
+    descEn: 'Auto-renew. Cancel anytime.',
+    benefits: DEFAULT_BENEFITS,
   },
 ];
 
@@ -44,7 +55,12 @@ async function ensureVipPlansEnglish() {
         data: {
           name: plan.name,
           nameEn: plan.name,
+          basePrice: plan.basePrice,
+          originalPrice: plan.originalPrice,
           badge: plan.badge,
+          descEn: plan.descEn,
+          benefits: plan.benefits,
+          sortOrder: plan.sortOrder,
           baseCurrency: 'USD',
         },
       });
@@ -57,8 +73,11 @@ async function ensureVipPlansEnglish() {
         durationDays: plan.durationDays,
         baseCurrency: plan.baseCurrency,
         basePrice: plan.basePrice,
+        originalPrice: plan.originalPrice,
         sortOrder: plan.sortOrder,
         badge: plan.badge,
+        descEn: plan.descEn,
+        benefits: plan.benefits,
         active: true,
       },
     });
@@ -88,7 +107,7 @@ async function ensureVipPlansEnglish() {
 }
 
 async function main() {
-  // 定价已改为直接 USD。汇率表仅兼容旧管理端，不再参与报价。
+  // 定价直接 USD，无汇率折算。
   await prisma.vipPlan.updateMany({ data: { baseCurrency: 'USD' } });
   await prisma.topupPackage.updateMany({ data: { baseCurrency: 'USD' } });
   console.log('[currency] vipPlan + topupPackage baseCurrency -> USD');
@@ -98,14 +117,41 @@ async function main() {
   if (count === 0) {
     await prisma.topupPackage.createMany({
       data: [
-        { name: 'Starter', credits: 10n, baseCurrency: 'USD', basePrice: 1.99 as any, sortOrder: 10 },
-        { name: 'Popular', credits: 50n, baseCurrency: 'USD', basePrice: 7.99 as any, sortOrder: 20 },
-        { name: 'Value', credits: 100n, baseCurrency: 'USD', basePrice: 12.99 as any, sortOrder: 30 },
+        {
+          name: 'Starter',
+          baseCredits: 300n,
+          bonusCredits: 0n,
+          credits: 300n,
+          baseCurrency: 'USD',
+          basePrice: 2.99 as any,
+          sortOrder: 10,
+          badge: null,
+        },
+        {
+          name: 'Popular',
+          baseCredits: 500n,
+          bonusCredits: 75n,
+          credits: 575n,
+          baseCurrency: 'USD',
+          basePrice: 4.99 as any,
+          sortOrder: 20,
+          badge: '+15%',
+        },
+        {
+          name: 'Value',
+          baseCredits: 1000n,
+          bonusCredits: 200n,
+          credits: 1200n,
+          baseCurrency: 'USD',
+          basePrice: 9.99 as any,
+          sortOrder: 30,
+          badge: '+20%',
+        },
       ],
     });
     console.log('[packages] seeded 3 packages');
   } else {
-    console.log('[packages] skip, already have', count);
+    console.log('[packages] skip seed, already have', count);
   }
 
   await ensureVipPlansEnglish();

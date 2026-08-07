@@ -1,5 +1,33 @@
 import { clsx, type ClassValue } from "clsx";
-import { twMerge } from "tailwind-merge";
+import { extendTailwindMerge } from "tailwind-merge";
+
+/**
+ * Custom type scale uses `text-body-sm` etc. Default twMerge treats those as
+ * conflicting with `text-white` / `text-ink` (same `text-*` group), which
+ * silently drops button text colors — black on wine-red then becomes unreadable.
+ */
+const twMerge = extendTailwindMerge({
+  extend: {
+    classGroups: {
+      "font-size": [
+        {
+          text: [
+            "display",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "body-lg",
+            "body",
+            "body-sm",
+            "caption",
+            "overline",
+          ],
+        },
+      ],
+    },
+  },
+});
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));

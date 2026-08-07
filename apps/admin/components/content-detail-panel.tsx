@@ -32,10 +32,10 @@ import {
   CircleDollarSign,
   Clapperboard,
   Cloud,
+  ExternalLink,
   Eye,
   FileVideo,
   Heart,
-  ImageIcon,
   LayoutDashboard,
   ThumbsUp,
   ListVideo,
@@ -57,6 +57,7 @@ import {
 } from "@/components/episode-media-panel";
 import { EpisodeThumbnailField } from "@/components/episode-thumbnail-field";
 import { DramaCoverField } from "@/components/drama-cover-field";
+import { DramaCoverThumb } from "@/components/drama-cover-thumb";
 import {
   DEFAULT_COMPLETION,
   DEFAULT_CONTENT_TYPE,
@@ -68,8 +69,10 @@ import {
   type DramaCompletion,
   type DramaContentType,
 } from "@/lib/drama-tags";
+import { useAdminSession } from "@/lib/admin-session";
 import { contentDetailHref } from "@/lib/content-href";
 import { useI18n, statusLabel } from "@/lib/i18n";
+import { webDramaPreviewHref } from "@/lib/web-preview";
 
 type Episode = {
   id: string | number;
@@ -142,7 +145,6 @@ function episodeAddOptions(sourceType?: string, status?: string): {
       ...(canPullPublic
         ? [{ key: "public" as const, labelKey: "addEpisodeMethodPublic" as const }]
         : []),
-      { key: "upload", labelKey: "addEpisodeMethodUpload", advanced: true },
     ];
     return { options, defaultMethod: "url", canPullPublic };
   }
@@ -272,6 +274,8 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
   const { t } = useI18n();
   const router = useRouter();
   const qc = useQueryClient();
+  const { admin } = useAdminSession();
+  const isSuperAdmin = admin?.role === "SUPER_ADMIN";
   const [tab, setTab] = useState<DetailTab>(initialTab ?? "overview");
   const [reason, setReason] = useState("");
   const [weight, setWeight] = useState(0);
@@ -484,16 +488,18 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
       key: "actions", header: "", className: "w-40",
       cell: (episode) => (
         <div className="flex justify-end gap-1">
-          <EpisodeVideoUploadButton
-            episodeId={String(episode.id)}
-            disabled={actionMut.isPending}
-            label={episode.hlsUrl || episode.originalUrl ? t("replaceVideo") : t("uploadVideo")}
-            onError={setError}
-            onDone={async () => {
-              await qc.invalidateQueries({ queryKey: ["admin", "drama", id] });
-              await qc.invalidateQueries({ queryKey: ["admin", "drama-storage", id] });
-            }}
-          />
+          {drama?.sourceType !== "ONLINE" ? (
+            <EpisodeVideoUploadButton
+              episodeId={String(episode.id)}
+              disabled={actionMut.isPending}
+              label={episode.hlsUrl || episode.originalUrl ? t("replaceVideo") : t("uploadVideo")}
+              onError={setError}
+              onDone={async () => {
+                await qc.invalidateQueries({ queryKey: ["admin", "drama", id] });
+                await qc.invalidateQueries({ queryKey: ["admin", "drama-storage", id] });
+              }}
+            />
+          ) : null}
           <Button size="sm" variant="ghost" className="!h-8 !w-8 !p-0" title={t("moveUp")} disabled={actionMut.isPending} onClick={() => moveEpisode(String(episode.id), -1)}><ArrowUp className="h-4 w-4" /></Button>
           <Button size="sm" variant="ghost" className="!h-8 !w-8 !p-0" title={t("moveDown")} disabled={actionMut.isPending} onClick={() => moveEpisode(String(episode.id), 1)}><ArrowDown className="h-4 w-4" /></Button>
           {["FAILED", "PENDING", "PROCESSING"].includes(episode.transcodeStatus || "") ? (
@@ -503,7 +509,7 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
         </div>
       ),
     },
-  ], [t, actionMut.isPending, selectedEps, episodes, id, qc]);
+  ], [t, actionMut.isPending, selectedEps, episodes, id, qc, drama?.sourceType]);
 
   const handleDeleteDrama = () =>
     actionMut.mutate(async () => {
@@ -551,7 +557,11 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
     <div className="content-detail-shell">
       <section className="content-detail-hero">
         <div className="content-cover">
-          {drama.coverUrl ? <img src={drama.coverUrl} alt="" /> : <ImageIcon className="h-7 w-7 text-ink-subtle" />}
+          <DramaCoverThumb
+            url={drama.coverUrl}
+            title={drama.titleZh || drama.titleEn}
+            className="!h-full !w-full !rounded-none !ring-0"
+          />
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -563,6 +573,29 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
           <p className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-ink-subtle"><span>{drama.slug}</span><span>·</span><span>{drama.creator?.displayName || "—"}</span><span>·</span><span>{drama.category?.nameZh || drama.category?.nameEn || "—"}</span></p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          {(() => {
+            const previewHref = webDramaPreviewHref({
+              id: drama.id,
+              slug: drama.slug,
+              status: drama.status,
+            });
+            return (
+              <Button
+                size="sm"
+                variant="secondary"
+                type="button"
+                disabled={!previewHref}
+                title={previewHref ? undefined : t("previewOnWebLiveOnly")}
+                onClick={() => {
+                  if (!previewHref) return;
+                  window.open(previewHref, "_blank", "noopener,noreferrer");
+                }}
+              >
+                <ExternalLink className="h-4 w-4" />
+                {t("previewOnWeb")}
+              </Button>
+            );
+          })()}
           {drama.status === "PENDING_REVIEW" ? (
             <Button size="sm" disabled={actionMut.isPending} onClick={() => act(() => adminApproveDrama(id))}>
               <Check className="h-4 w-4" />
@@ -581,10 +614,14 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
               {t("restoreOnline")}
             </Button>
           ) : null}
-          <Button size="sm" variant="danger" disabled={actionMut.isPending} onClick={() => setDeleteOpen(true)}>
-            <Trash2 className="h-4 w-4" />
-            {t("deleteDrama")}
-          </Button>
+          {isSuperAdmin ? (
+            <Button size="sm" variant="danger" disabled={actionMut.isPending} onClick={() => setDeleteOpen(true)}>
+              <Trash2 className="h-4 w-4" />
+              {t("deleteDrama")}
+            </Button>
+          ) : (
+            <span className="text-caption text-ink-subtle">{t("dangerOpsSuperOnly")}</span>
+          )}
         </div>
       </section>
 
@@ -812,9 +849,6 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
                       </div>
                     ) : drama.sourceType === "ONLINE" && !addEpisodeConfig.canPullPublic ? (
                       <p className="text-xs text-ink-subtle">{t("addEpisodePublicBlockedHint")}</p>
-                    ) : null}
-                    {addEpisodeMethod === "upload" && drama.sourceType === "ONLINE" ? (
-                      <p className="text-xs leading-5 text-warning">{t("addEpisodeUploadOnOnlineWarn")}</p>
                     ) : null}
                     {addEpisodeMethod === "url" && drama.sourceType !== "ONLINE" ? (
                       <p className="text-xs leading-5 text-warning">{t("addEpisodeUrlOnOwnedWarn")}</p>

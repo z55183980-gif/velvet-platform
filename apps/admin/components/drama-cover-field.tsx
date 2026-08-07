@@ -1,11 +1,12 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { adminUploadImage } from "@velvet/api-client";
 import { cn } from "@velvet/ui";
 import { ChevronDown, ImageIcon, ImagePlus, LoaderCircle, Trash2, Video } from "lucide-react";
 import { captureRemoteVideoFrame, captureVideoFirstFrame } from "@/lib/capture-video-frame";
 import { useI18n } from "@/lib/i18n";
+import { mediaUrl } from "@/lib/media-url";
 
 /**
  * Drama-level cover picker (3:4 poster). Shared by local upload, online ingest, and detail.
@@ -44,6 +45,12 @@ export function DramaCoverField({
   const [cropY, setCropY] = useState(50);
 
   const hasKnownVideo = !!(videoFile || videoSrc);
+  const previewSrc = mediaUrl(url);
+  const [imgFailed, setImgFailed] = useState(false);
+
+  useEffect(() => {
+    setImgFailed(false);
+  }, [previewSrc]);
 
   const run = async (task: () => Promise<void>) => {
     setBusy(true);
@@ -113,9 +120,15 @@ export function DramaCoverField({
       <div className={cn("drama-cover-field__preview", !url && "is-empty")}>
         {busy ? (
           <LoaderCircle className="h-6 w-6 animate-spin text-brand" />
-        ) : url ? (
+        ) : previewSrc && !imgFailed ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={url} alt="" />
+          <img
+            src={previewSrc}
+            alt=""
+            referrerPolicy="no-referrer"
+            onError={() => setImgFailed(true)}
+            key={previewSrc}
+          />
         ) : (
           <div className="drama-cover-field__empty">
             <ImageIcon className="h-7 w-7" />

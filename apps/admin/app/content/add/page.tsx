@@ -17,7 +17,6 @@ function AdminContentAddInner() {
   const searchParams = useSearchParams();
   const selection = parseContentAddSelection({
     tab: searchParams.get("tab"),
-    method: searchParams.get("method"),
   });
 
   function setSelection(next: ContentAddSelection) {
@@ -26,11 +25,7 @@ function AdminContentAddInner() {
 
   return (
     <AdminShell title={t("contentAdd")}>
-      <ContentAddPanel
-        tab={selection.tab}
-        method={selection.method}
-        onSelectionChange={setSelection}
-      />
+      <ContentAddPanel tab={selection.tab} onSelectionChange={setSelection} />
     </AdminShell>
   );
 }

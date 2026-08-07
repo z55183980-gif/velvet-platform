@@ -1,5 +1,7 @@
 /** 将第三方平台链接规范为可在本站播放的直链 */
 
+import { createHash } from 'crypto';
+
 const PLAYABLE_RE = /\.(m3u8|mp4|webm|mov|m4v)(\?|$)/i;
 const STREAM_PATH_RE = /\/(hls|playlist|index\.m3u8|master\.m3u8)\b/i;
 const EMBED_KEYS = ['url', 'src', 'playUrl', 'play_url', 'video', 'm3u8', 'media', 'videoUrl'];
@@ -85,4 +87,26 @@ export function inferExternalUrlExpiry(url: string, fallbackMs = 2 * 60 * 60 * 1
     // URL validation is handled by the caller.
   }
   return new Date(Date.now() + fallbackMs);
+}
+
+/** Drama-level dedupe key for manual paste import (hash of episode play URLs). */
+export function manualExternalRef(sourceUrls: string[]): string {
+  const key = sourceUrls
+    .map((u) => String(u || '').trim())
+    .filter(Boolean)
+    .sort()
+    .join('\n');
+  const hash = createHash('sha256')
+    .update(key || `empty:${Date.now()}`)
+    .digest('hex')
+    .slice(0, 24);
+  return `manual:${hash}`;
+}
+
+/** Stable id for a single pasted play URL (episode provenance). */
+export function manualExternalVideoId(sourceUrl: string): string {
+  return createHash('sha256')
+    .update(String(sourceUrl || '').trim())
+    .digest('hex')
+    .slice(0, 20);
 }

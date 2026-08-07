@@ -1,38 +1,39 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { useEffect, useImperativeHandle, useMemo, useRef, useState, forwardRef, type DragEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  adminGetDrama,
+  adminCreateOnlineDrama,
   adminListCategories,
-  adminListDramas,
   adminStorageProbe,
   adminStorageStatus,
   adminUploadImage,
-  asRows,
+  adminYtdlpImport,
+  adminYtdlpTransfer,
 } from "@velvet/api-client";
 import { Button, Input, Select, cn } from "@velvet/ui";
 import {
   AlertTriangle,
-  Check,
   ChevronDown,
   ChevronUp,
   Cloud,
   HardDrive,
   LoaderCircle,
   Film,
+  Link2,
   Trash2,
   Upload,
-  X,
   Save,
   Archive,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { DramaCoverField } from "@/components/drama-cover-field";
 import { GlassModal } from "@/components/glass-modal";
 import {
   captureVideoFirstFrameWithMeta,
   probeLocalVideoDuration,
 } from "@/lib/capture-video-frame";
+import { contentDetailHref } from "@/lib/content-href";
 import {
   DEFAULT_COMPLETION,
   DEFAULT_CONTENT_TYPE,
@@ -40,16 +41,18 @@ import {
   composeDramaSourceTags,
   normalizeCompletion,
   normalizeContentType,
-  parseDramaTags,
   type DramaCompletion,
   type DramaContentType,
 } from "@/lib/drama-tags";
-import { useI18n, statusLabel } from "@/lib/i18n";
+import type {
+  DramaInfoFillPayload,
+  OnlineSourcePackage,
+} from "@/lib/drama-info-fill";
+import { useI18n } from "@/lib/i18n";
 import { useUploadQueue } from "@/lib/upload-queue";
 import { VIDEO_ACCEPT, isVideoFile } from "@/lib/video-formats";
 
 type Category = { slug: string; nameZh?: string; nameEn?: string };
-type DramaTarget = "new" | "existing";
 type DraftRecord = {
   id: string;
   titleZh: string;
@@ -63,9 +66,6 @@ type DraftRecord = {
   totalEpisodes: number;
   /** Staged video count at save time (File objects are not persisted). */
   episodeFileCount?: number;
-  dramaTarget?: DramaTarget;
-  existingDramaId?: string;
-  existingDramaLabel?: string;
   updatedAt: string;
   freeRangeStart?: string;
   freeRangeEnd?: string;
@@ -75,9 +75,6 @@ type DraftRecord = {
 };
 
 function draftDisplayTitle(draft: DraftRecord) {
-  if (draft.dramaTarget === "existing") {
-    return draft.existingDramaLabel || draft.titleZh || draft.titleEn || "—";
-  }
   return draft.titleZh || draft.titleEn || "—";
 }
 
@@ -141,7 +138,13 @@ function isFileDrag(e: DragEvent) {
 
 type EpisodeDraft = {
   id: string;
-  file: File;
+  /** Local file upload vs online playable / page URL resource. */
+  kind: "file" | "link";
+  file?: File;
+  /** Direct playable URL (manual paste or resolved). */
+  sourceUrl?: string;
+  /** Public page URL for a probe item (may need server resolve). */
+  webpageUrl?: string;
   title: string;
   isFree: boolean;
   previewSeconds: number;
@@ -154,30 +157,13 @@ type EpisodeDraft = {
   durationSec?: number;
   durationStatus?: DurationStatus;
 };
-type DramaOption = {
-  id: string | number;
-  titleZh?: string;
-  titleEn?: string;
-  slug?: string;
-  status?: string;
-  sourceType?: string;
-  _count?: { episodes?: number };
-  totalEpisodes?: number;
-};
-type ExistingDrama = {
-  id: string | number;
-  titleZh?: string;
-  titleEn?: string;
-  slug?: string;
-  status?: string;
-  coverUrl?: string | null;
-  descriptionZh?: string | null;
-  tags?: string[];
-  totalEpisodes?: number;
-  freeEpisodeCount?: number;
-  lockMode?: string | null;
-  category?: { slug?: string; nameZh?: string; nameEn?: string };
-  episodes?: Array<{ episodeNumber: number; isFree?: boolean; priceCredits?: number | string }>;
+
+/** Page-level ingest preference from 在线入库 apply (executed on main submit). */
+type OnlineIngestMeta = {
+  pageUrl: string;
+  ingestForm: OnlineSourcePackage["ingestForm"];
+  formatPreference?: OnlineSourcePackage["formatPreference"];
+  maxEpisodes?: number;
 };
 
 function fmtSize(n: number) {
@@ -217,229 +203,13 @@ function makeEpisodeId(file: File) {
   return `${fileKey(file)}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
+function makeLinkEpisodeId(url: string, index: number) {
+  return `link:${index}:${url.slice(0, 120)}:${Math.random().toString(36).slice(2, 9)}`;
+}
+
 function sortVideoFiles(list: File[]) {
   return [...list].sort((a, b) =>
     a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }),
-  );
-}
-
-function dramaLabel(d: { titleZh?: string; titleEn?: string; slug?: string }) {
-  return d.titleZh || d.titleEn || d.slug || "—";
-}
-
-function dramaOptionMeta(
-  d: DramaOption,
-  tFn: (key: string, vars?: Record<string, string | number>) => string,
-) {
-  const parts = [
-    d.status ? statusLabel(tFn, d.status) : null,
-    `${d._count?.episodes ?? d.totalEpisodes ?? 0}${tFn("localWizardEpSuffix")}`,
-  ].filter(Boolean);
-  return parts.join(" · ");
-}
-
-/** Case-insensitive includes match on title / slug / id; multi-token ANDed. */
-function matchesDramaQuery(d: DramaOption, q: string) {
-  const needle = q.trim().toLowerCase();
-  if (!needle) return true;
-  const hay = [d.titleZh, d.titleEn, d.slug, String(d.id)]
-    .filter(Boolean)
-    .join("\0")
-    .toLowerCase();
-  return needle.split(/\s+/).every((tok) => hay.includes(tok));
-}
-
-function DramaPickerCombobox({
-  value,
-  query,
-  selectedLabel,
-  onQueryChange,
-  onSelect,
-  onClear,
-  options,
-  loading,
-  disabled,
-  label,
-  placeholder,
-  noMatchLabel,
-  clearLabel,
-  metaFor,
-}: {
-  value: string;
-  query: string;
-  selectedLabel?: string;
-  onQueryChange: (q: string) => void;
-  onSelect: (d: DramaOption) => void;
-  onClear: () => void;
-  options: DramaOption[];
-  loading?: boolean;
-  disabled?: boolean;
-  label: string;
-  placeholder: string;
-  noMatchLabel: string;
-  clearLabel: string;
-  metaFor: (d: DramaOption) => string;
-}) {
-  const [open, setOpen] = useState(false);
-  const [highlight, setHighlight] = useState(0);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const listRef = useRef<HTMLUListElement>(null);
-  const filtered = useMemo(
-    () => options.filter((d) => matchesDramaQuery(d, query)),
-    [options, query],
-  );
-
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDoc);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
-  useEffect(() => {
-    setHighlight(0);
-  }, [query, open, filtered.length]);
-
-  useEffect(() => {
-    if (!open) return;
-    const el = listRef.current?.querySelector<HTMLElement>(`[data-idx="${highlight}"]`);
-    el?.scrollIntoView({ block: "nearest" });
-  }, [highlight, open]);
-
-  const displayValue = open || !value ? query : selectedLabel || query;
-
-  const pick = (d: DramaOption) => {
-    onSelect(d);
-    onQueryChange(dramaLabel(d));
-    setOpen(false);
-  };
-
-  return (
-    <div className="upload-field max-w-xl" ref={rootRef}>
-      <span id="drama-picker-label">{label}</span>
-      <div className="drama-combobox">
-        <div className="drama-combobox__control">
-          <Input
-            role="combobox"
-            aria-expanded={open}
-            aria-controls="drama-picker-listbox"
-            aria-labelledby="drama-picker-label"
-            aria-autocomplete="list"
-            disabled={disabled}
-            value={displayValue}
-            placeholder={placeholder}
-            autoComplete="off"
-            onFocus={() => {
-              setOpen(true);
-              if (value) onQueryChange("");
-            }}
-            onChange={(e) => {
-              const next = e.target.value;
-              onQueryChange(next);
-              setOpen(true);
-              if (value) onClear();
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "ArrowDown") {
-                e.preventDefault();
-                setOpen(true);
-                setHighlight((h) => Math.min(h + 1, Math.max(filtered.length - 1, 0)));
-              } else if (e.key === "ArrowUp") {
-                e.preventDefault();
-                setOpen(true);
-                setHighlight((h) => Math.max(h - 1, 0));
-              } else if (e.key === "Enter" && open && filtered[highlight]) {
-                e.preventDefault();
-                pick(filtered[highlight]);
-              } else if (e.key === "Escape") {
-                setOpen(false);
-              }
-            }}
-          />
-          {value ? (
-            <button
-              type="button"
-              className="drama-combobox__icon-btn"
-              disabled={disabled}
-              aria-label={clearLabel}
-              onClick={() => {
-                onClear();
-                onQueryChange("");
-                setOpen(true);
-              }}
-            >
-              <X className="h-3.5 w-3.5" />
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="drama-combobox__icon-btn"
-              disabled={disabled}
-              aria-label={label}
-              aria-expanded={open}
-              onClick={() => setOpen((v) => !v)}
-            >
-              <ChevronDown className={cn("h-3.5 w-3.5 transition", open && "rotate-180")} />
-            </button>
-          )}
-        </div>
-        {open ? (
-          <ul
-            id="drama-picker-listbox"
-            ref={listRef}
-            role="listbox"
-            className="drama-combobox__list scrollbar-thin"
-          >
-            {loading ? (
-              <li className="drama-combobox__empty" role="presentation">
-                <LoaderCircle className="mx-auto h-4 w-4 animate-spin text-ink-muted" />
-              </li>
-            ) : filtered.length === 0 ? (
-              <li className="drama-combobox__empty" role="presentation">
-                {noMatchLabel}
-              </li>
-            ) : (
-              filtered.map((d, idx) => {
-                const id = String(d.id);
-                const isSelected = value === id;
-                const isActive = idx === highlight;
-                return (
-                  <li key={id} role="option" aria-selected={isSelected} data-idx={idx}>
-                    <button
-                      type="button"
-                      className={cn(
-                        "drama-combobox__option",
-                        isActive && "is-active",
-                        isSelected && "is-selected",
-                      )}
-                      onMouseEnter={() => setHighlight(idx)}
-                      onClick={() => pick(d)}
-                    >
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate font-medium">{dramaLabel(d)}</span>
-                        <span className="block truncate text-caption text-ink-muted">
-                          {[d.slug || id, metaFor(d)].filter(Boolean).join(" · ")}
-                        </span>
-                      </span>
-                      {isSelected ? <Check className="h-3.5 w-3.5 shrink-0 text-brand" /> : null}
-                    </button>
-                  </li>
-                );
-              })
-            )}
-          </ul>
-        ) : null}
-      </div>
-    </div>
   );
 }
 
@@ -528,18 +298,24 @@ function UploadSplitButton({
   );
 }
 
-export function LocalUploadWizard() {
+export type LocalUploadWizardHandle = {
+  applyDramaInfo: (payload: DramaInfoFillPayload) => void;
+};
+
+export const LocalUploadWizard = forwardRef<
+  LocalUploadWizardHandle,
+  {
+    /** 打开「在线入库」弹窗（由 ContentAddPanel 托管） */
+    onRequestOnline?: () => void;
+  }
+>(function LocalUploadWizard({ onRequestOnline }, ref) {
   const { t } = useI18n();
+  const router = useRouter();
   const qc = useQueryClient();
   const { enqueueJob } = useUploadQueue();
   const fileRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
 
-  const [dramaTarget, setDramaTarget] = useState<DramaTarget>("new");
-  const [existingDramaId, setExistingDramaId] = useState("");
-  const [dramaQuery, setDramaQuery] = useState("");
-  const [dramaSearch, setDramaSearch] = useState("");
-  const [dramaCommittedLabel, setDramaCommittedLabel] = useState("");
   const [titleZh, setTitleZh] = useState("");
   const [titleEn, setTitleEn] = useState("");
   const [titleTouched, setTitleTouched] = useState(false);
@@ -561,6 +337,8 @@ export function LocalUploadWizard() {
   const [freeRangeStart, setFreeRangeStart] = useState("1");
   const [freeRangeEnd, setFreeRangeEnd] = useState("");
   const [episodes, setEpisodes] = useState<EpisodeDraft[]>([]);
+  /** Page-level online ingest preference (R2 transfer / parse-import); episodes live in `episodes`. */
+  const [onlineIngest, setOnlineIngest] = useState<OnlineIngestMeta | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [progress, setProgress] = useState<Record<string, { status: ProgressStatus; error?: string }>>(
     {},
@@ -576,6 +354,104 @@ export function LocalUploadWizard() {
   const episodesRef = useRef(episodes);
   episodesRef.current = episodes;
 
+  useImperativeHandle(
+    ref,
+    () => ({
+      applyDramaInfo(payload) {
+        setShowDrafts(false);
+        const overwrite = payload.overwriteMeta === true;
+        const hasMeta =
+          payload.titleEn !== undefined ||
+          payload.titleZh !== undefined ||
+          payload.coverUrl !== undefined ||
+          payload.descriptionZh !== undefined ||
+          payload.categorySlug !== undefined ||
+          payload.totalEpisodes !== undefined;
+
+        if (payload.titleEn !== undefined) {
+          setTitleEn((prev) =>
+            !overwrite && prev.trim() ? prev : payload.titleEn!.slice(0, 40),
+          );
+          setTitleTouched(true);
+        }
+        if (payload.titleZh !== undefined) {
+          setTitleZh((prev) =>
+            !overwrite && prev.trim() ? prev : payload.titleZh!.slice(0, 40),
+          );
+        }
+        if (payload.coverUrl !== undefined) {
+          setCoverUrl((prev) =>
+            !overwrite && prev.trim() ? prev : payload.coverUrl!,
+          );
+        }
+        if (payload.descriptionZh !== undefined) {
+          setDescriptionZh((prev) =>
+            !overwrite && prev.trim()
+              ? prev
+              : payload.descriptionZh!.slice(0, 300),
+          );
+        }
+        if (payload.categorySlug !== undefined && payload.categorySlug) {
+          setCategorySlug((prev) =>
+            !overwrite && prev.trim() ? prev : payload.categorySlug!,
+          );
+        }
+        if (payload.totalEpisodes !== undefined && payload.totalEpisodes >= 0) {
+          setTotalEpisodes((prev) =>
+            !overwrite && prev > 0 ? prev : payload.totalEpisodes!,
+          );
+          setTotalEpisodesDirty(true);
+        }
+        if (payload.online) {
+          const cover = payload.coverUrl?.trim() || "";
+          const incoming: EpisodeDraft[] = payload.online.episodes.map((ep, i) => {
+            const sourceUrl = ep.sourceUrl?.trim() || undefined;
+            const webpageUrl = ep.webpageUrl?.trim() || undefined;
+            const title =
+              (ep.title || "").trim() ||
+              defaultEpisodeTitle(sourceUrl || webpageUrl || `ep-${ep.episodeNumber || i + 1}`);
+            return {
+              id: makeLinkEpisodeId(sourceUrl || webpageUrl || title, i),
+              kind: "link" as const,
+              sourceUrl,
+              webpageUrl,
+              title: title.slice(0, 80),
+              isFree: true,
+              previewSeconds: 0,
+              thumbPreviewUrl: cover || undefined,
+              thumbStatus: cover ? ("ready" as const) : ("error" as const),
+              durationSec: ep.durationSec,
+              durationStatus:
+                ep.durationSec != null ? ("ready" as const) : ("unknown" as const),
+            };
+          });
+          setOnlineIngest({
+            pageUrl: payload.online.pageUrl.trim(),
+            ingestForm: payload.online.ingestForm,
+            formatPreference: payload.online.formatPreference,
+            maxEpisodes: payload.online.maxEpisodes,
+          });
+          if (incoming.length) {
+            setEpisodes((prev) => {
+              const nextLen = prev.length + incoming.length;
+              if (!freeRangeEnd) setFreeRangeEnd(String(nextLen));
+              return [...prev, ...incoming];
+            });
+          }
+        }
+        setError(null);
+        setSuccess(
+          payload.online
+            ? t("ytdlpFillDramaInfoDone")
+            : hasMeta
+              ? t("ytdlpFillMetaDone")
+              : t("ytdlpFillDramaInfoDone"),
+        );
+      },
+    }),
+    [t],
+  );
+
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(LOCAL_DRAFTS_KEY);
@@ -583,15 +459,33 @@ export function LocalUploadWizard() {
       const parsed = JSON.parse(raw) as unknown;
       if (!Array.isArray(parsed)) return;
       setDrafts(
-        parsed.filter(
-          (item): item is DraftRecord =>
-            Boolean(item && typeof item === "object" && typeof (item as DraftRecord).id === "string"),
-        ),
+        parsed
+          .filter((item): item is DraftRecord => {
+            if (!item || typeof item !== "object" || typeof (item as DraftRecord).id !== "string") {
+              return false;
+            }
+            // Legacy "append to existing" drafts are no longer supported on this page.
+            if ((item as { dramaTarget?: string }).dramaTarget === "existing") return false;
+            return true;
+          })
+          .map((item) => {
+            const {
+              dramaTarget: _dt,
+              existingDramaId: _id,
+              existingDramaLabel: _label,
+              ...rest
+            } = item as DraftRecord & {
+              dramaTarget?: string;
+              existingDramaId?: string;
+              existingDramaLabel?: string;
+            };
+            return rest as DraftRecord;
+          }),
       );
     } catch { /* ignore malformed local drafts */ }
   }, []);
 
-  // Auto-fill 总集数 from uploaded episode count until the user overrides (or clears).
+  // Auto-fill 总集数 from staged episode count until the user overrides (or clears).
   useEffect(() => {
     if (!totalEpisodesDirty) setTotalEpisodes(episodes.length);
   }, [episodes.length, totalEpisodesDirty]);
@@ -622,9 +516,6 @@ export function LocalUploadWizard() {
       completion,
       totalEpisodes,
       episodeFileCount: episodes.length,
-      dramaTarget,
-      existingDramaId: dramaTarget === "existing" ? existingDramaId || undefined : undefined,
-      existingDramaLabel: dramaTarget === "existing" ? dramaCommittedLabel || undefined : undefined,
       updatedAt: new Date().toISOString(),
       freeRangeStart,
       freeRangeEnd,
@@ -640,12 +531,6 @@ export function LocalUploadWizard() {
   }
 
   function restoreDraft(record: DraftRecord) {
-    const target = record.dramaTarget === "existing" ? "existing" : "new";
-    setDramaTarget(target);
-    setExistingDramaId(target === "existing" ? record.existingDramaId || "" : "");
-    setDramaCommittedLabel(target === "existing" ? record.existingDramaLabel || "" : "");
-    setDramaQuery("");
-    setDramaSearch("");
     setTitleZh(record.titleZh === "未命名剧集" ? "" : record.titleZh);
     setTitleEn(record.titleEn || "");
     setTitleTouched(Boolean(record.titleEn?.trim() || (record.titleZh && record.titleZh !== "未命名剧集")));
@@ -697,7 +582,18 @@ export function LocalUploadWizard() {
     if (descriptionZh.trim().length > 300) return t("dramaDescriptionTooLong");
     if (tags.length > MAX_DRAMA_TAGS) return t("dramaTagsTooMany");
     if (episodes.length < 1) return t("uploadBlockFiles");
-    if (episodes.some((episode) => !episode.isFree) && priceCredits <= 0) return t("policyPriceInvalid");
+    const fileEps = episodes.filter((ep) => ep.kind === "file");
+    const linkEps = episodes.filter((ep) => ep.kind === "link");
+    if (onlineIngest?.ingestForm === "r2" && !fileEps.length) {
+      if (!onlineIngest.pageUrl.trim()) return t("ytdlpNeedUrl");
+    } else if (!fileEps.length && linkEps.length) {
+      const hasPlayable = linkEps.some((ep) => ep.sourceUrl?.trim());
+      const pageUrl = onlineIngest?.pageUrl?.trim();
+      if (!hasPlayable && !pageUrl) return t("onlineNeedEpisodes");
+    }
+    if (fileEps.some((episode) => !episode.isFree) && priceCredits <= 0) {
+      return t("policyPriceInvalid");
+    }
     // Only validate when the operator manually overrode 总集数 (empty/auto remains allowed).
     if (totalEpisodesDirty) {
       if (!Number.isInteger(totalEpisodes)) return t("totalEpisodesMustBeInteger");
@@ -716,17 +612,9 @@ export function LocalUploadWizard() {
     };
   }, []);
 
-  useEffect(() => {
-    const id = window.setTimeout(() => setDramaSearch(dramaQuery.trim()), 220);
-    return () => window.clearTimeout(id);
-  }, [dramaQuery]);
-
-  const isExisting = dramaTarget === "existing";
-
   const categoriesQ = useQuery({
     queryKey: ["admin", "categories"],
     queryFn: () => adminListCategories(true) as Promise<Category[]>,
-    enabled: !isExisting,
   });
   const storageQ = useQuery({
     queryKey: ["admin", "storage-status"],
@@ -741,70 +629,13 @@ export function LocalUploadWizard() {
     staleTime: 60_000,
     refetchOnWindowFocus: true,
   });
-  const dramasQ = useQuery({
-    queryKey: ["admin", "dramas", "picker", dramaSearch],
-    queryFn: async () => {
-      const data = await adminListDramas({
-        q: dramaSearch.trim() || undefined,
-        status: "ALL",
-        sort: "latest",
-        page: 1,
-        pageSize: 50,
-      });
-      return asRows<DramaOption>(data as never);
-    },
-    enabled: isExisting,
-  });
-  const existingDramaQ = useQuery({
-    queryKey: ["admin", "drama", existingDramaId],
-    queryFn: () => adminGetDrama(existingDramaId) as Promise<ExistingDrama>,
-    enabled: isExisting && !!existingDramaId,
-  });
 
-  const existingDrama = existingDramaQ.data;
-  const infoLocked = isExisting;
-  /** Tags / content type / completion stay editable for append-to-existing flow. */
-  const tagsLocked = false;
-  const showInfoPanel = !isExisting || !!existingDramaId;
-
-  useEffect(() => {
-    if (!isExisting || !existingDrama) return;
-    const meta = parseDramaTags(existingDrama.tags);
-    setTags(meta.displayTags);
-    setContentType(meta.contentType);
-    setCompletion(meta.completion);
-  }, [isExisting, existingDramaId, existingDrama?.tags]);
-
-  const infoTitleEn = infoLocked ? (existingDrama?.titleEn ?? "") : titleEn;
-  const infoTitleZh = infoLocked ? (existingDrama?.titleZh ?? "") : titleZh;
-  const infoCategoryLabel = infoLocked
-    ? (existingDrama?.category?.nameZh ||
-        existingDrama?.category?.nameEn ||
-        existingDrama?.category?.slug ||
-        "—")
-    : "";
-  const infoTags = tags;
-  const infoContentType = contentType;
-  const infoCompletion = completion;
-  const infoDescriptionZh = infoLocked
-    ? (existingDrama?.descriptionZh ?? "")
-    : descriptionZh;
-  const infoCoverUrl = infoLocked ? (existingDrama?.coverUrl ?? "") : coverUrl;
-  const infoTotalEpisodes = infoLocked
-    ? (existingDrama?.totalEpisodes ?? existingDrama?.episodes?.length ?? 0)
-    : totalEpisodes;
-  const maxExistingEp = useMemo(() => {
-    const eps = existingDrama?.episodes ?? [];
-    if (!eps.length) return 0;
-    return Math.max(...eps.map((e) => e.episodeNumber || 0));
-  }, [existingDrama]);
-  const existingPaidCredits = useMemo(() => {
-    const paid = (existingDrama?.episodes ?? []).find((e) => !e.isFree);
-    const n = paid?.priceCredits != null ? Number(paid.priceCredits) : 10;
-    return Number.isFinite(n) && n > 0 ? n : 10;
-  }, [existingDrama]);
-
-  const totalBytes = useMemo(() => episodes.reduce((s, ep) => s + ep.file.size, 0), [episodes]);
+  const totalBytes = useMemo(
+    () => episodes.reduce((s, ep) => s + (ep.file?.size ?? 0), 0),
+    [episodes],
+  );
+  const fileEpisodeCount = episodes.filter((ep) => ep.kind === "file").length;
+  const linkEpisodeCount = episodes.filter((ep) => ep.kind === "link").length;
   const totalDurationSec = useMemo(() => {
     let sum = 0;
     let known = 0;
@@ -974,15 +805,10 @@ export function LocalUploadWizard() {
   const fileBlockReason = useMemo(() => {
     if (storageQ.isLoading) return t("loading");
     if (storageQ.isError) return storageErrorMessage;
-    if (!ffmpegReady) return t("uploadBlockFfmpeg");
-    if (isExisting) {
-      if (!existingDramaId) return t("localWizardPickDrama");
-      if (existingDramaQ.isLoading) return t("loading");
-      if (existingDramaQ.isError) return t("localWizardDramaLoadFail");
-    } else {
-      const infoError = validateInfo();
-      if (infoError) return infoError;
-    }
+    const needsFfmpeg = episodes.some((ep) => ep.kind === "file") || onlineIngest?.ingestForm === "r2";
+    if (needsFfmpeg && !ffmpegReady) return t("uploadBlockFfmpeg");
+    const infoError = validateInfo();
+    if (infoError) return infoError;
     if (!episodes.length) return t("uploadBlockFiles");
     return null;
   }, [
@@ -990,10 +816,7 @@ export function LocalUploadWizard() {
     storageQ.isError,
     storageErrorMessage,
     ffmpegReady,
-    isExisting,
-    existingDramaId,
-    existingDramaQ.isLoading,
-    existingDramaQ.isError,
+    onlineIngest,
     titleZh,
     titleEn,
     categorySlug,
@@ -1004,14 +827,8 @@ export function LocalUploadWizard() {
     t,
   ]);
 
-  function episodeIsFreeForUpload(episodeNumber: number, indexInBatch: number) {
-    if (isExisting && existingDrama) {
-      const mode = existingDrama.lockMode || "FREE_FIRST_N";
-      if (mode === "ALL_FREE") return true;
-      if (mode === "VIP_ALL") return false;
-      return episodeNumber <= Math.max(0, existingDrama.freeEpisodeCount ?? 0);
-    }
-    // New drama: free/paid comes only from playback policy range (1-based draft order).
+  function episodeIsFreeForUpload(_episodeNumber: number, indexInBatch: number) {
+    // Free/paid comes only from playback policy range (1-based draft order).
     if (!freeRangeStart && !freeRangeEnd) return true;
     const start = Number(freeRangeStart);
     const end = Number(freeRangeEnd);
@@ -1119,7 +936,7 @@ export function LocalUploadWizard() {
   }
 
   async function uploadThumbBlob(ep: EpisodeDraft, blob: Blob): Promise<string | undefined> {
-    const base = ep.file.name.replace(/\.[^.]+$/, "") || "episode";
+    const base = (ep.file?.name || ep.title || "episode").replace(/\.[^.]+$/, "") || "episode";
     const saved = await adminUploadImage(blob, {
       kind: "thumbnail",
       filename: `${base}-thumb.jpg`,
@@ -1140,11 +957,14 @@ export function LocalUploadWizard() {
     if (!videos.length) return 0;
     // Build drafts outside setState — updater must stay pure (React Strict Mode
     // double-invokes it; Math.random ids inside would desync hydrate targets).
-    const known = new Set(episodesRef.current.map((ep) => fileKey(ep.file)));
+    const known = new Set(
+      episodesRef.current.filter((ep) => ep.file).map((ep) => fileKey(ep.file!)),
+    );
     const incoming: EpisodeDraft[] = videos
       .filter((f) => !known.has(fileKey(f)))
       .map((file) => ({
         id: makeEpisodeId(file),
+        kind: "file" as const,
         file,
         title: defaultEpisodeTitle(file.name),
         isFree: true,
@@ -1156,7 +976,7 @@ export function LocalUploadWizard() {
     if (!freeRangeEnd) setFreeRangeEnd(String(episodesRef.current.length + incoming.length));
     setEpisodes((prev) => [...prev, ...incoming]);
     for (const ep of incoming) {
-      void hydrateEpisodeThumb(ep.id, ep.file);
+      if (ep.file) void hydrateEpisodeThumb(ep.id, ep.file);
     }
     setError(null);
     return incoming.length;
@@ -1273,30 +1093,30 @@ export function LocalUploadWizard() {
     });
     setProgress({});
     setSelectedIds([]);
+    setOnlineIngest(null);
   }
 
-  function resetWizardAfterEnqueue(mode: "new" | "append") {
+  function resetWizardAfterEnqueue() {
     clearAllEpisodes();
+    setOnlineIngest(null);
     setEditingDraftId(null);
     setProgress({});
-    if (mode === "new") {
-      setTitleZh("");
-      setTitleEn("");
-      setTitleTouched(false);
-      setCoverUrl("");
-      setDescriptionZh("");
-      setTags([]);
-      setTagInput("");
-      setContentType(DEFAULT_CONTENT_TYPE);
-      setCompletion(DEFAULT_COMPLETION);
-      setTotalEpisodes(0);
-      setTotalEpisodesDirty(false);
-      setFreeRangeStart("1");
-      setFreeRangeEnd("");
-      setPriceCredits(10);
-      setAllowPreview(false);
-      setPreviewSeconds(10);
-    }
+    setTitleZh("");
+    setTitleEn("");
+    setTitleTouched(false);
+    setCoverUrl("");
+    setDescriptionZh("");
+    setTags([]);
+    setTagInput("");
+    setContentType(DEFAULT_CONTENT_TYPE);
+    setCompletion(DEFAULT_COMPLETION);
+    setTotalEpisodes(0);
+    setTotalEpisodesDirty(false);
+    setFreeRangeStart("1");
+    setFreeRangeEnd("");
+    setPriceCredits(10);
+    setAllowPreview(false);
+    setPreviewSeconds(10);
   }
 
   function prepareEpisodesForSubmit() {
@@ -1336,29 +1156,149 @@ export function LocalUploadWizard() {
     return next;
   }
 
+  const onlineSubmitMut = useMutation({
+    mutationFn: async () => {
+      if (fileBlockReason) throw new Error(fileBlockReason);
+      const linkEps = episodes.filter((ep) => ep.kind === "link");
+      const fileEps = episodes.filter((ep) => ep.kind === "file");
+      if (fileEps.length) {
+        throw new Error(t("onlineMixSubmitHint"));
+      }
+      if (!linkEps.length) throw new Error(t("onlineNeedEpisodes"));
+
+      const englishTitle = titleEn.trim();
+      const titleZhResolved = resolveLocaleTitle(titleZh, englishTitle);
+      const max =
+        onlineIngest?.maxEpisodes && onlineIngest.maxEpisodes > 0
+          ? onlineIngest.maxEpisodes
+          : undefined;
+      const pageUrl = onlineIngest?.pageUrl?.trim() || "";
+
+      if (onlineIngest?.ingestForm === "r2") {
+        if (!pageUrl) throw new Error(t("ytdlpNeedUrl"));
+        return adminYtdlpTransfer({
+          url: pageUrl,
+          categorySlug,
+          target: "r2",
+          titleZh: titleZhResolved,
+          titleEn: englishTitle,
+          maxEpisodes: max,
+          formatPreference:
+            onlineIngest.formatPreference === "best_hls"
+              ? "best"
+              : onlineIngest.formatPreference || "best",
+        }).then((data) => ({
+          kind: "transfer" as const,
+          id: data.id,
+          n: data.totalEpisodes,
+        }));
+      }
+
+      if (pageUrl && !linkEps.every((ep) => ep.sourceUrl?.trim())) {
+        return adminYtdlpImport({
+          url: pageUrl,
+          categorySlug,
+          titleZh: titleZhResolved,
+          titleEn: englishTitle,
+          maxEpisodes: max,
+          formatPreference: onlineIngest?.formatPreference || "best_hls",
+        }).then((data) => ({
+          kind: "import" as const,
+          id: data.id,
+          n: data.resolvedEpisodes,
+        }));
+      }
+
+      const playable = linkEps
+        .map((ep, i) => ({
+          episodeNumber: i + 1,
+          title: ep.title,
+          sourceUrl: (ep.sourceUrl || "").trim(),
+        }))
+        .filter((ep) => ep.sourceUrl);
+      if (!playable.length) throw new Error(t("onlineNeedEpisodes"));
+
+      const preparedFree = (() => {
+        if (!freeRangeStart && !freeRangeEnd) return playable.length;
+        const start = Number(freeRangeStart);
+        const end = Number(freeRangeEnd);
+        if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end < start) {
+          return playable.length;
+        }
+        return Math.max(0, Math.min(playable.length, end) - Math.max(1, start) + 1);
+      })();
+
+      return adminCreateOnlineDrama({
+        titleZh: titleZhResolved,
+        titleEn: englishTitle,
+        categorySlug,
+        coverUrl: coverUrl.trim() || undefined,
+        descriptionZh: descriptionZh.trim() || undefined,
+        freeEpisodeCount: preparedFree,
+        lockMode: preparedFree >= playable.length ? "ALL_FREE" : "VIP_ALL",
+        status: "DRAFT",
+        relaxedPlayUrl: true,
+        episodes: playable.map((ep, i) => {
+          const n = i + 1;
+          const start = Number(freeRangeStart) || 1;
+          const end = Number(freeRangeEnd) || playable.length;
+          const isFree = !freeRangeStart && !freeRangeEnd ? true : n >= start && n <= end;
+          return { ...ep, isFree };
+        }),
+      }).then((data) => ({
+        kind: "create" as const,
+        id: data.id,
+        n: data.totalEpisodes,
+      }));
+    },
+    onSuccess: async (data) => {
+      setError(null);
+      setSuccess(t("uploadTaskEnqueued", { n: data.n }));
+      resetWizardAfterEnqueue();
+      await qc.invalidateQueries({ queryKey: ["admin", "dramas"] });
+      if (data.id) {
+        router.push(
+          contentDetailHref(data.id, data.kind === "transfer" ? "episodes" : "info"),
+        );
+      }
+    },
+    onError: (e: Error) => {
+      setSuccess(null);
+      setError(e.message);
+    },
+  });
+
   const uploadMut = useMutation({
     mutationFn: async (opts?: { publishWhenReady?: boolean }) => {
-      const publishWhenReady = !!opts?.publishWhenReady && !isExisting;
+      const publishWhenReady = !!opts?.publishWhenReady;
       if (fileBlockReason) throw new Error(fileBlockReason);
-      const preparedEpisodes = isExisting ? episodes : prepareEpisodesForSubmit();
+      const preparedAll = prepareEpisodesForSubmit();
+      const preparedEpisodes = preparedAll.filter((ep) => ep.kind === "file" && ep.file);
+      const pendingLinks = preparedAll.filter((ep) => ep.kind === "link");
       if (!preparedEpisodes.length) throw new Error(t("localWizardAddEpisodes"));
+      if (pendingLinks.length) {
+        // Mixed list: local upload runs now; link episodes need playable URLs and are
+        // attached after shell create via a follow-up note (detail page can add URLs).
+        // Prefer submitting online-only or local-only in one pass for reliability.
+      }
 
       setProgress(
         Object.fromEntries(preparedEpisodes.map((ep) => [ep.id, { status: "pending" as const }])),
       );
 
-      const start = isExisting ? maxExistingEp + 1 : 1;
-      const credits = isExisting ? existingPaidCredits : priceCredits;
+      const start = 1;
+      const credits = priceCredits;
 
       // Hand Files to the queue immediately — drama create + thumbs run inside the job.
       const queueEpisodes = preparedEpisodes.map((ep, i) => {
         const episodeNumber = start + i;
-        const episodeIsFree = isExisting ? episodeIsFreeForUpload(episodeNumber, i) : ep.isFree;
+        const episodeIsFree = ep.isFree;
         const live = episodesRef.current.find((e) => e.id === ep.id) ?? ep;
+        const file = ep.file!;
         return {
           id: ep.id,
-          file: ep.file,
-          title: ep.title.trim() || defaultEpisodeTitle(ep.file.name),
+          file,
+          title: ep.title.trim() || defaultEpisodeTitle(file.name),
           episodeNumber,
           isFree: episodeIsFree,
           previewSeconds: episodeIsFree ? 0 : ep.previewSeconds,
@@ -1369,27 +1309,6 @@ export function LocalUploadWizard() {
       });
 
       const sourceTags = composeDramaSourceTags(tags, contentType, completion);
-
-      if (isExisting) {
-        const displayTitle = existingDrama
-          ? dramaLabel(existingDrama)
-          : dramaCommittedLabel || existingDramaId;
-        enqueueJob({
-          title: displayTitle,
-          dramaId: existingDramaId,
-          mode: "append",
-          preferDirect: r2DirectUpload,
-          publishWhenReady: false,
-          appendSourceTags: sourceTags,
-          episodes: queueEpisodes,
-        });
-        return {
-          id: existingDramaId,
-          totalEpisodes: preparedEpisodes.length,
-          mode: "append" as const,
-          publishWhenReady: false,
-        };
-      }
 
       const englishTitle = titleEn.trim();
       const titleZhResolved = resolveLocaleTitle(titleZh, englishTitle);
@@ -1423,7 +1342,6 @@ export function LocalUploadWizard() {
       return {
         id: "",
         totalEpisodes: preparedEpisodes.length,
-        mode: "new" as const,
         publishWhenReady,
       };
     },
@@ -1432,11 +1350,9 @@ export function LocalUploadWizard() {
       setSuccess(
         data.publishWhenReady
           ? t("uploadTaskEnqueuedPublish", { n: data.totalEpisodes })
-          : data.mode === "append"
-            ? t("uploadTaskEnqueuedAppend", { n: data.totalEpisodes })
-            : t("uploadTaskEnqueued", { n: data.totalEpisodes }),
+          : t("uploadTaskEnqueued", { n: data.totalEpisodes }),
       );
-      resetWizardAfterEnqueue(data.mode);
+      resetWizardAfterEnqueue();
       // Dramas list refreshes when the queue finishes creating the shell.
       if (data.id) {
         await qc.invalidateQueries({ queryKey: ["admin", "dramas"] });
@@ -1448,10 +1364,11 @@ export function LocalUploadWizard() {
     },
   });
 
-  const busy = uploadMut.isPending;
+  const busy = uploadMut.isPending || onlineSubmitMut.isPending;
   const progressRows = Object.values(progress);
   const doneCount = progressRows.filter((p) => p.status === "done").length;
-  const startEpPreview = isExisting ? maxExistingEp + 1 : 1;
+  const startEpPreview = 1;
+  const stagedEpisodeCount = episodes.length;
 
   const pickFiles = () => fileRef.current?.click();
   const pickFolder = () => folderRef.current?.click();
@@ -1463,6 +1380,21 @@ export function LocalUploadWizard() {
       onPickFiles={pickFiles}
       onPickFolder={pickFolder}
     />
+  );
+  const sourceActions = (
+    <div className="upload-source-actions" role="group" aria-label={t("localWizardVideosTitle")}>
+      {splitUploadBtn}
+      {onRequestOnline ? (
+        <button
+          type="button"
+          className="upload-source-online"
+          disabled={busy}
+          onClick={onRequestOnline}
+        >
+          {t("contentOnlineRef")}
+        </button>
+      ) : null}
+    </div>
   );
 
   return (
@@ -1503,8 +1435,6 @@ export function LocalUploadWizard() {
           ) : (
             <ul className="space-y-2">
               {drafts.map((draft) => {
-                const modeLabel =
-                  draft.dramaTarget === "existing" ? t("draftModeAppend") : t("draftModeNew");
                 const fileCount = draft.episodeFileCount ?? draft.totalEpisodes ?? 0;
                 return (
                   <li
@@ -1521,7 +1451,7 @@ export function LocalUploadWizard() {
                     <div className="min-w-0 flex-1">
                       <p className="truncate font-medium text-ink">{draftDisplayTitle(draft)}</p>
                       <p className="text-caption text-ink-muted">
-                        {modeLabel}
+                        {t("draftModeNew")}
                         {" · "}
                         {t("draftEpisodeFilesHint", { n: fileCount })}
                         {draft.totalEpisodes > fileCount
@@ -1558,170 +1488,74 @@ export function LocalUploadWizard() {
         </div>
       ) : null}
 
-      <section className="upload-panel space-y-3">
-        <div className="upload-panel__head">
-          <div>
-            <h2>{t("localWizardTargetTitle")}</h2>
-            <p>{t("localWizardTargetHint")}</p>
-          </div>
-          <div
-            className="flex max-w-full flex-wrap items-center justify-end gap-1.5"
-            aria-label={t("localWizardStorageTitle")}
-            title={t("localWizardStorageHint")}
-          >
-            <span className={cn("upload-status-pill", destPillTone)} title={destPillTitle}>
-              {storageChecking || probeChecking || r2Enabled ? (
-                <Cloud className="h-3.5 w-3.5" aria-hidden />
-              ) : (
-                <HardDrive className="h-3.5 w-3.5" aria-hidden />
-              )}
-              {destPillLabel}
-            </span>
-            <span className={cn("upload-status-pill", ffmpegPillTone)} title={ffmpegPillTitle}>
-              {ffmpegPillLabel}
-            </span>
-            {probeOk && probeLatencyMs != null ? (
-              <span
-                className={cn("upload-status-pill", latencyPillTone)}
-                title={t("uploadR2LatencyHint", {
-                  ms: probeLatencyMs,
-                  media: mediaBucketName,
-                  upload: uploadBucketName,
-                })}
-              >
-                {t("uploadR2BucketsLatency", {
-                  media: mediaBucketName,
-                  upload: uploadBucketName,
-                  ms: probeLatencyMs,
-                })}
-              </span>
-            ) : null}
-          </div>
-        </div>
-        <div className="seg-tabs w-full sm:w-auto" role="tablist" aria-label={t("localWizardTargetTitle")}>
-          {(
-            [
-              ["new", t("localWizardTargetNew")],
-              ["existing", t("localWizardTargetExisting")],
-            ] as const
-          ).map(([key, label]) => (
-            <button
-              key={key}
-              type="button"
-              role="tab"
-              aria-selected={dramaTarget === key}
-              className="seg-tabs__item"
-              disabled={busy}
-              onClick={() => {
-                setDramaTarget(key);
-                setError(null);
-                if (key === "new") {
-                  setExistingDramaId("");
-                  setDramaQuery("");
-                  setDramaSearch("");
-                  setDramaCommittedLabel("");
-                }
-              }}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        {isExisting ? (
-          <div className="space-y-3">
-            <DramaPickerCombobox
-              value={existingDramaId}
-              query={dramaQuery}
-              selectedLabel={dramaCommittedLabel}
-              onQueryChange={setDramaQuery}
-              onSelect={(d) => {
-                setExistingDramaId(String(d.id));
-                setDramaCommittedLabel(dramaLabel(d));
-                setError(null);
-              }}
-              onClear={() => {
-                setExistingDramaId("");
-                setDramaCommittedLabel("");
-                setError(null);
-              }}
-              options={dramasQ.data ?? []}
-              loading={dramasQ.isLoading && !dramasQ.data}
-              disabled={busy}
-              label={t("localWizardSelectDrama")}
-              placeholder={t("localWizardSearchDramaPh")}
-              noMatchLabel={t("localWizardDramaNoMatch")}
-              clearLabel={t("localWizardClearDrama")}
-              metaFor={(d) => dramaOptionMeta(d, t)}
-            />
-            {existingDramaId && existingDrama ? (
-              <p className="text-caption text-ink-muted">
-                {t("localWizardExistingSummary", {
-                  title: dramaLabel(existingDrama),
-                  n: existingDrama.episodes?.length ?? maxExistingEp,
-                  next: maxExistingEp + 1,
-                })}
-              </p>
-            ) : null}
-            {isExisting ? (
-              <p className="text-caption text-ink-subtle">{t("localWizardExistingSourceNote")}</p>
-            ) : null}
-          </div>
-        ) : null}
-      </section>
-
-      {showInfoPanel ? (
-          <section className="upload-panel upload-panel--info">
+      <section id="local-drama-info" className="upload-panel upload-panel--info">
             <div className="upload-panel__head">
               <div>
                 <h2>{t("uploadSectionInfo")}</h2>
-                <p>
-                  {infoLocked
-                    ? existingDramaQ.isLoading
-                      ? t("loading")
-                      : existingDramaQ.isError
-                        ? t("localWizardDramaLoadFail")
-                        : t("uploadSectionInfoHintExisting")
-                    : t("uploadSectionInfoHint")}
-                </p>
+                <p>{t("uploadSectionInfoHint")}</p>
+              </div>
+              <div
+                className="flex max-w-full flex-wrap items-center justify-end gap-1.5"
+                aria-label={t("localWizardStorageTitle")}
+                title={t("localWizardStorageHint")}
+              >
+                <span className={cn("upload-status-pill", destPillTone)} title={destPillTitle}>
+                  {storageChecking || probeChecking || r2Enabled ? (
+                    <Cloud className="h-3.5 w-3.5" aria-hidden />
+                  ) : (
+                    <HardDrive className="h-3.5 w-3.5" aria-hidden />
+                  )}
+                  {destPillLabel}
+                </span>
+                <span className={cn("upload-status-pill", ffmpegPillTone)} title={ffmpegPillTitle}>
+                  {ffmpegPillLabel}
+                </span>
+                {probeOk && probeLatencyMs != null ? (
+                  <span
+                    className={cn("upload-status-pill", latencyPillTone)}
+                    title={t("uploadR2LatencyHint", {
+                      ms: probeLatencyMs,
+                      media: mediaBucketName,
+                      upload: uploadBucketName,
+                    })}
+                  >
+                    {t("uploadR2BucketsLatency", {
+                      media: mediaBucketName,
+                      upload: uploadBucketName,
+                      ms: probeLatencyMs,
+                    })}
+                  </span>
+                ) : null}
               </div>
             </div>
-            {infoLocked && (existingDramaQ.isLoading || existingDramaQ.isError || !existingDrama) ? null : (
             <div className="upload-info-layout">
               <div className="upload-info-layout__fields">
                 <div className="upload-field upload-field--title-stack">
                   <div className="upload-locale-titles">
                     <div className="upload-locale-titles__head">
                       <strong>{t("localeTitlesLabel")}</strong>
-                      {!infoLocked ? <small>{t("localeTitleFallbackHint")}</small> : null}
+                      <small>{t("localeTitleFallbackHint")}</small>
                     </div>
                     <label className="upload-locale-titles__row">
                       <span className="upload-locale-titles__lang">
-                        {t("contentTitleLocaleEn")} {!infoLocked ? <b className="text-danger">*</b> : null}
+                        {t("contentTitleLocaleEn")} <b className="text-danger">*</b>
                       </span>
                       <div className="upload-locale-titles__input">
                         <Input
-                          required={!infoLocked}
+                          required
                           maxLength={40}
-                          value={infoTitleEn}
-                          disabled={busy || infoLocked}
-                          readOnly={infoLocked}
-                          aria-required={!infoLocked}
-                          aria-invalid={!infoLocked && titleTouched && !titleEn.trim()}
+                          value={titleEn}
+                          disabled={busy}
+                          aria-required
+                          aria-invalid={titleTouched && !titleEn.trim()}
                           aria-label={t("contentTitleLocaleEn")}
-                          onBlur={() => {
-                            if (!infoLocked) setTitleTouched(true);
-                          }}
-                          onChange={(e) => {
-                            if (!infoLocked) setTitleEn(e.target.value);
-                          }}
+                          onBlur={() => setTitleTouched(true)}
+                          onChange={(e) => setTitleEn(e.target.value)}
                         />
-                        {!infoLocked ? (
-                          <em className="upload-locale-titles__count">{titleEn.length}/40</em>
-                        ) : null}
+                        <em className="upload-locale-titles__count">{titleEn.length}/40</em>
                       </div>
                     </label>
-                    {!infoLocked && titleTouched && !titleEn.trim() ? (
+                    {titleTouched && !titleEn.trim() ? (
                       <small className="upload-locale-titles__error text-danger">
                         {t("requiredField")}
                       </small>
@@ -1731,22 +1565,13 @@ export function LocalUploadWizard() {
                       <div className="upload-locale-titles__input">
                         <Input
                           maxLength={40}
-                          value={infoTitleZh}
-                          disabled={busy || infoLocked}
-                          readOnly={infoLocked}
-                          placeholder={
-                            infoLocked
-                              ? undefined
-                              : titleEn.trim() || t("localeTitleFallbackPlaceholder")
-                          }
-                          onChange={(e) => {
-                            if (!infoLocked) setTitleZh(e.target.value);
-                          }}
+                          value={titleZh}
+                          disabled={busy}
+                          placeholder={titleEn.trim() || t("localeTitleFallbackPlaceholder")}
+                          onChange={(e) => setTitleZh(e.target.value)}
                           aria-label={t("contentTitleLocaleZh")}
                         />
-                        {!infoLocked ? (
-                          <em className="upload-locale-titles__count">{titleZh.length}/40</em>
-                        ) : null}
+                        <em className="upload-locale-titles__count">{titleZh.length}/40</em>
                       </div>
                     </label>
                   </div>
@@ -1756,21 +1581,11 @@ export function LocalUploadWizard() {
                   <div className="upload-field upload-field--tags">
                     <span>
                       {t("dramaTags")}
-                      {!tagsLocked ? (
-                        <em className="float-right not-italic text-ink-subtle">{tags.length}/{MAX_DRAMA_TAGS}</em>
-                      ) : null}
+                      <em className="float-right not-italic text-ink-subtle">{tags.length}/{MAX_DRAMA_TAGS}</em>
                     </span>
                     <div className="flex flex-wrap gap-1.5 rounded-md border border-line bg-surface px-2 py-1.5">
-                      {infoTags.length ? (
-                        infoTags.map((tag) =>
-                          tagsLocked ? (
-                            <span
-                              key={tag}
-                              className="rounded-full bg-brand/10 px-2 py-0.5 text-xs text-brand"
-                            >
-                              {tag}
-                            </span>
-                          ) : (
+                      {tags.length
+                        ? tags.map((tag) => (
                             <button
                               type="button"
                               key={tag}
@@ -1779,54 +1594,45 @@ export function LocalUploadWizard() {
                             >
                               {tag} ×
                             </button>
-                          ),
-                        )
-                      ) : tagsLocked ? (
-                        <span className="text-sm text-ink-subtle">—</span>
-                      ) : null}
-                      {!tagsLocked ? (
-                        <input
-                          className="min-w-24 flex-1 bg-transparent text-sm outline-none"
-                          value={tagInput}
-                          maxLength={12}
-                          placeholder={t("dramaTagsPlaceholder")}
-                          onChange={(e) => setTagInput(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" || e.key === ",") {
-                              e.preventDefault();
-                              const tag = tagInput.trim();
-                              if (tag && !tags.includes(tag) && tags.length < MAX_DRAMA_TAGS) {
-                                setTags((items) => [...items, tag]);
-                              }
-                              setTagInput("");
+                          ))
+                        : null}
+                      <input
+                        className="min-w-24 flex-1 bg-transparent text-sm outline-none"
+                        value={tagInput}
+                        maxLength={12}
+                        placeholder={t("dramaTagsPlaceholder")}
+                        onChange={(e) => setTagInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === ",") {
+                            e.preventDefault();
+                            const tag = tagInput.trim();
+                            if (tag && !tags.includes(tag) && tags.length < MAX_DRAMA_TAGS) {
+                              setTags((items) => [...items, tag]);
                             }
-                          }}
-                        />
-                      ) : null}
+                            setTagInput("");
+                          }
+                        }}
+                      />
                     </div>
                   </div>
                   <label className="upload-field upload-field--compact upload-field--category">
                     <span>
-                      {t("onlineCategory")} {!infoLocked ? <b className="text-danger">*</b> : null}
+                      {t("onlineCategory")} <b className="text-danger">*</b>
                     </span>
-                    {infoLocked ? (
-                      <Input value={infoCategoryLabel} disabled readOnly />
-                    ) : (
-                      <Select
-                        required
-                        value={categorySlug}
-                        disabled={busy}
-                        aria-required="true"
-                        onChange={(e) => setCategorySlug(e.target.value)}
-                      >
-                        <option value="">{t("selectCategory")}</option>
-                        {(categoriesQ.data ?? []).map((c) => (
-                          <option key={c.slug} value={c.slug}>
-                            {c.nameZh || c.nameEn || c.slug}
-                          </option>
-                        ))}
-                      </Select>
-                    )}
+                    <Select
+                      required
+                      value={categorySlug}
+                      disabled={busy}
+                      aria-required="true"
+                      onChange={(e) => setCategorySlug(e.target.value)}
+                    >
+                      <option value="">{t("selectCategory")}</option>
+                      {(categoriesQ.data ?? []).map((c) => (
+                        <option key={c.slug} value={c.slug}>
+                          {c.nameZh || c.nameEn || c.slug}
+                        </option>
+                      ))}
+                    </Select>
                   </label>
                   <label className="upload-field upload-field--episodes">
                     <span>{t("totalEpisodes")}</span>
@@ -1835,12 +1641,10 @@ export function LocalUploadWizard() {
                       min={0}
                       step={1}
                       inputMode="numeric"
-                      disabled={busy || infoLocked}
-                      readOnly={infoLocked}
-                      value={infoTotalEpisodes}
+                      disabled={busy}
+                      value={totalEpisodes}
                       aria-label={t("totalEpisodes")}
                       onChange={(e) => {
-                        if (infoLocked) return;
                         const raw = e.target.value;
                         if (raw === "") {
                           setTotalEpisodesDirty(false);
@@ -1861,12 +1665,10 @@ export function LocalUploadWizard() {
                       {t("contentType")} <b className="text-danger">*</b>
                     </span>
                     <UploadMetaChips
-                      value={infoContentType}
-                      disabled={busy || tagsLocked}
+                      value={contentType}
+                      disabled={busy}
                       ariaLabel={t("contentType")}
-                      onChange={(value) => {
-                        if (!tagsLocked) setContentType(normalizeContentType(value));
-                      }}
+                      onChange={(value) => setContentType(normalizeContentType(value))}
                       options={[
                         { value: "漫剧", label: t("contentTypeComic") },
                         { value: "真人短剧", label: t("contentTypeLive") },
@@ -1879,12 +1681,10 @@ export function LocalUploadWizard() {
                       {t("completionStatus")} <b className="text-danger">*</b>
                     </span>
                     <UploadMetaChips
-                      value={infoCompletion}
-                      disabled={busy || tagsLocked}
+                      value={completion}
+                      disabled={busy}
                       ariaLabel={t("completionStatus")}
-                      onChange={(value) => {
-                        if (!tagsLocked) setCompletion(value);
-                      }}
+                      onChange={(value) => setCompletion(value)}
                       options={[
                         { value: "连载中", label: t("completionOngoing") },
                         { value: "已完结", label: t("completionFinished") },
@@ -1896,22 +1696,17 @@ export function LocalUploadWizard() {
                 <label className="upload-field">
                   <span>
                     {t("onlineDescZh")}
-                    {!infoLocked ? (
-                      <em className="float-right not-italic text-ink-subtle">
-                        {descriptionZh.length}/300
-                      </em>
-                    ) : null}
+                    <em className="float-right not-italic text-ink-subtle">
+                      {descriptionZh.length}/300
+                    </em>
                   </span>
                   <textarea
                     className="content-textarea upload-info-desc"
                     rows={3}
                     maxLength={300}
-                    value={infoDescriptionZh}
-                    disabled={busy || infoLocked}
-                    readOnly={infoLocked}
-                    onChange={(e) => {
-                      if (!infoLocked) setDescriptionZh(e.target.value);
-                    }}
+                    value={descriptionZh}
+                    disabled={busy}
+                    onChange={(e) => setDescriptionZh(e.target.value)}
                   />
                 </label>
               </div>
@@ -1920,21 +1715,17 @@ export function LocalUploadWizard() {
                 <div className="upload-field">
                   <span>{t("uploadSectionCover")}</span>
                   <DramaCoverField
-                    url={infoCoverUrl || undefined}
-                    disabled={busy || infoLocked}
-                    videoFile={infoLocked ? undefined : episodes[0]?.file}
-                    showAdvancedUrl={!infoLocked}
-                    onChange={(url) => {
-                      if (!infoLocked) setCoverUrl(url);
-                    }}
+                    url={coverUrl || undefined}
+                    disabled={busy}
+                    videoFile={episodes[0]?.file}
+                    showAdvancedUrl
+                    onChange={(url) => setCoverUrl(url)}
                     onError={setError}
                   />
                 </div>
               </div>
             </div>
-            )}
           </section>
-      ) : null}
 
       <section className="upload-panel space-y-4">
         <div className="upload-panel__head">
@@ -1988,7 +1779,7 @@ export function LocalUploadWizard() {
                   {dragOver ? t("uploadDropActive") : t("uploadNoFiles")}
                 </p>
                 <p className="local-source-zone__hint">{t("uploadVideosHint")}</p>
-                <div className="mt-4 flex flex-wrap justify-center gap-2">{splitUploadBtn}</div>
+                <div className="mt-4 flex flex-wrap justify-center gap-2">{sourceActions}</div>
               </div>
             ) : (
               <div
@@ -2010,12 +1801,19 @@ export function LocalUploadWizard() {
                   <div className="min-w-0">
                     <p className="text-[13px] font-semibold text-ink">{t("localWizardEpisodeListTitle")}</p>
                     <p className="text-caption text-ink-muted">
-                      {t("uploadFilesSummary", { n: episodes.length, size: fmtSize(totalBytes) })}
+                      {t("uploadFilesSummary", {
+                        n: episodes.length,
+                        size: fmtSize(totalBytes),
+                      })}
+                      {linkEpisodeCount
+                        ? ` · ${t("onlineLinkEpisodeCount", { n: linkEpisodeCount })}`
+                        : ""}
                       {totalDurationSec != null ? ` · ${fmtDuration(totalDurationSec)}` : ""}
+                      {onlineIngest
+                        ? ` · ${onlineIngest.ingestForm === "r2" ? t("ytdlpIngestFormR2") : t("ytdlpIngestFormLink")}`
+                        : ""}
                       {" · "}
-                      {isExisting
-                        ? t("localWizardEpisodeOrderHintExisting", { start: startEpPreview })
-                        : t("localWizardEpisodeOrderHint")}
+                      {t("localWizardEpisodeOrderHint")}
                       {selectedIds.length
                         ? ` · ${t("epCardSelected", { n: selectedIds.length })}`
                         : ""}
@@ -2043,7 +1841,7 @@ export function LocalUploadWizard() {
                       <Trash2 className="h-4 w-4" />
                       {t("epCardDeleteSelected")}
                     </Button>
-                    {splitUploadBtn}
+                    {sourceActions}
                     <Button size="sm" variant="ghost" disabled={busy} onClick={clearAllEpisodes}>
                       {t("uploadClearFiles")}
                     </Button>
@@ -2109,6 +1907,8 @@ export function LocalUploadWizard() {
                               draggable={false}
                               className="ep-card__thumb"
                             />
+                          ) : ep.kind === "link" ? (
+                            <Link2 className="h-5 w-5" aria-hidden />
                           ) : ep.thumbStatus === "pending" ? (
                             <LoaderCircle className="h-5 w-5 animate-spin" aria-hidden />
                           ) : (
@@ -2132,9 +1932,17 @@ export function LocalUploadWizard() {
                         />
                         <p
                           className="ep-card__meta"
-                          title={`${ep.file.name} · ${fmtSize(ep.file.size)} · ${episodeDurationLabel(ep)}`}
+                          title={
+                            ep.kind === "link"
+                              ? `${ep.sourceUrl || ep.webpageUrl || ep.title} · ${episodeDurationLabel(ep)}`
+                              : `${ep.file?.name || ep.title} · ${fmtSize(ep.file?.size || 0)} · ${episodeDurationLabel(ep)}`
+                          }
                         >
-                          <span>{fmtSize(ep.file.size)}</span>
+                          <span>
+                            {ep.kind === "link"
+                              ? t("onlineLinkBadge")
+                              : fmtSize(ep.file?.size || 0)}
+                          </span>
                           <span className="ep-card__dot" aria-hidden>
                             ·
                           </span>
@@ -2147,12 +1955,9 @@ export function LocalUploadWizard() {
                           >
                             {episodeDurationLabel(ep)}
                           </span>
-                          {(!isExisting && !episodeIsFree) ||
-                          (isExisting && existingDrama?.lockMode !== "ALL_FREE") ? (
-                            <span className={cn("ep-card__pay", episodeIsFree && "is-free")}>
-                              {episodeIsFree
-                                ? t("free")
-                                : `${isExisting ? existingPaidCredits : priceCredits}`}
+                          {!episodeIsFree ? (
+                            <span className="ep-card__pay">
+                              {`${priceCredits}`}
                             </span>
                           ) : null}
                           {row ? <span className="ep-card__status">{row.status}</span> : null}
@@ -2222,8 +2027,7 @@ export function LocalUploadWizard() {
           </div>
       </section>
 
-      {!isExisting ? (
-          <section className="upload-panel space-y-3">
+      <section className="upload-panel space-y-3">
             <div className="upload-panel__head">
               <div>
                 <h2>{t("uploadSectionPolicy")}</h2>
@@ -2289,19 +2093,20 @@ export function LocalUploadWizard() {
               </div>
             ) : null}
           </section>
-      ) : null}
 
       <div className="upload-submit-bar">
-          <p className="min-w-0 flex-1 text-xs text-ink-subtle">
+          <p className="upload-submit-bar__hint">
             {fileBlockReason ||
-              (episodes.length
-                ? isExisting
-                  ? t("localWizardSubmitHintExisting", {
-                      title: existingDrama ? dramaLabel(existingDrama) : "—",
-                      n: episodes.length,
-                      start: startEpPreview,
+              (stagedEpisodeCount
+                ? linkEpisodeCount && !fileEpisodeCount
+                  ? t("localWizardSubmitHintOnline", {
+                      n: stagedEpisodeCount,
+                      mode:
+                        onlineIngest?.ingestForm === "r2"
+                          ? t("ytdlpIngestFormR2")
+                          : t("ytdlpIngestFormLink"),
                     })
-                  : t("localWizardSubmitHint", { n: episodes.length })
+                  : t("localWizardSubmitHint", { n: stagedEpisodeCount })
                 : t("uploadDraftOnlyHint"))}
           </p>
           <Button size="sm" variant="secondary" disabled={busy} onClick={saveLocalDraft}>
@@ -2311,8 +2116,12 @@ export function LocalUploadWizard() {
             size="sm"
             disabled={!!fileBlockReason || busy}
             onClick={() => {
-              if (isExisting) {
-                uploadMut.mutate({ publishWhenReady: false });
+              if (linkEpisodeCount && !fileEpisodeCount) {
+                onlineSubmitMut.mutate();
+                return;
+              }
+              if (linkEpisodeCount && fileEpisodeCount) {
+                setError(t("onlineMixSubmitHint"));
                 return;
               }
               setSubmitPublishChoice(false);
@@ -2320,7 +2129,7 @@ export function LocalUploadWizard() {
             }}
           >
             {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
-            {isExisting ? t("localWizardAppendBtn") : t("nextStep")}
+            {t("nextStep")}
           </Button>
         </div>
 
@@ -2333,7 +2142,7 @@ export function LocalUploadWizard() {
           size="sm"
         >
           <div className="space-y-4">
-            <p className="text-body-sm text-ink-muted">{t("submitDramaDialogHint", { n: episodes.length })}</p>
+            <p className="text-body-sm text-ink-muted">{t("submitDramaDialogHint", { n: stagedEpisodeCount })}</p>
             <div className="space-y-2" role="radiogroup" aria-label={t("submitDramaDialogTitle")}>
               <label
                 className={cn(
@@ -2400,4 +2209,4 @@ export function LocalUploadWizard() {
       )}
     </div>
   );
-}
+});

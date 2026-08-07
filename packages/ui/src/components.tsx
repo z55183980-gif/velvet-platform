@@ -5,14 +5,17 @@ type Variant = "primary" | "secondary" | "ghost" | "danger";
 type Size = "sm" | "md" | "lg";
 
 const btnBase =
-  "inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl font-medium transition-[background-color,transform,box-shadow,color,filter] duration-150 ease-out select-none hover:-translate-y-0.5 hover:shadow-md active:translate-y-0 active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 disabled:hover:shadow-none disabled:active:scale-100";
+  "inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl font-medium transition-[background-color,transform,box-shadow,color,filter] duration-150 ease-out select-none hover:-translate-y-0.5 hover:shadow-md active:translate-y-0 active:scale-[0.97] disabled:cursor-not-allowed disabled:hover:translate-y-0 disabled:hover:shadow-none disabled:active:scale-100";
 
 const variants: Record<Variant, string> = {
-  primary: "bg-brand text-white hover:bg-brand-strong shadow-brand",
+  primary:
+    "bg-brand text-white hover:bg-brand-strong shadow-brand disabled:bg-surface-3 disabled:text-ink-muted disabled:shadow-none",
   secondary:
-    "border border-white/70 bg-white/70 text-ink backdrop-blur-md hover:bg-white/85 shadow-[inset_0_1px_0_rgba(255,255,255,0.88)]",
-  ghost: "text-ink-muted hover:text-ink hover:bg-white/40",
-  danger: "border border-danger/20 bg-danger-soft text-danger hover:bg-danger/15",
+    "border border-white/70 bg-white/70 text-ink backdrop-blur-md hover:bg-white/85 shadow-[inset_0_1px_0_rgba(255,255,255,0.88)] disabled:border-line disabled:bg-surface-3 disabled:text-ink-muted disabled:shadow-none disabled:backdrop-blur-none",
+  ghost:
+    "text-ink-muted hover:text-ink hover:bg-white/40 disabled:text-ink-subtle disabled:hover:bg-transparent",
+  danger:
+    "border border-danger/20 bg-danger-soft text-danger hover:bg-danger/15 disabled:border-transparent disabled:bg-surface-3 disabled:text-ink-muted",
 };
 
 const sizes: Record<Size, string> = {
@@ -26,7 +29,9 @@ const fieldBase =
 
 export function buttonVariants(opts?: { variant?: Variant; size?: Size; className?: string }) {
   const { variant = "primary", size = "md", className } = opts || {};
-  return cn(btnBase, variants[variant], sizes[size], className);
+  // Size before variant so text color (`text-white`) isn't clobbered by `text-body-sm`
+  // if twMerge theme config is outdated.
+  return cn(btnBase, sizes[size], variants[variant], className);
 }
 
 export function Button({

@@ -70,19 +70,36 @@ export async function adminRequest<T = any>(path: string, init?: RequestInit): P
   return json.data;
 }
 
-export async function adminDownloadBlob(path: string, filename: string) {
+export async function adminDownloadBlob(
+  path: string,
+  filename: string,
+  init?: RequestInit,
+) {
   const token = getAdminToken();
   const locale = getAdminLocale();
+  const headers: Record<string, string> = {
+    "Accept-Language": locale === "en" ? "en" : "zh",
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(init?.headers as Record<string, string> | undefined),
+  };
+  if (init?.body && !(init.body instanceof FormData) && !headers["Content-Type"]) {
+    headers["Content-Type"] = "application/json";
+  }
   const res = await fetch(`${API_BASE}${path}`, {
     credentials: "include",
-    headers: {
-      "Accept-Language": locale === "en" ? "en" : "zh",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
+    ...init,
+    headers,
   });
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new ApiError(res.status, text || `HTTP ${res.status}`);
+    let message = `HTTP ${res.status}`;
+    try {
+      const json = (await res.json()) as { message?: unknown };
+      message = normalizeApiMessage(json.message, message);
+    } catch {
+      const text = await res.text().catch(() => "");
+      if (text.trim()) message = text.slice(0, 300);
+    }
+    throw new ApiError(res.status, message);
   }
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);

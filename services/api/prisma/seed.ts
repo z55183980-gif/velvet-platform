@@ -135,7 +135,7 @@ async function main() {
   // eslint-disable-next-line no-console
   console.log(`[seed] viewer phone=+84901234567 wallet=200000 credits`);
 
-  const keepSettingKeys = ['episodeLockMode', 'defaultFreeEpisodes'];
+  const keepSettingKeys = ['episodeLockMode', 'defaultFreeEpisodes', 'paymentGateways.stripe'];
   await prisma.systemSetting.deleteMany({
     where: { key: { notIn: keepSettingKeys } },
   });

@@ -73,9 +73,10 @@ const NAV_GROUPS: NavGroup[] = [
     id: "content",
     titleKey: "navContent",
     items: [
-      { href: "/content", key: "content", icon: Clapperboard, end: true },
       { href: "/content/add", key: "contentAdd", icon: Plus, end: true },
-      { href: "/content?sort=latest", key: "contentLatest", icon: Clapperboard, end: true },
+      { href: "/content", key: "content", icon: Clapperboard, end: true },
+      { href: "/content?view=latest", key: "contentLatest", icon: Clapperboard, end: true },
+      { href: "/content?view=pending", key: "contentPending", icon: ShieldCheck, end: true },
       { href: "/hottest", key: "hottest", icon: Flame, end: true },
       { href: "/content?modal=categories", key: "categories", icon: FolderTree, end: true },
     ],
@@ -114,7 +115,6 @@ const NAV_GROUPS: NavGroup[] = [
     titleKey: "navCreators",
     items: [
       { href: "/creators", key: "creators", icon: Handshake },
-      { href: "/content?status=PENDING_REVIEW", key: "contentPending", icon: ShieldCheck, end: true },
       { href: "/withdraws", key: "withdraws", icon: Wallet, finance: true },
     ],
   },
@@ -140,6 +140,21 @@ function isActive(pathname: string, searchParams: URLSearchParams, item: NavItem
   const { path, params } = parseHref(item.href);
 
   if ([...params.keys()].length > 0) {
+    // List presets: treat legacy status/sort params as the same view.
+    if (path === "/content" && params.get("view") === "latest") {
+      const view = searchParams.get("view");
+      const matched =
+        view === "latest" || (!view && searchParams.get("sort") === "latest");
+      return pathname === path && matched && searchParams.get("modal") !== "categories";
+    }
+    if (path === "/content" && params.get("view") === "pending") {
+      const view = searchParams.get("view");
+      const matched =
+        view === "pending" ||
+        (!view && searchParams.get("status") === "PENDING_REVIEW");
+      return pathname === path && matched && searchParams.get("modal") !== "categories";
+    }
+
     for (const [key, value] of params.entries()) {
       if (searchParams.get(key) !== value) return false;
     }
@@ -150,10 +165,21 @@ function isActive(pathname: string, searchParams: URLSearchParams, item: NavItem
 
   if (path === "/content") {
     const modal = searchParams.get("modal");
+    const view = searchParams.get("view");
+    const status = searchParams.get("status");
+    const sort = searchParams.get("sort");
+    // Legacy deep links still map to the same list presets.
+    const effectiveView =
+      view === "latest" || view === "pending"
+        ? view
+        : status === "PENDING_REVIEW"
+          ? "pending"
+          : sort === "latest"
+            ? "latest"
+            : null;
     return (
       pathname === "/content" &&
-      !searchParams.get("status") &&
-      !searchParams.get("sort") &&
+      !effectiveView &&
       (!modal || modal === "detail")
     );
   }
@@ -289,7 +315,7 @@ function SidebarNav({
   };
 
   return (
-    <nav className="scrollbar-thin flex-1 space-y-1 overflow-y-auto px-2.5 py-3">
+    <nav className="scrollbar-thin flex-1 space-y-1 overflow-y-auto px-2.5 pt-3 pb-20">
       {groups.map((group) => {
         const open = collapsed[group.id] !== true;
         return (
@@ -406,18 +432,19 @@ function AdminShellFrame({ children }: { children: ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const setTitle = useCallback((next?: string) => setPageTitle(next), []);
 
-  const role = admin?.role || "SUPER_ADMIN";
+  // Do not default missing role to SUPER_ADMIN — hide finance until role is known.
+  const isSuperAdmin = admin?.role === "SUPER_ADMIN";
   const flatItems = useMemo(
-    () => NAV_GROUPS.flatMap((g) => g.items).filter((n) => !n.finance || role === "SUPER_ADMIN"),
-    [role],
+    () => NAV_GROUPS.flatMap((g) => g.items).filter((n) => !n.finance || isSuperAdmin),
+    [isSuperAdmin],
   );
   const visibleGroups = useMemo(
     () =>
       NAV_GROUPS.map((g) => ({
         ...g,
-        items: g.items.filter((n) => !n.finance || role === "SUPER_ADMIN"),
+        items: g.items.filter((n) => !n.finance || isSuperAdmin),
       })).filter((g) => g.items.length > 0),
-    [role],
+    [isSuperAdmin],
   );
   const crumb = resolveCrumb(pathname, searchParams, flatItems, t);
   const account = admin?.displayName || admin?.username || "Admin";
@@ -517,7 +544,11 @@ function AdminShellFrame({ children }: { children: ReactNode }) {
                 <ChevronRight size={14} className="hidden shrink-0 text-ink-subtle sm:block" />
                 <span className="truncate font-semibold text-ink">{pageTitle || crumb.label}</span>
               </div>
-              <AccountMenu account={account} role={role} onLogout={() => void logout()} />
+              <AccountMenu
+                account={account}
+                role={admin?.role || "—"}
+                onLogout={() => void logout()}
+              />
             </div>
           </header>
 

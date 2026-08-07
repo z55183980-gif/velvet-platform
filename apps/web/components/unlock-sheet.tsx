@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { X, Loader2, Check, Lock, Coins } from "lucide-react";
+import { X, Loader2, Check, Lock, Coins, Crown } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { useAuth } from "@/components/auth-context";
 import { useDocumentScrollLock } from "@/hooks/use-document-scroll-lock";
@@ -45,6 +45,8 @@ export function UnlockSheet({
   const balanceKnown = balance != null;
   const insufficient = balanceKnown && bal < price;
   const showBuyout = !!(buyoutCredits && buyoutCredits > 0 && onBuyDrama);
+  /** Only surface recharge after user tries unlock (or server returns 4100). */
+  const showRechargeGate = status === "insufficient";
 
   useDocumentScrollLock(open);
 
@@ -77,6 +79,11 @@ export function UnlockSheet({
   function goVip() {
     onClose();
     openVip();
+  }
+
+  function dismissInsufficient() {
+    setStatus("idle");
+    setErrMsg(null);
   }
 
   async function confirm() {
@@ -128,7 +135,7 @@ export function UnlockSheet({
     }
   }
 
-  const showInsufficient = status === "insufficient" || (status === "idle" && insufficient && !vipActive);
+  const balanceWarn = insufficient && !vipActive;
 
   return (
     <div
@@ -189,10 +196,56 @@ export function UnlockSheet({
               {t("unlock.retry")}
             </button>
             <button
-              onClick={goRecharge}
-              className={cn(buttonVariants({ variant: "secondary", size: "lg" }), "mt-3 w-full")}
+              onClick={onClose}
+              className={cn(buttonVariants({ variant: "ghost", size: "lg" }), "mt-3 w-full")}
             >
+              {t("unlock.cancel")}
+            </button>
+          </div>
+        ) : showRechargeGate ? (
+          <div className="flex flex-col items-center py-6 text-center animate-[rise-in_0.35s_var(--ease-out)_both]">
+            <span className="grid h-14 w-14 place-items-center rounded-full bg-danger/15 text-danger">
+              <Coins className="h-7 w-7" />
+            </span>
+            <p className="mt-4 text-h4 font-semibold text-ink">{t("unlock.insufficientTitle")}</p>
+            <p className="mt-2 text-body-sm text-ink-muted">
+              {errMsg || t("unlock.insufficient")}
+            </p>
+            <div className="mt-2 w-full rounded-xl bg-surface-2 px-4 py-3 text-body-sm">
+              <div className="flex items-center justify-between">
+                <span className="text-ink-muted">{t("unlock.priceLabel")}</span>
+                <span className="font-semibold tabular-nums text-ink">
+                  {formatCredits(price, t("card.credits"))}
+                </span>
+              </div>
+              <div className="mt-2 flex items-center justify-between">
+                <span className="text-ink-muted">{t("unlock.balanceLabel")}</span>
+                <span className="font-semibold tabular-nums text-danger">
+                  {balanceKnown ? formatCredits(bal, t("card.credits")) : "—"}
+                </span>
+              </div>
+            </div>
+            <button
+              onClick={goRecharge}
+              className={cn(buttonVariants({ variant: "primary", size: "lg" }), "mt-5 w-full")}
+            >
+              <Coins className="h-4 w-4" />
               {t("unlock.goRecharge")}
+            </button>
+            {!vipActive ? (
+              <button
+                onClick={goVip}
+                className={cn(buttonVariants({ variant: "gold", size: "lg" }), "mt-3 w-full")}
+              >
+                <Crown className="h-4 w-4" />
+                {t("vip.open")}
+              </button>
+            ) : null}
+            <button
+              onClick={dismissInsufficient}
+              className={cn(buttonVariants({ variant: "ghost", size: "lg" }), "mt-2 w-full")}
+            >
+              {t("unlock.back")}
             </button>
           </div>
         ) : (
@@ -249,7 +302,7 @@ export function UnlockSheet({
                 <span
                   className={cn(
                     "text-h4 font-semibold tabular-nums",
-                    showInsufficient ? "text-danger" : "text-ink",
+                    balanceWarn ? "text-danger" : "text-ink",
                   )}
                 >
                   {balanceKnown ? formatCredits(bal, t("card.credits")) : "—"}
@@ -257,22 +310,9 @@ export function UnlockSheet({
               </div>
             </div>
 
-            {showInsufficient && (
-              <p className="mt-4 text-center text-body-sm text-danger">
-                {errMsg || t("unlock.insufficient")}
-              </p>
-            )}
-
             <div className="mt-6 flex flex-col gap-3">
-              {showInsufficient ? (
-                <button
-                  onClick={goRecharge}
-                  className={cn(buttonVariants({ variant: "primary", size: "lg" }), "w-full")}
-                >
-                  <Coins className="h-4 w-4" />
-                  {t("unlock.goRecharge")}
-                </button>
-              ) : (
+              {/* Primary pair: unlock this ep · VIP — recharge only on insufficient gate */}
+              {vipActive && mode === "episode" ? (
                 <button
                   onClick={confirm}
                   disabled={status === "processing"}
@@ -286,24 +326,41 @@ export function UnlockSheet({
                   ) : (
                     <>
                       <Lock className="h-4 w-4" />
-                      {vipActive && mode === "episode"
-                        ? t("vip.freeWatch")
-                        : mode === "drama"
-                          ? t("unlock.buyDrama")
-                          : t("unlock.confirm")}
+                      {t("vip.freeWatch")}
                     </>
                   )}
                 </button>
+              ) : (
+                <>
+                  <button
+                    onClick={confirm}
+                    disabled={status === "processing"}
+                    className={cn(buttonVariants({ variant: "primary", size: "lg" }), "w-full")}
+                  >
+                    {status === "processing" ? (
+                      <>
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        {t("unlock.processing")}
+                      </>
+                    ) : (
+                      <>
+                        <Lock className="h-4 w-4" />
+                        {mode === "drama" ? t("unlock.buyDrama") : t("unlock.confirm")}
+                      </>
+                    )}
+                  </button>
+                  {!vipActive ? (
+                    <button
+                      onClick={goVip}
+                      disabled={status === "processing"}
+                      className={cn(buttonVariants({ variant: "gold", size: "lg" }), "w-full")}
+                    >
+                      <Crown className="h-4 w-4" />
+                      {t("vip.open")}
+                    </button>
+                  ) : null}
+                </>
               )}
-              {!vipActive ? (
-                <button
-                  onClick={goVip}
-                  disabled={status === "processing"}
-                  className={cn(buttonVariants({ variant: "secondary", size: "lg" }), "w-full")}
-                >
-                  {t("vip.goVip")}
-                </button>
-              ) : null}
               <button
                 onClick={onClose}
                 disabled={status === "processing"}

@@ -18,6 +18,13 @@ const PAY_CURRENCY = "USD";
 
 type PayMethod = "STRIPE" | "SIMULATE";
 
+function packageParts(p: TopupPackageQuote) {
+  const total = Number(p.credits) || 0;
+  const bonus = Number(p.bonusCredits ?? 0) || 0;
+  const immediate = Number(p.baseCredits ?? total - bonus) || total;
+  return { total, immediate, bonus };
+}
+
 export function RechargeModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { t } = useLocale();
   const { user, openLogin, refreshWallet } = useAuth();
@@ -54,7 +61,8 @@ export function RechargeModal({ open, onClose }: { open: boolean; onClose: () =>
 
   const selected = packages.find((p) => p.id === packageId) || null;
   const payAmount = selected?.payAmount ? Number(selected.payAmount) : 0;
-  const credits = selected ? Number(selected.credits) : 0;
+  const selectedParts = selected ? packageParts(selected) : { total: 0, immediate: 0, bonus: 0 };
+  const credits = selectedParts.total;
 
   async function confirm() {
     if (!user) {
@@ -132,22 +140,46 @@ export function RechargeModal({ open, onClose }: { open: boolean; onClose: () =>
                 <div className="mt-3 grid grid-cols-2 gap-3">
                   {packages.map((p) => {
                     const active = p.id === packageId;
+                    const parts = packageParts(p);
                     return (
                       <button
                         key={p.id}
                         type="button"
                         onClick={() => setPackageId(p.id)}
                         className={cn(
-                          "relative flex flex-col items-start rounded-xl px-4 py-4 text-left transition-all duration-[var(--dur-base)]",
+                          "relative flex flex-col overflow-hidden rounded-xl px-4 py-4 text-left transition-all duration-[var(--dur-base)]",
                           active
                             ? "bg-brand/15 ring-2 ring-brand"
                             : "bg-surface-2 hover:bg-surface-3",
                         )}
                       >
-                        <span className="text-h2 font-bold tabular-nums text-ink">
-                          {formatAmount(Number(p.credits))}
-                        </span>
-                        <span className="mt-0.5 text-caption text-ink-subtle">{t("card.credits")}</span>
+                        {p.badge?.trim() ? (
+                          <span className="absolute right-0 top-0 rounded-bl-lg bg-danger px-2 py-0.5 text-[10px] font-bold text-white">
+                            {p.badge.trim()}
+                          </span>
+                        ) : null}
+                        <div className="flex items-center gap-2">
+                          <span className="grid h-8 w-8 place-items-center rounded-full bg-gold/20 text-gold">
+                            <Coins className="h-4 w-4" />
+                          </span>
+                          <span className="text-h2 font-bold tabular-nums text-ink">
+                            {formatAmount(parts.total)}
+                          </span>
+                        </div>
+                        <div className="mt-3 space-y-0.5 text-caption text-ink-muted">
+                          <p>
+                            {t("recharge.immediate")}:{" "}
+                            <span className="tabular-nums text-ink">{formatAmount(parts.immediate)}</span>
+                          </p>
+                          {parts.bonus > 0 ? (
+                            <p>
+                              {t("recharge.bonus")}:{" "}
+                              <span className="tabular-nums text-success">
+                                {formatAmount(parts.bonus)}
+                              </span>
+                            </p>
+                          ) : null}
+                        </div>
                         <span className="mt-3 text-body-sm font-semibold tabular-nums text-gold">
                           {formatUsd(Number(p.payAmount || 0))}
                         </span>
@@ -189,8 +221,13 @@ export function RechargeModal({ open, onClose }: { open: boolean; onClose: () =>
                     {formatAmount(credits)}
                   </p>
                   <p className="text-caption text-ink-subtle">
-                    {formatUsd(payAmount)}
+                    {selectedParts.bonus > 0
+                      ? `${t("recharge.immediate")} ${formatAmount(selectedParts.immediate)} · ${t("recharge.bonus")} ${formatAmount(selectedParts.bonus)}`
+                      : formatUsd(payAmount)}
                   </p>
+                  {selectedParts.bonus > 0 ? (
+                    <p className="text-caption text-ink-subtle">{formatUsd(payAmount)}</p>
+                  ) : null}
                 </div>
               </div>
             )}

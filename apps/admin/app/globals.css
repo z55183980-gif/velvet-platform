@@ -4,8 +4,8 @@
 @source "../../../packages/ui/src/**/*.{ts,tsx}";
 
 /* ============================================================
-   Ops Velvet — visual language aligned with local zai admin
-   Light frosted-glass console, iOS blue brand accent.
+   Ops Velvet — visual language aligned with Velvet mark
+   Light frosted-glass console, wine-red brand accent (#880018).
    ============================================================ */
 @theme {
   --color-base: #e4ecf4;
@@ -17,16 +17,16 @@
   --color-ink-muted: #475569;
   --color-ink-subtle: #64748b;
 
-  --color-brand: #007aff;
-  --color-brand-strong: #0062cc;
-  --color-brand-soft: rgba(0, 122, 255, 0.15);
-  --color-brand-glow: rgba(0, 122, 255, 0.25);
+  --color-brand: #880018;
+  --color-brand-strong: #6a0012;
+  --color-brand-soft: rgba(136, 0, 24, 0.12);
+  --color-brand-glow: rgba(136, 0, 24, 0.22);
 
   /* Aliases → brand (prefer brand* in new code) */
-  --color-accent: #007aff;
-  --color-accent-hover: #0062cc;
-  --color-accent-light: rgba(0, 122, 255, 0.15);
-  --color-accent-glow: rgba(0, 122, 255, 0.25);
+  --color-accent: #880018;
+  --color-accent-hover: #6a0012;
+  --color-accent-light: rgba(136, 0, 24, 0.12);
+  --color-accent-glow: rgba(136, 0, 24, 0.22);
 
   --color-panel: #f1f5f9;
 
@@ -96,7 +96,7 @@
   --shadow-1: 0 1px 2px rgba(15, 20, 25, 0.04), 0 1px 3px rgba(15, 20, 25, 0.06);
   --shadow-2: 0 4px 24px rgba(15, 20, 25, 0.06);
   --shadow-3: 0 12px 32px rgba(15, 20, 25, 0.08);
-  --shadow-brand: 0 2px 8px rgba(0, 122, 255, 0.28);
+  --shadow-brand: 0 2px 8px rgba(136, 0, 24, 0.28);
 
   --space-xs: 0.25rem;
   --space-sm: 0.5rem;
@@ -177,7 +177,7 @@
     padding: 1.1rem 1.5rem;
     border-bottom: 1px solid var(--color-line);
     background:
-      radial-gradient(circle at 88% 0%, rgba(0, 122, 255, 0.09), transparent 36%),
+      radial-gradient(circle at 88% 0%, rgba(147, 180, 255, 0.12), transparent 36%),
       linear-gradient(135deg, #fff 0%, #f8fbff 100%);
   }
 
@@ -216,7 +216,7 @@
   }
 
   .content-flag--brand {
-    border-color: rgba(0, 122, 255, 0.18);
+    border-color: color-mix(in srgb, var(--color-brand) 22%, transparent);
     background: var(--color-brand-soft);
     color: var(--color-brand-strong);
   }
@@ -476,7 +476,7 @@
   }
 
   .content-textarea:focus {
-    border-color: rgba(0, 122, 255, 0.45);
+    border-color: color-mix(in srgb, var(--color-brand) 45%, transparent);
     background: #fff;
     box-shadow: 0 0 0 2px var(--color-brand-soft);
   }
@@ -516,7 +516,7 @@
   .content-tip-card {
     display: flex;
     gap: 0.7rem;
-    border: 1px solid rgba(0, 122, 255, 0.14);
+    border: 1px solid color-mix(in srgb, var(--color-brand) 18%, transparent);
     border-radius: 1rem;
     background: var(--color-brand-soft);
     padding: 1rem;
@@ -602,8 +602,8 @@
   }
 
   .content-ep-thumb__btn:hover:not(:disabled) {
-    border-color: rgba(0, 122, 255, 0.28);
-    background: rgba(0, 122, 255, 0.04);
+    border-color: color-mix(in srgb, var(--color-brand) 28%, transparent);
+    background: color-mix(in srgb, var(--color-brand) 4%, white);
     color: var(--color-brand);
   }
 
@@ -822,9 +822,9 @@
 
   .content-policy-preview {
     align-self: start;
-    border: 1px solid rgba(0, 122, 255, 0.16);
+    border: 1px solid color-mix(in srgb, var(--color-brand) 18%, transparent);
     border-radius: 1rem;
-    background: linear-gradient(145deg, #fff 0%, rgba(0, 122, 255, 0.06) 100%);
+    background: linear-gradient(145deg, #fff 0%, var(--color-brand-soft) 100%);
     padding: 1.1rem;
     box-shadow: var(--shadow-1);
   }
@@ -1052,6 +1052,101 @@
     max-height: min(62dvh, 46rem);
   }
 
+  /* Content list: same hug behavior so few rows don’t leave a glass “empty belly”. */
+  .admin-main > .content-table.admin-fill {
+    flex: 0 1 auto;
+    min-height: 0;
+    max-height: min(68dvh, 48rem);
+  }
+
+  /*
+   * Ops density for剧集列表 only — do not tighten detail episode tables.
+   * Slightly denser than shared DataTable defaults (px-3 py-3).
+   */
+  .content-table th {
+    padding-block: 0.45rem;
+    padding-inline: 0.625rem;
+  }
+
+  .content-table td {
+    padding-block: 0.4rem;
+    padding-inline: 0.625rem;
+  }
+
+  /* Kill marketing lift on dense row-action icon buttons. */
+  .content-table .content-row-action:hover:not(:disabled) {
+    transform: none;
+    box-shadow: none;
+  }
+
+  /*
+   * Content list pills (status + home flags) — self-painted spans only.
+   * Do not wrap in Badge: Badge tone utilities sit in @layer utilities and
+   * beat rules in this @layer components block regardless of specificity.
+   * Shared craft: rounded-full, pale bg + deep fg + thin same-hue border.
+   */
+  .content-table th.content-status-col {
+    color: #5e6d82;
+  }
+  .content-table .content-status-pill,
+  .content-table .content-flag-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    vertical-align: middle;
+    box-sizing: border-box;
+    border-width: 1px;
+    border-style: solid;
+    border-radius: 9999px;
+    padding: 0.125rem 0.75rem;
+    font-family: inherit;
+    font-size: 0.75rem; /* caption */
+    font-weight: 500;
+    line-height: 1.25;
+    letter-spacing: 0;
+    box-shadow: none;
+  }
+  .content-table .content-status-pill--live {
+    background-color: #ebf7f2;
+    color: #1b7a4d;
+    border-color: #c2e7d9;
+  }
+  .content-table .content-status-pill--draft {
+    background-color: #f1f5f9;
+    color: #475569;
+    border-color: #d8dee6;
+  }
+  .content-table .content-status-pill--pending {
+    background-color: #fef3c7;
+    color: #b45309;
+    border-color: #f0d99a;
+  }
+  .content-table .content-status-pill--rejected {
+    background-color: #ffe4e6;
+    color: #be123c;
+    border-color: #fecdd3;
+  }
+  .content-table .content-status-pill--offline {
+    background-color: #e0f2fe;
+    color: #0369a1;
+    border-color: #bae6fd;
+  }
+  .content-table .content-flag-pill--official {
+    background-color: color-mix(in srgb, var(--color-brand) 8%, white);
+    color: var(--color-brand-strong);
+    border-color: color-mix(in srgb, var(--color-brand) 28%, transparent);
+  }
+  .content-table .content-flag-pill--featured {
+    background-color: #fff4eb;
+    color: #c2410c;
+    border-color: #fdc7a0;
+  }
+  .content-table .content-flag-pill--weight {
+    background-color: #f1f5f9;
+    color: #475569;
+    border-color: #d8dee6;
+  }
+
   /* VIP plan cards — aligned with ZAI subscription plans admin UX */
   .vip-plan-grid {
     display: grid;
@@ -1090,13 +1185,13 @@
   .vip-plan-card--featured {
     border-color: color-mix(in srgb, var(--color-brand) 35%, transparent);
     background:
-      linear-gradient(165deg, rgba(0, 122, 255, 0.06) 0%, rgba(0, 122, 255, 0.02) 52%, #fff 100%);
-    box-shadow: 0 0 0 1px rgba(0, 122, 255, 0.08), 0 12px 32px rgba(0, 122, 255, 0.1);
+      linear-gradient(165deg, var(--color-brand-soft) 0%, color-mix(in srgb, var(--color-brand) 2%, white) 52%, #fff 100%);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-brand) 10%, transparent), 0 12px 32px color-mix(in srgb, var(--color-brand) 12%, transparent);
   }
 
   .vip-plan-card--editing {
     border-color: var(--color-brand);
-    box-shadow: 0 0 0 1px rgba(0, 122, 255, 0.35), 0 4px 16px rgba(0, 122, 255, 0.12);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-brand) 35%, transparent), 0 4px 16px color-mix(in srgb, var(--color-brand) 14%, transparent);
   }
 
   .vip-plan-card--archived {
@@ -1460,7 +1555,7 @@
   .seg-tabs {
     display: inline-flex;
     gap: 0.15rem;
-    border: 1px solid var(--color-line);
+    border: 1px solid var(--color-line-strong);
     border-radius: 0.75rem;
     background: var(--color-surface-2);
     padding: 0.2rem;
@@ -1468,7 +1563,7 @@
 
   .seg-tabs__item {
     border-radius: 0.55rem;
-    padding: 0.4rem 0.85rem;
+    padding: 0.45rem 0.95rem;
     color: var(--color-ink-muted);
     font-size: 0.82rem;
     font-weight: 600;
@@ -1478,12 +1573,13 @@
 
   .seg-tabs__item:hover:not(:disabled):not([aria-selected="true"]) {
     color: var(--color-ink);
+    background: color-mix(in srgb, var(--color-surface) 70%, transparent);
   }
 
   .seg-tabs__item[aria-selected="true"] {
-    background: #fff;
-    color: var(--color-ink);
-    box-shadow: var(--shadow-1);
+    background: var(--color-brand);
+    color: #fff;
+    box-shadow: var(--shadow-brand);
   }
 
   .local-source-zone {
@@ -1569,6 +1665,46 @@
     display: flex;
     flex-wrap: wrap;
     gap: 0.35rem;
+  }
+
+  .upload-source-actions {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+  }
+
+  .upload-source-online {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0;
+    padding: 0.45rem 0.85rem;
+    border: 1px solid color-mix(in srgb, var(--color-brand) 28%, var(--color-line));
+    border-radius: 0.5rem;
+    background: var(--color-surface);
+    color: var(--color-ink);
+    font: inherit;
+    font-size: 0.8rem;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .upload-source-online:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--color-brand) 10%, var(--color-surface));
+  }
+
+  .upload-source-online:disabled {
+    cursor: default;
+    opacity: 1;
+  }
+
+  .upload-source-online--active {
+    border-color: color-mix(in srgb, var(--color-brand) 45%, var(--color-line));
+    background: color-mix(in srgb, var(--color-brand) 14%, var(--color-surface));
+    color: color-mix(in srgb, var(--color-brand) 82%, black);
   }
 
   .upload-split {
@@ -1980,6 +2116,22 @@
     box-shadow: var(--shadow-1);
   }
 
+  .upload-panel--primary {
+    border-color: color-mix(in srgb, var(--color-brand) 28%, var(--color-line));
+    background:
+      linear-gradient(180deg, color-mix(in srgb, var(--color-brand) 4%, #fff) 0%, #fff 42%);
+    box-shadow:
+      var(--shadow-1),
+      0 0 0 1px color-mix(in srgb, var(--color-brand) 6%, transparent);
+  }
+
+  .upload-panel--secondary {
+    border-style: dashed;
+    border-color: var(--color-line-strong);
+    background: color-mix(in srgb, var(--color-surface-2) 55%, #fff);
+    box-shadow: none;
+  }
+
   .upload-panel__head {
     display: flex;
     align-items: flex-start;
@@ -1988,7 +2140,12 @@
     margin-bottom: 0.9rem;
   }
 
-  .upload-panel__head h2 {
+  .upload-panel__head--flush {
+    margin-bottom: 0;
+  }
+
+  .upload-panel__head h2,
+  .upload-panel__head h3 {
     color: var(--color-ink);
     font-size: 0.94rem;
     font-weight: 700;
@@ -2000,6 +2157,77 @@
     color: var(--color-ink-subtle);
     font-size: 0.76rem;
     line-height: 1.45;
+  }
+
+  /* Online ingest: workflow empty state + manual toggle */
+  .online-empty {
+    display: grid;
+    gap: 0.65rem;
+    margin-top: 0.35rem;
+    border: 1px dashed color-mix(in srgb, var(--color-brand) 22%, var(--color-line));
+    border-radius: 0.85rem;
+    background: color-mix(in srgb, var(--color-brand) 3%, #fff);
+    padding: 1rem 1.05rem;
+  }
+
+  .online-empty__title {
+    color: var(--color-ink-muted);
+    font-size: 0.78rem;
+    font-weight: 600;
+  }
+
+  .online-empty__steps {
+    display: grid;
+    gap: 0.5rem;
+  }
+
+  @media (min-width: 720px) {
+    .online-empty__steps {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 0.65rem;
+    }
+  }
+
+  .online-empty__step {
+    display: flex;
+    gap: 0.55rem;
+    align-items: flex-start;
+    border-radius: 0.65rem;
+    background: #fff;
+    border: 1px solid var(--color-line);
+    padding: 0.65rem 0.7rem;
+  }
+
+  .online-empty__n {
+    display: inline-flex;
+    flex: 0 0 auto;
+    width: 1.35rem;
+    height: 1.35rem;
+    align-items: center;
+    justify-content: center;
+    border-radius: 999px;
+    background: var(--color-brand);
+    color: #fff;
+    font-size: 0.68rem;
+    font-weight: 700;
+    line-height: 1;
+  }
+
+  .online-empty__step p {
+    color: var(--color-ink);
+    font-size: 0.78rem;
+    font-weight: 600;
+    line-height: 1.35;
+  }
+
+  /* Hint only — do not target .online-empty__n (also a span). */
+  .online-empty__step > div > span {
+    display: block;
+    margin-top: 0.15rem;
+    color: var(--color-ink-subtle);
+    font-size: 0.7rem;
+    font-weight: 400;
+    line-height: 1.4;
   }
 
   .upload-panel--info {
@@ -2550,13 +2778,24 @@
     gap: 0.65rem;
     margin-top: 1.25rem;
     margin-bottom: 0.5rem;
-    border: 1px solid var(--color-line);
+    border: 1px solid rgba(255, 255, 255, 0.55);
     border-radius: 1rem;
-    background: rgba(255, 255, 255, 0.97);
-    backdrop-filter: blur(12px) saturate(1.4);
-    -webkit-backdrop-filter: blur(12px) saturate(1.4);
+    /* A: frosted glass — translucent but underlying text is illegible */
+    background: rgba(255, 255, 255, 0.82);
+    backdrop-filter: blur(24px) saturate(1.5);
+    -webkit-backdrop-filter: blur(24px) saturate(1.5);
     padding: 0.7rem 0.9rem;
     box-shadow: 0 -1px 2px rgba(15, 20, 25, 0.03), 0 8px 24px rgba(15, 20, 25, 0.07);
+  }
+
+  .upload-submit-bar__hint {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    text-align: center;
+    font-size: 0.875rem;
+    line-height: 1.4;
+    color: var(--color-danger);
   }
 
   .upload-task-dock {

@@ -85,10 +85,20 @@ const en = {
   'username.invalid': 'Invalid username',
   'validation.basePricePositive': 'basePrice must be > 0',
   'validation.creditsPositive': 'credits must be > 0',
+  'validation.creditsMin': 'credits must be >= 1',
+  'validation.baseCreditsMin': 'Immediate credits must be >= 1',
+  'validation.bonusCreditsMin': 'Bonus credits must be >= 0',
   'validation.durationDaysMin': 'durationDays must be >= 1',
+  'validation.nameRequired': 'Package name is required',
   'validation.nameEnRequired': 'English plan name is required',
+  'validation.vipDescRequired': 'VIP plan description is required',
+  'validation.vipBenefitsRequired': 'At least one VIP benefit is required',
+  'validation.originalPricePositive': 'originalPrice must be > 0',
   'validation.endAfterStart': 'endAt must be after startAt',
   'validation.dramaIdInvalid': 'Invalid dramaId',
+  'vipPlan.hasOrders': 'This VIP plan has related orders and cannot be deleted. Take it offline instead.',
+  'topupPackage.hasOrders':
+    'This credit pack has related orders and cannot be deleted. Take it offline instead.',
 } as const;
 
 export type MessageKey = keyof typeof en;
@@ -170,10 +180,19 @@ const zh: Record<MessageKey, string> = {
   'username.invalid': '用户名无效',
   'validation.basePricePositive': 'basePrice 必须 > 0',
   'validation.creditsPositive': 'credits 必须 > 0',
+  'validation.creditsMin': 'credits 必须 >= 1',
+  'validation.baseCreditsMin': '立即积分必须 >= 1',
+  'validation.bonusCreditsMin': '赠送积分必须 >= 0',
   'validation.durationDaysMin': 'durationDays 必须 >= 1',
+  'validation.nameRequired': '套餐名称必填',
   'validation.nameEnRequired': '英文套餐名称必填',
+  'validation.vipDescRequired': 'VIP 订阅说明必填',
+  'validation.vipBenefitsRequired': '至少填写一项会员权益',
+  'validation.originalPricePositive': '划线原价必须 > 0',
   'validation.endAfterStart': 'endAt 必须晚于 startAt',
   'validation.dramaIdInvalid': 'dramaId 无效',
+  'vipPlan.hasOrders': '该 VIP 套餐已有关联订单，无法删除，请改为下架。',
+  'topupPackage.hasOrders': '该积分充值套餐已有关联订单，无法删除，请改为下架。',
 };
 
 const vi: Record<MessageKey, string> = {
@@ -253,10 +272,20 @@ const vi: Record<MessageKey, string> = {
   'username.invalid': 'Username không hợp lệ',
   'validation.basePricePositive': 'basePrice phải > 0',
   'validation.creditsPositive': 'credits phải > 0',
+  'validation.creditsMin': 'credits phải >= 1',
+  'validation.baseCreditsMin': 'Credits ngay lập tức phải >= 1',
+  'validation.bonusCreditsMin': 'Credits thưởng phải >= 0',
   'validation.durationDaysMin': 'durationDays phải >= 1',
+  'validation.nameRequired': 'Tên gói là bắt buộc',
   'validation.nameEnRequired': 'English plan name is required',
+  'validation.vipDescRequired': 'Mô tả gói VIP là bắt buộc',
+  'validation.vipBenefitsRequired': 'Cần ít nhất một quyền lợi VIP',
+  'validation.originalPricePositive': 'originalPrice phải > 0',
   'validation.endAfterStart': 'endAt phải sau startAt',
   'validation.dramaIdInvalid': 'dramaId không hợp lệ',
+  'vipPlan.hasOrders': 'Gói VIP đã có đơn hàng liên quan, không thể xóa. Hãy hạ gói thay vì xóa.',
+  'topupPackage.hasOrders':
+    'Gói nạp đã có đơn hàng liên quan, không thể xóa. Hãy hạ gói thay vì xóa.',
 };
 
 const fr: Record<MessageKey, string> = {
@@ -336,10 +365,21 @@ const fr: Record<MessageKey, string> = {
   'username.invalid': 'Identifiant invalide',
   'validation.basePricePositive': 'basePrice doit être > 0',
   'validation.creditsPositive': 'credits doit être > 0',
+  'validation.creditsMin': 'credits doit être >= 1',
+  'validation.baseCreditsMin': 'Les crédits immédiats doivent être >= 1',
+  'validation.bonusCreditsMin': 'Les crédits bonus doivent être >= 0',
   'validation.durationDaysMin': 'durationDays doit être >= 1',
+  'validation.nameRequired': 'Le nom du forfait est obligatoire',
   'validation.nameEnRequired': 'Le nom anglais du forfait est obligatoire',
+  'validation.vipDescRequired': 'La description du forfait VIP est obligatoire',
+  'validation.vipBenefitsRequired': 'Au moins un avantage VIP est requis',
+  'validation.originalPricePositive': 'originalPrice doit être > 0',
   'validation.endAfterStart': 'endAt doit être après startAt',
   'validation.dramaIdInvalid': 'dramaId invalide',
+  'vipPlan.hasOrders':
+    'Ce forfait VIP a des commandes associées et ne peut pas être supprimé. Désactivez-le plutôt.',
+  'topupPackage.hasOrders':
+    'Ce forfait de crédits a des commandes associées et ne peut pas être supprimé. Désactivez-le plutôt.',
 };
 
 const ru: Record<MessageKey, string> = {
@@ -419,10 +459,21 @@ const ru: Record<MessageKey, string> = {
   'username.invalid': 'Некорректный логин',
   'validation.basePricePositive': 'basePrice должен быть > 0',
   'validation.creditsPositive': 'credits должен быть > 0',
+  'validation.creditsMin': 'credits должен быть >= 1',
+  'validation.baseCreditsMin': 'Мгновенные кредиты должны быть >= 1',
+  'validation.bonusCreditsMin': 'Бонусные кредиты должны быть >= 0',
   'validation.durationDaysMin': 'durationDays должен быть >= 1',
+  'validation.nameRequired': 'Название пакета обязательно',
   'validation.nameEnRequired': 'English plan name is required',
+  'validation.vipDescRequired': 'Описание VIP-плана обязательно',
+  'validation.vipBenefitsRequired': 'Нужна хотя бы одна привилегия VIP',
+  'validation.originalPricePositive': 'originalPrice должен быть > 0',
   'validation.endAfterStart': 'endAt должен быть позже startAt',
   'validation.dramaIdInvalid': 'Некорректный dramaId',
+  'vipPlan.hasOrders':
+    'У этого VIP-плана есть связанные заказы, удаление невозможно. Снимите его с публикации.',
+  'topupPackage.hasOrders':
+    'У этого пакета пополнения есть связанные заказы, удаление невозможно. Снимите его с публикации.',
 };
 
 export const MESSAGES: Record<ApiLocale, Record<MessageKey, string>> = {

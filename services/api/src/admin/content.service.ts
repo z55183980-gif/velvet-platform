@@ -7,15 +7,32 @@ export interface DramaListFilter {
   q?: string;
   status?: 'DRAFT' | 'PENDING_REVIEW' | 'LIVE' | 'OFFLINE' | 'REJECTED' | 'ALL';
   categorySlug?: string;
+  creatorId?: string;
   isOfficial?: '1' | '0';
   isFeatured?: '1' | '0';
   isHottest?: '1' | '0';
   /** owned = 自有成片(R2+LOCAL)；online = 在线引用；r2/local 为兼容旧筛选项 */
   mediaKind?: 'owned' | 'online' | 'r2' | 'local';
-  /** weight = 运营权重；latest = 上架时间（最新） */
-  sort?: 'weight' | 'latest';
+  /** weight | latest(publishedAt) | views | unlocks | created */
+  sort?: 'weight' | 'latest' | 'views' | 'unlocks' | 'created';
+  /** 时间范围字段：上架时间或创建时间 */
+  dateField?: 'publishedAt' | 'createdAt';
+  dateFrom?: string;
+  dateTo?: string;
   page?: number;
   pageSize?: number;
+}
+
+function parseDayBound(raw?: string, endOfDay = false): Date | null {
+  if (!raw || !String(raw).trim()) return null;
+  const s = String(raw).trim();
+  // YYYY-MM-DD → local calendar day bound in UTC-safe ISO
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    const d = new Date(endOfDay ? `${s}T23:59:59.999Z` : `${s}T00:00:00.000Z`);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  const d = new Date(s);
+  return Number.isNaN(d.getTime()) ? null : d;
 }
 
 @Injectable()
@@ -31,6 +48,13 @@ export class ContentService {
     const where: any = {};
     if (filter.status && filter.status !== 'ALL') where.status = filter.status;
     if (filter.categorySlug) where.categorySlug = filter.categorySlug;
+    if (filter.creatorId) {
+      try {
+        where.creatorId = BigInt(filter.creatorId);
+      } catch {
+        where.creatorId = -1n; // invalid id → empty result
+      }
+    }
     if (filter.isOfficial === '1') where.isOfficial = true;
     if (filter.isOfficial === '0') where.isOfficial = false;
     if (filter.isFeatured === '1') where.isFeatured = true;
@@ -46,6 +70,14 @@ export class ContentService {
     } else if (filter.mediaKind === 'local') {
       where.sourceType = 'LOCAL';
     }
+    const dateField = filter.dateField === 'createdAt' ? 'createdAt' : 'publishedAt';
+    const from = parseDayBound(filter.dateFrom, false);
+    const to = parseDayBound(filter.dateTo, true);
+    if (from || to) {
+      where[dateField] = {};
+      if (from) where[dateField].gte = from;
+      if (to) where[dateField].lte = to;
+    }
     if (filter.q) {
       where.OR = [
         { titleEn: { contains: filter.q, mode: 'insensitive' } },
@@ -59,7 +91,13 @@ export class ContentService {
         ? [{ hottestSortOrder: 'asc' as const }, { updatedAt: 'desc' as const }]
         : filter.sort === 'latest'
           ? [{ publishedAt: 'desc' as const }, { updatedAt: 'desc' as const }]
-          : [{ sortWeight: 'desc' as const }, { updatedAt: 'desc' as const }];
+          : filter.sort === 'created'
+            ? [{ createdAt: 'desc' as const }]
+            : filter.sort === 'views'
+              ? [{ viewCount: 'desc' as const }, { updatedAt: 'desc' as const }]
+              : filter.sort === 'unlocks'
+                ? [{ unlockCount: 'desc' as const }, { updatedAt: 'desc' as const }]
+                : [{ sortWeight: 'desc' as const }, { updatedAt: 'desc' as const }];
     const [rows, total] = await Promise.all([
       this.prisma.drama.findMany({
         where,

@@ -76,6 +76,9 @@ export class AdminEpisodesService {
     }
 
     const hasMediaInput = !!(dto.sourceUrl?.trim() || dto.hlsUrl?.trim() || dto.originalUrl?.trim());
+    if (drama.sourceType === 'ONLINE' && hasMediaInput) {
+      this.assertOnlineHttpMedia(dto.sourceUrl || dto.hlsUrl || dto.originalUrl || '');
+    }
     const urls = hasMediaInput
       ? this.resolveMediaUrls(dto)
       : { hlsUrl: null as string | null, originalUrl: null as string | null };
@@ -135,7 +138,10 @@ export class AdminEpisodesService {
     },
     actorId?: bigint,
   ) {
-    const ep = await this.prisma.episode.findUnique({ where: { id: BigInt(id) } });
+    const ep = await this.prisma.episode.findUnique({
+      where: { id: BigInt(id) },
+      include: { drama: { select: { sourceType: true } } },
+    });
     if (!ep) throw new BizException(BizCode.NOT_FOUND, 'episode.notFound');
     const data: Record<string, unknown> = {};
     if (dto.title != null) data.title = dto.title;
@@ -156,6 +162,9 @@ export class AdminEpisodesService {
     if (dto.transcodeStatus != null) data.transcodeStatus = dto.transcodeStatus;
 
     if (dto.sourceUrl != null || dto.hlsUrl != null || dto.originalUrl != null) {
+      if (ep.drama.sourceType === 'ONLINE') {
+        this.assertOnlineHttpMedia(dto.sourceUrl || dto.hlsUrl || dto.originalUrl || '');
+      }
       const urls = this.resolveMediaUrls({
         sourceUrl: dto.sourceUrl,
         hlsUrl: dto.hlsUrl ?? ep.hlsUrl ?? undefined,
@@ -168,7 +177,7 @@ export class AdminEpisodesService {
       data.mediaOrientation = null;
       if (urls.hlsUrl || urls.originalUrl) {
         data.uploadStatus = 'COMPLETED';
-        if (urls.hlsUrl?.endsWith('.m3u8')) {
+        if (urls.hlsUrl?.endsWith('.m3u8') || /^https?:\/\//i.test(urls.hlsUrl || '')) {
           data.transcodeStatus = 'COMPLETED';
         } else if (dto.transcodeStatus == null) {
           data.transcodeStatus = 'PENDING';
@@ -281,8 +290,12 @@ export class AdminEpisodesService {
   }
 
   async uploadVideo(id: string, file: Express.Multer.File, actorId?: bigint) {
-    const ep = await this.prisma.episode.findUnique({ where: { id: BigInt(id) } });
+    const ep = await this.prisma.episode.findUnique({
+      where: { id: BigInt(id) },
+      include: { drama: { select: { sourceType: true } } },
+    });
     if (!ep) throw new BizException(BizCode.NOT_FOUND, 'episode.notFound');
+    this.assertHostedUploadAllowed(ep.drama.sourceType);
     if (!file) throw new BizException(BizCode.BAD_REQUEST, '未收到文件');
 
     await this.upload.purgeMediaUrls([ep.hlsUrl, ep.originalUrl]).catch(() => undefined);
@@ -338,6 +351,12 @@ export class AdminEpisodesService {
     actorId?: bigint,
   ) {
     if (!file) throw new BizException(BizCode.BAD_REQUEST, '未收到文件');
+    const drama = await this.prisma.drama.findUnique({
+      where: { id: BigInt(dramaId) },
+      select: { sourceType: true },
+    });
+    if (!drama) throw new BizException(BizCode.NOT_FOUND, 'drama.notFound');
+    this.assertHostedUploadAllowed(drama.sourceType);
     const created = await this.create(
       dramaId,
       {
@@ -373,6 +392,13 @@ export class AdminEpisodesService {
     const key = String(dto.key || '').trim();
     if (!key) throw new BizException(BizCode.BAD_REQUEST, '缺少 R2 object key');
 
+    const drama = await this.prisma.drama.findUnique({
+      where: { id: BigInt(dramaId) },
+      select: { sourceType: true },
+    });
+    if (!drama) throw new BizException(BizCode.NOT_FOUND, 'drama.notFound');
+    this.assertHostedUploadAllowed(drama.sourceType);
+
     const created = await this.create(
       dramaId,
       {
@@ -401,8 +427,12 @@ export class AdminEpisodesService {
     originalFilename?: string,
     actorId?: bigint,
   ) {
-    const ep = await this.prisma.episode.findUnique({ where: { id: BigInt(episodeId) } });
+    const ep = await this.prisma.episode.findUnique({
+      where: { id: BigInt(episodeId) },
+      include: { drama: { select: { sourceType: true } } },
+    });
     if (!ep) throw new BizException(BizCode.NOT_FOUND, 'episode.notFound');
+    this.assertHostedUploadAllowed(ep.drama.sourceType);
 
     await this.upload.purgeMediaUrls([ep.hlsUrl, ep.originalUrl]).catch(() => undefined);
     const saved = await this.upload.ingestDirectUploadKey(key, originalFilename);
@@ -625,6 +655,25 @@ export class AdminEpisodesService {
       jobId: job.id,
       ffmpegReady: !!(await this.upload.detectFfmpeg()),
     };
+  }
+
+  private assertHostedUploadAllowed(sourceType: string) {
+    if (sourceType === 'ONLINE') {
+      throw new BizException(
+        BizCode.BAD_REQUEST,
+        '外链播放剧不可上传本地文件；请粘贴外链、用公开页追加，或另建「转存托管 / 本地上传」作品',
+      );
+    }
+  }
+
+  private assertOnlineHttpMedia(raw: string) {
+    const value = String(raw || '').trim();
+    if (!/^https?:\/\//i.test(value)) {
+      throw new BizException(
+        BizCode.BAD_REQUEST,
+        '外链播放剧仅支持 http(s) 播放地址，不可写入本地托管路径',
+      );
+    }
   }
 
   private resolveMediaUrls(dto: {

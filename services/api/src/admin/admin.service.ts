@@ -15,7 +15,7 @@ import {
   resolveDramaDef,
   normName,
 } from './local-import.util';
-import { convertExternalPlayUrl, inferExternalUrlExpiry, slugifyTitle } from './online-drama.util';
+import { convertExternalPlayUrl, inferExternalUrlExpiry, manualExternalRef, manualExternalVideoId, slugifyTitle } from './online-drama.util';
 import { AuditService } from '../common/audit.service';
 import { UploadService } from '../upload/upload.service';
 import { ContentReadinessService } from '../common/content-readiness.service';
@@ -63,8 +63,9 @@ export interface CreateOnlineDramaInput {
   coverUrl?: string;
   freeEpisodeCount?: number;
   lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE';
-  status?: 'DRAFT' | 'LIVE';
-  /** 外部来源去重键，如 ytdlp:{extractor}:{id} */
+  /** Ignored — online dramas always create as DRAFT (rights gate). */
+  status?: 'DRAFT';
+  /** 外部来源去重键，如 ytdlp:{extractor}:{id}；缺省时按分集 URL 生成 manual:… */
   externalRef?: string;
   sourceTags?: string[];
   /** 第三方解析结果允许非扩展名直链 */
@@ -82,7 +83,8 @@ export interface CreateLocalUploadDramaInput {
   coverUrl?: string;
   freeEpisodeCount?: number;
   lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE';
-  status?: 'DRAFT' | 'LIVE';
+  /** Ignored — upload shells always create as DRAFT. */
+  status?: 'DRAFT';
   sourceTags?: string[];
   /** local disk vs R2 CDN shell — listing filters use this. */
   sourceType?: 'LOCAL' | 'R2';
@@ -1289,8 +1291,8 @@ export class AdminService {
       slug = await this.ensureUniqueSlug(slug);
     }
 
-    const externalRef = dto.externalRef?.trim() || null;
-    if (externalRef) {
+    const externalRef = dto.externalRef?.trim() || manualExternalRef(dto.episodes.map((e) => e.sourceUrl));
+    {
       const byRef = await this.prisma.drama.findFirst({
         where: { externalRef } as any,
       });
@@ -1321,15 +1323,19 @@ export class AdminService {
         const { playUrl, originalUrl } = convertExternalPlayUrl(ep.sourceUrl, {
           relaxed: !!dto.relaxedPlayUrl,
         });
+        const sourcePageUrl = ep.sourcePageUrl?.trim() || originalUrl;
+        const sourceProvider = ep.sourceProvider?.trim() || 'manual';
+        const externalVideoId =
+          ep.externalVideoId?.trim() || manualExternalVideoId(originalUrl);
         converted.push({
           episodeNumber,
           title: ep.title?.trim() || null,
           playUrl,
           originalUrl,
           isFree: ep.isFree !== false,
-          sourcePageUrl: ep.sourcePageUrl?.trim() || null,
-          sourceProvider: ep.sourceProvider?.trim() || null,
-          externalVideoId: ep.externalVideoId?.trim() || null,
+          sourcePageUrl,
+          sourceProvider,
+          externalVideoId,
           playlistIndex: ep.playlistIndex && ep.playlistIndex > 0 ? Math.floor(ep.playlistIndex) : null,
         });
       } catch (e: any) {
@@ -1390,9 +1396,11 @@ export class AdminService {
           isOfficial: true,
           sourceType: 'ONLINE',
           externalRef,
-          tags: Array.isArray(dto.sourceTags)
+          tags: Array.isArray(dto.sourceTags) && dto.sourceTags.length
             ? dto.sourceTags.map(String).filter(Boolean)
-            : [],
+            : externalRef.startsWith('manual:')
+              ? ['manual', 'online']
+              : [],
           status,
           publishedAt: null,
           totalEpisodes: converted.length,
@@ -1416,7 +1424,7 @@ export class AdminService {
             externalVideoId: ep.externalVideoId,
             playlistIndex: ep.playlistIndex,
             resolvedAt: new Date(),
-            resolvedExpiresAt: ep.sourcePageUrl ? inferExternalUrlExpiry(ep.playUrl) : null,
+            resolvedExpiresAt: inferExternalUrlExpiry(ep.playUrl),
             uploadStatus: 'COMPLETED',
             transcodeStatus: 'COMPLETED',
           },
@@ -1434,6 +1442,7 @@ export class AdminService {
         slug: drama.slug,
         episodeCount: converted.length,
         status,
+        externalRef,
       },
     });
 
@@ -1632,13 +1641,21 @@ export class AdminService {
         where: { id: { in: bigIds }, status: 'LIVE' },
         data: { status: 'OFFLINE' },
       });
+      const updated = result.count;
+      const skipped = Math.max(0, uniqueIds.length - updated);
       await this.audit.write({
         actorId,
         action: 'drama.batchOffline',
         targetType: 'drama',
-        payload: { ids: uniqueIds, reason: reasonText, updated: result.count },
+        payload: { ids: uniqueIds, reason: reasonText, requested: uniqueIds.length, updated, skipped },
       });
-      return { action, updated: result.count, failed: [] as { id: string; error: string }[] };
+      return {
+        action,
+        requested: uniqueIds.length,
+        updated,
+        skipped,
+        failed: [] as { id: string; error: string }[],
+      };
     }
 
     if (action === 'online') {
@@ -1646,13 +1663,21 @@ export class AdminService {
         where: { id: { in: bigIds }, status: { in: ['OFFLINE', 'REJECTED'] } },
         data: { status: 'LIVE', publishedAt: new Date() },
       });
+      const updated = result.count;
+      const skipped = Math.max(0, uniqueIds.length - updated);
       await this.audit.write({
         actorId,
         action: 'drama.batchOnline',
         targetType: 'drama',
-        payload: { ids: uniqueIds, reason: reasonText, updated: result.count },
+        payload: { ids: uniqueIds, reason: reasonText, requested: uniqueIds.length, updated, skipped },
       });
-      return { action, updated: result.count, failed: [] as { id: string; error: string }[] };
+      return {
+        action,
+        requested: uniqueIds.length,
+        updated,
+        skipped,
+        failed: [] as { id: string; error: string }[],
+      };
     }
 
     const failed: { id: string; error: string }[] = [];
@@ -1668,13 +1693,20 @@ export class AdminService {
         });
       }
     }
+    const skipped = Math.max(0, uniqueIds.length - updated - failed.length);
     await this.audit.write({
       actorId,
       action: 'drama.batchDelete',
       targetType: 'drama',
-      payload: { ids: uniqueIds, reason: reasonText, updated, failed },
+      payload: { ids: uniqueIds, reason: reasonText, requested: uniqueIds.length, updated, skipped, failed },
     });
-    return { action, updated, failed };
+    return {
+      action,
+      requested: uniqueIds.length,
+      updated,
+      skipped,
+      failed,
+    };
   }
 
   /** Auto-derived titles often collide; bump suffix until free. Explicit operator slugs still conflict. */

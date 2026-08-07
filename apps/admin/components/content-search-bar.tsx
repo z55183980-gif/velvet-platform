@@ -5,23 +5,31 @@ import { Filter, Plus, Search, X } from "lucide-react";
 import { Badge, Button, Input, Select } from "@velvet/ui";
 import { statusLabel, useI18n } from "@/lib/i18n";
 
+export type ContentSort = "weight" | "latest" | "views" | "unlocks";
+
 export type ContentSearchFilters = {
   q: string;
   status: string;
   categorySlug: string;
+  creatorId: string;
   isOfficial: string;
   isFeatured: string;
   /** owned | online | legacy r2|local | "" */
   mediaKind: string;
-  sort: "weight" | "latest";
+  sort: ContentSort;
+  dateField: "publishedAt" | "createdAt";
+  dateFrom: string;
+  dateTo: string;
 };
 
 type CategoryOption = { slug: string; nameZh?: string; nameEn?: string };
+type CreatorOption = { id: string | number; displayName?: string };
 
 type ContentSearchBarProps = {
   value: ContentSearchFilters;
   onChange: (next: ContentSearchFilters) => void;
   categories: CategoryOption[];
+  creators?: CreatorOption[];
   statuses: string[];
   showAdd?: boolean;
   onAdd?: () => void;
@@ -33,9 +41,11 @@ function countActiveFilters(value: ContentSearchFilters) {
   let n = 0;
   if (value.status && value.status !== "ALL") n += 1;
   if (value.categorySlug) n += 1;
+  if (value.creatorId) n += 1;
   if (value.isOfficial) n += 1;
   if (value.isFeatured) n += 1;
   if (value.mediaKind) n += 1;
+  if (value.dateFrom || value.dateTo) n += 1;
   return n;
 }
 
@@ -43,6 +53,7 @@ export function ContentSearchBar({
   value,
   onChange,
   categories,
+  creators = [],
   statuses,
   showAdd = true,
   onAdd,
@@ -102,9 +113,13 @@ export function ContentSearchBar({
       ...value,
       status: "ALL",
       categorySlug: "",
+      creatorId: "",
       isOfficial: "",
       isFeatured: "",
       mediaKind: "",
+      dateFrom: "",
+      dateTo: "",
+      dateField: "publishedAt",
     });
   }
 
@@ -131,6 +146,14 @@ export function ContentSearchBar({
       clear: () => patch({ categorySlug: "" }),
     });
   }
+  if (value.creatorId) {
+    const creator = creators.find((item) => String(item.id) === value.creatorId);
+    chips.push({
+      key: "creator",
+      label: `${t("creatorFilter")}: ${creator?.displayName || value.creatorId}`,
+      clear: () => patch({ creatorId: "" }),
+    });
+  }
   if (value.mediaKind && mediaKindLabel) {
     chips.push({
       key: "mediaKind",
@@ -150,6 +173,14 @@ export function ContentSearchBar({
       key: "isFeatured",
       label: `${t("featuredFlag")}: ${value.isFeatured === "1" ? t("yes") : t("no")}`,
       clear: () => patch({ isFeatured: "" }),
+    });
+  }
+  if (value.dateFrom || value.dateTo) {
+    const fieldLabel = value.dateField === "createdAt" ? t("createdAt") : t("publishedAt");
+    chips.push({
+      key: "date",
+      label: `${fieldLabel}: ${value.dateFrom || "…"} → ${value.dateTo || "…"}`,
+      clear: () => patch({ dateFrom: "", dateTo: "" }),
     });
   }
 
@@ -181,7 +212,7 @@ export function ContentSearchBar({
         </div>
 
         <div
-          className="inline-flex h-10 items-center rounded-xl border border-white/70 bg-white/55 p-0.5 shadow-[inset_0_1px_2px_rgba(15,20,25,0.04)] backdrop-blur-md"
+          className="inline-flex h-10 max-w-full items-center overflow-x-auto rounded-xl border border-white/70 bg-white/55 p-0.5 shadow-[inset_0_1px_2px_rgba(15,20,25,0.04)] backdrop-blur-md"
           role="group"
           aria-label={t("sortBy")}
         >
@@ -189,6 +220,8 @@ export function ContentSearchBar({
             [
               ["weight", t("sortByWeight")],
               ["latest", t("sortByLatest")],
+              ["views", t("sortByViews")],
+              ["unlocks", t("sortByUnlocks")],
             ] as const
           ).map(([key, label]) => {
             const active = value.sort === key;
@@ -196,7 +229,7 @@ export function ContentSearchBar({
               <button
                 key={key}
                 type="button"
-                className={`h-9 rounded-[0.65rem] px-3 text-body-sm font-medium transition ${
+                className={`h-9 shrink-0 rounded-md px-2.5 text-body-sm font-medium transition sm:px-3 ${
                   active
                     ? "bg-brand text-white shadow-brand"
                     : "text-ink-muted hover:bg-white/55 hover:text-ink"
@@ -233,7 +266,7 @@ export function ContentSearchBar({
           {panelOpen ? (
             <div
               id={panelId}
-              className="absolute right-0 z-30 mt-2 w-[min(20rem,calc(100vw-2rem))] rounded-2xl border border-white/70 bg-white/90 p-3 shadow-lg backdrop-blur-xl"
+              className="absolute right-0 z-30 mt-2 w-[min(22rem,calc(100vw-2rem))] rounded-2xl border border-white/70 bg-white/90 p-3 shadow-lg backdrop-blur-xl"
               role="dialog"
               aria-label={t("filter")}
             >
@@ -262,6 +295,21 @@ export function ContentSearchBar({
                     {categories.map((category) => (
                       <option key={category.slug} value={category.slug}>
                         {category.nameZh || category.nameEn}
+                      </option>
+                    ))}
+                  </Select>
+                </label>
+
+                <label className="block space-y-1">
+                  <span className="text-caption font-medium text-ink-muted">{t("creatorFilter")}</span>
+                  <Select
+                    value={value.creatorId}
+                    onChange={(e) => patch({ creatorId: e.target.value })}
+                  >
+                    <option value="">{t("allCreators")}</option>
+                    {creators.map((creator) => (
+                      <option key={String(creator.id)} value={String(creator.id)}>
+                        {creator.displayName || String(creator.id)}
                       </option>
                     ))}
                   </Select>
@@ -306,6 +354,39 @@ export function ContentSearchBar({
                     <option value="0">{t("no")}</option>
                   </Select>
                 </label>
+
+                <div className="space-y-2 rounded-xl border border-white/60 bg-white/40 p-2">
+                  <label className="block space-y-1">
+                    <span className="text-caption font-medium text-ink-muted">{t("dateFieldLabel")}</span>
+                    <Select
+                      value={value.dateField}
+                      onChange={(e) =>
+                        patch({ dateField: e.target.value as "publishedAt" | "createdAt" })
+                      }
+                    >
+                      <option value="publishedAt">{t("publishedAt")}</option>
+                      <option value="createdAt">{t("createdAt")}</option>
+                    </Select>
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="block space-y-1">
+                      <span className="text-caption font-medium text-ink-muted">{t("dateFrom")}</span>
+                      <Input
+                        type="date"
+                        value={value.dateFrom}
+                        onChange={(e) => patch({ dateFrom: e.target.value })}
+                      />
+                    </label>
+                    <label className="block space-y-1">
+                      <span className="text-caption font-medium text-ink-muted">{t("dateTo")}</span>
+                      <Input
+                        type="date"
+                        value={value.dateTo}
+                        onChange={(e) => patch({ dateTo: e.target.value })}
+                      />
+                    </label>
+                  </div>
+                </div>
 
                 {activeFilterCount > 0 ? (
                   <Button size="sm" variant="ghost" className="w-full" onClick={clearFilters}>

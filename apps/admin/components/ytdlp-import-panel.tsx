@@ -1,60 +1,57 @@
 "use client";
 
 import { useMutation, useQuery } from "@tanstack/react-query";
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
-  adminListCategories,
   adminStorageStatus,
-  adminYtdlpImport,
+  adminYtdlpDownloadEpisode,
   adminYtdlpProbe,
   adminYtdlpResolve,
   adminYtdlpStatus,
-  adminYtdlpTransfer,
-  adminYtdlpTransferJob,
-  type YtdlpTransferJob,
 } from "@velvet/api-client";
 import { Button, Input, Select } from "@velvet/ui";
 import { StreamPreview } from "@/components/stream-preview";
-import { contentDetailHref } from "@/lib/content-href";
+import { OnlineDramaForm } from "@/components/online-drama-form";
+import {
+  dramaInfoFromYtdlpProbe,
+  type DramaInfoFillPayload,
+  type OnlineIngestForm,
+} from "@/lib/drama-info-fill";
 import { useI18n } from "@/lib/i18n";
 
-type Category = { slug: string; nameZh?: string; nameEn?: string };
 type ProbeResult = Awaited<ReturnType<typeof adminYtdlpProbe>>;
 type FormatPreference = "best_hls" | "best_mp4" | "best";
-type TransferTarget = "local" | "r2";
-type EpisodeFailure = { episodeNumber: number; url: string; error: string };
-/** import = 链接直播；transfer = 转存本地托管 */
-export type YtdlpPanelMode = "import" | "transfer";
+type IngestTab = "parse" | "manual";
 
-export function YtdlpImportPanel({ mode }: { mode: YtdlpPanelMode }) {
+/**
+ * 在线资源准备：公开页解析或手动粘贴直链。
+ * 不在弹窗内创建剧集；把信息与片源配置回填主窗口，由主窗口统一提交。
+ */
+export function YtdlpImportPanel({
+  onDirtyChange,
+  embedded = false,
+  onFillDramaInfo,
+}: {
+  onDirtyChange?: (dirty: boolean) => void;
+  embedded?: boolean;
+  onFillDramaInfo?: (payload: DramaInfoFillPayload) => void;
+} = {}) {
   const { t } = useI18n();
-  const router = useRouter();
-  const showImport = mode === "import";
-  const showTransfer = mode === "transfer";
+  const [ingestTab, setIngestTab] = useState<IngestTab>("parse");
+  const [ingestForm, setIngestForm] = useState<OnlineIngestForm>("r2");
+  const [manualDirty, setManualDirty] = useState(false);
   const [url, setUrl] = useState("");
   const [probe, setProbe] = useState<ProbeResult | null>(null);
-  const [categorySlug, setCategorySlug] = useState("");
   const [maxEpisodes, setMaxEpisodes] = useState("");
-  const [formatPreference, setFormatPreference] = useState<FormatPreference>(
-    mode === "transfer" ? "best" : "best_hls",
-  );
+  const [formatPreference, setFormatPreference] = useState<FormatPreference>("best_hls");
   const [error, setError] = useState<string | null>(null);
   const [engineOpen, setEngineOpen] = useState(false);
   const [previewEpIndex, setPreviewEpIndex] = useState<number | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
-  const [localMediaUrl, setLocalMediaUrl] = useState<string | null>(null);
-  const [failedEpisodes, setFailedEpisodes] = useState<EpisodeFailure[]>([]);
-  const [transferProgress, setTransferProgress] = useState<YtdlpTransferJob | null>(null);
-  const [result, setResult] = useState<{
-    id: string;
-    resolvedEpisodes: number;
-    failedCount: number;
-    mode: "online" | "transfer";
-    target?: TransferTarget;
-  } | null>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [filled, setFilled] = useState(false);
+  const [applied, setApplied] = useState(false);
+  const [overwriteMeta, setOverwriteMeta] = useState(false);
+  const [downloadingEpIndex, setDownloadingEpIndex] = useState<number | null>(null);
 
   const statusQ = useQuery({
     queryKey: ["admin", "ytdlp", "status"],
@@ -64,59 +61,101 @@ export function YtdlpImportPanel({ mode }: { mode: YtdlpPanelMode }) {
     queryKey: ["admin", "storage", "status"],
     queryFn: () => adminStorageStatus(),
   });
-  const categoriesQ = useQuery({
-    queryKey: ["admin", "categories"],
-    queryFn: () => adminListCategories(true) as Promise<Category[]>,
-  });
+
+  const parseDirty = Boolean(url.trim() || probe || maxEpisodes.trim());
+  const dirty = parseDirty || manualDirty;
 
   useEffect(() => {
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, []);
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
 
-  function stopPoll() {
-    if (pollRef.current) {
-      clearInterval(pollRef.current);
-      pollRef.current = null;
-    }
+  useEffect(() => {
+    return () => onDirtyChange?.(false);
+  }, [onDirtyChange]);
+
+  function clearDirtyForNav() {
+    setManualDirty(false);
+    onDirtyChange?.(false);
   }
 
-  function startTransferPoll(jobId: string, target: TransferTarget) {
-    stopPoll();
-    const tick = async () => {
-      try {
-        const job = await adminYtdlpTransferJob(jobId);
-        setTransferProgress(job);
-        setFailedEpisodes(job.failedEpisodes ?? []);
-        if (job.previewUrl) {
-          setLocalMediaUrl(job.previewUrl);
-          setPreviewUrl(null);
-          setPreviewEpIndex(job.jobs[0]?.episodeNumber ?? 1);
-        }
-        if (job.status === "completed") {
-          stopPoll();
-          setResult({
-            id: job.dramaId,
-            resolvedEpisodes: job.transferred,
-            failedCount: job.failedEpisodes?.length ?? 0,
-            mode: "transfer",
-            target,
-          });
-          if (!(job.failedEpisodes?.length > 0)) {
-            router.push(contentDetailHref(job.dramaId, "episodes"));
-          }
-        } else if (job.status === "failed") {
-          stopPoll();
-          setError(job.error || t("ytdlpTransferFailed"));
-        }
-      } catch (e: unknown) {
-        stopPoll();
-        setError(e instanceof Error ? e.message : String(e));
-      }
-    };
-    void tick();
-    pollRef.current = setInterval(() => void tick(), 2000);
+  function clearUrlInput() {
+    setUrl("");
+    setProbe(null);
+    setPreviewEpIndex(null);
+    setPreviewUrl(null);
+    setError(null);
+    setFilled(false);
+    setApplied(false);
+  }
+
+  function probeMaxEpisodes() {
+    const max = maxEpisodes.trim() ? Number(maxEpisodes) : undefined;
+    return max && max > 0 ? max : undefined;
+  }
+
+  /** Fill title/cover/desc/count only — does not stage episode resources. */
+  function fillDramaMeta() {
+    if (!probe) {
+      setError(t("ytdlpNeedProbe"));
+      return;
+    }
+    if (!onFillDramaInfo) {
+      setError(t("ytdlpApplyNeedMain"));
+      return;
+    }
+    onFillDramaInfo(
+      dramaInfoFromYtdlpProbe(probe, {
+        maxEpisodes: probeMaxEpisodes(),
+        includeMeta: true,
+        includeOnline: false,
+        overwriteMeta,
+      }),
+    );
+    setFilled(true);
+    setError(null);
+  }
+
+  /** Stage episode resources + ingest config — does not overwrite drama meta. */
+  function applyProbeToMain() {
+    if (!probe) {
+      setError(t("ytdlpNeedProbe"));
+      return;
+    }
+    if (!onFillDramaInfo) {
+      setError(t("ytdlpApplyNeedMain"));
+      return;
+    }
+    onFillDramaInfo(
+      dramaInfoFromYtdlpProbe(probe, {
+        pageUrl: url.trim(),
+        ingestForm,
+        formatPreference,
+        maxEpisodes: probeMaxEpisodes(),
+        includeMeta: false,
+        includeOnline: true,
+      }),
+    );
+    setApplied(true);
+    clearDirtyForNav();
+  }
+
+  async function downloadEpisode(ep: ProbeResult["episodes"][number]) {
+    setError(null);
+    setDownloadingEpIndex(ep.index);
+    const title = (ep.title || `ep-${ep.index}`).trim().slice(0, 60);
+    try {
+      await adminYtdlpDownloadEpisode({
+        url: ep.webpageUrl,
+        formatPreference:
+          formatPreference === "best_hls" ? "best_mp4" : formatPreference,
+        playlistIndex: ep.playlistIndex,
+        filenameHint: `${String(ep.index).padStart(2, "0")}-${title}`,
+      });
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDownloadingEpIndex(null);
+    }
   }
 
   const probeMut = useMutation({
@@ -127,16 +166,16 @@ export function YtdlpImportPanel({ mode }: { mode: YtdlpPanelMode }) {
     },
     onSuccess: (data) => {
       setError(null);
-      setResult(null);
-      setFailedEpisodes([]);
-      setTransferProgress(null);
       setPreviewEpIndex(null);
       setPreviewUrl(null);
-      setLocalMediaUrl(null);
+      setFilled(false);
+      setApplied(false);
       setProbe(data);
     },
     onError: (e: Error) => {
       setProbe(null);
+      setFilled(false);
+      setApplied(false);
       setError(e.message);
     },
   });
@@ -150,81 +189,8 @@ export function YtdlpImportPanel({ mode }: { mode: YtdlpPanelMode }) {
       }),
     onSuccess: (data, ep) => {
       setError(null);
-      setLocalMediaUrl(null);
       setPreviewEpIndex(ep.index);
       setPreviewUrl(data.playUrl);
-    },
-    onError: (e: Error) => setError(e.message),
-  });
-
-  const importMut = useMutation({
-    mutationFn: () => {
-      if (!probe) throw new Error(t("ytdlpNeedProbe"));
-      if (!categorySlug) throw new Error(t("onlineNeedCategory"));
-      const max = maxEpisodes.trim() ? Number(maxEpisodes) : undefined;
-      return adminYtdlpImport({
-        url: url.trim(),
-        categorySlug,
-        titleZh: probe.title,
-        maxEpisodes: max && max > 0 ? max : undefined,
-        formatPreference,
-      });
-    },
-    onSuccess: (data) => {
-      setError(null);
-      setFailedEpisodes(data.failedEpisodes ?? []);
-      setResult({
-        id: data.id,
-        resolvedEpisodes: data.resolvedEpisodes,
-        failedCount: data.failedEpisodes?.length ?? 0,
-        mode: "online",
-      });
-      // Stay when partial failures so ops can read the list; otherwise go to rights check.
-      if (!(data.failedEpisodes?.length > 0)) {
-        router.push(contentDetailHref(data.id, "info"));
-      }
-    },
-    onError: (e: Error) => setError(e.message),
-  });
-
-  const transferMut = useMutation({
-    mutationFn: (target: TransferTarget) => {
-      if (!probe) throw new Error(t("ytdlpNeedProbe"));
-      if (!categorySlug) throw new Error(t("onlineNeedCategory"));
-      const max = maxEpisodes.trim() ? Number(maxEpisodes) : undefined;
-      return adminYtdlpTransfer({
-        url: url.trim(),
-        categorySlug,
-        target,
-        titleZh: probe.title,
-        maxEpisodes: max && max > 0 ? max : undefined,
-        formatPreference: formatPreference === "best_hls" ? "best" : formatPreference,
-      }).then((data) => ({ data, target }));
-    },
-    onSuccess: ({ data, target }) => {
-      setError(null);
-      setFailedEpisodes([]);
-      setResult(null);
-      setTransferProgress({
-        id: data.jobId,
-        dramaId: data.id,
-        slug: data.slug,
-        status: data.jobStatus,
-        target: data.target,
-        preferR2: data.preferR2,
-        total: data.totalEpisodes,
-        transferred: 0,
-        currentEpisode: null,
-        failedEpisodes: [],
-        jobs: [],
-        extractor: data.extractor,
-        kind: data.kind,
-        externalRef: data.externalRef,
-        sourceType: data.sourceType,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      });
-      startTransferPoll(data.jobId, target);
     },
     onError: (e: Error) => setError(e.message),
   });
@@ -232,48 +198,30 @@ export function YtdlpImportPanel({ mode }: { mode: YtdlpPanelMode }) {
   const configured = !!statusQ.data?.configured;
   const r2Ready = !!storageQ.data?.r2Configured;
   const ffmpegReady = storageQ.data?.ffmpegReady !== false;
-  const transferring =
-    !!transferProgress &&
-    (transferProgress.status === "queued" || transferProgress.status === "running");
   const busy =
-    probeMut.isPending ||
-    resolveMut.isPending ||
-    importMut.isPending ||
-    transferMut.isPending ||
-    transferring;
+    probeMut.isPending || resolveMut.isPending || downloadingEpIndex != null;
+  const activePreviewSrc = previewUrl;
+  const showEmpty = !probe && !error && !probeMut.isPending;
 
-  const activePreviewSrc = localMediaUrl || previewUrl;
-
-  const panelTitle = mode === "transfer" ? t("ytdlpTransferTitle") : t("ytdlpImportTitle");
-  const panelHint = mode === "transfer" ? t("ytdlpTransferPanelHint") : t("ytdlpImportOnlyHint");
-
-  const progressPct =
-    transferProgress && transferProgress.total > 0
-      ? Math.min(
-          100,
-          Math.round(
-            ((transferProgress.transferred + (transferProgress.failedEpisodes?.length ?? 0)) /
-              transferProgress.total) *
-              100,
-          ),
-        )
-      : 0;
+  const panelClass = embedded
+    ? "space-y-3"
+    : "upload-panel upload-panel--primary space-y-3";
+  const PanelTag = embedded ? "div" : "section";
 
   return (
     <div className="space-y-4">
-      <div className="upload-panel space-y-2">
-        <h3 className="text-h4 font-semibold">{panelTitle}</h3>
-        <p className="text-body-sm text-ink-muted">{panelHint}</p>
-        {!configured ? (
-          <p className="text-body-sm text-danger">
-            {t("ytdlpNotConfigured")}
-            {statusQ.data?.lastError ? ` (${statusQ.data.lastError})` : ""}
-          </p>
-        ) : (
-          <div className="text-caption text-ink-muted">
+      <PanelTag className={panelClass}>
+        <div className="upload-panel__head upload-panel__head--flush">
+          <div className="min-w-0">
+            <h3>{t("ytdlpUnifiedTitle")}</h3>
+            <p>
+              {ingestTab === "parse" ? t("ytdlpUnifiedHint") : t("onlineManualHint")}
+            </p>
+          </div>
+          {ingestTab === "parse" && configured ? (
             <button
               type="button"
-              className="inline-flex items-center gap-1.5 rounded border border-line/60 bg-surface-2/40 px-2 py-1 hover:bg-surface-2"
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-line/60 bg-white px-2.5 py-1 text-caption text-ink-muted hover:bg-surface-2"
               onClick={() => setEngineOpen((v) => !v)}
               aria-expanded={engineOpen}
             >
@@ -283,130 +231,140 @@ export function YtdlpImportPanel({ mode }: { mode: YtdlpPanelMode }) {
                 aria-hidden
               />
               {t("ytdlpEngineReady")}
-              <span className="text-ink-subtle">{engineOpen ? "▾" : "▸"}</span>
+              <span className="text-ink-subtle" aria-hidden>
+                {engineOpen ? "▾" : "▸"}
+              </span>
             </button>
-            {engineOpen ? (
-              <p className="mt-1.5 break-all">
+          ) : null}
+        </div>
+
+        <div className="seg-tabs" role="tablist" aria-label={t("ytdlpUnifiedTitle")}>
+          {(
+            [
+              ["parse", t("onlineIngestTabParse")],
+              ["manual", t("onlineIngestTabManual")],
+            ] as const
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              role="tab"
+              aria-selected={ingestTab === key}
+              className="seg-tabs__item"
+              onClick={() => setIngestTab(key)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {ingestTab === "manual" ? (
+          <OnlineDramaForm
+            embedded
+            fillMode
+            onDirtyChange={setManualDirty}
+            onFillDramaInfo={(payload) => {
+              onFillDramaInfo?.(payload);
+              clearDirtyForNav();
+            }}
+          />
+        ) : (
+          <>
+            {!configured ? (
+              <p className="text-body-sm text-danger">
+                {t("ytdlpNotConfigured")}
+                {statusQ.data?.lastError ? ` (${statusQ.data.lastError})` : ""}
+              </p>
+            ) : engineOpen ? (
+              <p className="break-all text-caption text-ink-muted">
                 {t("ytdlpProvider")}: {statusQ.data?.provider}
                 {statusQ.data?.version ? ` ${statusQ.data.version}` : ""}
-                {statusQ.data?.binSource ? ` · ${t("ytdlpBinSource")}: ${statusQ.data.binSource}` : ""}
+                {statusQ.data?.binSource
+                  ? ` · ${t("ytdlpBinSource")}: ${statusQ.data.binSource}`
+                  : ""}
                 {statusQ.data?.bin ? ` · ${statusQ.data.bin}` : ""}
                 {" · "}
                 {t("ytdlpNoApiKey")}
               </p>
             ) : null}
-          </div>
+
+            <div className="flex flex-wrap items-end gap-2">
+              <Input
+                className="min-w-[20rem] flex-1"
+                placeholder={t("ytdlpUrlPlaceholder")}
+                value={url}
+                disabled={!configured}
+                onChange={(e) => {
+                  setUrl(e.target.value);
+                  setProbe(null);
+                  setPreviewEpIndex(null);
+                  setPreviewUrl(null);
+                  setFilled(false);
+                  setApplied(false);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && configured && url.trim()) {
+                    probeMut.mutate();
+                  }
+                }}
+              />
+              <Button
+                size="sm"
+                variant={probe ? "secondary" : "primary"}
+                className={
+                  probe
+                    ? "border-success/40 bg-success-soft text-success hover:bg-success/15"
+                    : undefined
+                }
+                disabled={!configured || !url.trim() || probeMut.isPending}
+                onClick={() => probeMut.mutate()}
+              >
+                {probeMut.isPending
+                  ? t("loading")
+                  : probe
+                    ? t("ytdlpProbeDone")
+                    : t("ytdlpProbe")}
+              </Button>
+              {url || probe ? (
+                <Button size="sm" variant="ghost" onClick={clearUrlInput}>
+                  {t("ytdlpClearUrl")}
+                </Button>
+              ) : null}
+            </div>
+
+            {showEmpty ? (
+              <div className="online-empty">
+                <p className="online-empty__title">{t("onlineEmptyTitle")}</p>
+                <div className="online-empty__steps">
+                  {(
+                    [
+                      ["1", t("onlineEmptyStep1"), t("onlineEmptyStep1Hint")],
+                      ["2", t("onlineEmptyStep2"), t("onlineEmptyStep2Hint")],
+                      ["3", t("onlineEmptyStep3"), t("onlineEmptyStep3Hint")],
+                    ] as const
+                  ).map(([n, title, hint]) => (
+                    <div key={n} className="online-empty__step">
+                      <span className="online-empty__n" aria-hidden>
+                        {n}
+                      </span>
+                      <div>
+                        <p>{title}</p>
+                        <span>{hint}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </>
         )}
-      </div>
+      </PanelTag>
 
-      {error ? <p className="text-body-sm text-danger">{error}</p> : null}
-
-      {transferProgress && (transferring || transferProgress.status === "failed") ? (
-        <div className="upload-panel space-y-2 text-body-sm">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="font-medium">
-              {transferring ? t("ytdlpTransferProgress") : t("ytdlpTransferFailed")}
-            </span>
-            <span className="text-caption text-ink-muted">
-              {t("ytdlpTransferProgressCount", {
-                done: transferProgress.transferred,
-                total: transferProgress.total,
-                failed: transferProgress.failedEpisodes?.length ?? 0,
-              })}
-            </span>
-          </div>
-          <div className="h-2 overflow-hidden rounded-full bg-surface-2">
-            <div
-              className="h-full rounded-full bg-brand transition-[width] duration-300"
-              style={{ width: `${progressPct}%` }}
-            />
-          </div>
-          {transferProgress.currentEpisode != null && transferring ? (
-            <p className="text-caption text-ink-muted">
-              {t("ytdlpTransferCurrentEp", { n: transferProgress.currentEpisode })}
-            </p>
-          ) : null}
-          {transferring ? (
-            <p className="text-caption text-ink-muted">{t("ytdlpTransferAsyncHint")}</p>
-          ) : null}
-          {transferProgress.dramaId ? (
-            <Link
-              href={contentDetailHref(transferProgress.dramaId, "episodes")}
-              className="text-brand hover:underline"
-            >
-              {t("onlineViewDrama")}
-            </Link>
-          ) : null}
-        </div>
+      {ingestTab === "parse" && error ? (
+        <p className="text-body-sm text-danger">{error}</p>
       ) : null}
 
-      {result ? (
-        <div className="upload-panel flex flex-wrap items-center gap-3 text-body-sm">
-          <span>
-            {result.mode === "transfer"
-              ? t("ytdlpTransferred", {
-                  n: result.resolvedEpisodes,
-                  failed: result.failedCount,
-                  target: result.target === "r2" ? "R2" : t("ytdlpTargetLocal"),
-                })
-              : t("ytdlpImported", {
-                  n: result.resolvedEpisodes,
-                  failed: result.failedCount,
-                })}
-          </span>
-          <Link
-            href={contentDetailHref(result.id, result.mode === "transfer" ? "episodes" : "info")}
-            className="text-brand hover:underline"
-          >
-            {t("onlineViewDrama")}
-          </Link>
-        </div>
-      ) : null}
-
-      {failedEpisodes.length > 0 ? (
-        <div className="upload-panel space-y-2">
-          <h5 className="text-body-sm font-medium text-danger">
-            {t("ytdlpFailedList", { n: failedEpisodes.length })}
-          </h5>
-          <ul className="max-h-36 space-y-1 overflow-y-auto text-caption text-ink-muted">
-            {failedEpisodes.map((ep) => (
-              <li key={`${ep.episodeNumber}-${ep.url}`} className="break-all">
-                #{ep.episodeNumber}: {ep.error}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-
-      <div className="flex flex-wrap items-end gap-2">
-        <Input
-          className="min-w-[20rem] flex-1"
-          placeholder={t("ytdlpUrlPlaceholder")}
-          value={url}
-          disabled={!configured || transferring}
-          onChange={(e) => {
-            setUrl(e.target.value);
-            setProbe(null);
-            setResult(null);
-            setFailedEpisodes([]);
-            setPreviewEpIndex(null);
-            setPreviewUrl(null);
-            setLocalMediaUrl(null);
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && configured && url.trim() && !transferring) probeMut.mutate();
-          }}
-        />
-        <Button
-          size="sm"
-          disabled={!configured || !url.trim() || probeMut.isPending || transferring}
-          onClick={() => probeMut.mutate()}
-        >
-          {probeMut.isPending ? t("loading") : t("ytdlpProbe")}
-        </Button>
-      </div>
-
-      {probe ? (
+      {ingestTab === "parse" && probe ? (
         <div className="upload-panel space-y-4">
           <div className="flex flex-wrap gap-3">
             {probe.coverUrl ? (
@@ -442,16 +400,29 @@ export function YtdlpImportPanel({ mode }: { mode: YtdlpPanelMode }) {
                       </span>
                     ) : null}
                   </span>
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    disabled={busy}
-                    onClick={() => resolveMut.mutate(ep)}
-                  >
-                    {resolveMut.isPending && previewEpIndex === ep.index
-                      ? t("loading")
-                      : t("ytdlpPreviewEp")}
-                  </Button>
+                  <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={busy}
+                      onClick={() => resolveMut.mutate(ep)}
+                    >
+                      {resolveMut.isPending && previewEpIndex === ep.index
+                        ? t("loading")
+                        : t("ytdlpPreviewEp")}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy || !ffmpegReady}
+                      title={!ffmpegReady ? t("ytdlpNeedFfmpeg") : t("ytdlpBrowserDownloadHint")}
+                      onClick={() => void downloadEpisode(ep)}
+                    >
+                      {downloadingEpIndex === ep.index
+                        ? t("ytdlpBrowserDownloading")
+                        : t("ytdlpDownloadLocal")}
+                    </Button>
+                  </div>
                 </li>
               ))}
             </ul>
@@ -463,57 +434,39 @@ export function YtdlpImportPanel({ mode }: { mode: YtdlpPanelMode }) {
                 <h5 className="text-body-sm font-medium">
                   {t("ytdlpPreviewTitle")}
                   {previewEpIndex != null ? ` · #${previewEpIndex}` : ""}
-                  {localMediaUrl ? ` · ${t("ytdlpPreviewLocal")}` : ""}
                 </h5>
                 <Button
                   size="sm"
                   variant="ghost"
                   onClick={() => {
                     setPreviewUrl(null);
-                    setLocalMediaUrl(null);
                     setPreviewEpIndex(null);
                   }}
                 >
                   {t("close")}
                 </Button>
               </div>
-              {previewUrl && !localMediaUrl ? (
-                <p className="text-caption text-ink-muted">{t("ytdlpPreviewCorsHint")}</p>
-              ) : null}
+              <p className="text-caption text-ink-muted">{t("ytdlpPreviewCorsHint")}</p>
               <StreamPreview
                 src={activePreviewSrc}
                 poster={probe.coverUrl}
-                failHint={
-                  previewUrl && !localMediaUrl ? t("ytdlpPreviewCorsFail") : t("ytdlpPreviewLocalFail")
-                }
+                failHint={t("ytdlpPreviewCorsFail")}
               />
             </div>
           ) : null}
 
           <div className="flex flex-wrap items-end gap-2">
             <label className="text-caption text-ink-muted">
-              {t("onlineCategory")}
-              <Select
-                className="mt-1 w-48"
-                value={categorySlug}
-                disabled={transferring}
-                onChange={(e) => setCategorySlug(e.target.value)}
-              >
-                <option value="">{t("onlineCategory")}</option>
-                {(categoriesQ.data ?? []).map((c) => (
-                  <option key={c.slug} value={c.slug}>
-                    {c.nameZh || c.nameEn || c.slug}
-                  </option>
-                ))}
-              </Select>
-            </label>
-            <label className="text-caption text-ink-muted">
               {t("ytdlpFormat")}
               <Select
                 className="mt-1 w-40"
                 value={formatPreference}
-                disabled={transferring}
-                onChange={(e) => setFormatPreference(e.target.value as FormatPreference)}
+                disabled={busy}
+                onChange={(e) => {
+                  setFormatPreference(e.target.value as FormatPreference);
+                  setFilled(false);
+                  setApplied(false);
+                }}
               >
                 <option value="best_hls">{t("ytdlpFormatHls")}</option>
                 <option value="best_mp4">{t("ytdlpFormatMp4")}</option>
@@ -527,58 +480,124 @@ export function YtdlpImportPanel({ mode }: { mode: YtdlpPanelMode }) {
                 type="number"
                 placeholder={t("all")}
                 value={maxEpisodes}
-                disabled={transferring}
-                onChange={(e) => setMaxEpisodes(e.target.value)}
+                disabled={busy}
+                onChange={(e) => {
+                  setMaxEpisodes(e.target.value);
+                  setFilled(false);
+                  setApplied(false);
+                }}
               />
             </label>
           </div>
 
-          <div className="flex flex-wrap gap-2 border-t border-line/50 pt-3">
-            {showImport ? (
-              <Button size="sm" disabled={busy} onClick={() => importMut.mutate()}>
-                {importMut.isPending ? t("loading") : t("importDraft")}
-              </Button>
-            ) : null}
-            {showTransfer ? (
-              <>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={busy || !ffmpegReady}
-                  title={!ffmpegReady ? t("ytdlpNeedFfmpeg") : undefined}
-                  onClick={() => transferMut.mutate("local")}
-                >
-                  {transferMut.isPending && transferMut.variables === "local"
-                    ? t("ytdlpTransferring")
-                    : transferring && transferProgress?.target === "local"
-                      ? t("ytdlpTransferring")
-                      : t("ytdlpTransferLocal")}
-                </Button>
-                <Button
-                  size="sm"
-                  disabled={busy || !ffmpegReady || !r2Ready}
-                  title={
-                    !r2Ready
-                      ? t("ytdlpNeedR2")
-                      : !ffmpegReady
-                        ? t("ytdlpNeedFfmpeg")
+          <div className="space-y-3 border-t border-line/50 pt-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h5 className="text-body-sm font-medium">{t("ytdlpChooseIngest")}</h5>
+              <div className="seg-tabs" role="tablist" aria-label={t("ytdlpChooseIngest")}>
+                {(
+                  [
+                    ["r2", t("ytdlpIngestFormR2")],
+                    ["link", t("ytdlpIngestFormLink")],
+                  ] as const
+                ).map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    role="tab"
+                    aria-selected={ingestForm === key}
+                    className="seg-tabs__item"
+                    disabled={busy}
+                    onClick={() => {
+                      setIngestForm(key);
+                      setFilled(false);
+                      setApplied(false);
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="rounded border border-line/70 bg-surface-2/30 p-3 space-y-3">
+              <p className="text-caption text-ink-muted">
+                {ingestForm === "r2"
+                  ? t("ytdlpIngestFormR2Hint")
+                  : t("ytdlpIngestFormLinkHint")}
+              </p>
+              {ingestForm === "r2" && (!r2Ready || !ffmpegReady) ? (
+                <p className="text-caption text-warning">
+                  {!r2Ready ? t("ytdlpNeedR2") : t("ytdlpNeedFfmpeg")}
+                </p>
+              ) : null}
+              <p className="text-caption text-ink-muted">{t("ytdlpApplyConfigHint")}</p>
+            </div>
+
+            {onFillDramaInfo ? (
+              <div className="space-y-2 rounded-lg border border-brand/25 bg-brand/5 px-3 py-2.5">
+                <label className="flex items-start gap-2 text-caption text-ink-muted">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={overwriteMeta}
+                    disabled={busy}
+                    onChange={(e) => setOverwriteMeta(e.target.checked)}
+                  />
+                  <span>{t("ytdlpOverwriteMeta")}</span>
+                </label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-body-sm font-medium text-ink">
+                      {filled ? t("ytdlpFillDramaInfoDoneBtn") : t("ytdlpFillDramaInfo")}
+                    </p>
+                    <p className="text-caption text-ink-muted">{t("ytdlpFillDramaInfoHint")}</p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className={
+                      filled
+                        ? "border-success/40 bg-success-soft text-success hover:bg-success/15"
                         : undefined
+                    }
+                    disabled={busy}
+                    onClick={fillDramaMeta}
+                  >
+                    {filled ? t("ytdlpFillDramaInfoDoneBtn") : t("ytdlpFillDramaInfo")}
+                  </Button>
+                </div>
+                <div
+                  className={
+                    applied
+                      ? "flex flex-wrap items-center gap-2 rounded-md border border-success/35 bg-success-soft px-2.5 py-2"
+                      : "flex flex-wrap items-center gap-2"
                   }
-                  onClick={() => transferMut.mutate("r2")}
                 >
-                  {transferMut.isPending && transferMut.variables === "r2"
-                    ? t("ytdlpTransferring")
-                    : transferring && transferProgress?.target === "r2"
-                      ? t("ytdlpTransferring")
-                      : t("ytdlpTransferR2")}
-                </Button>
-              </>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-body-sm font-medium text-ink">
+                      {applied ? t("ytdlpApplyToMainDone") : t("ytdlpApplyToMain")}
+                    </p>
+                    <p className="text-caption text-ink-muted">{t("ytdlpApplyToMainHint")}</p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant={applied ? "secondary" : "primary"}
+                    className={
+                      applied
+                        ? "border-success/40 bg-success-soft text-success hover:bg-success/15"
+                        : undefined
+                    }
+                    disabled={busy || (ingestForm === "r2" && (!r2Ready || !ffmpegReady))}
+                    onClick={applyProbeToMain}
+                  >
+                    {applied ? t("ytdlpApplyToMainDone") : t("ytdlpApplyToMain")}
+                  </Button>
+                </div>
+              </div>
             ) : null}
-          </div>
-          {showImport ? (
+
             <p className="text-caption text-ink-muted">{t("ytdlpImportComplianceHint")}</p>
-          ) : null}
-          {showTransfer ? <p className="text-caption text-ink-muted">{t("ytdlpTransferHint")}</p> : null}
+          </div>
         </div>
       ) : null}
     </div>

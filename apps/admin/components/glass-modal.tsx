@@ -45,6 +45,9 @@ export function ConfirmModal({
   onClose,
   onConfirm,
   message,
+  title,
+  cancelLabel,
+  confirmLabel,
   confirmVariant = "danger",
   busy,
   extraAction,
@@ -53,6 +56,9 @@ export function ConfirmModal({
   onClose: () => void;
   onConfirm: () => void;
   message: string;
+  title?: string;
+  cancelLabel?: string;
+  confirmLabel?: string;
   confirmVariant?: "primary" | "danger";
   busy?: boolean;
   extraAction?: { label: string; onClick: () => void; busy?: boolean; disabled?: boolean };
@@ -64,10 +70,10 @@ export function ConfirmModal({
       open={open}
       onClose={onClose}
       onConfirm={onConfirm}
-      title={t("confirm")}
+      title={title ?? t("confirm")}
       message={message}
-      cancelLabel={t("cancel")}
-      confirmLabel={t("confirm")}
+      cancelLabel={cancelLabel ?? t("cancel")}
+      confirmLabel={confirmLabel ?? t("confirm")}
       confirmVariant={confirmVariant}
       busy={busy}
       closeLabel={t("close")}

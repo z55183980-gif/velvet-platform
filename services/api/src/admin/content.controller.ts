@@ -7,11 +7,14 @@ import {
   Post,
   Query,
   Req,
+  Res,
   UploadedFile,
   UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
+import type { Response } from 'express';
+import * as fs from 'fs';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { Transform, Type } from 'class-transformer';
 import {
@@ -153,6 +156,23 @@ class BatchDramasDto {
   lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE' | 'INHERIT' | null;
   @IsOptional() priceCredits?: number | string;
   @IsOptional() buyoutCredits?: number | string | null;
+  @IsOptional()
+  @Transform(({ value }) =>
+    value === undefined || value === null || value === ''
+      ? undefined
+      : value === true || value === 'true' || value === 1 || value === '1',
+  )
+  @IsBoolean()
+  isFeatured?: boolean;
+  @IsOptional()
+  @Transform(({ value }) =>
+    value === undefined || value === null || value === ''
+      ? undefined
+      : value === true || value === 'true' || value === 1 || value === '1',
+  )
+  @IsBoolean()
+  isOfficial?: boolean;
+  @IsOptional() @Type(() => Number) @IsNumber() sortWeight?: number;
 }
 
 class BatchDramaLifecycleDto {
@@ -230,8 +250,8 @@ class CreateOnlineDramaDto {
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) freeEpisodeCount?: number;
   @IsOptional() @IsIn(['FREE_FIRST_N', 'VIP_ALL', 'ALL_FREE'])
   lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE';
-  @IsOptional() @IsIn(['DRAFT', 'LIVE'])
-  status?: 'DRAFT' | 'LIVE';
+  @IsOptional() @IsIn(['DRAFT'])
+  status?: 'DRAFT';
   @IsOptional() @IsString() externalRef?: string;
   /** Accept signed/CDN URLs without media extension (same as yt-dlp import). */
   @IsOptional() @IsBoolean() relaxedPlayUrl?: boolean;
@@ -253,8 +273,8 @@ class CreateLocalUploadDramaDto {
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) freeEpisodeCount?: number;
   @IsOptional() @IsIn(['FREE_FIRST_N', 'VIP_ALL', 'ALL_FREE'])
   lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE';
-  @IsOptional() @IsIn(['DRAFT', 'LIVE'])
-  status?: 'DRAFT' | 'LIVE';
+  @IsOptional() @IsIn(['DRAFT'])
+  status?: 'DRAFT';
   @IsOptional() @IsArray() @IsString({ each: true }) sourceTags?: string[];
   @IsOptional() @IsIn(['LOCAL', 'R2'])
   sourceType?: 'LOCAL' | 'R2';
@@ -272,6 +292,15 @@ class YtdlpResolveDto {
   @IsOptional() @IsIn(['best_hls', 'best_mp4', 'best'])
   formatPreference?: 'best_hls' | 'best_mp4' | 'best';
   @IsOptional() @Type(() => Number) @IsNumber() @Min(1) playlistIndex?: number;
+}
+
+class YtdlpBrowserDownloadDto {
+  @IsNotEmpty() @IsString() url!: string;
+  @IsOptional() @IsIn(['best_hls', 'best_mp4', 'best'])
+  formatPreference?: 'best_hls' | 'best_mp4' | 'best';
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) playlistIndex?: number;
+  /** Suggested download filename (sanitized server-side). */
+  @IsOptional() @IsString() filenameHint?: string;
 }
 
 class YtdlpImportDto {
@@ -491,11 +520,15 @@ export class ContentController {
     @Query('q') q?: string,
     @Query('status') status?: string,
     @Query('categorySlug') categorySlug?: string,
+    @Query('creatorId') creatorId?: string,
     @Query('isOfficial') isOfficial?: string,
     @Query('isFeatured') isFeatured?: string,
     @Query('isHottest') isHottest?: string,
     @Query('mediaKind') mediaKind?: string,
     @Query('sort') sort?: string,
+    @Query('dateField') dateField?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
   ) {
@@ -506,15 +539,27 @@ export class ContentController {
       mediaKind === 'local'
         ? mediaKind
         : undefined;
+    const sortKey =
+      sort === 'latest' ||
+      sort === 'views' ||
+      sort === 'unlocks' ||
+      sort === 'created' ||
+      sort === 'weight'
+        ? sort
+        : 'weight';
     return ok(await this.content.list({
       q,
       status: (status as any) || 'ALL',
       categorySlug,
+      creatorId: creatorId || undefined,
       isOfficial: isOfficial as any,
       isFeatured: isFeatured as any,
       isHottest: isHottest as any,
       mediaKind: kind,
-      sort: sort === 'latest' ? 'latest' : 'weight',
+      sort: sortKey,
+      dateField: dateField === 'createdAt' ? 'createdAt' : 'publishedAt',
+      dateFrom,
+      dateTo,
       page: page ? Number(page) : 1,
       pageSize: pageSize ? Number(pageSize) : 20,
     }));
@@ -661,6 +706,49 @@ export class ContentController {
     return ok(await this.ytdlp.resolve(dto.url, dto.formatPreference, dto.playlistIndex));
   }
 
+  /**
+   * yt-dlp 在服务端拉成实体文件，再作为附件触发浏览器「另存为」。
+   * 用于越过外链 CORS/防盗链；下载完成后删除临时文件。
+   */
+  @Post('ytdlp/download')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async ytdlpBrowserDownload(
+    @Body() dto: YtdlpBrowserDownloadDto,
+    @Res({ passthrough: false }) res: Response,
+  ) {
+    const file = await this.ytdlp.downloadEpisodeForBrowser({
+      url: dto.url,
+      formatPreference: dto.formatPreference,
+      playlistIndex: dto.playlistIndex,
+      filenameHint: dto.filenameHint,
+    });
+
+    const asciiName = file.filename.replace(/[^\x20-\x7E]/g, '_');
+    res.setHeader('Content-Type', file.mime);
+    res.setHeader('Content-Length', String(file.size));
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${asciiName}"; filename*=UTF-8''${encodeURIComponent(file.filename)}`,
+    );
+    res.setHeader('Cache-Control', 'no-store');
+
+    const stream = fs.createReadStream(file.absPath);
+    const cleanup = () => {
+      try {
+        fs.unlinkSync(file.absPath);
+      } catch {
+        /* ignore */
+      }
+    };
+    stream.on('close', cleanup);
+    stream.on('error', () => {
+      cleanup();
+      if (!res.headersSent) res.status(500).end();
+      else res.destroy();
+    });
+    stream.pipe(res);
+  }
+
   @Post('ytdlp/import')
   @AdminRoles('SUPER_ADMIN', 'OPS')
   async ytdlpImport(@Body() dto: YtdlpImportDto, @Req() req: any) {
@@ -677,7 +765,7 @@ export class ContentController {
   @Get('ytdlp/transfer/:jobId')
   @AdminRoles('SUPER_ADMIN', 'OPS')
   async ytdlpTransferJob(@Param('jobId') jobId: string) {
-    return ok(this.ytdlp.getTransferJob(jobId));
+    return ok(await this.ytdlp.getTransferJob(jobId));
   }
 
   @Post('dramas/:id/ytdlp/append')
@@ -706,6 +794,10 @@ export class ContentController {
   @Post('dramas/batch-lifecycle')
   @AdminRoles('SUPER_ADMIN', 'OPS')
   async batchDramaLifecycle(@Body() dto: BatchDramaLifecycleDto, @Req() req: any) {
+    // Hard-delete is SUPER_ADMIN only; offline/online remain SUPER_ADMIN | OPS.
+    if (dto.action === 'delete' && req?.adminRole !== 'SUPER_ADMIN') {
+      throw new BizException(BizCode.FORBIDDEN, 'Yêu cầu quyền: SUPER_ADMIN');
+    }
     return ok(
       await this.admin.batchLifecycle(dto.action, dto.ids, dto.reason, getActor(req)),
     );
@@ -779,6 +871,7 @@ export class ContentController {
   }
 
   @Post('dramas/:id/delete')
+  @AdminRoles('SUPER_ADMIN')
   async deleteDrama(@Param('id') id: string, @Body() dto: ReasonDto, @Req() req: any) {
     return ok(await this.admin.deleteDrama(id, dto.reason, getActor(req)));
   }

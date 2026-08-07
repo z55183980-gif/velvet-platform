@@ -680,10 +680,15 @@ export type VipPlanQuote = {
   durationDays: number;
   baseCurrency: string;
   basePrice: string;
+  originalPrice?: string | null;
   badge?: string | null;
+  desc?: string | null;
+  descEn?: string | null;
+  descZh?: string | null;
+  descFr?: string | null;
+  benefits?: string[];
   payCurrency?: string;
   payAmount?: string;
-  cnyToFiat?: string;
 };
 
 export async function getVipPlans(currency = "USD"): Promise<VipPlanQuote[]> {
@@ -719,12 +724,14 @@ export async function simulatePay(orderNo: string) {
 export type TopupPackageQuote = {
   id: string;
   name: string | null;
+  baseCredits?: string;
+  bonusCredits?: string;
   credits: string;
+  badge?: string | null;
   baseCurrency: string;
   basePrice: string;
   payCurrency?: string;
   payAmount?: string;
-  cnyToFiat?: string;
 };
 
 /** 公开积分套餐（USD 标价） */
@@ -736,16 +743,6 @@ export async function getTopupPackages(currency = "USD"): Promise<TopupPackageQu
   }
 }
 
-// 汇率表（公开）：cnyToFiat = 1 CNY 换多少该币
-export async function getExchangeRates(): Promise<
-  { currency: string; cnyToFiat: string; buyRate: string; sellRate: string }[]
-> {
-  try {
-    return await request("/exchange-rates");
-  } catch {
-    return [];
-  }
-}
 export async function unlockEpisode(episodeId: string | number) {
   try {
     return await request<any>("/orders/unlock-episode", {

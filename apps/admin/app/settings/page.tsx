@@ -1,18 +1,16 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  adminListAuditLogs,
-  adminListRates,
+  adminGetStripePaymentGateway,
   adminListSettings,
-  adminSetRate,
   adminUpdateSetting,
-  asRows,
+  adminUpdateStripePaymentGateway,
 } from "@velvet/api-client";
-import { exchangeRateSchema } from "@velvet/validators";
-import { Button, DataTable, Input, Select, fmtDate, type Column } from "@velvet/ui";
+import { Button, Input, Select, fmtDate } from "@velvet/ui";
 import { AdminShell } from "@/components/admin-shell";
+import { StripeSettingsPanel } from "@/components/stripe-settings-panel";
 import { useI18n } from "@/lib/i18n";
 import { useLocationSearchParams } from "@/lib/use-location-search";
 
@@ -25,22 +23,12 @@ type Setting = {
   updatedAt?: string;
 };
 
-type RateRow = {
-  id?: string;
-  currency: string;
-  cnyToFiat?: string | number;
-  buyRate?: string | number;
-  updatedAt?: string;
-};
+type Tab = "config" | "payments";
 
-type AuditRow = {
-  id: string | number;
-  createdAt?: string;
-  action?: string;
-  payload?: unknown;
-};
-
-type Tab = "config" | "rates";
+function parseTab(raw: string | null): Tab {
+  if (raw === "payments") return raw;
+  return "config";
+}
 
 function parseValue(setting: Setting, raw: string) {
   if (setting.type === "boolean") return raw === "true" || raw === "1";
@@ -56,17 +44,12 @@ export default function AdminSettingsPage() {
   const { t, locale, setLocale } = useI18n();
   const qc = useQueryClient();
   const searchParams = useLocationSearchParams();
-  const [tab, setTab] = useState<Tab>(
-    searchParams.get("tab") === "rates" ? "rates" : "config",
-  );
+  const [tab, setTab] = useState<Tab>(() => parseTab(searchParams.get("tab")));
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
-  const [currency, setCurrency] = useState("VND");
-  const [cnyToFiat, setCnyToFiat] = useState(3500);
-  const [formErr, setFormErr] = useState<string | null>(null);
 
   useEffect(() => {
-    setTab(searchParams.get("tab") === "rates" ? "rates" : "config");
+    setTab(parseTab(searchParams.get("tab")));
   }, [searchParams]);
 
   const settingsQ = useQuery({
@@ -78,19 +61,10 @@ export default function AdminSettingsPage() {
     enabled: tab === "config",
   });
 
-  const ratesQ = useQuery({
-    queryKey: ["admin", "rates"],
-    queryFn: async () => asRows<RateRow>(await adminListRates()),
-    enabled: tab === "rates",
-  });
-
-  const historyQ = useQuery({
-    queryKey: ["admin", "rates", "history"],
-    queryFn: async () => {
-      const h = await adminListAuditLogs({ action: "exchangeRate.upsert", pageSize: 30 });
-      return asRows<AuditRow>(h);
-    },
-    enabled: tab === "rates",
+  const stripeQ = useQuery({
+    queryKey: ["admin", "payment-gateways", "stripe"],
+    queryFn: () => adminGetStripePaymentGateway(),
+    enabled: tab === "payments",
   });
 
   useEffect(() => {
@@ -112,70 +86,34 @@ export default function AdminSettingsPage() {
     onError: (e: Error) => setError(e.message),
   });
 
-  const saveRateMut = useMutation({
-    mutationFn: async () => {
-      const parsed = exchangeRateSchema.safeParse({ currency, cnyToFiat, sellRate: cnyToFiat });
-      if (!parsed.success) {
-        throw new Error(parsed.error.issues[0]?.message || t("validateFailed"));
-      }
-      return adminSetRate(parsed.data);
+  const stripeMut = useMutation({
+    mutationFn: adminUpdateStripePaymentGateway,
+    onSuccess: (data) => {
+      setError(null);
+      qc.setQueryData(["admin", "payment-gateways", "stripe"], data);
     },
-    onSuccess: async () => {
-      setFormErr(null);
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: ["admin", "rates"] }),
-        qc.invalidateQueries({ queryKey: ["admin", "rates", "history"] }),
-      ]);
-    },
-    onError: (e: Error) => setFormErr(e.message),
+    onError: (e: Error) => setError(e.message),
   });
 
   const dateLocale = locale === "en" ? "en-US" : "zh-CN";
-  const preview = (10 * cnyToFiat).toLocaleString(dateLocale);
-  const rateCols: Column<RateRow>[] = useMemo(
-    () => [
-      { key: "currency", header: t("colCurrency"), cell: (r) => r.currency },
-      {
-        key: "rate",
-        header: t("cnyEquals"),
-        cell: (r) => String(r.cnyToFiat ?? r.buyRate),
-        className: "tabular-nums",
-      },
-      { key: "updated", header: t("colUpdated"), cell: (r) => fmtDate(r.updatedAt, dateLocale), className: "text-caption" },
-    ],
-    [t, dateLocale],
-  );
-  const histCols: Column<AuditRow>[] = useMemo(
-    () => [
-      { key: "time", header: t("time"), cell: (r) => fmtDate(r.createdAt, dateLocale), className: "text-caption" },
-      { key: "action", header: t("colAction"), cell: (r) => r.action || "—" },
-      {
-        key: "payload",
-        header: t("colPayload"),
-        cell: (r) => (
-          <span className="max-w-lg truncate font-mono text-caption">{JSON.stringify(r.payload)}</span>
-        ),
-      },
-    ],
-    [t, dateLocale],
-  );
 
   const switchTab = (next: Tab) => {
     setTab(next);
     const url = new URL(window.location.href);
-    if (next === "rates") url.searchParams.set("tab", "rates");
-    else url.searchParams.delete("tab");
+    if (next === "config") url.searchParams.delete("tab");
+    else url.searchParams.set("tab", next);
     window.history.replaceState(null, "", url.pathname + url.search);
   };
 
+  const shellTitle = tab === "payments" ? t("paymentGateway") : t("settings");
+
   return (
-    <AdminShell title={tab === "rates" ? t("rates") : t("settings")}>
-      {error || formErr || settingsQ.error || ratesQ.error ? (
+    <AdminShell title={shellTitle}>
+      {error || settingsQ.error || stripeQ.error ? (
         <p className="mb-3 text-body-sm text-danger">
           {error ||
-            formErr ||
             (settingsQ.error as Error)?.message ||
-            (ratesQ.error as Error)?.message}
+            (stripeQ.error as Error)?.message}
         </p>
       ) : null}
 
@@ -189,10 +127,10 @@ export default function AdminSettingsPage() {
         </Button>
         <Button
           size="sm"
-          variant={tab === "rates" ? "primary" : "secondary"}
-          onClick={() => switchTab("rates")}
+          variant={tab === "payments" ? "primary" : "secondary"}
+          onClick={() => switchTab("payments")}
         >
-          {t("rates")}
+          {t("paymentGateway")}
         </Button>
       </div>
 
@@ -264,54 +202,19 @@ export default function AdminSettingsPage() {
           ))}
         </div>
       ) : (
-        <>
-          <p className="mb-4 text-body-sm text-ink-muted">{t("ratesHint")}</p>
-          <div className="mb-6 flex flex-wrap items-end gap-2 card glass-card p-4">
-            <label className="text-caption text-ink-muted">
-              {t("colCurrency")}
-              <Input
-                className="mt-1 w-28"
-                value={currency}
-                onChange={(e) => setCurrency(e.target.value.toUpperCase())}
-              />
-            </label>
-            <label className="text-caption text-ink-muted">
-              {t("cnyEquals")}
-              <Input
-                type="number"
-                step="any"
-                className="mt-1 w-36"
-                value={cnyToFiat}
-                onChange={(e) => setCnyToFiat(Number(e.target.value))}
-              />
-            </label>
-            <p className="pb-2 text-caption text-ink-subtle">
-              {t("ratePreview", { n: preview, currency })}
-            </p>
-            <Button size="sm" onClick={() => saveRateMut.mutate()} disabled={saveRateMut.isPending}>
-              {t("save")}
-            </Button>
-          </div>
-
-          <h2 className="mb-2 text-h4">{t("currentRates")}</h2>
-          <div className="mb-8">
-            <DataTable
-              columns={rateCols}
-              rows={ratesQ.data || []}
-              loading={ratesQ.isFetching}
-              emptyTitle={t("empty")}
-              getRowKey={(r) => r.currency || String(r.id)}
+        <div className="space-y-3">
+          {stripeQ.isLoading ? (
+            <p className="text-body-sm text-ink-muted">{t("loading")}</p>
+          ) : stripeQ.data ? (
+            <StripeSettingsPanel
+              settings={stripeQ.data}
+              saving={stripeMut.isPending}
+              onSave={async (payload) => {
+                await stripeMut.mutateAsync(payload);
+              }}
             />
-          </div>
-
-          <h2 className="mb-2 text-h4">{t("rateHistory")}</h2>
-          <DataTable
-            columns={histCols}
-            rows={historyQ.data || []}
-            loading={historyQ.isFetching}
-            emptyTitle={t("empty")}
-          />
-        </>
+          ) : null}
+        </div>
       )}
     </AdminShell>
   );

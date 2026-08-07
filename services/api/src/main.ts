@@ -12,8 +12,19 @@ async function bootstrap() {
 
   app.setGlobalPrefix('api'); // → /api/auth/*, /api/v1/*
 
-  // 支付宝回调为 form-urlencoded；上传走 multipart（multer）
-  app.use(json({ limit: '2mb' }));
+  // 支付宝回调为 form-urlencoded；上传走 multipart（multer）。
+  // Webhook 路径保留原始 bytes，供 Stripe-Signature HMAC 校验。
+  app.use(
+    json({
+      limit: '2mb',
+      verify: (req: any, _res, buf) => {
+        const url = String(req.originalUrl || req.url || '');
+        if (url.includes('/webhooks/') && Buffer.isBuffer(buf) && buf.length) {
+          req.rawBody = buf;
+        }
+      },
+    }),
+  );
   app.use(urlencoded({ extended: true, limit: '2mb' }));
 
   app.useGlobalPipes(

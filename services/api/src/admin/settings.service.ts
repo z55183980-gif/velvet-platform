@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit.service';
 import { BizException, BizCode } from '../common/biz.exception';
 import { isLockAccessMode } from '../common/lock-access.service';
+import { STRIPE_GATEWAY_SETTING_KEY } from '../payments/stripe-gateway.constants';
 
 const DEFAULT_KEYS: {
   key: string;
@@ -28,6 +29,9 @@ const DEFAULT_KEYS: {
 ];
 
 const ALLOWED_KEYS = new Set(DEFAULT_KEYS.map((d) => d.key));
+/** Keys owned by other admin modules — keep in DB, never list in generic settings UI. */
+const INTERNAL_SETTING_KEYS = new Set([STRIPE_GATEWAY_SETTING_KEY]);
+const PRESERVED_KEYS = new Set([...ALLOWED_KEYS, ...INTERNAL_SETTING_KEYS]);
 
 @Injectable()
 export class SettingsService implements OnModuleInit {
@@ -38,7 +42,7 @@ export class SettingsService implements OnModuleInit {
 
   async onModuleInit() {
     await this.prisma.systemSetting.deleteMany({
-      where: { key: { notIn: [...ALLOWED_KEYS] } },
+      where: { key: { notIn: [...PRESERVED_KEYS] } },
     });
   }
 

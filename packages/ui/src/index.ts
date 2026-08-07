@@ -12,4 +12,5 @@ export {
   DataTable,
   type Column,
 } from "./components";
+export { Switch } from "./switch";
 export { Modal, ConfirmDialog, type ModalProps, type ModalSize } from "./modal";

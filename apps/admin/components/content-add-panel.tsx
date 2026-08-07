@@ -1,164 +1,146 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { LocalUploadWizard } from "@/components/local-upload-wizard";
-import { OnlineDramaForm } from "@/components/online-drama-form";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ConfirmModal, GlassModal } from "@/components/glass-modal";
+import {
+  LocalUploadWizard,
+  type LocalUploadWizardHandle,
+} from "@/components/local-upload-wizard";
 import { YtdlpImportPanel } from "@/components/ytdlp-import-panel";
+import type { DramaInfoFillPayload } from "@/lib/drama-info-fill";
 import { useI18n } from "@/lib/i18n";
+import { useUnsavedNavigationGuard } from "@/lib/use-unsaved-navigation-guard";
 
 /**
- * 本地上传：统一向导（文件 / 文件夹 / 服务器路径）。
- * 在线入库：链接直播 / 转存托管。
+ * 本地上传：统一向导（文件 / 文件夹）。
+ * 在线入库弹窗：解析/粘贴后回填主窗口；主窗口统一提交才真正入库。
  */
 export type ContentAddTab = "owned" | "online";
-export type ContentAddMethod = "stream" | "transfer";
 
 export type ContentAddSelection = {
   tab: ContentAddTab;
-  method: ContentAddMethod;
 };
-
-function defaultOnlineMethod(method: string | null): ContentAddMethod {
-  return method === "transfer" ? "transfer" : "stream";
-}
 
 export function parseContentAddSelection(params: {
   tab: string | null;
-  method: string | null;
+  /** @deprecated ignored — probe-first UI no longer splits by method */
+  method?: string | null;
 }): ContentAddSelection {
   const raw = params.tab;
-  if (raw === "transfer") return { tab: "online", method: "transfer" };
-  if (raw === "online") return { tab: "online", method: defaultOnlineMethod(params.method) };
+  if (raw === "transfer" || raw === "online") return { tab: "online" };
   if (raw === "owned" || raw === "upload" || raw === "local") {
-    return { tab: "owned", method: "stream" };
+    return { tab: "owned" };
   }
-  return { tab: "owned", method: "stream" };
+  return { tab: "owned" };
 }
 
 export function contentAddQuery(sel: ContentAddSelection): string {
-  if (sel.tab === "owned") return "?tab=owned";
-  return sel.method === "transfer" ? "?tab=online&method=transfer" : "?tab=online";
+  return sel.tab === "online" ? "?tab=online" : "?tab=owned";
 }
 
 export function ContentAddPanel({
   tab: controlledTab,
-  method: controlledMethod,
   onSelectionChange,
 }: {
   tab?: ContentAddTab;
-  method?: ContentAddMethod;
+  /** @deprecated ignored */
+  method?: string;
   onSelectionChange?: (sel: ContentAddSelection) => void;
 } = {}) {
   const { t } = useI18n();
+  const wizardRef = useRef<LocalUploadWizardHandle>(null);
   const [tab, setTab] = useState<ContentAddTab>(controlledTab ?? "owned");
-  const [method, setMethod] = useState<ContentAddMethod>(controlledMethod ?? "stream");
-  const [manualOpen, setManualOpen] = useState(false);
+  const [onlineKey, setOnlineKey] = useState(0);
+  const [dirty, setDirty] = useState(false);
+  const dirtyRef = useRef(false);
+
+  const markDirty = useCallback((next: boolean) => {
+    dirtyRef.current = next;
+    setDirty(next);
+  }, []);
+
+  const onlineOpen = tab === "online";
+  const guardEnabled = onlineOpen && dirty;
+  const { confirmOpen, confirmLeave, cancelLeave, requestLeave } =
+    useUnsavedNavigationGuard({
+      enabled: guardEnabled,
+      dirtyRef,
+    });
 
   useEffect(() => {
     if (controlledTab) setTab(controlledTab);
   }, [controlledTab]);
 
-  useEffect(() => {
-    if (controlledMethod) setMethod(controlledMethod);
-  }, [controlledMethod]);
-
-  useEffect(() => {
-    setManualOpen(false);
-  }, [method]);
-
-  function select(next: ContentAddSelection) {
+  function applySelection(next: ContentAddSelection) {
     setTab(next.tab);
-    setMethod(next.method);
     onSelectionChange?.(next);
+  }
+
+  function openOnline() {
+    if (tab === "online") return;
+    applySelection({ tab: "online" });
+  }
+
+  function closeOnline() {
+    if (tab !== "online") return;
+
+    const leave = () => {
+      dirtyRef.current = false;
+      setDirty(false);
+      setOnlineKey((k) => k + 1);
+      applySelection({ tab: "owned" });
+    };
+
+    if (dirtyRef.current) {
+      requestLeave(leave);
+      return;
+    }
+    leave();
+  }
+
+  function fillDramaInfo(payload: DramaInfoFillPayload) {
+    wizardRef.current?.applyDramaInfo(payload);
+    // Meta-only fill keeps the modal open so the user can still Apply episodes.
+    if (!payload.online) return;
+    dirtyRef.current = false;
+    setDirty(false);
+    setOnlineKey((k) => k + 1);
+    applySelection({ tab: "owned" });
   }
 
   return (
     <div>
-      <div className="mb-4" role="tablist" aria-label={t("contentAdd")}>
-        <div className="seg-tabs">
-          {(
-            [
-              ["owned", t("contentOwned")],
-              ["online", t("contentOnlineRef")],
-            ] as const
-          ).map(([key, label]) => (
-            <button
-              key={key}
-              type="button"
-              role="tab"
-              aria-selected={tab === key}
-              className="seg-tabs__item"
-              onClick={() =>
-                select({
-                  tab: key,
-                  method: key === "online" ? (method === "transfer" ? "transfer" : "stream") : "stream",
-                })
-              }
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
+      <LocalUploadWizard ref={wizardRef} onRequestOnline={openOnline} />
 
-      {tab === "owned" ? (
-        <LocalUploadWizard />
-      ) : (
-        <div className="space-y-4">
+      <GlassModal
+        open={onlineOpen}
+        onClose={closeOnline}
+        title={t("contentOnlineRef")}
+        size="2xl"
+      >
+        <div className="space-y-3">
           <p className="text-body-sm text-ink-muted">{t("contentAddOnlineRefHint")}</p>
-          <div className="seg-tabs" role="tablist" aria-label={t("contentOnlineMethods")}>
-            {(
-              [
-                ["stream", t("contentOnlineStream")],
-                ["transfer", t("contentOnlineTransfer")],
-              ] as const
-            ).map(([key, label]) => (
-              <button
-                key={key}
-                type="button"
-                role="tab"
-                aria-selected={method === key}
-                className="seg-tabs__item"
-                onClick={() => select({ tab: "online", method: key })}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <p className="text-caption text-ink-muted">
-            {method === "transfer" ? t("contentOnlineTransferLead") : t("contentOnlineStreamLead")}
-          </p>
-
-          {method === "transfer" ? (
-            <YtdlpImportPanel mode="transfer" />
-          ) : (
-            <div className="space-y-6">
-              <YtdlpImportPanel mode="import" />
-              <div className="border-t border-line pt-4">
-                <button
-                  type="button"
-                  className="flex w-full items-center justify-between gap-2 text-left"
-                  onClick={() => setManualOpen((v) => !v)}
-                  aria-expanded={manualOpen}
-                >
-                  <div>
-                    <h3 className="text-h4 font-semibold">{t("onlineManualTitle")}</h3>
-                    <p className="text-body-sm text-ink-muted">{t("onlineManualHint")}</p>
-                  </div>
-                  <span className="shrink-0 text-ink-muted" aria-hidden>
-                    {manualOpen ? "▾" : "▸"}
-                  </span>
-                </button>
-                {manualOpen ? (
-                  <div className="mt-4">
-                    <OnlineDramaForm />
-                  </div>
-                ) : null}
-              </div>
-            </div>
-          )}
+          {onlineOpen ? (
+            <YtdlpImportPanel
+              key={onlineKey}
+              embedded
+              onDirtyChange={markDirty}
+              onFillDramaInfo={fillDramaInfo}
+            />
+          ) : null}
         </div>
-      )}
+      </GlassModal>
+
+      <ConfirmModal
+        open={confirmOpen}
+        onClose={cancelLeave}
+        onConfirm={confirmLeave}
+        title={t("unsavedChanges")}
+        message={t("confirmLeaveUnsavedInput")}
+        cancelLabel={t("stayEditing")}
+        confirmLabel={t("leaveAnyway")}
+        confirmVariant="danger"
+      />
     </div>
   );
 }

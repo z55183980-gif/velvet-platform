@@ -6,8 +6,10 @@ import {
   Param,
   Post,
   Query,
+  Req,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
+import type { Request } from 'express';
 import { PaymentsService } from './payments.service';
 import { ok } from '../common/response';
 import { IsNotEmpty, IsString } from 'class-validator';
@@ -38,20 +40,25 @@ export class PaymentsController {
   }
 
   /**
-   * 通用 Webhook 入口。生产部署时请根据渠道（alipay / wechat / stripe …）
-   * 实现各自的签名校验与字段解析，统一走 `handleWebhook(provider, payload)`。
-   * 开源版仅保留抽象骨架，所有渠道共用共享密钥校验（见 assertWebhookAuth）。
+   * 通用 Webhook 入口。
+   * Stripe：优先用 Stripe-Signature + raw body 验签，并尊重管理端网关 enabled/事件配置。
+   * 其他渠道：x-webhook-secret / 共享 WEBHOOK_SECRET。
    */
   @Post('webhooks/:provider')
   @Throttle({ webhook: { limit: 30, ttl: 60_000 } })
   async webhook(
     @Param('provider') provider: string,
     @Body() payload: any,
+    @Req() req: Request & { rawBody?: Buffer },
     @Headers('x-webhook-secret') webhookSecret?: string,
     @Headers('stripe-signature') stripeSignature?: string,
   ) {
-    const secret = webhookSecret || stripeSignature;
-    this.payments.assertWebhookAuth(provider, secret);
-    return ok(await this.payments.handleWebhook(provider, payload));
+    return ok(
+      await this.payments.handleWebhook(provider, payload, {
+        webhookSecret,
+        stripeSignature,
+        rawBody: req.rawBody,
+      }),
+    );
   }
 }

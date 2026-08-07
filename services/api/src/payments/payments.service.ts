@@ -5,6 +5,12 @@ import { WalletService } from '../wallet/wallet.service';
 import { PAYMENT_PROVIDERS, ParsedWebhook } from './provider.interface';
 import { BizException, BizCode } from '../common/biz.exception';
 import { StructuredLogger } from '../common/structured-logger.service';
+import {
+  loadStripeGatewayConfig,
+  parseStripeWebhookPayload,
+  resolveStripeWebhookSecrets,
+  verifyStripeSignature,
+} from './stripe-gateway.runtime';
 
 /** provider 路径参数 → Order.paymentMethod */
 const PROVIDER_TO_METHOD: Record<string, string> = {
@@ -18,9 +24,26 @@ const PROVIDER_TO_METHOD: Record<string, string> = {
   bank: 'BANK_TRANSFER',
 };
 
+const PAID_STATUSES = new Set(['paid', 'success', 'trade_success', 'completed']);
+
+/** Stripe event types that indicate a successful payment for order credit. */
+const STRIPE_PAID_EVENT_TYPES = new Set([
+  'checkout.session.completed',
+  'invoice.payment_succeeded',
+  'invoice_payment.paid',
+  'payment_intent.succeeded',
+  'charge.succeeded',
+]);
+
+export type WebhookAuthContext = {
+  stripeSignature?: string;
+  webhookSecret?: string;
+  rawBody?: Buffer;
+};
+
 @Injectable()
 export class PaymentsService {
-  private readonly webhookSecret: string;
+  private readonly sharedWebhookSecret: string;
 
   constructor(
     private readonly wallet: WalletService,
@@ -28,18 +51,23 @@ export class PaymentsService {
     private readonly log: StructuredLogger,
     config: ConfigService,
   ) {
-    this.webhookSecret =
+    this.sharedWebhookSecret =
       config.get<string>('WEBHOOK_SECRET') ||
       (process.env.NODE_ENV === 'production' ? '' : 'dev-webhook');
   }
 
   /**
-   * 校验非 alipay webhook 的共享密钥。
-   * 生产：必须配置 WEBHOOK_SECRET 且 header 匹配。
-   * 非生产：默认密钥 `dev-webhook`（可用 WEBHOOK_SECRET 覆盖）。
+   * Shared-key auth for non-Stripe channels.
+   * Prefer live `process.env.WEBHOOK_SECRET` so admin/env updates apply without restart
+   * on the current worker; fall back to boot-time value.
    */
+  private sharedSecret(): string {
+    return (process.env.WEBHOOK_SECRET || '').trim() || this.sharedWebhookSecret;
+  }
+
   assertWebhookAuth(provider: string, secretHeader?: string) {
-    if (!this.webhookSecret) {
+    const secret = this.sharedSecret();
+    if (!secret) {
       this.log.warn({
         event: 'webhook.auth.missing_secret',
         provider,
@@ -49,7 +77,7 @@ export class PaymentsService {
         'Webhook secret not configured',
       );
     }
-    if (!secretHeader || secretHeader !== this.webhookSecret) {
+    if (!secretHeader || secretHeader !== secret) {
       this.log.warn({
         event: 'webhook.auth.invalid',
         provider,
@@ -59,9 +87,79 @@ export class PaymentsService {
     }
   }
 
+  private isProduction(): boolean {
+    const env = (process.env.NODE_ENV || '').trim().toLowerCase();
+    return env === 'production';
+  }
+
+  private async assertStripeWebhookAuth(ctx: WebhookAuthContext, storeSecret: string) {
+    const secrets = resolveStripeWebhookSecrets(storeSecret);
+    if (!secrets.length) {
+      this.log.warn({ event: 'webhook.auth.missing_secret', provider: 'stripe' });
+      throw new BizException(BizCode.FORBIDDEN, 'Stripe webhook secret not configured');
+    }
+
+    const sig = (ctx.stripeSignature || '').trim();
+    if (sig) {
+      if (!ctx.rawBody?.length) {
+        this.log.warn({
+          event: 'webhook.auth.invalid',
+          provider: 'stripe',
+          mode: 'missing_raw_body',
+        });
+        throw new BizException(
+          BizCode.BAD_REQUEST,
+          'Stripe-Signature present but raw body unavailable for verification',
+        );
+      }
+      if (!verifyStripeSignature(ctx.rawBody, sig, secrets)) {
+        this.log.warn({
+          event: 'webhook.auth.invalid',
+          provider: 'stripe',
+          mode: 'stripe_signature',
+          hasSecret: true,
+        });
+        throw new BizException(BizCode.UNAUTHORIZED, 'Invalid Stripe webhook signature');
+      }
+      return;
+    }
+
+    // Shared-secret fallback is for local/dev only. Production Stripe must send Stripe-Signature.
+    if (this.isProduction()) {
+      this.log.warn({
+        event: 'webhook.auth.invalid',
+        provider: 'stripe',
+        mode: 'missing_stripe_signature',
+      });
+      throw new BizException(BizCode.UNAUTHORIZED, 'Stripe-Signature header required');
+    }
+
+    const header = (ctx.webhookSecret || '').trim();
+    const legacy = this.sharedSecret();
+    const accepted = [...secrets];
+    if (legacy && !accepted.includes(legacy)) accepted.push(legacy);
+    if (!header || !accepted.includes(header)) {
+      this.log.warn({
+        event: 'webhook.auth.invalid',
+        provider: 'stripe',
+        mode: 'shared_secret',
+        hasSecret: !!header,
+      });
+      throw new BizException(BizCode.UNAUTHORIZED, 'Invalid webhook signature');
+    }
+  }
+
   /** 处理渠道回调（幂等：eventId 去重 + creditOnPaid 内部防重） */
-  async handleWebhook(provider: string, payload: any) {
+  async handleWebhook(provider: string, payload: any, ctx: WebhookAuthContext = {}) {
+    const providerKey = String(provider || '').toLowerCase();
     const t0 = Date.now();
+
+    if (providerKey === 'stripe') {
+      return this.handleStripeWebhook(payload, ctx, t0);
+    }
+
+    this.assertWebhookAuth(providerKey, ctx.webhookSecret || ctx.stripeSignature);
+
     const eventId =
       payload?.id ||
       payload?.event_id ||
@@ -71,14 +169,63 @@ export class PaymentsService {
       null;
 
     try {
+      return await this.creditFromWebhook(providerKey, payload, eventId, t0);
+    } catch (e: any) {
+      this.log.error({
+        event: 'webhook.failed',
+        provider: providerKey,
+        eventId,
+        latencyMs: Date.now() - t0,
+        message: e?.message || String(e),
+        bizCode: e?.bizCode,
+      });
+      throw e;
+    }
+  }
+
+  private async handleStripeWebhook(payload: any, ctx: WebhookAuthContext, t0: number) {
+    const gateway = await loadStripeGatewayConfig(this.prisma);
+    await this.assertStripeWebhookAuth(ctx, gateway.webhook_signing_secret);
+
+    const parsedStripe = parseStripeWebhookPayload(payload);
+    const eventId = parsedStripe.eventId;
+    const eventType = parsedStripe.eventType;
+
+    // Match zai: after signature ok, honor admin enable + event allowlist.
+    if (gateway.enabled === false && String(gateway.webhook_endpoint_url || '').trim()) {
+      this.log.log({
+        event: 'webhook.skipped',
+        provider: 'stripe',
+        reason: 'gateway_disabled',
+        eventId,
+        eventType,
+        latencyMs: Date.now() - t0,
+      });
+      return { received: true, skipped: true, gateway_disabled: true };
+    }
+    if (gateway.enabled_events?.length) {
+      if (!eventType || !gateway.enabled_events.includes(eventType)) {
+        this.log.log({
+          event: 'webhook.skipped',
+          provider: 'stripe',
+          reason: 'event_disabled',
+          eventId,
+          eventType,
+          latencyMs: Date.now() - t0,
+        });
+        return { received: true, skipped: true, event_disabled: true };
+      }
+    }
+
+    try {
       if (eventId) {
         const existed = await this.prisma.webhookEvent.findUnique({
-          where: { provider_eventId: { provider, eventId: String(eventId) } },
+          where: { provider_eventId: { provider: 'stripe', eventId: String(eventId) } },
         });
         if (existed) {
           this.log.log({
             event: 'webhook.replay.ignored',
-            provider,
+            provider: 'stripe',
             eventId: String(eventId),
             orderNo: existed.orderNo,
             latencyMs: Date.now() - t0,
@@ -87,52 +234,82 @@ export class PaymentsService {
         }
       }
 
-      const p = PAYMENT_PROVIDERS[provider];
-      if (!p) {
-        this.log.warn({ event: 'webhook.provider.unknown', provider });
-        throw new BizException(BizCode.BAD_REQUEST, 'Kênh thanh toán không hỗ trợ');
-      }
-      const parsed: ParsedWebhook | null = p.parse(payload);
-      if (!parsed) {
-        this.log.log({ event: 'webhook.parse.ignored', provider, reason: 'no_orderNo' });
-        return { received: true, ignored: true };
-      }
-      const status = String(payload?.status || payload?.trade_status || 'paid').toLowerCase();
-      if (!['paid', 'success', 'trade_success', 'completed'].includes(status)) {
+      // Non-payment / non-creditable event types: acknowledge after allowlist check.
+      if (eventType && !STRIPE_PAID_EVENT_TYPES.has(eventType) && !payload?.orderNo) {
         this.log.log({
           event: 'webhook.parse.ignored',
-          provider,
-          orderNo: parsed.orderNo,
+          provider: 'stripe',
+          eventId,
+          eventType,
+          reason: 'non_paid_event',
+          latencyMs: Date.now() - t0,
+        });
+        return { received: true, ignored: true, reason: 'non_paid_event' };
+      }
+
+      if (!parsedStripe.orderNo) {
+        this.log.log({
+          event: 'webhook.parse.ignored',
+          provider: 'stripe',
+          eventId,
+          eventType,
+          reason: 'no_orderNo',
+          latencyMs: Date.now() - t0,
+        });
+        return { received: true, ignored: true };
+      }
+
+      const status = String(payload?.status || payload?.trade_status || 'paid').toLowerCase();
+      if (payload?.orderNo && !PAID_STATUSES.has(status)) {
+        this.log.log({
+          event: 'webhook.parse.ignored',
+          provider: 'stripe',
+          orderNo: parsedStripe.orderNo,
           reason: `status=${status}`,
         });
         return { received: true, ignored: true, reason: 'status_not_paid' };
       }
 
-      await this.assertProviderMatchesOrder(provider, parsed.orderNo);
-      const result = await this.wallet.creditOnPaid(parsed.orderNo, {
-        externalRef: parsed.externalRef,
-        payAmount: parsed.payAmount,
-        currency: parsed.currency,
+      // Stripe Checkout may leave payment_status unpaid on some event edges.
+      const paymentStatus = String(payload?.data?.object?.payment_status || '').toLowerCase();
+      if (paymentStatus && paymentStatus !== 'paid' && eventType === 'checkout.session.completed') {
+        this.log.log({
+          event: 'webhook.parse.ignored',
+          provider: 'stripe',
+          orderNo: parsedStripe.orderNo,
+          reason: `payment_status=${paymentStatus}`,
+        });
+        return { received: true, ignored: true, reason: 'payment_status_not_paid' };
+      }
+
+      await this.assertProviderMatchesOrder('stripe', parsedStripe.orderNo);
+      // Do not overwrite order.payAmount from Stripe minor-unit fields.
+      // Flat dev payloads may still carry major-unit payAmount.
+      const result = await this.wallet.creditOnPaid(parsedStripe.orderNo, {
+        externalRef: parsedStripe.externalRef,
+        currency: parsedStripe.currency,
+        ...(parsedStripe.fromFlatPayload && parsedStripe.payAmountMajor != null
+          ? { payAmount: parsedStripe.payAmountMajor }
+          : {}),
       });
 
       if (eventId) {
         try {
           await this.prisma.webhookEvent.create({
             data: {
-              provider,
+              provider: 'stripe',
               eventId: String(eventId),
-              orderNo: parsed.orderNo,
+              orderNo: parsedStripe.orderNo,
               payload: payload as any,
             },
           });
         } catch (e: any) {
-          // 并发重放：唯一约束冲突 → 视为已处理
           if (e?.code === 'P2002') {
             this.log.log({
               event: 'webhook.replay.ignored',
-              provider,
+              provider: 'stripe',
               eventId: String(eventId),
-              orderNo: parsed.orderNo,
+              orderNo: parsedStripe.orderNo,
               latencyMs: Date.now() - t0,
             });
             return { received: true, duplicate: true, eventId: String(eventId) };
@@ -143,9 +320,10 @@ export class PaymentsService {
 
       this.log.log({
         event: 'webhook.handled',
-        provider,
-        orderNo: parsed.orderNo,
+        provider: 'stripe',
+        orderNo: parsedStripe.orderNo,
         eventId,
+        eventType,
         latencyMs: Date.now() - t0,
         alreadyPaid: (result as any)?.alreadyPaid ?? false,
       });
@@ -153,14 +331,101 @@ export class PaymentsService {
     } catch (e: any) {
       this.log.error({
         event: 'webhook.failed',
-        provider,
+        provider: 'stripe',
         eventId,
+        eventType,
         latencyMs: Date.now() - t0,
         message: e?.message || String(e),
         bizCode: e?.bizCode,
       });
       throw e;
     }
+  }
+
+  private async creditFromWebhook(
+    provider: string,
+    payload: any,
+    eventId: string | null,
+    t0: number,
+  ) {
+    if (eventId) {
+      const existed = await this.prisma.webhookEvent.findUnique({
+        where: { provider_eventId: { provider, eventId: String(eventId) } },
+      });
+      if (existed) {
+        this.log.log({
+          event: 'webhook.replay.ignored',
+          provider,
+          eventId: String(eventId),
+          orderNo: existed.orderNo,
+          latencyMs: Date.now() - t0,
+        });
+        return { received: true, duplicate: true, eventId: String(eventId) };
+      }
+    }
+
+    const p = PAYMENT_PROVIDERS[provider];
+    if (!p) {
+      this.log.warn({ event: 'webhook.provider.unknown', provider });
+      throw new BizException(BizCode.BAD_REQUEST, 'Kênh thanh toán không hỗ trợ');
+    }
+    const parsed: ParsedWebhook | null = p.parse(payload);
+    if (!parsed) {
+      this.log.log({ event: 'webhook.parse.ignored', provider, reason: 'no_orderNo' });
+      return { received: true, ignored: true };
+    }
+    const status = String(payload?.status || payload?.trade_status || 'paid').toLowerCase();
+    if (!PAID_STATUSES.has(status)) {
+      this.log.log({
+        event: 'webhook.parse.ignored',
+        provider,
+        orderNo: parsed.orderNo,
+        reason: `status=${status}`,
+      });
+      return { received: true, ignored: true, reason: 'status_not_paid' };
+    }
+
+    await this.assertProviderMatchesOrder(provider, parsed.orderNo);
+    const result = await this.wallet.creditOnPaid(parsed.orderNo, {
+      externalRef: parsed.externalRef,
+      payAmount: parsed.payAmount,
+      currency: parsed.currency,
+    });
+
+    if (eventId) {
+      try {
+        await this.prisma.webhookEvent.create({
+          data: {
+            provider,
+            eventId: String(eventId),
+            orderNo: parsed.orderNo,
+            payload: payload as any,
+          },
+        });
+      } catch (e: any) {
+        if (e?.code === 'P2002') {
+          this.log.log({
+            event: 'webhook.replay.ignored',
+            provider,
+            eventId: String(eventId),
+            orderNo: parsed.orderNo,
+            latencyMs: Date.now() - t0,
+          });
+          return { received: true, duplicate: true, eventId: String(eventId) };
+        }
+        throw e;
+      }
+    }
+
+    this.log.log({
+      event: 'webhook.handled',
+      provider,
+      orderNo: parsed.orderNo,
+      eventId,
+      latencyMs: Date.now() - t0,
+      alreadyPaid: (result as any)?.alreadyPaid ?? false,
+    });
+    return { received: true, ...result };
   }
 
   /** 开发态模拟支付成功（替代真实渠道 webhook） */

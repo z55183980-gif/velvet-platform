@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { X, Loader2, Check, Crown, Clapperboard, Infinity, Ticket } from "lucide-react";
+import { X, Loader2, Check, Crown, Clapperboard, MonitorPlay } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { useAuth } from "@/components/auth-context";
 import {
@@ -15,8 +15,17 @@ import { cn, formatUsd } from "@/lib/utils";
 import { track } from "@/lib/track";
 
 const PAY_CURRENCY = "USD";
+const DEFAULT_BENEFITS = ["Unlimited Viewing", "1080p High Quality"];
 
 type PayMethod = "STRIPE" | "SIMULATE";
+
+function benefitIcon(text: string) {
+  const lower = text.toLowerCase();
+  if (lower.includes("1080") || lower.includes("quality") || lower.includes("画质")) {
+    return MonitorPlay;
+  }
+  return Clapperboard;
+}
 
 export function VipModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { t, locale } = useLocale();
@@ -88,12 +97,6 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
     }
   }
 
-  const benefits = [
-    { icon: Clapperboard, text: t("vip.benefitWatch") },
-    { icon: Infinity, text: t("vip.benefitNoCredits") },
-    { icon: Ticket, text: t("vip.benefitStack") },
-  ];
-
   return (
     <div className="fixed inset-0 z-[80] flex items-end justify-center p-0 sm:items-center sm:p-4">
       <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => !busy && onClose()} />
@@ -114,7 +117,7 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
           </button>
           <div className="flex items-center gap-2">
             <span className="grid h-9 w-9 place-items-center rounded-full bg-gold/20 text-gold">
-              <Crown className="h-4.5 w-4.5 h-[18px] w-[18px]" />
+              <Crown className="h-[18px] w-[18px]" />
             </span>
             <div>
               <p className="text-overline uppercase tracking-widest text-gold">{t("vip.title")}</p>
@@ -143,18 +146,6 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
           </div>
         ) : (
           <div className="space-y-5 px-6 pb-6">
-            <ul className="grid gap-2">
-              {benefits.map(({ icon: Icon, text }) => (
-                <li
-                  key={text}
-                  className="flex items-center gap-2.5 rounded-lg bg-surface-2/80 px-3 py-2 text-body-sm text-ink-muted"
-                >
-                  <Icon className="h-4 w-4 shrink-0 text-gold" />
-                  <span>{text}</span>
-                </li>
-              ))}
-            </ul>
-
             <div>
               <label className="text-caption uppercase text-ink-subtle">{t("vip.plans")}</label>
               {loading ? (
@@ -162,40 +153,61 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
               ) : plans.length === 0 ? (
                 <p className="mt-3 text-body-sm text-ink-muted">{t("vip.emptyPlans")}</p>
               ) : (
-                <div className="mt-3 grid gap-2.5">
+                <div className="mt-3 grid gap-3">
                   {plans.map((p) => {
                     const active = p.id === planId;
+                    const original = p.originalPrice != null ? Number(p.originalPrice) : null;
+                    const price = Number(p.payAmount || p.basePrice || 0);
+                    const benefits =
+                      Array.isArray(p.benefits) && p.benefits.length > 0
+                        ? p.benefits
+                        : DEFAULT_BENEFITS;
                     return (
                       <button
                         key={p.id}
                         type="button"
                         onClick={() => setPlanId(p.id)}
                         className={cn(
-                          "relative flex items-center justify-between gap-3 rounded-xl px-4 py-3.5 text-left transition-all",
+                          "relative overflow-hidden rounded-2xl px-4 py-4 text-left transition-all",
                           active
-                            ? "bg-brand/15 ring-2 ring-brand"
-                            : "bg-surface-2 hover:bg-surface-3",
+                            ? "bg-gradient-to-br from-[#f6e7c8] to-[#efe0b8] ring-2 ring-gold shadow-md"
+                            : "bg-gradient-to-br from-[#f8f1df]/90 to-[#f3e7c8]/80 hover:brightness-[1.02]",
                         )}
                       >
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-semibold text-ink">
-                              {p.name || t("vip.days", { n: String(p.durationDays) })}
+                        {p.badge?.trim() ? (
+                          <span className="absolute right-0 top-0 rounded-bl-xl bg-danger px-2.5 py-1 text-[10px] font-bold tracking-wide text-white">
+                            {p.badge.trim()}
+                          </span>
+                        ) : null}
+                        <p className="pr-16 text-body font-semibold text-[#5b4a2a]">
+                          {p.name || t("vip.days", { n: String(p.durationDays) })}
+                        </p>
+                        <div className="mt-2 flex items-end gap-2">
+                          <span className="text-h2 font-bold tabular-nums text-[#8a2a1a]">
+                            {formatUsd(price)}
+                          </span>
+                          {original != null && Number.isFinite(original) && original > price ? (
+                            <span className="mb-1 text-body-sm tabular-nums text-[#9a8970] line-through">
+                              {formatUsd(original)}
                             </span>
-                            {p.badge ? (
-                              <span className="rounded-full bg-gold/20 px-2 py-0.5 text-caption font-medium text-gold">
-                                {p.badge}
-                              </span>
-                            ) : null}
-                          </div>
-                          <p className="mt-0.5 text-caption text-ink-muted">
-                            {t("vip.days", { n: String(p.durationDays) })}
-                          </p>
+                          ) : null}
                         </div>
-                        <div className="shrink-0 text-right">
-                          <p className="text-h4 font-bold tabular-nums text-gold">
-                            {formatUsd(Number(p.payAmount || 0))}
-                          </p>
+                        <p className="mt-2 text-caption leading-5 text-[#7a6848]">
+                          {p.desc || p.descEn || t("vip.renewHint")}
+                        </p>
+                        <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 border-t border-[#d9c69a]/70 pt-3">
+                          {benefits.slice(0, 4).map((text) => {
+                            const Icon = benefitIcon(text);
+                            return (
+                              <span
+                                key={text}
+                                className="inline-flex items-center gap-1.5 text-[11px] font-medium text-[#6d5a3a]"
+                              >
+                                <Icon className="h-3.5 w-3.5 text-[#8a2a1a]" />
+                                {text}
+                              </span>
+                            );
+                          })}
                         </div>
                       </button>
                     );
@@ -224,26 +236,21 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
               </div>
             ) : null}
 
-            {err ? <p className="text-body-sm text-danger">{err}</p> : null}
-
             <button
               type="button"
-              disabled={busy || !selected || loading}
               onClick={confirm}
-              className={cn(buttonVariants({ size: "lg" }), "w-full gap-2")}
+              disabled={busy || !selected || loading}
+              className={cn(buttonVariants({ variant: "gold", size: "lg" }), "w-full")}
             >
               {busy ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
+              ) : isActiveVip ? (
+                t("vip.renew")
               ) : (
-                <Crown className="h-4 w-4" />
+                t("vip.confirm")
               )}
-              {isActiveVip ? t("vip.renew") : t("vip.confirm")}
-              {selected ? (
-                <span className="ml-1 tabular-nums opacity-90">
-                  · {formatUsd(payAmount)}
-                </span>
-              ) : null}
             </button>
+            {err && <p className="text-body-sm text-danger">{err}</p>}
           </div>
         )}
       </div>

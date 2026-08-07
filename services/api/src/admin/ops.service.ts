@@ -119,6 +119,9 @@ export class AdminOpsService {
       lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE' | 'INHERIT' | null;
       priceCredits?: number | string;
       buyoutCredits?: number | string | null;
+      isFeatured?: boolean;
+      isOfficial?: boolean;
+      sortWeight?: number;
     },
     actorId?: bigint | null,
   ) {
@@ -155,6 +158,15 @@ export class AdminOpsService {
         data.buyoutCredits = c;
       }
     }
+    if (dto.isFeatured !== undefined) data.isFeatured = !!dto.isFeatured;
+    if (dto.isOfficial !== undefined) data.isOfficial = !!dto.isOfficial;
+    if (dto.sortWeight !== undefined) {
+      const w = Math.floor(Number(dto.sortWeight));
+      if (!Number.isFinite(w)) {
+        throw new BizException(BizCode.BAD_REQUEST, 'sortWeight không hợp lệ');
+      }
+      data.sortWeight = w;
+    }
 
     let dramasUpdated = 0;
     let episodesUpdated = 0;
@@ -186,6 +198,9 @@ export class AdminOpsService {
         lockMode: dto.lockMode,
         priceCredits: dto.priceCredits != null ? String(dto.priceCredits) : undefined,
         buyoutCredits: dto.buyoutCredits != null ? String(dto.buyoutCredits) : undefined,
+        isFeatured: dto.isFeatured,
+        isOfficial: dto.isOfficial,
+        sortWeight: dto.sortWeight,
         dramasUpdated,
         episodesUpdated,
       },

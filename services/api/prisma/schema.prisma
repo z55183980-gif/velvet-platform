@@ -350,6 +350,45 @@ model MediaTranscodeJob {
   @@map("media_transcode_jobs")
 }
 
+enum YtdlpTransferJobStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+/// yt-dlp 转存编排任务；API 重启后 QUEUED/RUNNING 会恢复下载（已成功集跳过）。
+model YtdlpTransferJob {
+  id             String                 @id @default(uuid())
+  dramaId        BigInt
+  slug           String
+  status         YtdlpTransferJobStatus @default(QUEUED)
+  target         String
+  preferR2       Boolean                @default(false)
+  total          Int
+  transferred    Int                    @default(0)
+  currentEpisode Int?
+  failedEpisodes Json                   @default("[]")
+  jobs           Json                   @default("[]")
+  /// Resume payload: selected episodes + preference + actorId
+  payload        Json
+  previewUrl     String?
+  extractor      String?
+  kind           String?
+  externalRef    String?
+  sourceType     String?
+  error          String?
+  attempts       Int                    @default(0)
+  createdAt      DateTime               @default(now()) @db.Timestamptz
+  startedAt      DateTime?              @db.Timestamptz
+  finishedAt     DateTime?              @db.Timestamptz
+  updatedAt      DateTime               @updatedAt
+
+  @@index([status, createdAt])
+  @@index([dramaId])
+  @@map("ytdlp_transfer_jobs")
+}
+
 // ========== 用户解锁记录 ==========
 model UserUnlock {
   id            BigInt      @id @default(autoincrement())
@@ -614,11 +653,18 @@ enum WithdrawStatus {
 model TopupPackage {
   id            BigInt    @id @default(autoincrement())
   name          String?
-  credits       BigInt                              // 到账积分
+  /// 立即到账积分（必填）
+  baseCredits   BigInt
+  /// 额外赠送积分（可选，默认 0）
+  bonusCredits  BigInt    @default(0)
+  /// 实际到账总计 = baseCredits + bonusCredits（钱包入账用）
+  credits       BigInt
   baseCurrency  String    @default("USD")           // 基准币，固定 USD
   basePrice     Decimal   @db.Decimal(18, 2)        // USD 价格
   sortOrder     Int       @default(0)
   active        Boolean   @default(true)
+  /// 展示角标，如「+15%」「热门」
+  badge         String?
   createdAt     DateTime  @default(now()) @db.Timestamptz
   updatedAt     DateTime  @updatedAt
 
@@ -637,10 +683,20 @@ model VipPlan {
   nameFr        String?
   durationDays  Int                                 // 有效天数
   baseCurrency  String    @default("USD")
+  /// 当前售价（必填）
   basePrice     Decimal   @db.Decimal(18, 2)
+  /// 划线原价（选填，仅展示）
+  originalPrice Decimal?  @db.Decimal(18, 2)
   sortOrder     Int       @default(0)
   active        Boolean   @default(true)
-  badge         String?                             // 展示角标，如「推荐」
+  /// 角标，如「54% OFF」「Popular」（选填）
+  badge         String?
+  /// 订阅说明文案（必填）：如 Auto-renew / 首周优惠说明
+  descEn        String    @default("Auto-renew. Cancel anytime.")
+  descZh        String?
+  descFr        String?
+  /// 权益列表（必填）：JSON string[]，如 ["Unlimited Viewing","1080p High Quality"]
+  benefits      Json      @default("[\"Unlimited Viewing\", \"1080p High Quality\"]")
   createdAt     DateTime  @default(now()) @db.Timestamptz
   updatedAt     DateTime  @updatedAt
 
@@ -721,36 +777,6 @@ model RedeemRedemption {
   @@index([userId, createdAt(sort: Desc)])
   @@index([codeId])
   @@map("redeem_redemptions")
-}
-
-/// 法币相对人民币汇率。
-/// buyRate 语义（套餐定价）：cnyToFiat = 1 CNY 等于多少该币种（CNY 自身为 1）。
-/// sellRate 预留（退款等），默认可与 buyRate 相同。
-model CreditExchangeRate {
-  id        BigInt    @id @default(autoincrement())
-  currency  String    @unique                         // VND | CNY | USD ...
-  buyRate   Decimal   @db.Decimal(18, 8)              // cnyToFiat：1 CNY = N 该币
-  sellRate  Decimal   @db.Decimal(18, 8)              // 预留
-  updatedAt DateTime  @updatedAt
-
-  @@map("credit_exchange_rates")
-}
-
-/// 汇率变更历史（合规审计；admin 修改即写一行）
-model ExchangeRateHistory {
-  id           BigInt    @id @default(autoincrement())
-  currency     String
-  prevBuyRate  Decimal?  @db.Decimal(18, 8)
-  prevSellRate Decimal?  @db.Decimal(18, 8)
-  newBuyRate   Decimal   @db.Decimal(18, 8)
-  newSellRate  Decimal   @db.Decimal(18, 8)
-  actorId      BigInt?
-  reason       String?
-  createdAt    DateTime  @default(now()) @db.Timestamptz
-
-  @@index([currency, createdAt(sort: Desc)])
-  @@index([actorId, createdAt(sort: Desc)])
-  @@map("exchange_rate_histories")
 }
 
 model SystemSetting {

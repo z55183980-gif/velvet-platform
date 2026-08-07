@@ -595,6 +595,9 @@ export async function adminBatchDramas(body: {
   lockMode?: "FREE_FIRST_N" | "VIP_ALL" | "ALL_FREE" | "INHERIT" | null;
   priceCredits?: number;
   buyoutCredits?: number | null;
+  isFeatured?: boolean;
+  isOfficial?: boolean;
+  sortWeight?: number;
 }) {
   return adminRequest("/admin/dramas/batch", { method: "PATCH", body: JSON.stringify(body) });
 }
@@ -606,7 +609,9 @@ export async function adminBatchDramaLifecycle(body: {
 }) {
   return adminRequest<{
     action: "offline" | "online" | "delete";
+    requested: number;
     updated: number;
+    skipped: number;
     failed: { id: string; error: string }[];
   }>("/admin/dramas/batch-lifecycle", {
     method: "POST",
@@ -802,18 +807,6 @@ export async function adminWalletAdjust(
   });
 }
 
-export async function adminListRates() {
-  return adminRequest("/admin/exchange-rates");
-}
-
-export async function adminSetRate(body: {
-  currency: string;
-  cnyToFiat: number;
-  sellRate?: number;
-}) {
-  return adminRequest("/admin/exchange-rates", { method: "POST", body: JSON.stringify(body) });
-}
-
 export async function adminListVipPlans() {
   return adminRequest("/admin/vip-plans");
 }
@@ -824,8 +817,13 @@ export async function adminCreateVipPlan(body: {
   nameFr?: string;
   durationDays: number;
   basePrice: number;
+  originalPrice?: number | null;
   sortOrder?: number;
   badge?: string;
+  descEn: string;
+  descZh?: string;
+  descFr?: string;
+  benefits?: string[];
   active?: boolean;
 }) {
   return adminRequest("/admin/vip-plans", { method: "POST", body: JSON.stringify(body) });
@@ -839,12 +837,59 @@ export async function adminUpdateVipPlan(
     nameFr: string;
     durationDays: number;
     basePrice: number;
+    originalPrice: number | null;
+    sortOrder: number;
+    badge: string;
+    descEn: string;
+    descZh: string;
+    descFr: string;
+    benefits: string[];
+    active: boolean;
+  }>,
+) {
+  return adminRequest(`/admin/vip-plans/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+export async function adminDeleteVipPlan(id: string) {
+  return adminRequest(`/admin/vip-plans/${id}`, { method: "DELETE" });
+}
+
+export async function adminListTopupPackages() {
+  return adminRequest("/admin/topup-packages");
+}
+
+export async function adminCreateTopupPackage(body: {
+  name?: string;
+  baseCredits: number;
+  bonusCredits?: number;
+  basePrice: number;
+  sortOrder?: number;
+  badge?: string;
+  active?: boolean;
+}) {
+  return adminRequest("/admin/topup-packages", { method: "POST", body: JSON.stringify(body) });
+}
+
+export async function adminUpdateTopupPackage(
+  id: string,
+  body: Partial<{
+    name: string;
+    baseCredits: number;
+    bonusCredits: number;
+    basePrice: number;
     sortOrder: number;
     badge: string;
     active: boolean;
   }>,
 ) {
-  return adminRequest(`/admin/vip-plans/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+  return adminRequest(`/admin/topup-packages/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function adminDeleteTopupPackage(id: string) {
+  return adminRequest(`/admin/topup-packages/${id}`, { method: "DELETE" });
 }
 
 export async function adminListRedeemBatches(page = 1, pageSize = 20) {
@@ -910,6 +955,55 @@ export async function adminListSettings() {
 
 export async function adminUpdateSetting(key: string, value: unknown) {
   return adminRequest("/admin/settings", { method: "POST", body: JSON.stringify({ key, value }) });
+}
+
+export type StripePaymentGatewaySettings = {
+  provider: "stripe";
+  enabled: boolean;
+  secret_key_env: string;
+  webhook_secret_env?: string;
+  secret_key_masked: string;
+  webhook_endpoint_url: string;
+  webhook_signing_secret: string;
+  has_webhook_signing_secret: boolean;
+  has_secret_key: boolean;
+  has_env_webhook_secret: boolean;
+  webhook_secret_source: "env" | "store" | "none";
+  webhook_receiver_path: string;
+  webhook_receiver_url?: string;
+  enabled_events: string[];
+  recommended_events: string[];
+  signature_header: string;
+  created_at?: string;
+  updated_at?: string;
+  backend_public_url?: string | null;
+  checkout_enabled: boolean;
+  frontend_public_url?: string;
+  subscription_success_url?: string;
+  subscription_cancel_url?: string;
+  docs: {
+    webhooks: string;
+    signatures: string;
+    checkout?: string;
+    dashboard_developers?: string;
+    dashboard_webhooks?: string;
+  };
+};
+
+export async function adminGetStripePaymentGateway() {
+  return adminRequest<StripePaymentGatewaySettings>("/admin/payment-gateways/stripe");
+}
+
+export async function adminUpdateStripePaymentGateway(input: {
+  enabled: boolean;
+  secret_key: string;
+  webhook_signing_secret: string;
+  enabled_events: string[];
+}) {
+  return adminRequest<StripePaymentGatewaySettings>("/admin/payment-gateways/stripe", {
+    method: "PUT",
+    body: JSON.stringify(input),
+  });
 }
 
 export async function adminListAdmins() {
@@ -1048,7 +1142,7 @@ export async function adminCreateUploadDrama(body: {
   coverUrl?: string;
   freeEpisodeCount?: number;
   lockMode?: "FREE_FIRST_N" | "VIP_ALL" | "ALL_FREE";
-  status?: "DRAFT" | "LIVE";
+  status?: "DRAFT";
   sourceTags?: string[];
   /** Announced/planned total (> uploaded inventory) for consumer placeholders. */
   totalEpisodes?: number;
@@ -1079,7 +1173,7 @@ export async function adminCreateUploadDramaWithFiles(
     coverUrl?: string;
     freeEpisodeCount?: number;
     lockMode?: "FREE_FIRST_N" | "VIP_ALL" | "ALL_FREE";
-    status?: "DRAFT" | "LIVE";
+    status?: "DRAFT";
     isFree?: boolean;
     priceCredits?: number;
   },
@@ -1188,6 +1282,26 @@ export async function adminYtdlpResolve(body: {
   });
 }
 
+/** Server-side yt-dlp download → browser attachment (bypasses CDN CORS). */
+export async function adminYtdlpDownloadEpisode(body: {
+  url: string;
+  formatPreference?: "best_hls" | "best_mp4" | "best";
+  playlistIndex?: number;
+  filenameHint?: string;
+}) {
+  const hint = (body.filenameHint || "episode").trim() || "episode";
+  const filename = /\.[a-z0-9]{2,5}$/i.test(hint) ? hint : `${hint}.mp4`;
+  await adminDownloadBlob("/admin/ytdlp/download", filename, {
+    method: "POST",
+    body: JSON.stringify({
+      url: body.url,
+      formatPreference: body.formatPreference || "best_mp4",
+      playlistIndex: body.playlistIndex,
+      filenameHint: filename,
+    }),
+  });
+}
+
 export type YtdlpTransferJob = {
   id: string;
   dramaId: string;
@@ -1205,6 +1319,8 @@ export type YtdlpTransferJob = {
     jobId: string;
     filename: string;
     size: number;
+    webpageUrl?: string;
+    sourceIndex?: number;
   }>;
   previewUrl?: string;
   extractor?: string;

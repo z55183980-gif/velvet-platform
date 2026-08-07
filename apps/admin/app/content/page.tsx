@@ -1,58 +1,215 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  MoreHorizontal,
+  Eye,
+  ExternalLink,
+  Trash2,
+  Check,
+  X,
+} from "lucide-react";
+import {
+  adminApproveDrama,
   adminBatchDramaLifecycle,
   adminBatchDramas,
   adminListCategories,
+  adminListCreators,
   adminListDramas,
+  adminRejectDrama,
   asRows,
 } from "@velvet/api-client";
-import { Button, DataTable, Input, Select, fmtDate, fmtNum, type Column } from "@velvet/ui";
+import { Badge, Button, DataTable, Input, Select, Switch, fmtNum, type Column } from "@velvet/ui";
 import { AdminShell } from "@/components/admin-shell";
 import { CategoriesModal } from "@/components/categories-modal";
 import { ContentDetailModal } from "@/components/content-detail-modal";
 import {
   ContentSearchBar,
   type ContentSearchFilters,
+  type ContentSort,
 } from "@/components/content-search-bar";
-import { ConfirmModal } from "@/components/glass-modal";
+import { DramaCoverThumb } from "@/components/drama-cover-thumb";
+import { ConfirmModal, GlassModal } from "@/components/glass-modal";
+import { useAdminSession } from "@/lib/admin-session";
 import { parseContentDetailTab } from "@/lib/content-href";
 import { useI18n, statusLabel } from "@/lib/i18n";
+import { webDramaPreviewHref } from "@/lib/web-preview";
 
 type Drama = {
   id: string | number;
   titleZh?: string;
   titleEn?: string;
   slug?: string;
+  coverUrl?: string | null;
   status?: string;
-  creator?: { displayName?: string };
-  viewCount?: number;
-  unlockCount?: number;
+  creator?: { id?: string | number; displayName?: string };
+  viewCount?: number | string;
+  unlockCount?: number | string;
   isOfficial?: boolean;
   isFeatured?: boolean;
   sortWeight?: number;
   publishedAt?: string | null;
+  createdAt?: string | null;
   _count?: { episodes?: number };
 };
 type Category = { slug: string; nameZh?: string; nameEn?: string };
+type Creator = { id: string | number; displayName?: string };
 type ContentModal = "detail" | "categories";
+type ContentView = "all" | "latest" | "pending";
 
 const statuses = ["ALL", "DRAFT", "PENDING_REVIEW", "LIVE", "OFFLINE", "REJECTED"];
-const pageSize = 20;
+const PAGE_SIZE_OPTIONS = [10, 20, 50];
+
+function parseSort(raw: string | null): ContentSort {
+  if (raw === "latest" || raw === "views" || raw === "unlocks" || raw === "weight") return raw;
+  return "weight";
+}
+
+function parseView(searchParams: URLSearchParams): ContentView {
+  const view = searchParams.get("view");
+  if (view === "latest" || view === "pending") return view;
+  if (searchParams.get("status") === "PENDING_REVIEW") return "pending";
+  if (searchParams.get("sort") === "latest" && !searchParams.get("view")) return "latest";
+  return "all";
+}
+
+function parsePageSize(raw: string | null) {
+  const n = Number(raw);
+  return PAGE_SIZE_OPTIONS.includes(n) ? n : 20;
+}
+
+/** Compact ops console datetime: YYYY-MM-DD HH:mm */
+function fmtOpsDateTime(v?: string | null) {
+  if (!v) return "—";
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return "—";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function filtersFromUrl(
+  searchParams: URLSearchParams,
+  view: ContentView,
+  sort: ContentSort,
+): ContentSearchFilters {
+  const status =
+    view === "pending" ? "PENDING_REVIEW" : searchParams.get("status") || "ALL";
+  const official = searchParams.get("official") || "";
+  const featured = searchParams.get("featured") || "";
+  const media = searchParams.get("media") || "";
+  const dateField = searchParams.get("dateField") === "createdAt" ? "createdAt" : "publishedAt";
+  return {
+    q: searchParams.get("q") || "",
+    status: statuses.includes(status) ? status : "ALL",
+    categorySlug: searchParams.get("category") || "",
+    creatorId: searchParams.get("creator") || "",
+    isOfficial: official === "1" || official === "0" ? official : "",
+    isFeatured: featured === "1" || featured === "0" ? featured : "",
+    mediaKind:
+      media === "owned" || media === "online" || media === "r2" || media === "local" ? media : "",
+    sort,
+    dateField,
+    dateFrom: searchParams.get("from") || "",
+    dateTo: searchParams.get("to") || "",
+  };
+}
+
+function toMetric(value?: number | string | null) {
+  if (value == null || value === "") return 0;
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function unlockRate(views?: number | string | null, unlocks?: number | string | null) {
+  const v = toMetric(views);
+  const u = toMetric(unlocks);
+  if (v <= 0) return "—";
+  return `${((u / v) * 100).toFixed(1)}%`;
+}
+
+/**
+ * Soft status pills — plain spans, not Badge.
+ * Badge tone utilities (bg-success-soft etc.) live in @layer utilities and
+ * always beat .content-status-pill rules in @layer components.
+ */
+function dramaStatusPillClass(status?: string) {
+  switch (status) {
+    case "LIVE":
+      return "content-status-pill content-status-pill--live";
+    case "PENDING_REVIEW":
+      return "content-status-pill content-status-pill--pending";
+    case "REJECTED":
+      return "content-status-pill content-status-pill--rejected";
+    case "OFFLINE":
+      return "content-status-pill content-status-pill--offline";
+    case "DRAFT":
+    default:
+      return "content-status-pill content-status-pill--draft";
+  }
+}
+
+function paginationItems(page: number, total: number): Array<number | "ellipsis"> {
+  if (total <= 7) return Array.from({ length: total }, (_, index) => index + 1);
+  const visible = new Set([1, total, page - 1, page, page + 1]);
+  const pages = [...visible].filter((value) => value >= 1 && value <= total).sort((a, b) => a - b);
+  const result: Array<number | "ellipsis"> = [];
+  pages.forEach((value, index) => {
+    if (index > 0 && value - pages[index - 1] > 1) result.push("ellipsis");
+    result.push(value);
+  });
+  return result;
+}
 
 function buildContentHref(opts: {
+  view?: ContentView;
   status?: string;
   sort?: string;
+  page?: number;
+  pageSize?: number;
+  q?: string;
+  categorySlug?: string;
+  creatorId?: string;
+  isOfficial?: string;
+  isFeatured?: string;
+  mediaKind?: string;
+  dateField?: string;
+  dateFrom?: string;
+  dateTo?: string;
   modal?: ContentModal | null;
   id?: string | null;
   tab?: string | null;
 }) {
   const qs = new URLSearchParams();
-  if (opts.status && opts.status !== "ALL") qs.set("status", opts.status);
-  if (opts.sort === "latest") qs.set("sort", "latest");
+  if (opts.view === "latest") qs.set("view", "latest");
+  if (opts.view === "pending") qs.set("view", "pending");
+
+  if (opts.view === "pending") {
+    // status pinned by view
+  } else if (opts.status && opts.status !== "ALL") {
+    qs.set("status", opts.status);
+  }
+
+  if (opts.view === "latest") {
+    if (opts.sort && opts.sort !== "latest") qs.set("sort", opts.sort);
+  } else if (opts.sort && opts.sort !== "weight") {
+    qs.set("sort", opts.sort);
+  }
+
+  if (opts.q) qs.set("q", opts.q);
+  if (opts.categorySlug) qs.set("category", opts.categorySlug);
+  if (opts.creatorId) qs.set("creator", opts.creatorId);
+  if (opts.isOfficial === "1" || opts.isOfficial === "0") qs.set("official", opts.isOfficial);
+  if (opts.isFeatured === "1" || opts.isFeatured === "0") qs.set("featured", opts.isFeatured);
+  if (opts.mediaKind) qs.set("media", opts.mediaKind);
+  if (opts.dateField && opts.dateField !== "publishedAt") qs.set("dateField", opts.dateField);
+  if (opts.dateFrom) qs.set("from", opts.dateFrom);
+  if (opts.dateTo) qs.set("to", opts.dateTo);
+
+  if (opts.page && opts.page > 1) qs.set("page", String(opts.page));
+  if (opts.pageSize && opts.pageSize !== 20) qs.set("pageSize", String(opts.pageSize));
   if (opts.modal) qs.set("modal", opts.modal);
   if (opts.modal === "detail" && opts.id) {
     qs.set("id", opts.id);
@@ -62,107 +219,320 @@ function buildContentHref(opts: {
   return next ? `/content?${next}` : "/content";
 }
 
+const ROW_MENU_MIN_WIDTH = 152;
+const ROW_MENU_EST_HEIGHT = 96;
+const ROW_MENU_GAP = 4;
+const ROW_MENU_VIEWPORT_PAD = 8;
+
+const rowActionClass =
+  "content-row-action h-8 w-8 shrink-0 gap-0 px-0 hover:translate-y-0 hover:shadow-none";
+
+/** Row ⋯ menu (preview / delete). Portal keeps overflow tables usable. */
+function RowMoreMenu({
+  row,
+  busy,
+  canDelete,
+  onDelete,
+}: {
+  row: Drama;
+  busy: boolean;
+  canDelete: boolean;
+  onDelete: () => void;
+}) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
+  const triggerRef = useRef<HTMLSpanElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  // Public catalog only serves LIVE; prefer slug (canonical) over id.
+  const previewHref = webDramaPreviewHref(row);
+
+  useLayoutEffect(() => {
+    if (!open) {
+      setMenuPos(null);
+      return;
+    }
+
+    function placeMenu() {
+      const trigger = triggerRef.current;
+      if (!trigger) return;
+      const rect = trigger.getBoundingClientRect();
+      const menuEl = menuRef.current;
+      const menuWidth = Math.max(menuEl?.offsetWidth ?? 0, ROW_MENU_MIN_WIDTH);
+      const menuHeight = menuEl?.offsetHeight || ROW_MENU_EST_HEIGHT;
+      const spaceBelow = window.innerHeight - rect.bottom - ROW_MENU_VIEWPORT_PAD;
+      const openAbove = spaceBelow < menuHeight + ROW_MENU_GAP && rect.top > spaceBelow;
+      const top = openAbove
+        ? Math.max(ROW_MENU_VIEWPORT_PAD, rect.top - menuHeight - ROW_MENU_GAP)
+        : Math.min(
+            rect.bottom + ROW_MENU_GAP,
+            window.innerHeight - menuHeight - ROW_MENU_VIEWPORT_PAD,
+          );
+      const left = Math.min(
+        Math.max(ROW_MENU_VIEWPORT_PAD, rect.right - menuWidth),
+        window.innerWidth - menuWidth - ROW_MENU_VIEWPORT_PAD,
+      );
+      setMenuPos({ top, left });
+    }
+
+    placeMenu();
+    window.addEventListener("resize", placeMenu);
+    // Capture scroll from nested overflow (DataTable) without closing first.
+    window.addEventListener("scroll", placeMenu, true);
+    return () => {
+      window.removeEventListener("resize", placeMenu);
+      window.removeEventListener("scroll", placeMenu, true);
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(event: MouseEvent) {
+      const target = event.target as Node;
+      if (triggerRef.current?.contains(target) || menuRef.current?.contains(target)) return;
+      setOpen(false);
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  const menu =
+    open && typeof document !== "undefined"
+      ? createPortal(
+          <div
+            ref={menuRef}
+            role="menu"
+            style={{
+              position: "fixed",
+              top: menuPos?.top ?? -9999,
+              left: menuPos?.left ?? -9999,
+              minWidth: ROW_MENU_MIN_WIDTH,
+              visibility: menuPos ? "visible" : "hidden",
+            }}
+            className="z-[70] rounded-xl border border-line bg-white py-1 text-ink shadow-lg"
+          >
+            {previewHref ? (
+              <a
+                role="menuitem"
+                className="flex items-center gap-2 px-3 py-2 text-body-sm text-ink hover:bg-brand-soft"
+                href={previewHref}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={() => setOpen(false)}
+              >
+                <ExternalLink className="size-3.5 shrink-0 text-ink-muted" />
+                {t("previewOnWeb")}
+              </a>
+            ) : (
+              <span
+                role="menuitem"
+                aria-disabled="true"
+                title={t("previewOnWebLiveOnly")}
+                className="flex cursor-not-allowed items-center gap-2 px-3 py-2 text-body-sm text-ink-muted"
+              >
+                <ExternalLink className="size-3.5 shrink-0" />
+                {t("previewOnWeb")}
+              </span>
+            )}
+            {canDelete ? (
+              <button
+                type="button"
+                role="menuitem"
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-body-sm text-danger hover:bg-danger-soft"
+                onClick={() => {
+                  setOpen(false);
+                  onDelete();
+                }}
+              >
+                <Trash2 className="size-3.5 shrink-0" />
+                {t("rowDelete")}
+              </button>
+            ) : null}
+          </div>,
+          document.body,
+        )
+      : null;
+
+  return (
+    <>
+      <span ref={triggerRef} className="inline-flex">
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={busy}
+          aria-expanded={open}
+          aria-haspopup="menu"
+          aria-label={t("moreActions")}
+          title={t("moreActions")}
+          className={rowActionClass}
+          onClick={() => setOpen((v) => !v)}
+        >
+          <MoreHorizontal className="size-3.5" />
+        </Button>
+      </span>
+      {menu}
+    </>
+  );
+}
+
 function AdminContentInner() {
   const { t } = useI18n();
   const router = useRouter();
   const qc = useQueryClient();
   const searchParams = useSearchParams();
-  const statusFromUrl = searchParams.get("status") || "ALL";
-  const sortFromUrl = searchParams.get("sort") === "latest" ? "latest" : "weight";
+  const { admin } = useAdminSession();
+  // No SUPER_ADMIN fallback — hide hard-delete until role is known.
+  const isSuperAdmin = admin?.role === "SUPER_ADMIN";
+
+  const view = parseView(searchParams);
+  const statusFromUrl =
+    view === "pending" ? "PENDING_REVIEW" : searchParams.get("status") || "ALL";
+  const sortFromUrl =
+    view === "latest" && !searchParams.get("sort")
+      ? "latest"
+      : parseSort(searchParams.get("sort") || (view === "latest" ? "latest" : "weight"));
+  const pageFromUrl = Math.max(1, Number(searchParams.get("page") || 1) || 1);
+  const pageSizeFromUrl = parsePageSize(searchParams.get("pageSize"));
   const modalParam = searchParams.get("modal");
   const modal =
     modalParam === "detail" || modalParam === "categories" ? modalParam : null;
   const detailId = modal === "detail" ? searchParams.get("id") : null;
   const detailTab = modal === "detail" ? parseContentDetailTab(searchParams.get("tab")) : null;
-  const [filters, setFilters] = useState<ContentSearchFilters>({
-    q: "",
-    status: statusFromUrl,
-    categorySlug: "",
-    isOfficial: "",
-    isFeatured: "",
-    mediaKind: "",
-    sort: sortFromUrl as "weight" | "latest",
-  });
-  const [page, setPage] = useState(1);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const urlFilterKey = searchParams.toString();
+
+  const [filters, setFilters] = useState<ContentSearchFilters>(() =>
+    filtersFromUrl(searchParams, view, sortFromUrl),
+  );
+  const [page, setPage] = useState(pageFromUrl);
+  const [pageSize, setPageSize] = useState(pageSizeFromUrl);
+  const [selected, setSelected] = useState<Map<string, Drama>>(new Map());
   const [batch, setBatch] = useState({
     freeEpisodeCount: 3,
     priceCredits: 10,
     buyoutCredits: 0,
     lockMode: "" as "" | "INHERIT" | "FREE_FIRST_N" | "VIP_ALL" | "ALL_FREE",
+    sortWeight: 0,
   });
   const [error, setError] = useState<string | null>(null);
-  const [lifecycleConfirm, setLifecycleConfirm] = useState<"offline" | "online" | "delete" | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [lifecycleConfirm, setLifecycleConfirm] = useState<"offline" | "online" | "delete" | null>(
+    null,
+  );
+  const [rowDelete, setRowDelete] = useState<Drama | null>(null);
+  const [rejectRow, setRejectRow] = useState<Drama | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+  const [jumpPage, setJumpPage] = useState("");
+  const [menuBusyId, setMenuBusyId] = useState<string | null>(null);
 
   useEffect(() => {
     if (modalParam !== "add") return;
     const tab = searchParams.get("tab");
     const qs =
-      tab === "online"
+      tab === "online" || tab === "transfer"
         ? "?tab=online"
-        : tab === "transfer"
-          ? "?tab=online&method=transfer"
-          : tab === "owned" || tab === "upload" || tab === "local"
-            ? "?tab=owned"
-            : "?tab=owned";
+        : tab === "owned" || tab === "upload" || tab === "local"
+          ? "?tab=owned"
+          : "?tab=owned";
     router.replace(`/content/add${qs}`);
   }, [modalParam, router, searchParams]);
 
   useEffect(() => {
-    setFilters((prev) => ({
-      ...prev,
-      status: statusFromUrl,
-      sort: sortFromUrl as "weight" | "latest",
-    }));
-    setPage(1);
-  }, [statusFromUrl, sortFromUrl]);
+    setFilters(filtersFromUrl(searchParams, view, sortFromUrl));
+    setPage(pageFromUrl);
+    setPageSize(pageSizeFromUrl);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [urlFilterKey, view, statusFromUrl, sortFromUrl, pageFromUrl, pageSizeFromUrl]);
 
-  function applyFilters(next: ContentSearchFilters) {
-    setFilters(next);
-    setPage(1);
-    if (next.status !== statusFromUrl || next.sort !== sortFromUrl) {
-      router.replace(
-        buildContentHref({
-          status: next.status,
-          sort: next.sort,
-          modal,
-          id: detailId,
-        }),
-      );
-    }
-  }
-
-  function openModal(nextModal: ContentModal, id?: string) {
+  function syncUrl(next: {
+    view?: ContentView;
+    status?: string;
+    sort?: string;
+    page?: number;
+    pageSize?: number;
+    filters?: ContentSearchFilters;
+    modal?: ContentModal | null;
+    id?: string | null;
+    tab?: string | null;
+  }) {
+    const f = next.filters ?? filters;
     router.replace(
       buildContentHref({
-        status: statusFromUrl,
-        sort: sortFromUrl,
-        modal: nextModal,
-        id: nextModal === "detail" ? id ?? null : null,
+        view: next.view ?? view,
+        status: next.status ?? f.status,
+        sort: next.sort ?? f.sort,
+        page: next.page ?? page,
+        pageSize: next.pageSize ?? pageSize,
+        q: f.q,
+        categorySlug: f.categorySlug,
+        creatorId: f.creatorId,
+        isOfficial: f.isOfficial,
+        isFeatured: f.isFeatured,
+        mediaKind: f.mediaKind,
+        dateField: f.dateField,
+        dateFrom: f.dateFrom,
+        dateTo: f.dateTo,
+        modal: next.modal === undefined ? modal : next.modal,
+        id: next.id === undefined ? detailId : next.id,
+        tab: next.tab === undefined ? detailTab : next.tab,
       }),
     );
   }
 
   function closeModal() {
-    router.replace(
-      buildContentHref({
-        status: statusFromUrl,
-        sort: sortFromUrl,
-      }),
-    );
+    syncUrl({ modal: null, id: null, tab: null });
+  }
+
+  function openModal(nextModal: ContentModal, id?: string) {
+    syncUrl({
+      modal: nextModal,
+      id: nextModal === "detail" ? id ?? null : null,
+      tab: nextModal === "detail" ? detailTab : null,
+    });
+  }
+
+  function applyFilters(next: ContentSearchFilters) {
+    setFilters(next);
+    setPage(1);
+
+    let resolvedView: ContentView = "all";
+    if (view === "pending" && next.status === "PENDING_REVIEW") resolvedView = "pending";
+    else if (view === "latest" && next.sort === "latest") resolvedView = "latest";
+
+    syncUrl({
+      view: resolvedView,
+      status: next.status,
+      sort: next.sort,
+      page: 1,
+      filters: next,
+    });
   }
 
   const categoriesQ = useQuery({
     queryKey: ["admin", "categories"],
     queryFn: () => adminListCategories(true) as Promise<Category[]>,
   });
+  const creatorsQ = useQuery({
+    queryKey: ["admin", "creators", "picker"],
+    queryFn: async () => {
+      const result = await adminListCreators({ page: 1, pageSize: 100 });
+      return asRows<Creator>(result);
+    },
+  });
   const dramasQ = useQuery({
-    queryKey: ["admin", "dramas", filters, page],
+    queryKey: ["admin", "dramas", filters, page, pageSize],
     queryFn: async () => {
       const result = await adminListDramas({
         q: filters.q || undefined,
         status: filters.status,
         categorySlug: filters.categorySlug || undefined,
+        creatorId: filters.creatorId || undefined,
         isOfficial: filters.isOfficial || undefined,
         isFeatured: filters.isFeatured || undefined,
         mediaKind:
@@ -170,6 +540,9 @@ function AdminContentInner() {
             ? "owned"
             : filters.mediaKind || undefined,
         sort: filters.sort,
+        dateField: filters.dateField,
+        dateFrom: filters.dateFrom || undefined,
+        dateTo: filters.dateTo || undefined,
         page,
         pageSize,
       });
@@ -179,247 +552,697 @@ function AdminContentInner() {
       };
     },
   });
+
+  function goToPage(nextPage: number) {
+    const totalPages = Math.max(1, Math.ceil((dramasQ.data?.total ?? 0) / pageSize));
+    const clamped = Math.min(Math.max(1, nextPage), totalPages);
+    setPage(clamped);
+    syncUrl({ page: clamped });
+  }
+
+  const selectedIds = useMemo(() => [...selected.keys()], [selected]);
+  const selectedCount = selectedIds.length;
+
   const batchMut = useMutation({
-    mutationFn: () =>
-      adminBatchDramas({
-        ids: [...selected],
-        freeEpisodeCount: batch.freeEpisodeCount,
-        priceCredits: batch.priceCredits,
-        buyoutCredits: batch.buyoutCredits > 0 ? batch.buyoutCredits : null,
-        ...(batch.lockMode ? { lockMode: batch.lockMode } : {}),
-      }),
+    mutationFn: (patch: Parameters<typeof adminBatchDramas>[0]) => adminBatchDramas(patch),
     onSuccess: async () => {
-      setSelected(new Set());
+      setSelected(new Map());
       setError(null);
+      setNotice(t("batchApplyOk"));
       await qc.invalidateQueries({ queryKey: ["admin", "dramas"] });
     },
     onError: (e: Error) => setError(e.message),
   });
 
   const lifecycleMut = useMutation({
-    mutationFn: (action: "offline" | "online" | "delete") =>
+    mutationFn: (payload: {
+      action: "offline" | "online" | "delete";
+      ids: string[];
+    }) =>
       adminBatchDramaLifecycle({
-        ids: [...selected],
-        action,
-        reason: `admin batch ${action}`,
+        ids: payload.ids,
+        action: payload.action,
+        reason: `admin batch ${payload.action}`,
       }),
-    onSuccess: async (result) => {
+    onSuccess: async (result, variables) => {
       setLifecycleConfirm(null);
-      setSelected(new Set());
+      setRowDelete(null);
+      setMenuBusyId(null);
+      setSelected((prev) => {
+        const next = new Map(prev);
+        for (const id of variables.ids) next.delete(id);
+        return next;
+      });
+      const requested = result?.requested ?? variables.ids.length;
+      const updated = result?.updated ?? 0;
+      const skipped =
+        result?.skipped ?? Math.max(0, requested - updated - (result?.failed?.length ?? 0));
       const failed = result?.failed?.length ?? 0;
+      const actionLabel =
+        variables.action === "offline"
+          ? t("batchOffline")
+          : variables.action === "online"
+            ? t("batchOnline")
+            : t("batchDelete");
+
       if (failed > 0) {
+        setNotice(null);
         setError(
           t("batchLifecyclePartial", {
-            ok: result.updated,
+            ok: updated,
             fail: failed,
             detail: result.failed.map((f) => `${f.id}: ${f.error}`).join("; "),
           }),
         );
+      } else if (skipped > 0 || updated < requested) {
+        setError(null);
+        setNotice(
+          t("batchLifecycleSkipped", {
+            action: actionLabel,
+            n: requested,
+            ok: updated,
+            skip: skipped || requested - updated,
+          }),
+        );
       } else {
         setError(null);
+        setNotice(t("batchLifecycleOk", { action: actionLabel, ok: updated }));
       }
       await qc.invalidateQueries({ queryKey: ["admin", "dramas"] });
     },
     onError: (e: Error) => {
       setLifecycleConfirm(null);
+      setRowDelete(null);
+      setMenuBusyId(null);
+      setNotice(null);
+      setError(e.message);
+    },
+  });
+
+  const reviewMut = useMutation({
+    mutationFn: async (payload: { id: string; action: "approve" | "reject"; reason?: string }) => {
+      if (payload.action === "approve") return adminApproveDrama(payload.id);
+      return adminRejectDrama(payload.id, payload.reason || "");
+    },
+    onSuccess: async (_data, variables) => {
+      setRejectRow(null);
+      setRejectReason("");
+      setMenuBusyId(null);
+      setError(null);
+      setNotice(
+        variables.action === "approve" ? t("approveReviewOk") : t("rejectReviewOk"),
+      );
+      await qc.invalidateQueries({ queryKey: ["admin", "dramas"] });
+    },
+    onError: (e: Error) => {
+      setMenuBusyId(null);
+      setNotice(null);
       setError(e.message);
     },
   });
 
   const rows = dramasQ.data?.rows ?? [];
-  const busy = batchMut.isPending || lifecycleMut.isPending;
+  const busy = batchMut.isPending || lifecycleMut.isPending || reviewMut.isPending;
+  const total = dramasQ.data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const pageAllSelected = rows.length > 0 && rows.every((row) => selected.has(String(row.id)));
   const pageSomeSelected = rows.some((row) => selected.has(String(row.id)));
+
+  function togglePageSelection(selectAll: boolean) {
+    setSelected((prev) => {
+      const next = new Map(prev);
+      if (selectAll) {
+        for (const row of rows) next.set(String(row.id), row);
+      } else {
+        for (const row of rows) next.delete(String(row.id));
+      }
+      return next;
+    });
+  }
+
+  function toggleRow(row: Drama, checked: boolean) {
+    setSelected((prev) => {
+      const next = new Map(prev);
+      const id = String(row.id);
+      if (checked) next.set(id, row);
+      else next.delete(id);
+      return next;
+    });
+  }
+
   const columns: Column<Drama>[] = useMemo(
     () => [
       {
         key: "select",
-        className: "w-[7.5rem] min-w-[7.5rem] max-w-[7.5rem]",
+        className: "w-10 min-w-10 max-w-10",
         header: (
-          <label className="inline-flex cursor-pointer items-center gap-1.5 text-caption font-medium text-ink-muted">
-            <input
-              type="checkbox"
-              checked={pageAllSelected}
-              ref={(el) => {
-                if (el) el.indeterminate = pageSomeSelected && !pageAllSelected;
-              }}
-              disabled={busy || rows.length === 0}
-              onChange={() =>
-                setSelected(
-                  pageAllSelected ? new Set() : new Set(rows.map((row) => String(row.id))),
-                )
-              }
-            />
-            <span>{t("selectAll")}</span>
-            <span className="inline-block w-7 tabular-nums text-ink-subtle">
-              {selected.size > 0 ? `(${selected.size})` : null}
-            </span>
-          </label>
+          <input
+            type="checkbox"
+            title={t("selectAllPageHint")}
+            aria-label={t("selectAllPage")}
+            checked={pageAllSelected}
+            ref={(el) => {
+              if (el) el.indeterminate = pageSomeSelected && !pageAllSelected;
+            }}
+            disabled={busy || rows.length === 0}
+            onChange={() => togglePageSelection(!pageAllSelected)}
+          />
         ),
         cell: (row) => (
           <input
             type="checkbox"
             checked={selected.has(String(row.id))}
-            onChange={(e) =>
-              setSelected((previous) => {
-                const next = new Set(previous);
-                e.target.checked ? next.add(String(row.id)) : next.delete(String(row.id));
-                return next;
-              })
-            }
+            onChange={(e) => toggleRow(row, e.target.checked)}
           />
         ),
       },
-      { key: "id", header: t("colId"), cell: (row) => String(row.id), className: "tabular-nums" },
+      {
+        key: "cover",
+        header: t("colCover"),
+        className: "w-14 min-w-14",
+        cell: (row) => (
+          <DramaCoverThumb url={row.coverUrl} title={row.titleZh || row.titleEn} />
+        ),
+      },
       {
         key: "title",
         header: t("colTitle"),
+        className: "min-w-[12rem]",
         cell: (row) => (
-          <div>
+          <div className="min-w-0">
             <button
               type="button"
-              className="font-medium text-brand hover:underline"
+              className="max-w-[18rem] truncate text-left font-medium text-brand hover:underline"
               onClick={() => openModal("detail", String(row.id))}
             >
               {row.titleZh || row.titleEn || "—"}
             </button>
-            <div className="text-caption text-ink-muted">{row.slug}</div>
+            <div className="truncate text-caption text-ink-muted">{row.slug}</div>
           </div>
         ),
       },
-      { key: "status", header: t("status"), cell: (row) => statusLabel(t, row.status) },
       {
         key: "eps",
         header: t("episodeCount"),
         cell: (row) => String(row._count?.episodes ?? "—"),
-        className: "tabular-nums",
+        className: "tabular-nums text-right",
       },
-      { key: "creator", header: t("colCreator"), cell: (row) => row.creator?.displayName || "—" },
+      {
+        key: "creator",
+        header: t("colCreator"),
+        className: "hidden xl:table-cell",
+        cell: (row) => {
+          const name = row.creator?.displayName;
+          return name ? name : <span className="text-ink-subtle">—</span>;
+        },
+      },
       {
         key: "published",
         header: t("publishedAt"),
-        cell: (row) => (row.publishedAt ? fmtDate(row.publishedAt) : "—"),
+        className: "hidden 2xl:table-cell whitespace-nowrap",
+        cell: (row) =>
+          row.publishedAt ? (
+            fmtOpsDateTime(row.publishedAt)
+          ) : (
+            <span className="text-ink-subtle">—</span>
+          ),
       },
       {
-        key: "metrics",
-        header: t("colViewsUnlocks"),
-        cell: (row) => `${fmtNum(row.viewCount)} / ${fmtNum(row.unlockCount)}`,
+        key: "views",
+        header: t("colViews"),
+        className: "tabular-nums text-right",
+        cell: (row) => {
+          const n = toMetric(row.viewCount);
+          return <span className={n === 0 ? "text-ink-subtle" : undefined}>{fmtNum(n)}</span>;
+        },
+      },
+      {
+        key: "unlocks",
+        header: t("colUnlocks"),
+        className: "tabular-nums text-right",
+        cell: (row) => {
+          const n = toMetric(row.unlockCount);
+          return <span className={n === 0 ? "text-ink-subtle" : undefined}>{fmtNum(n)}</span>;
+        },
+      },
+      {
+        key: "unlockRate",
+        header: t("colUnlockRate"),
+        className: "hidden 2xl:table-cell tabular-nums text-right",
+        cell: (row) => {
+          const rate = unlockRate(row.viewCount, row.unlockCount);
+          return <span className={rate === "—" ? "text-ink-subtle" : undefined}>{rate}</span>;
+        },
       },
       {
         key: "flags",
         header: t("colHomeFlags"),
-        cell: (row) =>
-          `${row.isOfficial ? `${t("official")} ` : ""}${row.isFeatured ? `${t("featuredFlag")} ` : ""}${t("weightLabel")} ${row.sortWeight ?? 0}`,
+        className: "hidden lg:table-cell min-w-[8rem]",
+        cell: (row) => {
+          const weight = row.sortWeight ?? 0;
+          const hasFlags = row.isOfficial || row.isFeatured || weight !== 0;
+          if (!hasFlags) return <span className="text-ink-subtle">—</span>;
+          return (
+            <div className="flex flex-wrap gap-1">
+              {row.isOfficial ? (
+                <span className="content-flag-pill content-flag-pill--official">{t("official")}</span>
+              ) : null}
+              {row.isFeatured ? (
+                <span className="content-flag-pill content-flag-pill--featured">{t("featuredFlag")}</span>
+              ) : null}
+              {weight !== 0 ? (
+                <span className="content-flag-pill content-flag-pill--weight">
+                  {t("weightLabel")} {weight}
+                </span>
+              ) : null}
+            </div>
+          );
+        },
+      },
+      {
+        key: "status",
+        header: (
+          <span className="inline-flex items-center justify-center gap-1">
+            {t("status")}
+            <span className="inline-flex flex-col leading-none opacity-45" aria-hidden="true">
+              <span className="text-[7px]">▲</span>
+              <span className="-mt-px text-[7px]">▼</span>
+            </span>
+          </span>
+        ),
+        className: "content-status-col whitespace-nowrap text-center",
+        cell: (row) => (
+          <span className={dramaStatusPillClass(row.status)}>
+            {statusLabel(t, row.status)}
+          </span>
+        ),
+      },
+      {
+        key: "online",
+        header: t("colOnline"),
+        className: "w-16 min-w-16",
+        cell: (row) => {
+          const live = row.status === "LIVE";
+          const canToggleLifecycle =
+            row.status === "LIVE" || row.status === "OFFLINE" || row.status === "REJECTED";
+          const rowBusy = busy || menuBusyId === String(row.id);
+          return (
+            <Switch
+              size="sm"
+              checked={live}
+              disabled={rowBusy || !canToggleLifecycle}
+              title={live ? t("rowOffline") : t("rowOnline")}
+              aria-label={live ? t("rowOffline") : t("rowOnline")}
+              onCheckedChange={(next) => {
+                setMenuBusyId(String(row.id));
+                if (next) {
+                  lifecycleMut.mutate({ action: "online", ids: [String(row.id)] });
+                } else {
+                  lifecycleMut.mutate({ action: "offline", ids: [String(row.id)] });
+                }
+              }}
+            />
+          );
+        },
+      },
+      {
+        key: "actions",
+        header: t("colActions"),
+        className: "whitespace-nowrap",
+        cell: (row) => {
+          const pending = row.status === "PENDING_REVIEW";
+          const rowBusy = busy || menuBusyId === String(row.id);
+          return (
+            <div className="flex items-center gap-0.5">
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={rowBusy}
+                title={t("openDetail")}
+                aria-label={t("openDetail")}
+                className={rowActionClass}
+                onClick={() => openModal("detail", String(row.id))}
+              >
+                <Eye className="size-3.5" />
+              </Button>
+              {pending ? (
+                <>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={rowBusy}
+                    title={t("approveReview")}
+                    aria-label={t("approveReview")}
+                    className={`${rowActionClass} text-success hover:bg-success-soft hover:text-success`}
+                    onClick={() => {
+                      setMenuBusyId(String(row.id));
+                      reviewMut.mutate({ id: String(row.id), action: "approve" });
+                    }}
+                  >
+                    <Check className="size-3.5" />
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={rowBusy}
+                    title={t("reject")}
+                    aria-label={t("reject")}
+                    className={`${rowActionClass} text-danger hover:bg-danger-soft hover:text-danger`}
+                    onClick={() => {
+                      setRejectReason("");
+                      setRejectRow(row);
+                    }}
+                  >
+                    <X className="size-3.5" />
+                  </Button>
+                </>
+              ) : null}
+              <RowMoreMenu
+                row={row}
+                busy={rowBusy}
+                canDelete={isSuperAdmin}
+                onDelete={() => setRowDelete(row)}
+              />
+            </div>
+          );
+        },
       },
     ],
-    // openModal depends on URL filters; columns refresh when those/i18n/selection change
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [t, selected, statusFromUrl, sortFromUrl, rows, pageAllSelected, pageSomeSelected, busy],
+    [
+      t,
+      selected,
+      rows,
+      pageAllSelected,
+      pageSomeSelected,
+      busy,
+      menuBusyId,
+      isSuperAdmin,
+      filters.status,
+      filters.sort,
+      view,
+      page,
+      pageSize,
+    ],
   );
 
   const title =
-    statusFromUrl === "PENDING_REVIEW"
+    view === "pending"
       ? t("contentPending")
-      : filters.sort === "latest"
+      : view === "latest"
         ? t("contentLatest")
         : t("content");
 
+  function applyMonetization() {
+    if (!isSuperAdmin || !selectedCount) return;
+    batchMut.mutate({
+      ids: selectedIds,
+      freeEpisodeCount: batch.freeEpisodeCount,
+      priceCredits: batch.priceCredits,
+      buyoutCredits: batch.buyoutCredits > 0 ? batch.buyoutCredits : null,
+      ...(batch.lockMode ? { lockMode: batch.lockMode } : {}),
+    });
+  }
+
+  function applyFeatured(value: boolean) {
+    if (!isSuperAdmin || !selectedCount) return;
+    batchMut.mutate({ ids: selectedIds, isFeatured: value });
+  }
+
+  function applyWeight() {
+    if (!isSuperAdmin || !selectedCount) return;
+    batchMut.mutate({ ids: selectedIds, sortWeight: batch.sortWeight });
+  }
+
   return (
     <AdminShell title={title}>
-      {error || dramasQ.error || categoriesQ.error ? (
+      {error || dramasQ.error || categoriesQ.error || creatorsQ.error ? (
         <p className="mb-3 text-body-sm text-danger">
-          {error || (dramasQ.error as Error)?.message || (categoriesQ.error as Error)?.message}
+          {error ||
+            (dramasQ.error as Error)?.message ||
+            (categoriesQ.error as Error)?.message ||
+            (creatorsQ.error as Error)?.message}
         </p>
+      ) : notice ? (
+        <p className="mb-3 text-body-sm text-success">{notice}</p>
       ) : null}
+
       <ContentSearchBar
         value={filters}
         onChange={applyFilters}
         categories={categoriesQ.data ?? []}
+        creators={creatorsQ.data ?? []}
         statuses={statuses}
-        showAdd={statusFromUrl !== "PENDING_REVIEW"}
+        showAdd={view !== "pending"}
         onAdd={() => router.push("/content/add")}
       />
 
-      <div className="mb-4 flex flex-wrap items-end gap-2 card glass-card p-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            size="sm"
-            variant="secondary"
-            disabled={!selected.size || busy}
-            onClick={() => setLifecycleConfirm("offline")}
-          >
-            {t("batchOffline")}
-          </Button>
-          <Button size="sm" disabled={!selected.size || busy} onClick={() => setLifecycleConfirm("online")}>
-            {t("batchOnline")}
-          </Button>
-          <Button
-            size="sm"
-            variant="danger"
-            disabled={!selected.size || busy}
-            onClick={() => setLifecycleConfirm("delete")}
-          >
-            {t("batchDelete")}
-          </Button>
-        </div>
-        <span className="mx-1 hidden h-6 w-px bg-line sm:block" aria-hidden />
-        <label className="text-caption text-ink-muted">
-          {t("lockMode")}
-          <Select
-            className="mt-1 w-44"
-            value={batch.lockMode}
-            onChange={(e) =>
-              setBatch((value) => ({
-                ...value,
-                lockMode: e.target.value as typeof batch.lockMode,
-              }))
-            }
-          >
-            <option value="">{t("lockModeBatchKeep")}</option>
-            <option value="INHERIT">{t("lockModeInherit")}</option>
-            <option value="FREE_FIRST_N">{t("lockModeFreeFirstN")}</option>
-            <option value="VIP_ALL">{t("lockModeVipAll")}</option>
-            <option value="ALL_FREE">{t("lockModeAllFree")}</option>
-          </Select>
-        </label>
-        {(
-          [
-            ["freeEpisodeCount", t("freeEpisodes")],
-            ["priceCredits", t("priceCreditsPerEpisode")],
-            ["buyoutCredits", t("buyoutCreditsLabel")],
-          ] as const
-        ).map(([key, label]) => (
-          <label key={key} className="text-caption text-ink-muted">
-            {label}
-            <Input
-              type="number"
-              className="mt-1 w-28"
-              value={batch[key]}
-              onChange={(e) => setBatch((value) => ({ ...value, [key]: Number(e.target.value) }))}
-            />
-          </label>
-        ))}
-        <Button size="sm" disabled={!selected.size || busy} onClick={() => batchMut.mutate()}>
-          {t("batchApply")}
-        </Button>
-      </div>
+      <DataTable
+        className={`content-table${selectedCount > 0 ? " mb-36" : ""}`}
+        columns={columns}
+        rows={rows}
+        loading={dramasQ.isFetching}
+        emptyTitle={t("empty")}
+      />
 
-      <DataTable columns={columns} rows={rows} loading={dramasQ.isFetching} emptyTitle={t("empty")} />
-      <div className="mt-3 flex items-center gap-3 text-body-sm text-ink-muted">
-        <span>{t("totalCount", { n: dramasQ.data?.total ?? 0 })}</span>
-        <Button size="sm" variant="secondary" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
-          {t("prevPage")}
-        </Button>
-        <span>{t("pageNumber", { n: page })}</span>
-        <Button
-          size="sm"
-          variant="secondary"
-          disabled={page * pageSize >= (dramasQ.data?.total ?? 0)}
-          onClick={() => setPage((p) => p + 1)}
-        >
-          {t("nextPage")}
-        </Button>
-      </div>
+      {total > 0 ? (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-white/45 px-3 py-2 text-caption text-ink-muted">
+          <div className="flex flex-wrap items-center gap-3">
+            <span>
+              {`${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, total)} / ${total}`}
+            </span>
+            <Select
+              className="h-8 w-28 text-caption"
+              value={String(pageSize)}
+              onChange={(e) => {
+                const next = Number(e.target.value);
+                setPageSize(next);
+                setPage(1);
+                syncUrl({ page: 1, pageSize: next });
+              }}
+            >
+              {PAGE_SIZE_OPTIONS.map((n) => (
+                <option key={n} value={n}>
+                  {n} / {t("page")}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="flex items-center gap-1">
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={page <= 1 || dramasQ.isFetching}
+              onClick={() => goToPage(page - 1)}
+            >
+              {t("previousPage")}
+            </Button>
+            <div className="hidden items-center gap-1 sm:flex">
+              {paginationItems(page, totalPages).map((item, index) =>
+                item === "ellipsis" ? (
+                  <span key={`ellipsis-${index}`} className="grid h-9 w-7 place-items-center text-ink-subtle">
+                    …
+                  </span>
+                ) : (
+                  <button
+                    key={item}
+                    type="button"
+                    aria-current={item === page ? "page" : undefined}
+                    disabled={dramasQ.isFetching}
+                    onClick={() => goToPage(item)}
+                    className={[
+                      "grid h-9 min-w-9 place-items-center rounded-xl px-2 font-medium transition",
+                      item === page
+                        ? "bg-brand text-white shadow-brand"
+                        : "border border-white/70 bg-white/65 text-ink-muted hover:-translate-y-0.5 hover:bg-white hover:text-ink hover:shadow-sm",
+                    ].join(" ")}
+                  >
+                    {item}
+                  </button>
+                ),
+              )}
+            </div>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={page >= totalPages || dramasQ.isFetching}
+              onClick={() => goToPage(page + 1)}
+            >
+              {t("nextPage")}
+            </Button>
+            {totalPages > 1 ? (
+              <div className="ml-2 hidden items-center gap-1 lg:flex">
+                <Input
+                  type="number"
+                  min={1}
+                  max={totalPages}
+                  className="h-9 w-16 px-2 text-center text-caption"
+                  value={jumpPage}
+                  placeholder={String(page)}
+                  onChange={(event) => setJumpPage(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && jumpPage) {
+                      goToPage(Number(jumpPage));
+                      setJumpPage("");
+                    }
+                  }}
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={!jumpPage || dramasQ.isFetching}
+                  onClick={() => {
+                    goToPage(Number(jumpPage));
+                    setJumpPage("");
+                  }}
+                >
+                  {t("goToPage")}
+                </Button>
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {selectedCount > 0 ? (
+        <div className="pointer-events-none fixed inset-x-0 bottom-4 z-40 flex justify-center px-3">
+          <div className="pointer-events-auto w-full max-w-5xl rounded-2xl border border-white/70 bg-white/92 p-3 shadow-lg backdrop-blur-xl">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center gap-2 text-body-sm">
+                <Badge tone="info">{t("selectedCount", { n: selectedCount })}</Badge>
+                <span className="text-caption text-ink-muted">{t("selectionCrossPageHint")}</span>
+              </div>
+              <Button size="sm" variant="ghost" onClick={() => setSelected(new Map())}>
+                {t("clearSelection")}
+              </Button>
+            </div>
+
+            <div className="grid gap-3 lg:grid-cols-3">
+              <div className="rounded-xl border border-white/60 bg-white/50 p-2.5">
+                <p className="mb-2 text-caption font-semibold text-ink-muted">{t("batchBarLifecycle")}</p>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={busy}
+                    onClick={() => setLifecycleConfirm("offline")}
+                  >
+                    {t("batchOffline")}
+                  </Button>
+                  <Button size="sm" disabled={busy} onClick={() => setLifecycleConfirm("online")}>
+                    {t("batchOnline")}
+                  </Button>
+                  {isSuperAdmin ? (
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      disabled={busy}
+                      onClick={() => setLifecycleConfirm("delete")}
+                    >
+                      {t("batchDelete")}
+                    </Button>
+                  ) : (
+                    <span className="text-caption text-ink-subtle">{t("dangerOpsSuperOnly")}</span>
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-white/60 bg-white/50 p-2.5">
+                <p className="mb-2 text-caption font-semibold text-ink-muted">{t("batchBarHomeFlags")}</p>
+                {isSuperAdmin ? (
+                  <div className="flex flex-wrap items-end gap-2">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={busy}
+                      onClick={() => applyFeatured(true)}
+                    >
+                      {t("batchFeaturedOn")}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy}
+                      onClick={() => applyFeatured(false)}
+                    >
+                      {t("batchFeaturedOff")}
+                    </Button>
+                    <label className="text-caption text-ink-muted">
+                      {t("batchWeightValue")}
+                      <Input
+                        type="number"
+                        className="mt-1 w-24"
+                        value={batch.sortWeight}
+                        onChange={(e) =>
+                          setBatch((value) => ({ ...value, sortWeight: Number(e.target.value) }))
+                        }
+                      />
+                    </label>
+                    <Button size="sm" disabled={busy} onClick={applyWeight}>
+                      {t("batchSetWeight")}
+                    </Button>
+                  </div>
+                ) : (
+                  <span className="text-caption text-ink-subtle">{t("dangerOpsSuperOnly")}</span>
+                )}
+              </div>
+
+              <div className="rounded-xl border border-white/60 bg-white/50 p-2.5">
+                <p className="mb-2 text-caption font-semibold text-ink-muted">
+                  {t("batchBarMonetization")}
+                </p>
+                {isSuperAdmin ? (
+                  <div className="flex flex-wrap items-end gap-2">
+                    <label className="text-caption text-ink-muted">
+                      {t("lockMode")}
+                      <Select
+                        className="mt-1 w-40"
+                        value={batch.lockMode}
+                        onChange={(e) =>
+                          setBatch((value) => ({
+                            ...value,
+                            lockMode: e.target.value as typeof batch.lockMode,
+                          }))
+                        }
+                      >
+                        <option value="">{t("lockModeBatchKeep")}</option>
+                        <option value="INHERIT">{t("lockModeInherit")}</option>
+                        <option value="FREE_FIRST_N">{t("lockModeFreeFirstN")}</option>
+                        <option value="VIP_ALL">{t("lockModeVipAll")}</option>
+                        <option value="ALL_FREE">{t("lockModeAllFree")}</option>
+                      </Select>
+                    </label>
+                    {(
+                      [
+                        ["freeEpisodeCount", t("freeEpisodes")],
+                        ["priceCredits", t("priceCreditsPerEpisode")],
+                        ["buyoutCredits", t("buyoutCreditsLabel")],
+                      ] as const
+                    ).map(([key, label]) => (
+                      <label key={key} className="text-caption text-ink-muted">
+                        {label}
+                        <Input
+                          type="number"
+                          className="mt-1 w-24"
+                          value={batch[key]}
+                          onChange={(e) =>
+                            setBatch((value) => ({ ...value, [key]: Number(e.target.value) }))
+                          }
+                        />
+                      </label>
+                    ))}
+                    <Button size="sm" disabled={busy} onClick={applyMonetization}>
+                      {t("batchApply")}
+                    </Button>
+                  </div>
+                ) : (
+                  <span className="text-caption text-ink-subtle">{t("dangerOpsSuperOnly")}</span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <ContentDetailModal
         open={modal === "detail"}
@@ -431,25 +1254,89 @@ function AdminContentInner() {
       <ConfirmModal
         open={lifecycleConfirm === "offline"}
         onClose={() => setLifecycleConfirm(null)}
-        onConfirm={() => lifecycleMut.mutate("offline")}
-        message={t("confirmBatchOffline", { n: selected.size })}
+        onConfirm={() => lifecycleMut.mutate({ action: "offline", ids: selectedIds })}
+        message={t("confirmBatchOffline", { n: selectedCount })}
         busy={lifecycleMut.isPending}
       />
       <ConfirmModal
         open={lifecycleConfirm === "online"}
         onClose={() => setLifecycleConfirm(null)}
-        onConfirm={() => lifecycleMut.mutate("online")}
-        message={t("confirmBatchOnline", { n: selected.size })}
+        onConfirm={() => lifecycleMut.mutate({ action: "online", ids: selectedIds })}
+        message={t("confirmBatchOnline", { n: selectedCount })}
         confirmVariant="primary"
         busy={lifecycleMut.isPending}
       />
       <ConfirmModal
         open={lifecycleConfirm === "delete"}
         onClose={() => setLifecycleConfirm(null)}
-        onConfirm={() => lifecycleMut.mutate("delete")}
-        message={t("confirmBatchDelete", { n: selected.size })}
+        onConfirm={() => lifecycleMut.mutate({ action: "delete", ids: selectedIds })}
+        message={t("confirmBatchDeleteHard", { n: selectedCount })}
         busy={lifecycleMut.isPending}
       />
+      <ConfirmModal
+        open={!!rowDelete}
+        onClose={() => setRowDelete(null)}
+        onConfirm={() => {
+          if (!rowDelete) return;
+          setMenuBusyId(String(rowDelete.id));
+          lifecycleMut.mutate({ action: "delete", ids: [String(rowDelete.id)] });
+        }}
+        message={t("confirmRowDelete", {
+          title: rowDelete?.titleZh || rowDelete?.titleEn || String(rowDelete?.id ?? ""),
+        })}
+        busy={lifecycleMut.isPending}
+      />
+      <GlassModal
+        open={!!rejectRow}
+        onClose={() => {
+          if (reviewMut.isPending) return;
+          setRejectRow(null);
+          setRejectReason("");
+        }}
+        title={t("reject")}
+        size="sm"
+      >
+        <p className="mb-3 text-body-sm text-ink-muted">
+          {t("confirmRejectDrama", {
+            title: rejectRow?.titleZh || rejectRow?.titleEn || String(rejectRow?.id ?? ""),
+          })}
+        </p>
+        <Input
+          value={rejectReason}
+          onChange={(e) => setRejectReason(e.target.value)}
+          placeholder={t("actionReasonPlaceholder")}
+          autoFocus
+        />
+        <div className="mt-4 flex justify-end gap-2">
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={reviewMut.isPending}
+            onClick={() => {
+              setRejectRow(null);
+              setRejectReason("");
+            }}
+          >
+            {t("cancel")}
+          </Button>
+          <Button
+            size="sm"
+            variant="danger"
+            disabled={reviewMut.isPending || !rejectReason.trim()}
+            onClick={() => {
+              if (!rejectRow) return;
+              setMenuBusyId(String(rejectRow.id));
+              reviewMut.mutate({
+                id: String(rejectRow.id),
+                action: "reject",
+                reason: rejectReason.trim(),
+              });
+            }}
+          >
+            {t("reject")}
+          </Button>
+        </div>
+      </GlassModal>
     </AdminShell>
   );
 }

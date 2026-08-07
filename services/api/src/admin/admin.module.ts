@@ -20,6 +20,7 @@ import { KycService } from './kyc.service';
 import { AdminWithdrawsService } from './withdraws.service';
 import { AdminCreatorsService } from './creators.service';
 import { SettingsService } from './settings.service';
+import { PaymentGatewayService } from './payment-gateway.service';
 import { AdminEpisodesService } from './episodes.service';
 import { AdminsService } from './admins.service';
 import { AdminExportService } from './export.service';
@@ -69,6 +70,7 @@ import { UploadModule } from '../upload/upload.module';
     AdminWithdrawsService,
     AdminCreatorsService,
     SettingsService,
+    PaymentGatewayService,
     AdminEpisodesService,
     AdminsService,
     AdminExportService,

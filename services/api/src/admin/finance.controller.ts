@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Header,
   Param,
@@ -13,10 +14,9 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { Transform, Type } from 'class-transformer';
-import { IsBoolean, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
-import { BizCode, BizException } from '../common/biz.exception';
+import { ArrayMinSize, IsArray, IsBoolean, IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 import { ok } from '../common/response';
-import { ExchangeService } from '../exchange/exchange.service';
+import { PackagesService } from '../packages/packages.service';
 import { RedeemService } from '../redeem/redeem.service';
 import { VipPlansService } from '../vip/vip-plans.service';
 import { AdminRoleGuard, AdminRoles } from './admin-role.guard';
@@ -33,21 +33,32 @@ class ReasonDto {
   @IsOptional() @IsString() reason?: string;
 }
 
-class SetRateDto {
-  @IsNotEmpty() @IsString() currency!: string;
-  @IsOptional() @Type(() => Number) @IsNumber() @Min(0.000001) cnyToFiat?: number;
-  @IsOptional() @Type(() => Number) @IsNumber() @Min(0.000001) buyRate?: number;
-  @IsOptional() @Type(() => Number) @IsNumber() @Min(0.000001) sellRate?: number;
-}
-
 class UpsertVipPlanDto {
   @IsNotEmpty() @IsString() nameEn!: string;
   @IsOptional() @IsString() nameZh?: string;
   @IsOptional() @IsString() nameFr?: string;
   @IsNotEmpty() @Type(() => Number) @IsNumber() @Min(1) durationDays!: number;
   @IsNotEmpty() @Type(() => Number) @IsNumber() @Min(0.01) basePrice!: number;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0.01) originalPrice?: number | null;
   @IsOptional() @Type(() => Number) @IsNumber() sortOrder?: number;
   @IsOptional() @IsString() badge?: string;
+  @IsNotEmpty() @IsString() descEn!: string;
+  @IsOptional() @IsString() descZh?: string;
+  @IsOptional() @IsString() descFr?: string;
+  @Transform(({ value }) => {
+    if (Array.isArray(value)) return value;
+    if (typeof value === 'string') {
+      return value
+        .split(/\n|,/)
+        .map((s: string) => s.trim())
+        .filter(Boolean);
+    }
+    return value;
+  })
+  @IsArray()
+  @ArrayMinSize(1)
+  @IsString({ each: true })
+  benefits!: string[];
   @IsOptional()
   @Transform(({ value }) => value === true || value === 'true' || value === 1)
   @IsBoolean()
@@ -59,6 +70,56 @@ class PatchVipPlanDto {
   @IsOptional() @IsString() nameZh?: string;
   @IsOptional() @IsString() nameFr?: string;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(1) durationDays?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0.01) basePrice?: number;
+  @IsOptional()
+  @Transform(({ value }) => (value === '' || value === undefined ? null : value))
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0.01)
+  originalPrice?: number | null;
+  @IsOptional() @Type(() => Number) @IsNumber() sortOrder?: number;
+  @IsOptional() @IsString() badge?: string;
+  @IsOptional() @IsString() descEn?: string;
+  @IsOptional() @IsString() descZh?: string;
+  @IsOptional() @IsString() descFr?: string;
+  @IsOptional()
+  @Transform(({ value }) => {
+    if (value == null) return value;
+    if (Array.isArray(value)) return value;
+    if (typeof value === 'string') {
+      return value
+        .split(/\n|,/)
+        .map((s: string) => s.trim())
+        .filter(Boolean);
+    }
+    return value;
+  })
+  @IsArray()
+  @IsString({ each: true })
+  benefits?: string[];
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true' || value === 1)
+  @IsBoolean()
+  active?: boolean;
+}
+
+class UpsertTopupPackageDto {
+  @IsOptional() @IsString() name?: string;
+  @IsNotEmpty() @Type(() => Number) @IsNumber() @Min(1) baseCredits!: number;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) bonusCredits?: number;
+  @IsNotEmpty() @Type(() => Number) @IsNumber() @Min(0.01) basePrice!: number;
+  @IsOptional() @Type(() => Number) @IsNumber() sortOrder?: number;
+  @IsOptional() @IsString() badge?: string;
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true' || value === 1)
+  @IsBoolean()
+  active?: boolean;
+}
+
+class PatchTopupPackageDto {
+  @IsOptional() @IsString() name?: string;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) baseCredits?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) bonusCredits?: number;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0.01) basePrice?: number;
   @IsOptional() @Type(() => Number) @IsNumber() sortOrder?: number;
   @IsOptional() @IsString() badge?: string;
@@ -93,10 +154,10 @@ class AdjustDto {
 export class FinanceController {
   constructor(
     private readonly admin: AdminService,
-    private readonly exchange: ExchangeService,
     private readonly walletAdmin: AdminWalletService,
     private readonly withdraws: AdminWithdrawsService,
     private readonly vipPlans: VipPlansService,
+    private readonly packages: PackagesService,
     private readonly redeemSvc: RedeemService,
   ) {}
 
@@ -142,25 +203,6 @@ export class FinanceController {
     return ok(await this.admin.rejectWithdraw(id, dto.reason, getActor(req)));
   }
 
-  @Get('exchange-rates')
-  async listRates() {
-    return ok(await this.exchange.getRates());
-  }
-
-  @Post('exchange-rates')
-  @AdminRoles('SUPER_ADMIN')
-  async setRate(@Body() dto: SetRateDto, @Req() req: any) {
-    const cnyToFiat = dto.cnyToFiat ?? dto.buyRate;
-    if (cnyToFiat == null) {
-      throw new BizException(BizCode.BAD_REQUEST, 'cnyToFiat 必填');
-    }
-    return ok(await this.exchange.upsertRate({
-      currency: dto.currency,
-      cnyToFiat,
-      sellRate: dto.sellRate ?? cnyToFiat,
-    }, getActor(req)));
-  }
-
   @Get('vip-plans')
   async listVipPlans() {
     return ok(await this.vipPlans.listAdmin());
@@ -176,6 +218,39 @@ export class FinanceController {
   @AdminRoles('SUPER_ADMIN')
   async updateVipPlan(@Param('id') id: string, @Body() dto: PatchVipPlanDto, @Req() req: any) {
     return ok(await this.vipPlans.update(BigInt(id), dto, getActor(req)));
+  }
+
+  @Delete('vip-plans/:id')
+  @AdminRoles('SUPER_ADMIN')
+  async deleteVipPlan(@Param('id') id: string, @Req() req: any) {
+    return ok(await this.vipPlans.remove(BigInt(id), getActor(req)));
+  }
+
+  @Get('topup-packages')
+  async listTopupPackages() {
+    return ok(await this.packages.listAdmin());
+  }
+
+  @Post('topup-packages')
+  @AdminRoles('SUPER_ADMIN')
+  async createTopupPackage(@Body() dto: UpsertTopupPackageDto, @Req() req: any) {
+    return ok(await this.packages.create(dto, getActor(req)));
+  }
+
+  @Patch('topup-packages/:id')
+  @AdminRoles('SUPER_ADMIN')
+  async updateTopupPackage(
+    @Param('id') id: string,
+    @Body() dto: PatchTopupPackageDto,
+    @Req() req: any,
+  ) {
+    return ok(await this.packages.update(BigInt(id), dto, getActor(req)));
+  }
+
+  @Delete('topup-packages/:id')
+  @AdminRoles('SUPER_ADMIN')
+  async deleteTopupPackage(@Param('id') id: string, @Req() req: any) {
+    return ok(await this.packages.remove(BigInt(id), getActor(req)));
   }
 
   @Get('redeem/batches')
