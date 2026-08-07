@@ -115,6 +115,9 @@ export async function createStripeCheckoutSession(
     cancel_url: urls.cancel_url,
     client_reference_id: input.orderNo,
     customer_email: checkoutEmail(input.userId, input.customerEmail),
+    // New Stripe accounts may enable Managed Payments by default, which requires
+    // product tax codes. Velvet uses classic one-time Checkout only.
+    'managed_payments[enabled]': 'false',
     'line_items[0][quantity]': '1',
     'line_items[0][price_data][currency]': currency,
     'line_items[0][price_data][unit_amount]': String(amount),
