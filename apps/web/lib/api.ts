@@ -473,19 +473,37 @@ export async function verifyEmailOtp(email: string, code: string) {
 
 export async function registerEmail(opts: {
   email: string;
-  username: string;
+  username?: string;
   password: string;
   code?: string;
   nickname?: string;
+  captchaId?: string;
+  captchaCode?: string;
 }) {
-  return authPost<{ token: string; user?: any }>("/auth/email/register", opts);
+  const body: Record<string, unknown> = {
+    email: opts.email,
+    password: opts.password,
+  };
+  if (opts.username) body.username = opts.username;
+  if (opts.code) body.code = opts.code;
+  if (opts.nickname) body.nickname = opts.nickname;
+  if (opts.captchaId) body.captchaId = opts.captchaId;
+  if (opts.captchaCode) body.captchaCode = opts.captchaCode;
+  return authPost<{ token: string; user?: any }>("/auth/email/register", body);
 }
 
 /** 账号或邮箱 + 密码登录 */
-export async function loginWithPassword(account: string, password: string) {
+export async function loginWithPassword(
+  account: string,
+  password: string,
+  captcha?: { captchaId: string; captchaCode: string },
+) {
   return authPost<{ token: string; user?: any }>("/auth/email/login", {
     account,
     password,
+    ...(captcha
+      ? { captchaId: captcha.captchaId, captchaCode: captcha.captchaCode }
+      : {}),
   });
 }
 
@@ -506,8 +524,17 @@ export async function getAuthChannels(): Promise<{
   emailOtp: { enabled: boolean; configured: boolean; resetAlwaysOn: boolean };
   phoneOtp: { enabled: boolean; configured: boolean };
   google: { enabled: boolean };
+  captcha: { enabled: boolean };
 }> {
   return request("/auth/channels");
+}
+
+export async function fetchAuthCaptcha(): Promise<{
+  captchaId: string;
+  imageSvg: string;
+  captchaRequired: boolean;
+}> {
+  return request("/auth/captcha");
 }
 
 /** Absolute or same-origin URL to open Google OAuth in a popup */

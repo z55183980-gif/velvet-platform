@@ -29,6 +29,7 @@ import {
   MinLength,
 } from 'class-validator';
 import { OtpPurpose } from './otp.service';
+import { CaptchaService } from '../common/captcha.service';
 
 class SendOtpDto {
   /** 统一字段名 phone；兼容旧客户端 phoneNumber */
@@ -71,13 +72,16 @@ class RegisterEmailDto {
   @IsNotEmpty()
   email!: string;
 
-  /** 登录账号（3–24 位字母数字下划线）；内测必填 */
+  /**
+   * 可选。未传时服务端按邮箱本地部分自动生成唯一 username。
+   * 登录推荐使用邮箱；username 仍可用于旧账号密码登录。
+   */
+  @IsOptional()
   @IsString()
-  @IsNotEmpty()
   @Matches(/^[a-zA-Z0-9_]{3,24}$/, {
     message: 'auth.usernameRules',
   })
-  username!: string;
+  username?: string;
 
   @IsString()
   @MinLength(6, { message: 'auth.passwordMinLength' })
@@ -85,7 +89,7 @@ class RegisterEmailDto {
 
   /**
    * 公测预留：邮箱验证码激活注册时传入。
-   * 内测可不传（直接邮箱+账号+密码注册）。
+   * 内测可不传（直接邮箱+密码注册）。
    */
   @IsOptional()
   @IsString()
@@ -94,6 +98,14 @@ class RegisterEmailDto {
   @IsOptional()
   @IsString()
   nickname?: string;
+
+  @IsOptional()
+  @IsString()
+  captchaId?: string;
+
+  @IsOptional()
+  @IsString()
+  captchaCode?: string;
 }
 
 class LoginPasswordDto {
@@ -110,6 +122,14 @@ class LoginPasswordDto {
   @IsString()
   @IsNotEmpty()
   password!: string;
+
+  @IsOptional()
+  @IsString()
+  captchaId?: string;
+
+  @IsOptional()
+  @IsString()
+  captchaCode?: string;
 }
 
 class ForgotPasswordDto {
@@ -138,6 +158,7 @@ export class AuthController {
     private readonly auth: AuthService,
     private readonly sessions: SessionService,
     private readonly prisma: PrismaService,
+    private readonly captcha: CaptchaService,
   ) {}
 
   /**
@@ -149,6 +170,13 @@ export class AuthController {
   @Get('channels')
   authChannels() {
     return ok(this.auth.getAuthChannels());
+  }
+
+  /** Web 登录/注册图形验证码（对齐管理端 SVG captcha） */
+  @SkipThrottle()
+  @Get('captcha')
+  captchaChallenge() {
+    return ok(this.captcha.issue('web'));
   }
 
   /** Google OAuth: open in popup → redirect to Google */
@@ -285,6 +313,7 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
+    this.captcha.verify('web', dto.captchaId || '', dto.captchaCode || '');
     const result = await this.auth.registerEmail(dto, getClientMeta(req));
     this.setSessionCookie(res, result.token);
     return ok(result, this.msg(req, 'auth.registerSuccess'));
@@ -297,6 +326,7 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
+    this.captcha.verify('web', dto.captchaId || '', dto.captchaCode || '');
     const account = String(dto.account || dto.email || '').trim();
     const result = await this.auth.loginWithPassword(account, dto.password, getClientMeta(req));
     this.setSessionCookie(res, result.token);

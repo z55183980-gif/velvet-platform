@@ -47,6 +47,7 @@ export class AuthService {
   private readonly allowedOrigins: Set<string>;
   /** Short-lived OAuth CSRF states (single-process; OK for current deploy). */
   private readonly googleStates = new Map<string, GoogleOAuthState>();
+  private readonly captchaDisabledWeb: boolean;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -58,6 +59,7 @@ export class AuthService {
     this.adminToken = config.get<string>('ADMIN_TOKEN') || 'dev-admin';
     this.emailOtpEnabled = this.envFlag(config, 'AUTH_EMAIL_OTP_ENABLED', false);
     this.phoneOtpEnabled = this.envFlag(config, 'AUTH_PHONE_OTP_ENABLED', false);
+    this.captchaDisabledWeb = this.envFlag(config, 'AUTH_WEB_CAPTCHA_DISABLED', false);
     this.smsConfigured = Boolean(
       String(config.get('SMS_API_KEY') || config.get('SMS_PROVIDER') || '').trim(),
     );
@@ -102,6 +104,9 @@ export class AuthService {
       },
       google: {
         enabled: this.isGoogleEnabled(),
+      },
+      captcha: {
+        enabled: !this.captchaDisabledWeb,
       },
     };
   }
@@ -449,14 +454,14 @@ export class AuthService {
   }
 
   /**
-   * 内测注册：邮箱 + 账号 + 密码（无需验证码）。
+   * 注册：邮箱 + 密码（username 可选；未传则按邮箱自动生成）。
    * 公测：打开 AUTH_EMAIL_OTP_ENABLED 后必须传 code。
    */
   async registerEmail(
     opts: {
       email: string;
       password: string;
-      username: string;
+      username?: string;
       code?: string;
       nickname?: string;
     },
@@ -465,10 +470,6 @@ export class AuthService {
     const normalized = this.normalizeEmail(opts.email);
     if (!normalized) {
       throw new BizException(BizCode.BAD_REQUEST, 'auth.invalidEmail');
-    }
-    const username = this.normalizeUsername(opts.username);
-    if (!username) {
-      throw new BizException(BizCode.BAD_REQUEST, 'auth.usernameRules');
     }
     const password = String(opts.password || '');
     if (password.length < MIN_PASSWORD_LEN) {
@@ -486,19 +487,27 @@ export class AuthService {
       throw new BizException(BizCode.INVALID_OTP, 'auth.invalidOtp');
     }
 
-    const [byEmail, byUsername] = await Promise.all([
-      this.prisma.user.findUnique({ where: { email: normalized } }),
-      this.prisma.user.findUnique({ where: { username } }),
-    ]);
+    const byEmail = await this.prisma.user.findUnique({ where: { email: normalized } });
     if (byEmail?.passwordHash) {
       throw new BizException(BizCode.CONFLICT, 'auth.emailAlreadyRegistered');
     }
-    if (byUsername && byUsername.id !== byEmail?.id) {
-      throw new BizException(BizCode.CONFLICT, 'auth.usernameTaken');
+
+    let username = this.normalizeUsername(String(opts.username || '').trim());
+    if (!username) {
+      username = await this.allocateUsernameFromEmail(normalized, byEmail?.id);
+    } else {
+      const taken = await this.prisma.user.findUnique({ where: { username } });
+      if (taken && taken.id !== byEmail?.id) {
+        throw new BizException(BizCode.CONFLICT, 'auth.usernameTaken');
+      }
     }
 
     const nickname =
-      String(opts.nickname || '').trim() || username || normalized.split('@')[0] || 'user';
+      String(opts.nickname || '').trim() ||
+      byEmail?.nickname ||
+      this.nicknameFromEmail(normalized) ||
+      username ||
+      'user';
     const passwordHash = this.hashPassword(password);
 
     let user;
@@ -636,6 +645,35 @@ export class AuthService {
       .toLowerCase();
     if (!USERNAME_RE.test(u)) return null;
     return u;
+  }
+
+  private nicknameFromEmail(email: string): string {
+    const local = String(email || '').split('@')[0] || '';
+    return local.trim().slice(0, 32) || 'user';
+  }
+
+  /** Build a unique username from email local-part (3–24 [a-z0-9_]). */
+  private async allocateUsernameFromEmail(
+    email: string,
+    allowUserId?: bigint | null,
+  ): Promise<string> {
+    const local = String(email.split('@')[0] || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9_]/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_|_$/g, '');
+    let base = local.slice(0, 18);
+    if (base.length < 3) base = `u_${base || 'user'}`.slice(0, 18);
+    if (!USERNAME_RE.test(base)) base = `user_${crypto.randomBytes(3).toString('hex')}`;
+
+    for (let i = 0; i < 12; i++) {
+      const candidate =
+        i === 0 ? base : `${base.slice(0, 18)}_${(Math.floor(Math.random() * 9000) + 1000).toString()}`.slice(0, 24);
+      if (!USERNAME_RE.test(candidate)) continue;
+      const taken = await this.prisma.user.findUnique({ where: { username: candidate } });
+      if (!taken || (allowUserId != null && taken.id === allowUserId)) return candidate;
+    }
+    return `user_${crypto.randomBytes(6).toString('hex')}`.slice(0, 24);
   }
 
   private envFlag(config: ConfigService, key: string, fallback: boolean): boolean {

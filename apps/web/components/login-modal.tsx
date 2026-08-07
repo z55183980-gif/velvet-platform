@@ -1,23 +1,37 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { BrandLogo } from "@/components/brand-logo";
-import { getAuthChannels, getGoogleAuthStartUrl, saveAuthToken } from "@/lib/api";
+import {
+  fetchAuthCaptcha,
+  getAuthChannels,
+  getGoogleAuthStartUrl,
+  saveAuthToken,
+} from "@/lib/api";
 import { useLocale } from "@/lib/i18n";
 import { track } from "@/lib/track";
 
 export type AuthMode = "login" | "register" | "forgot";
 
-type Panel = "entry" | "email";
+type CaptchaChallenge = {
+  captchaId: string;
+  imageSvg: string;
+  captchaRequired: boolean;
+};
 
 const inputCls =
-  "w-full rounded-xl border border-line bg-surface-3 px-4 py-3 text-white outline-none transition-colors placeholder:text-ink-subtle focus:border-brand";
+  "w-full rounded-xl border border-line bg-surface-3 px-4 py-3 text-ink outline-none transition-colors placeholder:text-ink-subtle focus:border-brand";
 const primaryBtnCls =
   "w-full rounded-xl bg-brand py-3 font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50";
-const linkBtnCls = "w-full text-center text-sm text-ink-muted hover:text-white";
+const linkBtnCls = "w-full text-center text-sm text-ink-muted hover:text-ink";
 const oauthBtnCls =
-  "flex w-full items-center justify-center gap-3 rounded-xl border border-line bg-surface-3 px-4 py-3.5 text-sm font-medium text-white transition-colors hover:bg-surface-2 disabled:opacity-50";
+  "flex w-full items-center justify-center gap-3 rounded-xl border border-line bg-surface-3 px-4 py-3.5 text-sm font-medium text-ink transition-colors hover:bg-surface-2 disabled:opacity-50";
+
+/** Simple email shape check (aligned with API normalizeEmail). */
+function isValidEmail(raw: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(raw || "").trim());
+}
 
 function GoogleIcon() {
   return (
@@ -42,24 +56,6 @@ function GoogleIcon() {
   );
 }
 
-function EmailIcon() {
-  return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden>
-      <path
-        d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 17.5v-11Z"
-        stroke="currentColor"
-        strokeWidth="1.6"
-      />
-      <path
-        d="m5.5 7.5 6.1 4.2a1 1 0 0 0 1.1 0L18.8 7.5"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
 function openCenteredPopup(url: string, name: string, w = 520, h = 640) {
   const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - w) / 2));
   const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - h) / 2));
@@ -73,13 +69,19 @@ function openCenteredPopup(url: string, name: string, w = 520, h = 640) {
 export type LoginModalProps = {
   initialMode: AuthMode;
   onClose: () => void;
-  loginPassword: (account: string, password: string) => Promise<void>;
+  loginPassword: (
+    account: string,
+    password: string,
+    captcha?: { captchaId: string; captchaCode: string },
+  ) => Promise<void>;
   register: (opts: {
     email: string;
-    username: string;
+    username?: string;
     password: string;
     code?: string;
     nickname?: string;
+    captchaId?: string;
+    captchaCode?: string;
   }) => Promise<void>;
   forgot: (email: string) => Promise<{ expiresInSec: number; devCode?: string; mailed?: boolean }>;
   reset: (opts: { email: string; code: string; password: string }) => Promise<void>;
@@ -97,13 +99,15 @@ export function LoginModal({
 }: LoginModalProps) {
   const { t } = useLocale();
 
-  const [panel, setPanel] = useState<Panel>("entry");
-  const [mode, setMode] = useState<AuthMode>(initialMode === "forgot" ? "forgot" : initialMode);
+  const [mode, setMode] = useState<AuthMode>(initialMode);
   const [account, setAccount] = useState("");
   const [email, setEmail] = useState("");
-  const [username, setUsername] = useState("");
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
+  const [passwordConfirm, setPasswordConfirm] = useState("");
+  const [captchaCode, setCaptchaCode] = useState("");
+  const [captcha, setCaptcha] = useState<CaptchaChallenge | null>(null);
+  const [captchaLoading, setCaptchaLoading] = useState(false);
   const [step, setStep] = useState<"form" | "code">("form");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -111,26 +115,52 @@ export function LoginModal({
   const [mailed, setMailed] = useState<boolean | null>(null);
   const [googleEnabled, setGoogleEnabled] = useState(true);
 
-  useEffect(() => {
-    if (initialMode === "register" || initialMode === "forgot") {
-      setPanel("email");
-      setMode(initialMode);
+  const loadCaptcha = useCallback(async () => {
+    setCaptchaLoading(true);
+    try {
+      const challenge = await fetchAuthCaptcha();
+      setCaptcha(challenge);
+      setCaptchaCode("");
+    } catch {
+      setErr(t("login.captchaLoadFailed"));
+    } finally {
+      setCaptchaLoading(false);
     }
+  }, [t]);
+
+  useEffect(() => {
+    setMode(initialMode);
+    setStep("form");
+    setErr(null);
   }, [initialMode]);
 
   useEffect(() => {
     let cancelled = false;
     getAuthChannels()
       .then((c) => {
-        if (!cancelled) setGoogleEnabled(!!c.google?.enabled);
+        if (cancelled) return;
+        setGoogleEnabled(!!c.google?.enabled);
+        if (c.captcha?.enabled !== false) {
+          void loadCaptcha();
+        } else {
+          setCaptcha({ captchaId: "", imageSvg: "", captchaRequired: false });
+        }
       })
       .catch(() => {
-        if (!cancelled) setGoogleEnabled(false);
+        if (!cancelled) {
+          setGoogleEnabled(false);
+          void loadCaptcha();
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadCaptcha]);
+
+  useEffect(() => {
+    if (mode === "forgot") return;
+    if (captcha?.captchaRequired) void loadCaptcha();
+  }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps — refresh image when switching login/register
 
   useEffect(() => {
     const onMessage = (ev: MessageEvent) => {
@@ -159,35 +189,42 @@ export function LoginModal({
     setStep("form");
     setCode("");
     setPassword("");
+    setPasswordConfirm("");
     setDevCode(null);
     setMailed(null);
     setErr(null);
   };
 
   const title =
-    panel === "entry"
-      ? t("login.entryTitle")
-      : mode === "register"
-        ? t("login.registerTitle")
-        : mode === "forgot"
-          ? t("login.forgotTitle")
-          : t("login.title");
+    mode === "register"
+      ? t("login.registerTitle")
+      : mode === "forgot"
+        ? t("login.forgotTitle")
+        : t("login.title");
   const subtitle =
-    panel === "entry"
-      ? t("login.entrySubtitle")
-      : mode === "register"
-        ? t("login.registerSubtitle")
-        : mode === "forgot"
-          ? t("login.forgotSubtitle")
-          : t("login.subtitle");
+    mode === "register"
+      ? t("login.registerSubtitle")
+      : mode === "forgot"
+        ? t("login.forgotSubtitle")
+        : t("login.subtitle");
 
-  const canLogin = account.trim().length >= 2 && password.length >= 6;
+  const captchaRequired = captcha?.captchaRequired !== false;
+  const captchaReady =
+    !captchaRequired ||
+    (!!captcha?.captchaId && captchaCode.trim().length >= 4);
+  const canLogin = account.trim().length >= 3 && password.length >= 6 && captchaReady;
   const canRegister =
-    email.includes("@") &&
-    /^[a-zA-Z0-9_]{3,24}$/.test(username.trim()) &&
-    password.length >= 6;
-  const canSendReset = email.includes("@");
-  const canReset = email.includes("@") && code.length >= 4 && password.length >= 6;
+    isValidEmail(email) &&
+    password.length >= 6 &&
+    password === passwordConfirm &&
+    captchaReady;
+  const canSendReset = isValidEmail(email);
+  const canReset = isValidEmail(email) && code.length >= 4 && password.length >= 6;
+
+  const captchaPayload = () =>
+    captchaRequired && captcha?.captchaId
+      ? { captchaId: captcha.captchaId, captchaCode: captchaCode.trim() }
+      : undefined;
 
   const onGoogle = () => {
     setErr(null);
@@ -212,11 +249,16 @@ export function LoginModal({
 
   const onLogin = async () => {
     setErr(null);
+    if (captchaRequired && !captchaPayload()) {
+      setErr(t("login.captchaRequired"));
+      return;
+    }
     setBusy(true);
     try {
-      await loginPassword(account.trim(), password);
+      await loginPassword(account.trim(), password, captchaPayload());
     } catch (e: any) {
       setErr(e?.message || t("login.verifyFail"));
+      if (captchaRequired) void loadCaptcha();
     } finally {
       setBusy(false);
     }
@@ -224,15 +266,31 @@ export function LoginModal({
 
   const onRegister = async () => {
     setErr(null);
+    if (!isValidEmail(email)) {
+      setErr(t("login.invalidEmail"));
+      return;
+    }
+    if (password !== passwordConfirm) {
+      setErr(t("login.passwordMismatch"));
+      return;
+    }
+    const cap = captchaPayload();
+    if (captchaRequired && !cap) {
+      setErr(t("login.captchaRequired"));
+      return;
+    }
     setBusy(true);
     try {
       await register({
         email: email.trim(),
-        username: username.trim(),
         password,
+        ...(cap
+          ? { captchaId: cap.captchaId, captchaCode: cap.captchaCode }
+          : {}),
       });
     } catch (e: any) {
       setErr(e?.message || t("login.verifyFail"));
+      if (captchaRequired) void loadCaptcha();
     } finally {
       setBusy(false);
     }
@@ -265,10 +323,12 @@ export function LoginModal({
     }
   };
 
+  const showGoogle = mode !== "forgot" && step === "form";
+
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-4">
       <div className="absolute inset-0 bg-black/75 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative flex w-full max-w-lg overflow-hidden rounded-2xl border border-line bg-surface shadow-3 max-h-[92vh] md:max-w-3xl">
+      <div className="auth-modal-dark relative flex w-full max-w-lg overflow-hidden rounded-2xl border border-line bg-surface shadow-3 max-h-[92vh] md:max-w-3xl">
         <div className="relative hidden w-[42%] shrink-0 md:block">
           <div
             className="absolute inset-0"
@@ -294,7 +354,7 @@ export function LoginModal({
         <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto p-6 sm:p-8">
           <button
             onClick={onClose}
-            className="absolute right-4 top-4 text-ink-muted transition-colors hover:text-white"
+            className="absolute right-4 top-4 text-ink-muted transition-colors hover:text-ink"
             aria-label="close"
             type="button"
           >
@@ -303,212 +363,241 @@ export function LoginModal({
 
           <div className="mb-5 flex items-center gap-2 md:hidden">
             <BrandLogo size={28} withWordmark={false} />
-            <span className="text-lg font-semibold text-white">Velvet</span>
+            <span className="text-lg font-semibold text-ink">Velvet</span>
           </div>
 
-          <h2 className="pr-8 text-xl font-semibold tracking-tight text-white">{title}</h2>
+          <h2 className="pr-8 text-xl font-semibold tracking-tight text-ink">{title}</h2>
           <p className="mt-1 text-sm text-ink-muted">{subtitle}</p>
 
-          {panel === "entry" && (
-            <div className="mt-6 space-y-3">
-              <button type="button" onClick={onGoogle} disabled={busy} className={oauthBtnCls}>
-                <GoogleIcon />
-                {busy ? t("login.verifying") : t("login.withGoogle")}
-              </button>
+          {mode !== "forgot" && (
+            <div className="mt-5 flex rounded-xl bg-surface-3 p-1">
+              {(["login", "register"] as const).map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => switchMode(k)}
+                  className={`flex-1 rounded-lg py-2 text-sm font-medium transition-colors ${
+                    mode === k
+                      ? "bg-surface text-ink shadow-sm"
+                      : "text-ink-muted hover:text-ink"
+                  }`}
+                >
+                  {k === "login" ? t("login.tabLogin") : t("login.tabRegister")}
+                </button>
+              ))}
+            </div>
+          )}
 
+          {mode === "login" && (
+            <div className="mt-5 space-y-3">
+              <input
+                value={account}
+                onChange={(e) => setAccount(e.target.value)}
+                placeholder={t("login.emailPlaceholder")}
+                inputMode="email"
+                autoComplete="email"
+                className={inputCls}
+              />
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder={t("login.passwordPlaceholder")}
+                autoComplete="current-password"
+                className={inputCls}
+              />
+              {captchaRequired ? (
+                <div className="flex items-center gap-3">
+                  <input
+                    value={captchaCode}
+                    onChange={(e) => setCaptchaCode(e.target.value.toUpperCase())}
+                    placeholder={t("login.captchaPlaceholder")}
+                    autoComplete="off"
+                    className={`${inputCls} min-w-0 flex-1`}
+                  />
+                  <button
+                    type="button"
+                    className="inline-flex h-[50px] w-[120px] shrink-0 items-center justify-center overflow-hidden rounded-xl border border-line bg-surface-3 transition-colors hover:bg-surface-2 disabled:opacity-50"
+                    onClick={() => void loadCaptcha()}
+                    disabled={captchaLoading}
+                    aria-label={t("login.refreshCaptcha")}
+                    title={t("login.refreshCaptcha")}
+                  >
+                    {captcha?.imageSvg ? (
+                      <span
+                        className="inline-flex h-full w-full items-center justify-center [&_svg]:h-full [&_svg]:w-full"
+                        dangerouslySetInnerHTML={{ __html: captcha.imageSvg }}
+                      />
+                    ) : (
+                      <span className="text-xs text-ink-muted">…</span>
+                    )}
+                  </button>
+                </div>
+              ) : null}
+              <button
+                type="button"
+                onClick={onLogin}
+                disabled={busy || !canLogin}
+                className={primaryBtnCls}
+              >
+                {busy ? t("login.verifying") : t("login.confirm")}
+              </button>
+              <button type="button" onClick={() => switchMode("forgot")} className={linkBtnCls}>
+                {t("login.forgotLink")}
+              </button>
+            </div>
+          )}
+
+          {mode === "register" && (
+            <div className="mt-5 space-y-3">
+              <input
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder={t("login.emailPlaceholder")}
+                inputMode="email"
+                autoComplete="email"
+                className={inputCls}
+              />
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder={t("login.setPasswordPlaceholder")}
+                autoComplete="new-password"
+                className={inputCls}
+              />
+              <input
+                type="password"
+                value={passwordConfirm}
+                onChange={(e) => setPasswordConfirm(e.target.value)}
+                placeholder={t("login.confirmPasswordPlaceholder")}
+                autoComplete="new-password"
+                className={inputCls}
+              />
+              {captchaRequired ? (
+                <div className="flex items-center gap-3">
+                  <input
+                    value={captchaCode}
+                    onChange={(e) => setCaptchaCode(e.target.value.toUpperCase())}
+                    placeholder={t("login.captchaPlaceholder")}
+                    autoComplete="off"
+                    className={`${inputCls} min-w-0 flex-1`}
+                  />
+                  <button
+                    type="button"
+                    className="inline-flex h-[50px] w-[120px] shrink-0 items-center justify-center overflow-hidden rounded-xl border border-line bg-surface-3 transition-colors hover:bg-surface-2 disabled:opacity-50"
+                    onClick={() => void loadCaptcha()}
+                    disabled={captchaLoading}
+                    aria-label={t("login.refreshCaptcha")}
+                    title={t("login.refreshCaptcha")}
+                  >
+                    {captcha?.imageSvg ? (
+                      <span
+                        className="inline-flex h-full w-full items-center justify-center [&_svg]:h-full [&_svg]:w-full"
+                        dangerouslySetInnerHTML={{ __html: captcha.imageSvg }}
+                      />
+                    ) : (
+                      <span className="text-xs text-ink-muted">…</span>
+                    )}
+                  </button>
+                </div>
+              ) : null}
+              <button
+                type="button"
+                onClick={onRegister}
+                disabled={busy || !canRegister}
+                className={primaryBtnCls}
+              >
+                {busy ? t("login.verifying") : t("login.registerConfirm")}
+              </button>
+            </div>
+          )}
+
+          {mode === "forgot" && step === "form" && (
+            <div className="mt-5 space-y-3">
+              <input
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder={t("login.emailPlaceholder")}
+                inputMode="email"
+                autoComplete="email"
+                className={inputCls}
+              />
+              <button
+                type="button"
+                onClick={onSendResetCode}
+                disabled={busy || !canSendReset}
+                className={primaryBtnCls}
+              >
+                {busy ? t("login.sending") : t("login.sendResetCode")}
+              </button>
+              <button type="button" onClick={() => switchMode("login")} className={linkBtnCls}>
+                {t("login.backToLogin")}
+              </button>
+            </div>
+          )}
+
+          {mode === "forgot" && step === "code" && (
+            <div className="mt-5 space-y-3">
+              <p className="text-xs text-ink-subtle">{t("login.resetCodeHint")}</p>
+              <input
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+                placeholder={t("login.resetCodePlaceholder")}
+                inputMode="numeric"
+                className={`${inputCls} text-center text-lg tracking-[0.3em]`}
+              />
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder={t("login.newPasswordPlaceholder")}
+                autoComplete="new-password"
+                className={inputCls}
+              />
+              {devCode && (
+                <p className="text-center text-xs text-ink-subtle">
+                  Dev: <span className="font-mono text-gold">{devCode}</span>
+                  {mailed === false && (
+                    <span className="ml-2">{t("login.smtpNotConfigured")}</span>
+                  )}
+                </p>
+              )}
+              <button
+                type="button"
+                onClick={onReset}
+                disabled={busy || !canReset}
+                className={primaryBtnCls}
+              >
+                {busy ? t("login.verifying") : t("login.resetConfirm")}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setStep("form");
+                  setCode("");
+                  setPassword("");
+                  setDevCode(null);
+                }}
+                className={linkBtnCls}
+              >
+                {t("login.changeIdentity")}
+              </button>
+            </div>
+          )}
+
+          {showGoogle && (
+            <div className="mt-5 space-y-3">
               <div className="flex items-center gap-3 py-1">
                 <div className="h-px flex-1 bg-line" />
                 <span className="text-xs text-ink-subtle">{t("login.or")}</span>
                 <div className="h-px flex-1 bg-line" />
               </div>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setErr(null);
-                  setPanel("email");
-                  setMode(initialMode === "register" ? "register" : "login");
-                }}
-                className={oauthBtnCls}
-              >
-                <EmailIcon />
-                {t("login.continueEmail")}
+              <button type="button" onClick={onGoogle} disabled={busy} className={oauthBtnCls}>
+                <GoogleIcon />
+                {busy ? t("login.verifying") : t("login.withGoogle")}
               </button>
             </div>
-          )}
-
-          {panel === "email" && (
-            <>
-              {mode !== "forgot" && (
-                <div className="mt-5 flex rounded-xl bg-surface-3 p-1">
-                  {(["login", "register"] as const).map((k) => (
-                    <button
-                      key={k}
-                      type="button"
-                      onClick={() => switchMode(k)}
-                      className={`flex-1 rounded-lg py-2 text-sm font-medium transition-colors ${
-                        mode === k
-                          ? "bg-surface text-white shadow-sm"
-                          : "text-ink-muted hover:text-ink"
-                      }`}
-                    >
-                      {k === "login" ? t("login.tabLogin") : t("login.tabRegister")}
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {mode === "login" && (
-                <div className="mt-5 space-y-3">
-                  <input
-                    value={account}
-                    onChange={(e) => setAccount(e.target.value)}
-                    placeholder={t("login.accountPlaceholder")}
-                    autoComplete="username"
-                    className={inputCls}
-                  />
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder={t("login.passwordPlaceholder")}
-                    autoComplete="current-password"
-                    className={inputCls}
-                  />
-                  <button
-                    type="button"
-                    onClick={onLogin}
-                    disabled={busy || !canLogin}
-                    className={primaryBtnCls}
-                  >
-                    {busy ? t("login.verifying") : t("login.confirm")}
-                  </button>
-                  <button type="button" onClick={() => switchMode("forgot")} className={linkBtnCls}>
-                    {t("login.forgotLink")}
-                  </button>
-                </div>
-              )}
-
-              {mode === "register" && (
-                <div className="mt-5 space-y-3">
-                  <input
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder={t("login.emailPlaceholder")}
-                    inputMode="email"
-                    autoComplete="email"
-                    className={inputCls}
-                  />
-                  <input
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    placeholder={t("login.usernamePlaceholder")}
-                    autoComplete="username"
-                    className={inputCls}
-                  />
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder={t("login.setPasswordPlaceholder")}
-                    autoComplete="new-password"
-                    className={inputCls}
-                  />
-                  <button
-                    type="button"
-                    onClick={onRegister}
-                    disabled={busy || !canRegister}
-                    className={primaryBtnCls}
-                  >
-                    {busy ? t("login.verifying") : t("login.registerConfirm")}
-                  </button>
-                </div>
-              )}
-
-              {mode === "forgot" && step === "form" && (
-                <div className="mt-5 space-y-3">
-                  <input
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    placeholder={t("login.emailPlaceholder")}
-                    inputMode="email"
-                    autoComplete="email"
-                    className={inputCls}
-                  />
-                  <button
-                    type="button"
-                    onClick={onSendResetCode}
-                    disabled={busy || !canSendReset}
-                    className={primaryBtnCls}
-                  >
-                    {busy ? t("login.sending") : t("login.sendResetCode")}
-                  </button>
-                  <button type="button" onClick={() => switchMode("login")} className={linkBtnCls}>
-                    {t("login.backToLogin")}
-                  </button>
-                </div>
-              )}
-
-              {mode === "forgot" && step === "code" && (
-                <div className="mt-5 space-y-3">
-                  <p className="text-xs text-ink-subtle">{t("login.resetCodeHint")}</p>
-                  <input
-                    value={code}
-                    onChange={(e) => setCode(e.target.value)}
-                    placeholder={t("login.resetCodePlaceholder")}
-                    inputMode="numeric"
-                    className={`${inputCls} text-center text-lg tracking-[0.3em]`}
-                  />
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder={t("login.newPasswordPlaceholder")}
-                    autoComplete="new-password"
-                    className={inputCls}
-                  />
-                  {devCode && (
-                    <p className="text-center text-xs text-ink-subtle">
-                      Dev: <span className="font-mono text-gold">{devCode}</span>
-                      {mailed === false && (
-                        <span className="ml-2">{t("login.smtpNotConfigured")}</span>
-                      )}
-                    </p>
-                  )}
-                  <button
-                    type="button"
-                    onClick={onReset}
-                    disabled={busy || !canReset}
-                    className={primaryBtnCls}
-                  >
-                    {busy ? t("login.verifying") : t("login.resetConfirm")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setStep("form");
-                      setCode("");
-                      setPassword("");
-                      setDevCode(null);
-                    }}
-                    className={linkBtnCls}
-                  >
-                    {t("login.changeIdentity")}
-                  </button>
-                </div>
-              )}
-
-              <button
-                type="button"
-                onClick={() => {
-                  setPanel("entry");
-                  setErr(null);
-                }}
-                className={`${linkBtnCls} mt-3`}
-              >
-                {t("login.backToEntry")}
-              </button>
-            </>
           )}
 
           {err && <p className="mt-3 text-sm text-red-400">{err}</p>}

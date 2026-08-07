@@ -72,12 +72,18 @@ interface AuthValue {
   verifyEmail: (email: string, code: string) => Promise<void>;
   register: (opts: {
     email: string;
-    username: string;
+    username?: string;
     password: string;
     code?: string;
     nickname?: string;
+    captchaId?: string;
+    captchaCode?: string;
   }) => Promise<void>;
-  loginPassword: (account: string, password: string) => Promise<void>;
+  loginPassword: (
+    account: string,
+    password: string,
+    captcha?: { captchaId: string; captchaCode: string },
+  ) => Promise<void>;
   forgot: (email: string) => Promise<{ expiresInSec: number; devCode?: string; mailed?: boolean }>;
   reset: (opts: { email: string; code: string; password: string }) => Promise<void>;
   logout: () => Promise<void>;
@@ -243,22 +249,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const register = useCallback(
     async (opts: {
       email: string;
-      username: string;
+      username?: string;
       password: string;
       code?: string;
       nickname?: string;
+      captchaId?: string;
+      captchaCode?: string;
     }) => {
       const data = await apiRegisterEmail(opts);
       setLoginOpen(false);
-      await applySession((data as any)?.user, opts.username || opts.email);
+      await applySession((data as any)?.user, opts.email);
       track("register", { method: "email" });
     },
     [applySession],
   );
 
   const loginPassword = useCallback(
-    async (account: string, password: string) => {
-      const data = await apiLoginPassword(account, password);
+    async (
+      account: string,
+      password: string,
+      captcha?: { captchaId: string; captchaCode: string },
+    ) => {
+      const data = await apiLoginPassword(account, password, captcha);
       setLoginOpen(false);
       await applySession((data as any)?.user, account);
       track("login", { method: "password" });

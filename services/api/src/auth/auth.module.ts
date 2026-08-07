@@ -6,10 +6,27 @@ import { SessionService } from './session.service';
 import { JwtService } from '../common/jwt.service';
 import { AuthGuard } from './auth.guard';
 import { MailerService } from '../common/mailer.service';
+import { CaptchaService } from '../common/captcha.service';
 
 @Module({
   controllers: [AuthController],
-  providers: [AuthService, OtpService, SessionService, JwtService, AuthGuard, MailerService],
-  exports: [AuthService, SessionService, JwtService, OtpService, AuthGuard, MailerService],
+  providers: [
+    AuthService,
+    OtpService,
+    SessionService,
+    JwtService,
+    AuthGuard,
+    MailerService,
+    CaptchaService,
+  ],
+  exports: [
+    AuthService,
+    SessionService,
+    JwtService,
+    OtpService,
+    AuthGuard,
+    MailerService,
+    CaptchaService,
+  ],
 })
 export class AuthModule {}

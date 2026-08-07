@@ -3,6 +3,7 @@ import { AdminService } from './admin.service';
 import { AdminAuthController } from './admin-auth.controller';
 import { AdminAuthService } from './admin-auth.service';
 import { AdminCaptchaService } from './admin-captcha.service';
+import { CaptchaService } from '../common/captcha.service';
 import { AdminGuard } from './admin.guard';
 import { AdminRoleGuard } from './admin-role.guard';
 import { AdminAuditController } from './audit.controller';
@@ -57,6 +58,7 @@ import { UploadModule } from '../upload/upload.module';
   providers: [
     AdminService,
     AdminAuthService,
+    CaptchaService,
     AdminCaptchaService,
     AdminGuard,
     AdminRoleGuard,

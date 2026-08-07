@@ -39,6 +39,8 @@ const en = {
   'auth.googleExchangeFailed': 'Google sign-in failed, please try again',
   'auth.googleEmailUnverified': 'Google account email is not verified',
   'auth.googleOriginDenied': 'Unauthorized sign-in origin',
+  'auth.captchaRequired': 'Captcha is required',
+  'auth.captchaInvalid': 'Captcha invalid or expired',
   'common.internalError': 'Internal server error',
   'common.ok': 'ok',
 
@@ -142,6 +144,8 @@ const zh: Record<MessageKey, string> = {
   'auth.googleExchangeFailed': 'Google 登录失败，请重试',
   'auth.googleEmailUnverified': 'Google 账号邮箱未验证',
   'auth.googleOriginDenied': '未授权的登录来源',
+  'auth.captchaRequired': '请填写验证码',
+  'auth.captchaInvalid': '验证码错误或已过期',
   'common.internalError': '服务器内部错误',
   'common.ok': 'ok',
 
@@ -239,6 +243,8 @@ const vi: Record<MessageKey, string> = {
   'auth.googleExchangeFailed': 'Đăng nhập Google thất bại, thử lại',
   'auth.googleEmailUnverified': 'Email tài khoản Google chưa được xác minh',
   'auth.googleOriginDenied': 'Nguồn đăng nhập không được phép',
+  'auth.captchaRequired': 'Cần nhập mã captcha',
+  'auth.captchaInvalid': 'Captcha sai hoặc hết hạn',
   'common.internalError': 'Lỗi máy chủ',
   'common.ok': 'ok',
 
@@ -337,6 +343,8 @@ const fr: Record<MessageKey, string> = {
   'auth.googleExchangeFailed': 'Échec de la connexion Google, réessayez',
   'auth.googleEmailUnverified': 'E-mail du compte Google non vérifié',
   'auth.googleOriginDenied': 'Origine de connexion non autorisée',
+  'auth.captchaRequired': 'Captcha requis',
+  'auth.captchaInvalid': 'Captcha invalide ou expiré',
   'common.internalError': 'Erreur interne du serveur',
   'common.ok': 'ok',
 
@@ -436,6 +444,8 @@ const ru: Record<MessageKey, string> = {
   'auth.googleExchangeFailed': 'Не удалось войти через Google, попробуйте снова',
   'auth.googleEmailUnverified': 'Email аккаунта Google не подтверждён',
   'auth.googleOriginDenied': 'Источник входа не разрешён',
+  'auth.captchaRequired': 'Требуется капча',
+  'auth.captchaInvalid': 'Капча неверна или истекла',
   'common.internalError': 'Внутренняя ошибка сервера',
   'common.ok': 'ok',
 
