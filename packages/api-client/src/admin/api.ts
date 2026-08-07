@@ -665,6 +665,8 @@ export type UserStatisticsOverview = {
     newPreviousPeriod: number;
     paidUsers: number;
     totalPaidAmountVnd: string;
+    totalCreditsBalance: string;
+    totalPaidTopupCredits: string;
     totalSpentCredits: string;
     totalRechargedCredits: string;
     activeVipUsers: number;
@@ -707,12 +709,103 @@ export async function adminSetUserVip(
   return adminRequest(`/admin/users/${id}/vip`, { method: "POST", body: JSON.stringify(body) });
 }
 
-export async function adminListOrders(params: Record<string, string | number | undefined> = {}) {
-  return adminRequest(`/admin/orders${toQuery(params)}`);
+export type AdminOrderUser = {
+  id?: string | number;
+  email?: string | null;
+  phone?: string | null;
+  nickname?: string | null;
+  vipExpireAt?: string | null;
+};
+
+export type AdminOrderRow = {
+  id?: string | number;
+  orderNo: string;
+  orderType?: string;
+  userId?: string | number;
+  episodeId?: string | number | null;
+  dramaId?: string | number | null;
+  packageId?: string | number | null;
+  vipPlanId?: string | number | null;
+  amountVnd?: string | number;
+  amountCredits?: string | number;
+  creatorIncomeVnd?: string | number;
+  platformFeeVnd?: string | number;
+  payCurrency?: string;
+  payAmount?: string | number | null;
+  fxRate?: string | number | null;
+  paymentMethod?: string;
+  paymentStatus?: string;
+  externalRef?: string | null;
+  paidAt?: string | null;
+  refundedAt?: string | null;
+  refundReason?: string | null;
+  refundStatus?: string | null;
+  refundNote?: string | null;
+  meta?: unknown;
+  createdAt?: string;
+  updatedAt?: string;
+  user?: AdminOrderUser | null;
+  package?: {
+    id?: string | number;
+    name?: string | null;
+    credits?: string | number;
+    baseCredits?: string | number;
+    bonusCredits?: string | number;
+    baseCurrency?: string;
+    basePrice?: string | number;
+  } | null;
+  vipPlan?: {
+    id?: string | number;
+    name?: string | null;
+    nameEn?: string;
+    nameZh?: string | null;
+    durationDays?: number;
+    baseCurrency?: string;
+    basePrice?: string | number;
+  } | null;
+  drama?: {
+    id?: string | number;
+    titleEn?: string;
+    titleZh?: string | null;
+    slug?: string;
+  } | null;
+  episode?: {
+    id?: string | number;
+    episodeNumber?: number;
+    title?: string | null;
+    dramaId?: string | number;
+  } | null;
+};
+
+export type AdminOrderList = {
+  rows: AdminOrderRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
+export async function adminListOrders(
+  params: {
+    type?: string;
+    status?: string;
+    method?: string;
+    userId?: string;
+    q?: string;
+    from?: string;
+    to?: string;
+    page?: number;
+    pageSize?: number;
+  } = {},
+) {
+  return adminRequest<AdminOrderList>(`/admin/orders${toQuery(params)}`);
+}
+
+export async function adminGetOrder(orderNo: string) {
+  return adminRequest<AdminOrderRow>(`/admin/orders/${encodeURIComponent(orderNo)}`);
 }
 
 export async function adminMarkPaid(orderNo: string, externalRef: string) {
-  return adminRequest(`/admin/orders/${orderNo}/mark-paid`, {
+  return adminRequest(`/admin/orders/${encodeURIComponent(orderNo)}/mark-paid`, {
     method: "POST",
     body: JSON.stringify({ externalRef }),
   });
@@ -892,8 +985,68 @@ export async function adminDeleteTopupPackage(id: string) {
   return adminRequest(`/admin/topup-packages/${id}`, { method: "DELETE" });
 }
 
+export type RedeemBatchList = {
+  rows: Array<{
+    id: string;
+    name?: string | null;
+    type: "VIP" | "CREDITS" | string;
+    vipDays?: number | null;
+    creditsAmount?: string | null;
+    quantity: number;
+    expiresAt?: string | null;
+    note?: string | null;
+    createdAt?: string;
+    unused?: number;
+    used?: number;
+    voided?: number;
+  }>;
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
+export type RedeemCodeList = {
+  rows: Array<{
+    id: string;
+    batchId: string;
+    code?: string;
+    codeHint?: string;
+    type?: string;
+    vipDays?: number | null;
+    creditsAmount?: string | null;
+    status?: string;
+    usedByUserId?: string | null;
+    usedBy?: { id?: string; email?: string | null; nickname?: string | null; username?: string | null } | null;
+    usedAt?: string | null;
+    expiresAt?: string | null;
+    createdAt?: string;
+  }>;
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
+export type RedeemRedemptionList = {
+  rows: Array<{
+    id: string;
+    type?: string;
+    vipDays?: number | null;
+    creditsAmount?: string | null;
+    vipExpireAt?: string | null;
+    orderId?: string | null;
+    createdAt?: string;
+    code?: string;
+    codeHint?: string;
+    batchId?: string;
+    user?: { id?: string; email?: string | null; nickname?: string | null; username?: string | null };
+  }>;
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
 export async function adminListRedeemBatches(page = 1, pageSize = 20) {
-  return adminRequest(`/admin/redeem/batches?page=${page}&pageSize=${pageSize}`);
+  return adminRequest<RedeemBatchList>(`/admin/redeem/batches${toQuery({ page, pageSize })}`);
 }
 
 export async function adminCreateRedeemBatch(body: {
@@ -905,28 +1058,46 @@ export async function adminCreateRedeemBatch(body: {
   expiresAt?: string;
   note?: string;
 }) {
-  return adminRequest("/admin/redeem/batches", { method: "POST", body: JSON.stringify(body) });
+  return adminRequest<{
+    batchId: string;
+    type: string;
+    quantity: number;
+    vipDays?: number | null;
+    creditsAmount?: string | null;
+    expiresAt?: string | null;
+    codes: string[];
+  }>("/admin/redeem/batches", { method: "POST", body: JSON.stringify(body) });
 }
 
 export async function adminVoidRedeemBatch(id: string) {
-  return adminRequest(`/admin/redeem/batches/${id}/void`, { method: "POST", body: "{}" });
+  return adminRequest<{ voided: number }>(`/admin/redeem/batches/${id}/void`, {
+    method: "POST",
+    body: "{}",
+  });
 }
 
 export async function adminListRedeemCodes(
-  params: { batchId?: string; status?: string; page?: number; pageSize?: number } = {},
+  params: { batchId?: string; status?: string; code?: string; page?: number; pageSize?: number } = {},
 ) {
-  return adminRequest(`/admin/redeem/codes${toQuery(params)}`);
+  return adminRequest<RedeemCodeList>(`/admin/redeem/codes${toQuery(params)}`);
 }
 
 export async function adminVoidRedeemCodes(ids: string[]) {
-  return adminRequest("/admin/redeem/codes/void", {
+  return adminRequest<{ voided: number }>("/admin/redeem/codes/void", {
     method: "POST",
     body: JSON.stringify({ ids }),
   });
 }
 
-export async function adminListRedemptions(page = 1, pageSize = 20) {
-  return adminRequest(`/admin/redeem/redemptions?page=${page}&pageSize=${pageSize}`);
+export async function adminListRedemptions(
+  pageOrParams: number | { batchId?: string; page?: number; pageSize?: number } = 1,
+  pageSize = 20,
+) {
+  const params =
+    typeof pageOrParams === "number"
+      ? { page: pageOrParams, pageSize }
+      : { page: 1, pageSize: 20, ...pageOrParams };
+  return adminRequest<RedeemRedemptionList>(`/admin/redeem/redemptions${toQuery(params)}`);
 }
 
 export async function adminExportRedeemBatchCsv(batchId: string) {

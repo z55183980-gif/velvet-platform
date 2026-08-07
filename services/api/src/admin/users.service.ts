@@ -249,6 +249,7 @@ export class AdminUsersService {
       newPreviousPeriod,
       activeLoginRows,
       walletAgg,
+      paidTopupCreditsAgg,
       trendRows,
       localeRows,
     ] = await Promise.all([
@@ -288,9 +289,20 @@ export class AdminUsersService {
       `,
       this.prisma.wallet.aggregate({
         _sum: {
+          balanceCredits: true,
           totalSpentCredits: true,
           totalRechargedCredits: true,
         },
+      }),
+      // 真实付费充值入账积分（排除兑换码 / 人工调账）
+      this.prisma.order.aggregate({
+        where: {
+          orderType: 'TOPUP',
+          paymentStatus: 'PAID',
+          amountCredits: { gt: 0 },
+          NOT: { fxSource: { in: ['redeem', 'admin-adjust'] } },
+        },
+        _sum: { amountCredits: true },
       }),
       this.prisma.$queryRaw<Array<{ day: Date; cnt: bigint }>>`
         SELECT date_trunc('day', "createdAt") AS day,
@@ -342,6 +354,8 @@ export class AdminUsersService {
         newPreviousPeriod,
         paidUsers,
         totalPaidAmountVnd: (paidOrderAgg._sum.amountVnd ?? 0n).toString(),
+        totalCreditsBalance: (walletAgg._sum.balanceCredits ?? 0n).toString(),
+        totalPaidTopupCredits: (paidTopupCreditsAgg._sum.amountCredits ?? 0n).toString(),
         totalSpentCredits: (walletAgg._sum.totalSpentCredits ?? 0n).toString(),
         totalRechargedCredits: (walletAgg._sum.totalRechargedCredits ?? 0n).toString(),
         activeVipUsers: await this.prisma.user.count({

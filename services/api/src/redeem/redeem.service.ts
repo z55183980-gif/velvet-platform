@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
-import { Prisma, RedeemCodeType } from '@prisma/client';
-import { randomBytes } from 'crypto';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { Prisma, RedeemCodeStatus, RedeemCodeType } from '@prisma/client';
+import { createHmac, randomBytes } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { BizException, BizCode } from '../common/biz.exception';
 import { AuditService } from '../common/audit.service';
@@ -10,25 +11,92 @@ import { VipPlansService } from '../vip/vip-plans.service';
 const WALLET_RETRY = 3;
 
 function genCode(): string {
-  // 16 hex chars grouped: XXXX-XXXX-XXXX-XXXX
   const raw = randomBytes(8).toString('hex').toUpperCase();
   return `${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}-${raw.slice(12, 16)}`;
 }
 
+export function normalizeRedeemCode(raw: string): string {
+  return (raw || '').trim().toUpperCase().replace(/\s+/g, '');
+}
+
+export function maskRedeemCode(normalized: string): string {
+  const compact = normalized.replace(/-/g, '');
+  const last4 = compact.slice(-4) || '????';
+  return `****-****-****-${last4}`;
+}
+
+export function hashRedeemCode(normalized: string, pepper: string): string {
+  return createHmac('sha256', pepper).update(normalized).digest('hex');
+}
+
 @Injectable()
-export class RedeemService {
+export class RedeemService implements OnModuleInit {
+  private readonly logger = new Logger(RedeemService.name);
+  private readonly pepper: string;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
-  ) {}
+    private readonly config: ConfigService,
+  ) {
+    this.pepper =
+      this.config.get<string>('REDEEM_CODE_PEPPER')?.trim() ||
+      this.config.get<string>('JWT_SECRET')?.trim() ||
+      'dev-secret';
+  }
+
+  async onModuleInit() {
+    await this.backfillLegacyHashes();
+  }
+
+  private async backfillLegacyHashes() {
+    try {
+      const legacy = await this.prisma.redeemCode.findMany({
+        where: { codeLegacy: { not: null }, OR: [{ codeHash: null }, { codeHash: '' }] },
+        select: { id: true, codeLegacy: true },
+        take: 5000,
+      });
+      if (!legacy.length) return;
+
+      let migrated = 0;
+      for (const row of legacy) {
+        const normalized = normalizeRedeemCode(row.codeLegacy || '');
+        if (!normalized) continue;
+        const codeHash = hashRedeemCode(normalized, this.pepper);
+        const codeHint = maskRedeemCode(normalized);
+        try {
+          await this.prisma.redeemCode.update({
+            where: { id: row.id },
+            data: { codeHash, codeHint, codeLegacy: null },
+          });
+          migrated += 1;
+        } catch (err) {
+          this.logger.warn(`Failed to migrate redeem code ${row.id}: ${(err as Error).message}`);
+        }
+      }
+      this.logger.log(`Migrated ${migrated}/${legacy.length} legacy redeem codes to HMAC hashes`);
+    } catch (err) {
+      this.logger.warn(`Redeem code hash backfill skipped: ${(err as Error).message}`);
+    }
+  }
 
   /** 观众兑换卡密 */
   async redeem(userId: bigint, rawCode: string) {
-    const code = (rawCode || '').trim().toUpperCase();
+    const code = normalizeRedeemCode(rawCode);
     if (!code) throw new BizException(BizCode.BAD_REQUEST, 'Mã không hợp lệ');
 
     return this.prisma.$transaction(async (tx) => {
-      const row = await tx.redeemCode.findUnique({ where: { code } });
+      const codeHash = hashRedeemCode(code, this.pepper);
+      let row = await tx.redeemCode.findUnique({ where: { codeHash } });
+      if (!row) {
+        const legacy = await tx.redeemCode.findUnique({ where: { codeLegacy: code } });
+        if (legacy) {
+          row = await tx.redeemCode.update({
+            where: { id: legacy.id },
+            data: { codeHash, codeHint: maskRedeemCode(code), codeLegacy: null },
+          });
+        }
+      }
       if (!row) throw new BizException(BizCode.NOT_FOUND, 'Mã không tồn tại');
       if (row.status === 'VOID') throw new BizException(BizCode.FORBIDDEN, 'Mã đã bị vô hiệu');
       if (row.status === 'USED') throw new BizException(BizCode.CONFLICT, 'code.alreadyUsed');
@@ -242,14 +310,19 @@ export class RedeemService {
         },
       });
       await tx.redeemCode.createMany({
-        data: codes.map((code) => ({
-          batchId: b.id,
-          code,
-          type,
-          vipDays,
-          creditsAmount,
-          expiresAt,
-        })),
+        data: codes.map((code) => {
+          const normalized = normalizeRedeemCode(code);
+          return {
+            batchId: b.id,
+            codeHash: hashRedeemCode(normalized, this.pepper),
+            codeHint: maskRedeemCode(normalized),
+            codeLegacy: null,
+            type,
+            vipDays,
+            creditsAmount,
+            expiresAt,
+          };
+        }),
       });
       return b;
     });
@@ -281,9 +354,6 @@ export class RedeemService {
         orderBy: { createdAt: 'desc' },
         skip: (p - 1) * ps,
         take: ps,
-        include: {
-          _count: { select: { codes: true } },
-        },
       }),
       this.prisma.redeemCodeBatch.count(),
     ]);
@@ -316,20 +386,31 @@ export class RedeemService {
 
   async listCodes(filter: {
     batchId?: string;
-    status?: 'UNUSED' | 'USED' | 'VOID' | 'ALL';
+    status?: RedeemCodeStatus | 'ALL';
+    code?: string;
     page?: number;
     pageSize?: number;
   }) {
     const page = Math.max(1, Math.floor(filter.page ?? 1));
     const pageSize = Math.min(200, Math.max(5, Math.floor(filter.pageSize ?? 50)));
-    const where: any = {};
+    const where: Prisma.RedeemCodeWhereInput = {};
     if (filter.batchId) where.batchId = BigInt(filter.batchId);
     if (filter.status && filter.status !== 'ALL') where.status = filter.status;
+
+    const needle = normalizeRedeemCode(filter.code || '');
+    if (needle) {
+      if (needle.startsWith('****')) {
+        where.codeHint = needle;
+      } else {
+        const codeHash = hashRedeemCode(needle, this.pepper);
+        where.OR = [{ codeHash }, { codeLegacy: needle }];
+      }
+    }
 
     const [rows, total] = await Promise.all([
       this.prisma.redeemCode.findMany({
         where,
-        orderBy: { id: 'asc' },
+        orderBy: { id: 'desc' },
         skip: (page - 1) * pageSize,
         take: pageSize,
         include: {
@@ -343,7 +424,8 @@ export class RedeemService {
       rows: rows.map((r) => ({
         id: r.id.toString(),
         batchId: r.batchId.toString(),
-        code: r.code,
+        code: r.codeHint,
+        codeHint: r.codeHint,
         type: r.type,
         vipDays: r.vipDays,
         creditsAmount: r.creditsAmount?.toString() ?? null,
@@ -399,17 +481,18 @@ export class RedeemService {
     return { voided: res.count };
   }
 
+  /** 导出批次状态 CSV（掩码码，不含明文） */
   async exportCsv(batchId: string) {
     const id = BigInt(batchId);
     const rows = await this.prisma.redeemCode.findMany({
       where: { batchId: id },
       orderBy: { id: 'asc' },
     });
-    const header = 'code,type,vipDays,creditsAmount,status,usedByUserId,usedAt,expiresAt\n';
+    const header = 'codeHint,type,vipDays,creditsAmount,status,usedByUserId,usedAt,expiresAt\n';
     const body = rows
       .map((r) =>
         [
-          r.code,
+          r.codeHint,
           r.type,
           r.vipDays ?? '',
           r.creditsAmount?.toString() ?? '',
@@ -423,20 +506,28 @@ export class RedeemService {
     return header + body + (body ? '\n' : '');
   }
 
-  async listRedemptions(page = 1, pageSize = 20) {
-    const p = Math.max(1, page);
-    const ps = Math.min(100, Math.max(5, pageSize));
+  async listRedemptions(filter: {
+    batchId?: string;
+    page?: number;
+    pageSize?: number;
+  } = {}) {
+    const p = Math.max(1, filter.page ?? 1);
+    const ps = Math.min(100, Math.max(5, filter.pageSize ?? 20));
+    const where: Prisma.RedeemRedemptionWhereInput = {};
+    if (filter.batchId) where.code = { batchId: BigInt(filter.batchId) };
+
     const [rows, total] = await Promise.all([
       this.prisma.redeemRedemption.findMany({
+        where,
         orderBy: { createdAt: 'desc' },
         skip: (p - 1) * ps,
         take: ps,
         include: {
           user: { select: { id: true, email: true, nickname: true, username: true } },
-          code: { select: { code: true, batchId: true } },
+          code: { select: { codeHint: true, batchId: true } },
         },
       }),
-      this.prisma.redeemRedemption.count(),
+      this.prisma.redeemRedemption.count({ where }),
     ]);
     return {
       rows: rows.map((r) => ({
@@ -447,7 +538,8 @@ export class RedeemService {
         vipExpireAt: r.vipExpireAt,
         orderId: r.orderId?.toString() ?? null,
         createdAt: r.createdAt,
-        code: r.code.code,
+        code: r.code.codeHint,
+        codeHint: r.code.codeHint,
         batchId: r.code.batchId.toString(),
         user: {
           id: r.user.id.toString(),

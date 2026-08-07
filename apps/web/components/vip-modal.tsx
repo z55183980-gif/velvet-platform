@@ -80,13 +80,27 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
     setBusy(true);
     setErr(null);
     try {
-      const r: any = await vipSubOrder(selected.id, PAY_CURRENCY, "STRIPE");
-      if (isDev && r?.orderNo && method === "SIMULATE") {
+      const wantSimulate = isDev && method === "SIMULATE";
+      const r: any = await vipSubOrder(selected.id, PAY_CURRENCY, "STRIPE", {
+        createCheckout: !wantSimulate,
+      });
+      if (wantSimulate && r?.orderNo) {
         await simulatePay(r.orderNo);
         await applySession();
         track("vip_sub", { method, currency: PAY_CURRENCY, planId: selected.id, payAmount });
         setDone(true);
         setTimeout(() => onClose(), 1400);
+        return;
+      }
+      const checkoutUrl = String(r?.checkoutUrl || r?.checkout_url || "").trim();
+      if (checkoutUrl) {
+        track("vip_sub", {
+          method: "STRIPE",
+          currency: PAY_CURRENCY,
+          planId: selected.id,
+          payAmount,
+        });
+        window.location.assign(checkoutUrl);
         return;
       }
       setErr(t("vip.payPending"));
@@ -239,6 +253,18 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
                     )}
                   >
                     {t("recharge.simulate")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMethod("STRIPE")}
+                    className={cn(
+                      "rounded-full px-4 py-2 text-body-sm font-medium transition-colors",
+                      method === "STRIPE"
+                        ? "bg-brand text-white"
+                        : "bg-surface-2 text-ink-muted hover:text-ink",
+                    )}
+                  >
+                    Stripe
                   </button>
                 </div>
               </div>

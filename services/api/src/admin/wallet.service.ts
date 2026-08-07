@@ -5,6 +5,8 @@ import { BizException, BizCode } from '../common/biz.exception';
 import { toBigInt, genOrderNo } from '../common/money.util';
 import { AuditService } from '../common/audit.service';
 
+type UsageKind = 'EPISODE_UNLOCK' | 'DRAMA_BUYOUT' | 'ALL';
+
 @Injectable()
 export class AdminWalletService {
   private static readonly ADJUST_RETRY = 3;
@@ -14,9 +16,15 @@ export class AdminWalletService {
     private readonly audit: AuditService,
   ) {}
 
+  /**
+   * 积分使用记录：用户消耗积分解锁单集 / 买断整剧。
+   * 以已支付消费订单为主，附带钱包流水余额快照与内容标题。
+   */
   async listTransactions(filter: {
     userId?: string;
-    type?: 'TOPUP' | 'UNLOCK' | 'REFUND' | 'ADJUST' | 'ALL';
+    /** @deprecated 兼容旧 type=UNLOCK；新前端用 usage */
+    type?: string;
+    usage?: UsageKind;
     from?: string;
     to?: string;
     page?: number;
@@ -24,27 +32,126 @@ export class AdminWalletService {
   }) {
     const page = Math.max(1, Math.floor(filter.page ?? 1));
     const pageSize = Math.min(100, Math.max(5, Math.floor(filter.pageSize ?? 20)));
-    const where: any = {};
-    if (filter.userId) where.walletUserId = BigInt(filter.userId);
-    if (filter.type && filter.type !== 'ALL') {
-      // 注：当前 TxType 未含 ADJUST（prisma enum 沿用），实际生产会迁移 schema
-      where.type = filter.type as any;
-    }
+
+    const usage = this.resolveUsageKind(filter.usage ?? filter.type);
+    const where: Prisma.OrderWhereInput = {
+      paymentStatus: 'PAID',
+      amountCredits: { gt: 0 },
+      fxSource: { not: 'admin-adjust' },
+      orderType:
+        usage === 'ALL'
+          ? { in: ['EPISODE_UNLOCK', 'DRAMA_BUYOUT'] }
+          : usage,
+    };
+
+    if (filter.userId) where.userId = BigInt(filter.userId);
     if (filter.from || filter.to) {
-      where.createdAt = {};
-      if (filter.from) (where.createdAt as any).gte = new Date(filter.from);
-      if (filter.to) (where.createdAt as any).lte = new Date(filter.to);
+      where.paidAt = {};
+      if (filter.from) where.paidAt.gte = new Date(filter.from);
+      if (filter.to) {
+        const end = new Date(filter.to);
+        if (!filter.to.includes('T')) end.setHours(23, 59, 59, 999);
+        where.paidAt.lte = end;
+      }
     }
-    const [rows, total] = await Promise.all([
-      this.prisma.walletTransaction.findMany({
+
+    const [orders, total] = await Promise.all([
+      this.prisma.order.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { paidAt: 'desc' },
         skip: (page - 1) * pageSize,
         take: pageSize,
+        include: {
+          user: {
+            select: { id: true, email: true, phone: true, nickname: true },
+          },
+        },
       }),
-      this.prisma.walletTransaction.count({ where }),
+      this.prisma.order.count({ where }),
     ]);
+
+    const orderIds = orders.map((o) => o.id);
+    const [txs, dramas, episodes] = await Promise.all([
+      orderIds.length
+        ? this.prisma.walletTransaction.findMany({
+            where: {
+              orderId: { in: orderIds },
+              type: { in: ['UNLOCK', 'REFUND'] },
+            },
+            orderBy: { createdAt: 'desc' },
+          })
+        : Promise.resolve([]),
+      (() => {
+        const dramaIds = [
+          ...new Set(orders.map((o) => o.dramaId).filter((id): id is bigint => id != null)),
+        ];
+        return dramaIds.length
+          ? this.prisma.drama.findMany({
+              where: { id: { in: dramaIds } },
+              select: { id: true, titleEn: true, titleZh: true, slug: true },
+            })
+          : Promise.resolve([]);
+      })(),
+      (() => {
+        const episodeIds = [
+          ...new Set(orders.map((o) => o.episodeId).filter((id): id is bigint => id != null)),
+        ];
+        return episodeIds.length
+          ? this.prisma.episode.findMany({
+              where: { id: { in: episodeIds } },
+              select: { id: true, episodeNumber: true, title: true, dramaId: true },
+            })
+          : Promise.resolve([]);
+      })(),
+    ]);
+
+    const txByOrder = new Map<string, (typeof txs)[number]>();
+    for (const tx of txs) {
+      const key = String(tx.orderId);
+      // 优先扣款流水；若仅有退款则保留退款
+      const prev = txByOrder.get(key);
+      if (!prev || (prev.type === 'REFUND' && tx.type === 'UNLOCK')) {
+        txByOrder.set(key, tx);
+      }
+    }
+    const dramaMap = new Map(dramas.map((d) => [String(d.id), d] as const));
+    const episodeMap = new Map(episodes.map((e) => [String(e.id), e] as const));
+
+    const rows = orders.map((order) => {
+      const tx = txByOrder.get(String(order.id));
+      const drama = order.dramaId ? dramaMap.get(String(order.dramaId)) ?? null : null;
+      const episode = order.episodeId ? episodeMap.get(String(order.episodeId)) ?? null : null;
+      return {
+        id: tx?.id ?? order.id,
+        orderId: order.id,
+        orderNo: order.orderNo,
+        usageType: order.orderType as 'EPISODE_UNLOCK' | 'DRAMA_BUYOUT',
+        amountCredits: tx?.amountCredits ?? -order.amountCredits,
+        creditsSpent: order.amountCredits,
+        balanceAfter: tx?.balanceAfter ?? null,
+        remark: tx?.remark ?? null,
+        createdAt: order.paidAt ?? order.createdAt,
+        walletUserId: order.userId,
+        user: order.user
+          ? {
+              id: order.user.id.toString(),
+              email: order.user.email,
+              phone: order.user.phone,
+              nickname: order.user.nickname,
+            }
+          : null,
+        drama,
+        episode,
+      };
+    });
+
     return { rows, total, page, pageSize };
+  }
+
+  private resolveUsageKind(raw?: string): UsageKind {
+    if (raw === 'EPISODE_UNLOCK' || raw === 'DRAMA_BUYOUT') return raw;
+    // 旧筛选 UNLOCK ≈ 全部使用；TOPUP/REFUND/ADJUST 对本页无意义，回落 ALL
+    return 'ALL';
   }
 
   /** 管理员人工加减积分（生成一次性订单，orderType=TOPUP/amountCredits 负值记 ADJUST 类记账） */

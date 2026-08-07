@@ -21,7 +21,6 @@ import {
   Smartphone,
   Sparkles,
   Sun,
-  Ticket,
   X,
 } from "lucide-react";
 import { useTheme } from "@/components/theme-provider";
@@ -161,6 +160,7 @@ export function MobileMe(props: Props) {
   const [editing, setEditing] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [showGroups, setShowGroups] = useState(false);
+  const [showOrders, setShowOrders] = useState(false);
   const [historyStatus, setHistoryStatus] = useState<HistoryStatusFilter>("all");
   const [themeMounted, setThemeMounted] = useState(false);
 
@@ -208,6 +208,31 @@ export function MobileMe(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [likes, query, locale],
   );
+
+  const billingFeed = useMemo(() => {
+    const rows: Array<
+      | { kind: "order"; at: number; key: string; order: any }
+      | { kind: "tx"; at: number; key: string; tx: any }
+    > = [];
+    for (const order of orders) {
+      rows.push({
+        kind: "order",
+        at: order.createdAt ? new Date(order.createdAt).getTime() : 0,
+        key: `order-${order.orderNo}`,
+        order,
+      });
+    }
+    for (const tx of transactions) {
+      rows.push({
+        kind: "tx",
+        at: tx.createdAt ? new Date(tx.createdAt).getTime() : 0,
+        key: `tx-${tx.id}`,
+        tx,
+      });
+    }
+    rows.sort((a, b) => b.at - a.at);
+    return rows;
+  }, [orders, transactions]);
 
   const toggleSelect = (id: string) => {
     setSelected((prev) => {
@@ -346,13 +371,20 @@ export function MobileMe(props: Props) {
         </button>
 
         <div
-          className="rounded-2xl border border-gold/25 p-3.5"
+          className={cn(
+            "rounded-2xl border p-3.5",
+            user.isVip ? "border-gold/55" : "border-gold/25",
+          )}
           style={{
-            background:
-              "radial-gradient(200px 100px at 0% 0%, oklch(0.82 0.11 85 / 0.22), transparent 65%), var(--color-surface)",
+            background: user.isVip
+              ? "radial-gradient(220px 110px at 0% 0%, oklch(0.82 0.12 85 / 0.36), transparent 65%), linear-gradient(135deg, oklch(0.82 0.11 85 / 0.1), transparent 55%), var(--color-surface)"
+              : "radial-gradient(200px 100px at 0% 0%, oklch(0.82 0.11 85 / 0.22), transparent 65%), var(--color-surface)",
           }}
         >
-          <p className="text-overline uppercase tracking-widest text-gold">{t("vip.member")}</p>
+          <div className="flex items-center gap-1.5">
+            <Crown className="h-3.5 w-3.5 text-gold" />
+            <p className="text-overline uppercase tracking-widest text-gold">{t("vip.member")}</p>
+          </div>
           <p className="mt-2 line-clamp-2 text-body-sm font-medium leading-snug text-ink">
             {user.isVip && user.vipExpireAt
               ? t("vip.activeUntil", {
@@ -363,7 +395,12 @@ export function MobileMe(props: Props) {
           <button
             type="button"
             onClick={openVip}
-            className="mt-2 text-caption font-semibold text-gold"
+            className={cn(
+              "mt-2 rounded-full px-2.5 py-1 text-caption font-semibold transition-colors",
+              user.isVip
+                ? "border border-gold/70 bg-transparent text-gold active:bg-gold/10"
+                : "bg-gold text-ink",
+            )}
           >
             {user.isVip ? t("vip.renew") : t("vip.open")}
           </button>
@@ -860,6 +897,106 @@ export function MobileMe(props: Props) {
                   <ChevronRight className="h-4 w-4 text-ink-subtle" />
                 </Link>
 
+                <button
+                  type="button"
+                  onClick={() => setShowOrders((v) => !v)}
+                  className="flex w-full items-center gap-3 border-t border-line px-4 py-3.5 text-left hover:bg-surface-2"
+                >
+                  <Receipt className="h-4 w-4 text-ink-muted" />
+                  <span className="flex-1 text-body-sm text-ink">{t("account.orders")}</span>
+                  <ChevronRight
+                    className={cn(
+                      "h-4 w-4 text-ink-subtle transition-transform",
+                      showOrders && "rotate-90",
+                    )}
+                  />
+                </button>
+                {showOrders && (
+                  <div className="space-y-2 border-t border-line px-4 py-3">
+                    {billingFeed.length === 0 ? (
+                      <p className="text-caption text-ink-muted">{t("account.emptyOrders")}</p>
+                    ) : (
+                      <>
+                        {billingFeed.slice(0, 12).map((item) => {
+                          if (item.kind === "order") {
+                            const o = item.order;
+                            const canRequest =
+                              o.paymentStatus === "PAID" &&
+                              (o.orderType === "TOPUP" || o.orderType === "EPISODE_UNLOCK") &&
+                              !o.refundStatus;
+                            return (
+                              <div
+                                key={item.key}
+                                className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-surface-2/60 px-3 py-2"
+                              >
+                                <div className="min-w-0">
+                                  <div className="font-mono text-xs text-ink">{o.orderNo}</div>
+                                  <div className="text-xs text-ink-muted">
+                                    {o.orderType} · {o.paymentStatus}
+                                    {o.refundStatus ? ` · ${o.refundStatus}` : ""}
+                                    {o.createdAt
+                                      ? ` · ${new Date(o.createdAt).toLocaleDateString(locale)}`
+                                      : ""}
+                                  </div>
+                                </div>
+                                {canRequest ? (
+                                  <button
+                                    type="button"
+                                    disabled={refundBusy === o.orderNo}
+                                    className="rounded-lg border border-line px-2.5 py-1 text-xs text-ink-muted disabled:opacity-50"
+                                    onClick={() =>
+                                      void onRefund(
+                                        o.orderNo,
+                                        o.orderType === "TOPUP"
+                                          ? t("account.refundTopup")
+                                          : t("account.refundUnlock"),
+                                      )
+                                    }
+                                  >
+                                    {t("account.requestRefund")}
+                                  </button>
+                                ) : null}
+                              </div>
+                            );
+                          }
+
+                          const tx = item.tx;
+                          const amount = Number(tx.amountCredits ?? 0);
+                          const positive = amount > 0;
+                          return (
+                            <div
+                              key={item.key}
+                              className="flex items-center justify-between gap-2 rounded-lg bg-surface-2/60 px-3 py-2"
+                            >
+                              <div className="min-w-0">
+                                <div className="text-xs text-ink">{tx.type}</div>
+                                <div className="truncate text-xs text-ink-muted">
+                                  {tx.remark || ""}
+                                  {tx.createdAt
+                                    ? ` · ${new Date(tx.createdAt).toLocaleDateString(locale)}`
+                                    : ""}
+                                </div>
+                              </div>
+                              <div
+                                className={cn(
+                                  "shrink-0 text-xs font-semibold tabular-nums",
+                                  positive ? "text-success" : "text-danger",
+                                )}
+                              >
+                                {positive ? "+" : ""}
+                                {formatAmount(amount)}
+                              </div>
+                            </div>
+                          );
+                        })}
+                        {orders.length > 0 && (
+                          <p className="text-caption text-ink-muted">{t("account.refundHint")}</p>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+
                 <Link
                   href="/creator/"
                   className="flex items-center gap-3 border-t border-line px-4 py-3.5 hover:bg-surface-2"
@@ -916,101 +1053,6 @@ export function MobileMe(props: Props) {
                   <LogOut className="h-4 w-4 text-ink-muted" />
                   <span className="flex-1 text-body-sm text-ink">{t("account.logout")}</span>
                 </button>
-              </div>
-
-              {/* Wallet transactions kept as secondary section */}
-              <div className="rounded-2xl border border-line/80 bg-surface p-4">
-                <div className="mb-3 flex items-center gap-2">
-                  <Receipt className="h-4 w-4 text-ink-muted" />
-                  <p className="text-body-sm font-medium text-ink">{t("account.transactions")}</p>
-                </div>
-                {transactions.length === 0 ? (
-                  <p className="text-caption text-ink-muted">{t("account.emptyTx")}</p>
-                ) : (
-                  <div className="space-y-2">
-                    {transactions.slice(0, 8).map((tx) => {
-                      const amount = Number(tx.amountCredits ?? 0);
-                      const positive = amount > 0;
-                      return (
-                        <div
-                          key={tx.id}
-                          className="flex items-center justify-between gap-2 rounded-lg bg-surface-2/60 px-3 py-2"
-                        >
-                          <div className="min-w-0">
-                            <div className="text-xs text-ink">{tx.type}</div>
-                            <div className="truncate text-xs text-ink-muted">
-                              {tx.remark || ""}
-                              {tx.createdAt
-                                ? ` · ${new Date(tx.createdAt).toLocaleDateString(locale)}`
-                                : ""}
-                            </div>
-                          </div>
-                          <div
-                            className={cn(
-                              "shrink-0 text-xs font-semibold tabular-nums",
-                              positive ? "text-success" : "text-danger",
-                            )}
-                          >
-                            {positive ? "+" : ""}
-                            {formatAmount(amount)}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* Orders kept as secondary section */}
-              <div className="rounded-2xl border border-line/80 bg-surface p-4">
-                <div className="mb-3 flex items-center gap-2">
-                  <Ticket className="h-4 w-4 text-ink-muted" />
-                  <p className="text-body-sm font-medium text-ink">{t("account.orders")}</p>
-                </div>
-                {orders.length === 0 ? (
-                  <p className="text-caption text-ink-muted">{t("account.emptyOrders")}</p>
-                ) : (
-                  <div className="space-y-2">
-                    {orders.slice(0, 8).map((o) => {
-                      const canRequest =
-                        o.paymentStatus === "PAID" &&
-                        (o.orderType === "TOPUP" || o.orderType === "EPISODE_UNLOCK") &&
-                        !o.refundStatus;
-                      return (
-                        <div
-                          key={o.orderNo}
-                          className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-surface-2/60 px-3 py-2"
-                        >
-                          <div className="min-w-0">
-                            <div className="font-mono text-xs text-ink">{o.orderNo}</div>
-                            <div className="text-xs text-ink-muted">
-                              {o.orderType} · {o.paymentStatus}
-                              {o.refundStatus ? ` · ${o.refundStatus}` : ""}
-                            </div>
-                          </div>
-                          {canRequest ? (
-                            <button
-                              type="button"
-                              disabled={refundBusy === o.orderNo}
-                              className="rounded-lg border border-line px-2.5 py-1 text-xs text-ink-muted disabled:opacity-50"
-                              onClick={() =>
-                                void onRefund(
-                                  o.orderNo,
-                                  o.orderType === "TOPUP"
-                                    ? t("account.refundTopup")
-                                    : t("account.refundUnlock"),
-                                )
-                              }
-                            >
-                              {t("account.requestRefund")}
-                            </button>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                    <p className="text-caption text-ink-muted">{t("account.refundHint")}</p>
-                  </div>
-                )}
               </div>
             </div>
           </div>

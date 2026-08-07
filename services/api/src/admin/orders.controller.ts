@@ -51,6 +51,7 @@ export class OrdersController {
     @Query('status') status?: string,
     @Query('method') method?: string,
     @Query('userId') userId?: string,
+    @Query('q') q?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('page') page?: string,
@@ -61,11 +62,17 @@ export class OrdersController {
       status: (status as any) || 'ALL',
       method,
       userId,
+      q,
       from,
       to,
       page: page ? Number(page) : 1,
       pageSize: pageSize ? Number(pageSize) : 20,
     }));
+  }
+
+  @Get('orders/:orderNo')
+  async orderDetail(@Param('orderNo') orderNo: string) {
+    return ok(await this.orders.detail(orderNo));
   }
 
   @Post('orders/:orderNo/mark-paid')

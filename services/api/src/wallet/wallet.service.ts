@@ -7,6 +7,7 @@ import { PackagesService } from '../packages/packages.service';
 import { VipPlansService } from '../vip/vip-plans.service';
 import { StructuredLogger } from '../common/structured-logger.service';
 import { LockAccessService } from '../common/lock-access.service';
+import { createStripeCheckoutSession } from '../payments/stripe-checkout';
 
 const WALLET_RETRY = 3;
 const PAY_CURRENCY = 'USD';
@@ -68,6 +69,7 @@ export class WalletService {
       packageId: number | string;
       currency?: string;
       paymentMethod?: string;
+      createCheckout?: boolean;
       idempotencyKey?: string;
     },
     userId: bigint,
@@ -127,6 +129,17 @@ export class WalletService {
       base.devPayUrl = `/api/v1/payments/simulate?orderNo=${order.orderNo}`;
       base.simulate = true;
     }
+
+    if (method === 'STRIPE' && dto.createCheckout !== false) {
+      await this.attachStripeCheckout(base, {
+        orderNo: order.orderNo,
+        userId,
+        productName: String(pkg.name || 'Velvet credits'),
+        payAmountMajor: payAmount.toString(),
+        currency,
+        orderType: 'TOPUP',
+      });
+    }
     return base;
   }
 
@@ -136,6 +149,7 @@ export class WalletService {
       vipPlanId: number | string;
       currency?: string;
       paymentMethod?: string;
+      createCheckout?: boolean;
       idempotencyKey?: string;
     },
     userId: bigint,
@@ -192,6 +206,17 @@ export class WalletService {
     if (process.env.NODE_ENV !== 'production') {
       base.devPayUrl = `/api/v1/payments/simulate?orderNo=${order.orderNo}`;
       base.simulate = true;
+    }
+
+    if (method === 'STRIPE' && dto.createCheckout !== false) {
+      await this.attachStripeCheckout(base, {
+        orderNo: order.orderNo,
+        userId,
+        productName: String(plan.name || `VIP ${plan.durationDays}d`),
+        payAmountMajor: payAmount.toString(),
+        currency,
+        orderType: 'VIP_SUB',
+      });
     }
     return base;
   }
@@ -989,6 +1014,41 @@ export class WalletService {
         },
       });
     }
+  }
+
+  private async attachStripeCheckout(
+    base: Record<string, any>,
+    opts: {
+      orderNo: string;
+      userId: bigint;
+      productName: string;
+      payAmountMajor: string;
+      currency: string;
+      orderType: string;
+    },
+  ) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: opts.userId },
+      select: { email: true },
+    });
+    const session = await createStripeCheckoutSession(this.prisma, {
+      orderNo: opts.orderNo,
+      userId: opts.userId,
+      productName: opts.productName,
+      payAmountMajor: opts.payAmountMajor,
+      currency: opts.currency,
+      customerEmail: user?.email,
+      metadata: { orderType: opts.orderType },
+    });
+    base.checkoutUrl = session.checkoutUrl;
+    base.checkout_url = session.checkoutUrl;
+    base.stripeSessionId = session.sessionId;
+    this.log.log({
+      event: 'payments.stripe.checkout_created',
+      orderNo: opts.orderNo,
+      orderType: opts.orderType,
+      sessionId: session.sessionId,
+    });
   }
 
   private orderView(order: any) {

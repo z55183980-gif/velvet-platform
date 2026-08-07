@@ -309,7 +309,7 @@ const zh = {
   creators: "创作者管理",
   kyc: "KYC审核",
   withdraws: "提现审核",
-  wallet: "资金流水",
+  wallet: "积分流水",
   reconcile: "对账结算",
   settle: "T+7结算",
   paymentGateway: "支付网关",
@@ -502,6 +502,8 @@ const zh = {
   userSearchPlaceholder: "邮箱 / 手机 / 昵称",
   userDetail: "用户详情",
   creditBalance: "积分余额",
+  creditsBalanceTotal: "全平台总余额",
+  creditsBalanceFromTopup: "真实充值增加",
   totalRecharged: "累计充值",
   totalSpent: "累计消费",
   statusChangeReason: "状态变更理由",
@@ -529,6 +531,9 @@ const zh = {
   userStatsTotalPaidDesc: "累计付款金额（全平台，不限时段）",
   userStatsUsageDesc: "全平台累计消费积分",
   userStatsVipDesc: "当前 VIP 未过期",
+  userStatsSectionUsers: "用户指标",
+  userStatsSectionFinance: "财务与积分",
+  userStatsSectionCharts: "趋势与分布",
   userStatsRegTrend: "注册趋势",
   userStatsRegTrendDesc: "所选时段每日新增用户",
   userStatsLocaleDist: "语言分布",
@@ -559,10 +564,17 @@ const zh = {
   externalRef: "外部单号",
   emptyRefunds: "暂无退款工单",
 
-  // wallet
+  // wallet / credits usage
   manualAdjust: "人工调账",
   submitAdjust: "提交调账",
   walletUserId: "用户 ID",
+  walletHint: "记录用户消耗积分解锁单集、买断整剧等情况。",
+  usageTypeAll: "全部用途",
+  colUsage: "用途",
+  colContent: "内容",
+  colCreditsSpent: "消耗积分",
+  colBalanceAfter: "变动后余额",
+  adjustDeltaPlaceholder: "±积分",
 
   // creators / withdraws
   withdrawable: "可提现",
@@ -881,11 +893,31 @@ const zh = {
   createdNotifications: "已创建 {n} 条通知",
 
   // redeem codes
-  redeemHint: "批量生成 VIP 或积分卡密。明文仅在创建时展示一次，请立即复制或导出 CSV。",
+  redeemHint: "批量生成 VIP 或积分卡密。明文仅在创建时展示一次，请立即复制或导出；库内仅存哈希与掩码。",
+  redeemHintShort: "明文仅创建时可见一次",
   plaintextCodesTitle: "明文卡密（仅此一次）",
+  plaintextCodesOnce: "关闭后无法再查看明文。列表与状态导出仅显示掩码。",
   tabBatches: "批次",
   tabCodes: "兑换码",
   tabRedemptions: "兑换记录",
+  generateBatch: "生成批次",
+  viewCodes: "查看卡密",
+  exportStatusCsv: "导出状态 CSV",
+  downloadPlaintextCsv: "下载明文 CSV",
+  copyAll: "复制全部",
+  copyFailed: "复制失败",
+  allBatches: "全部批次",
+  redeemCodeSearchPlaceholder: "精确卡密或掩码",
+  redeemMaskedHint: "列表显示掩码；完整明文仅创建时可得。",
+  redeemNotePlaceholder: "渠道 / 活动备注",
+  redeemCreated: "已生成 {n} 个卡密",
+  redeemVoided: "已作废 {n} 个",
+  confirmVoidBatch: "确认作废批次 #{id} 的 {n} 个未用码？此操作不可恢复。",
+  confirmVoidSelected: "确认作废已选的 {n} 个未用码？",
+  colUsedAt: "使用时间",
+  statusUnused: "未用",
+  statusUsed: "已用",
+  statusVoid: "作废",
 
   // content import
   importFolderTitle: "上传文件夹",
@@ -1202,6 +1234,38 @@ const zh = {
   captchaPlaceholder: "请输入验证码",
   loginFooterHint: "登录后将校验管理员权限，非授权账号无法访问后台功能。",
   loginSubheading: "使用管理员账号进入控制台",
+
+  // orders center
+  orderTabAll: "全部",
+  orderTabTopup: "充值购买",
+  orderTabVip: "VIP 订阅",
+  orderSearchPlaceholder: "订单号 / 外部单号 / 邮箱 / 手机 / 用户 ID",
+  orderProduct: "商品",
+  orderDetail: "订单详情",
+  orderPaidAt: "支付时间",
+  orderRefundAt: "退款时间",
+  orderExternalRef: "外部单号",
+  orderPayAmount: "实付金额",
+  orderUserVipExpire: "用户 VIP 到期",
+  orderMeta: "扩展信息",
+  orderEmpty: "暂无订单",
+  orderTypeTopup: "充值",
+  orderTypeUnlock: "单集解锁",
+  orderTypeVip: "VIP 订阅",
+  orderTypeBuyout: "整剧买断",
+  payStatusPaid: "已支付",
+  payStatusFailed: "失败",
+  payStatusRefunded: "已退款",
+  payStatusCancelled: "已取消",
+  payMethodWallet: "钱包",
+  payMethodStripe: "Stripe",
+  payMethodWechat: "微信",
+  payMethodAlipay: "支付宝",
+  payMethodMomo: "MoMo",
+  payMethodZalopay: "ZaloPay",
+  payMethodVietqr: "VietQR",
+  payMethodBank: "银行转账",
+  viewDetail: "详情",
 } as const;
 
 export type LabelKey = keyof typeof zh;
@@ -1505,7 +1569,7 @@ const en: Record<LabelKey, string> = {
   creators: "Creators",
   kyc: "KYC review",
   withdraws: "Withdrawals",
-  wallet: "Wallet ledger",
+  wallet: "Credits ledger",
   reconcile: "Reconcile",
   settle: "T+7 settle",
   paymentGateway: "Payment gateway",
@@ -1691,6 +1755,8 @@ const en: Record<LabelKey, string> = {
   userSearchPlaceholder: "email / phone / nick",
   userDetail: "User detail",
   creditBalance: "Credit balance",
+  creditsBalanceTotal: "Platform wallet total",
+  creditsBalanceFromTopup: "From paid top-ups",
   totalRecharged: "Total recharged",
   totalSpent: "Total spent",
   statusChangeReason: "Status change reason",
@@ -1717,6 +1783,9 @@ const en: Record<LabelKey, string> = {
   userStatsTotalPaidDesc: "Lifetime payment amount (all-time, platform-wide)",
   userStatsUsageDesc: "Sum of lifetime spent credits",
   userStatsVipDesc: "Users with unexpired VIP",
+  userStatsSectionUsers: "Users",
+  userStatsSectionFinance: "Finance & credits",
+  userStatsSectionCharts: "Trends & distribution",
   userStatsRegTrend: "Registration trend",
   userStatsRegTrendDesc: "Daily new users in the selected range",
   userStatsLocaleDist: "Locale distribution",
@@ -1749,6 +1818,13 @@ const en: Record<LabelKey, string> = {
   manualAdjust: "Manual adjust",
   submitAdjust: "Submit adjust",
   walletUserId: "User ID",
+  walletHint: "How users spend credits to unlock episodes or buy out dramas.",
+  usageTypeAll: "All usages",
+  colUsage: "Usage",
+  colContent: "Content",
+  colCreditsSpent: "Credits spent",
+  colBalanceAfter: "Balance after",
+  adjustDeltaPlaceholder: "± credits",
 
   withdrawable: "Withdrawable",
   goKycReview: "Go to KYC review",
@@ -2059,11 +2135,31 @@ const en: Record<LabelKey, string> = {
   createdNotifications: "Created {n} notifications",
 
   redeemHint:
-    "Bulk-generate VIP or credits codes. Plaintext codes are shown only once — copy or export immediately.",
+    "Bulk-generate VIP or credits codes. Plaintext is shown only once at creation — copy or download immediately. The database stores hashes and masks only.",
+  redeemHintShort: "Plaintext is visible only once at creation",
   plaintextCodesTitle: "Plaintext codes (shown once)",
+  plaintextCodesOnce: "After closing, plaintext cannot be recovered. Lists and status exports show masks only.",
   tabBatches: "Batches",
   tabCodes: "Codes",
   tabRedemptions: "Redemptions",
+  generateBatch: "Generate batch",
+  viewCodes: "View codes",
+  exportStatusCsv: "Export status CSV",
+  downloadPlaintextCsv: "Download plaintext CSV",
+  copyAll: "Copy all",
+  copyFailed: "Copy failed",
+  allBatches: "All batches",
+  redeemCodeSearchPlaceholder: "Exact code or mask",
+  redeemMaskedHint: "List shows masks; full plaintext is only available at creation.",
+  redeemNotePlaceholder: "Channel / campaign note",
+  redeemCreated: "Generated {n} codes",
+  redeemVoided: "Voided {n}",
+  confirmVoidBatch: "Void {n} unused code(s) in batch #{id}? This cannot be undone.",
+  confirmVoidSelected: "Void the selected {n} unused code(s)?",
+  colUsedAt: "Used at",
+  statusUnused: "Unused",
+  statusUsed: "Used",
+  statusVoid: "Void",
 
   importFolderTitle: "Upload folder",
   importFolderHint:
@@ -2390,6 +2486,38 @@ const en: Record<LabelKey, string> = {
   loginFooterHint:
     "After signing in, admin permissions are verified; unauthorized accounts cannot access console features.",
   loginSubheading: "Sign in with your admin account",
+
+  // orders center
+  orderTabAll: "All",
+  orderTabTopup: "Top-ups",
+  orderTabVip: "VIP subscriptions",
+  orderSearchPlaceholder: "Order no. / external ref / email / phone / user ID",
+  orderProduct: "Product",
+  orderDetail: "Order detail",
+  orderPaidAt: "Paid at",
+  orderRefundAt: "Refunded at",
+  orderExternalRef: "External ref",
+  orderPayAmount: "Paid amount",
+  orderUserVipExpire: "User VIP expires",
+  orderMeta: "Metadata",
+  orderEmpty: "No orders",
+  orderTypeTopup: "Top-up",
+  orderTypeUnlock: "Episode unlock",
+  orderTypeVip: "VIP subscription",
+  orderTypeBuyout: "Drama buyout",
+  payStatusPaid: "Paid",
+  payStatusFailed: "Failed",
+  payStatusRefunded: "Refunded",
+  payStatusCancelled: "Cancelled",
+  payMethodWallet: "Wallet",
+  payMethodStripe: "Stripe",
+  payMethodWechat: "WeChat",
+  payMethodAlipay: "Alipay",
+  payMethodMomo: "MoMo",
+  payMethodZalopay: "ZaloPay",
+  payMethodVietqr: "VietQR",
+  payMethodBank: "Bank transfer",
+  viewDetail: "Detail",
 };
 
 const dictionaries: Record<AdminLocale, Record<LabelKey, string>> = { zh, en };
@@ -2535,7 +2663,59 @@ export function statusLabel(tFn: I18nContextValue["t"], status?: string | null) 
       return tFn("statusLive");
     case "OFFLINE":
       return tFn("statusOffline");
+    case "UNUSED":
+      return tFn("statusUnused");
+    case "USED":
+      return tFn("statusUsed");
+    case "VOID":
+      return tFn("statusVoid");
+    case "PAID":
+      return tFn("payStatusPaid");
+    case "FAILED":
+      return tFn("payStatusFailed");
+    case "REFUNDED":
+      return tFn("payStatusRefunded");
+    case "CANCELLED":
+      return tFn("payStatusCancelled");
     default:
       return status || "—";
+  }
+}
+
+export function orderTypeLabel(tFn: I18nContextValue["t"], type?: string | null) {
+  switch (type) {
+    case "TOPUP":
+      return tFn("orderTypeTopup");
+    case "EPISODE_UNLOCK":
+      return tFn("orderTypeUnlock");
+    case "VIP_SUB":
+      return tFn("orderTypeVip");
+    case "DRAMA_BUYOUT":
+      return tFn("orderTypeBuyout");
+    default:
+      return type || "—";
+  }
+}
+
+export function paymentMethodLabel(tFn: I18nContextValue["t"], method?: string | null) {
+  switch (method) {
+    case "WALLET":
+      return tFn("payMethodWallet");
+    case "STRIPE":
+      return tFn("payMethodStripe");
+    case "WECHAT":
+      return tFn("payMethodWechat");
+    case "ALIPAY":
+      return tFn("payMethodAlipay");
+    case "MOMO":
+      return tFn("payMethodMomo");
+    case "ZALOPAY":
+      return tFn("payMethodZalopay");
+    case "VIETQR":
+      return tFn("payMethodVietqr");
+    case "BANK_TRANSFER":
+      return tFn("payMethodBank");
+    default:
+      return method || "—";
   }
 }

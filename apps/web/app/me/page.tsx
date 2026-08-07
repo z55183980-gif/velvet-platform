@@ -1,17 +1,19 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Bell,
   ChevronRight,
   Clapperboard,
   HelpCircle,
+  Heart,
   Languages,
   LogOut,
   PenLine,
   Crown,
   Sparkles,
+  X,
 } from "lucide-react";
 import { useAuth } from "@/components/auth-context";
 import { useLocale } from "@/lib/i18n";
@@ -37,7 +39,33 @@ import {
 import { cn, formatAmount, mediaUrl } from "@/lib/utils";
 import { pickTitleText } from "@/lib/languages";
 
-type DesktopTab = "favorites" | "history" | "orders" | "transactions";
+type DesktopTab = "favorites" | "history" | "likes" | "orders";
+
+type BillingFeedItem =
+  | { kind: "order"; at: number; key: string; order: any }
+  | { kind: "tx"; at: number; key: string; tx: any };
+
+function mergeBillingFeed(orders: any[], transactions: any[]): BillingFeedItem[] {
+  const rows: BillingFeedItem[] = [];
+  for (const order of orders) {
+    rows.push({
+      kind: "order",
+      at: order.createdAt ? new Date(order.createdAt).getTime() : 0,
+      key: `order-${order.orderNo}`,
+      order,
+    });
+  }
+  for (const tx of transactions) {
+    rows.push({
+      kind: "tx",
+      at: tx.createdAt ? new Date(tx.createdAt).getTime() : 0,
+      key: `tx-${tx.id}`,
+      tx,
+    });
+  }
+  rows.sort((a, b) => b.at - a.at);
+  return rows;
+}
 
 export default function AccountPage() {
   const { user, ready, openLogin, openVip, openRecharge, balance, logout, applySession } = useAuth();
@@ -251,6 +279,11 @@ export default function AccountPage() {
       setRefundBusy(null);
     }
   };
+
+  const billingFeed = useMemo(
+    () => mergeBillingFeed(orders, transactions),
+    [orders, transactions],
+  );
 
   if (!ready) {
     return (
@@ -477,15 +510,24 @@ export default function AccountPage() {
               </button>
 
               <div
-                className="rounded-2xl border border-line/80 p-4"
+                className={cn(
+                  "rounded-2xl border p-4",
+                  user.isVip ? "border-gold/55" : "border-line/80",
+                )}
                 style={{
-                  background:
-                    "radial-gradient(280px 120px at 0% 0%, oklch(0.82 0.11 85 / 0.18), transparent 60%), var(--color-surface)",
+                  background: user.isVip
+                    ? "radial-gradient(320px 140px at 0% 0%, oklch(0.82 0.12 85 / 0.32), transparent 62%), linear-gradient(135deg, oklch(0.82 0.11 85 / 0.08), transparent 50%), var(--color-surface)"
+                    : "radial-gradient(280px 120px at 0% 0%, oklch(0.82 0.11 85 / 0.18), transparent 60%), var(--color-surface)",
                 }}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="text-overline uppercase tracking-widest text-gold">{t("vip.member")}</p>
+                    <div className="flex items-center gap-1.5">
+                      <Crown className="h-3.5 w-3.5 text-gold" />
+                      <p className="text-overline uppercase tracking-widest text-gold">
+                        {t("vip.member")}
+                      </p>
+                    </div>
                     <p className="mt-1 text-body font-medium text-ink">
                       {user.isVip && user.vipExpireAt
                         ? t("vip.activeUntil", {
@@ -502,7 +544,12 @@ export default function AccountPage() {
                   </div>
                   <button
                     onClick={openVip}
-                    className="shrink-0 rounded-full bg-gold px-4 py-2 text-body-sm font-semibold text-ink hover:opacity-90"
+                    className={cn(
+                      "shrink-0 rounded-full px-4 py-2 text-body-sm font-semibold transition-colors",
+                      user.isVip
+                        ? "border border-gold/70 bg-transparent text-gold hover:bg-gold/10"
+                        : "bg-gold text-ink hover:opacity-90",
+                    )}
                   >
                     {user.isVip ? t("vip.renew") : t("vip.open")}
                   </button>
@@ -631,14 +678,14 @@ export default function AccountPage() {
           </div>
         </div>
 
-        <div ref={listRef} className="mx-auto max-w-[800px] scroll-mt-20 px-4 pt-8 md:px-6">
+        <div ref={listRef} className="mx-auto max-w-[1100px] scroll-mt-20 px-4 pt-8 md:px-6">
           <div className="flex gap-1 overflow-x-auto pb-1">
             {(
               [
                 ["favorites", t("account.favorites")],
                 ["history", t("account.history")],
+                ["likes", t("account.tabLiked")],
                 ["orders", t("account.orders")],
-                ["transactions", t("account.transactions")],
               ] as const
             ).map(([k, label]) => (
               <button
@@ -663,10 +710,10 @@ export default function AccountPage() {
 
             {(!loading || refreshing) && desktopTab === "favorites" && (
               <div
-                className={cn("space-y-2 transition-opacity duration-200", refreshing && "opacity-60")}
+                className={cn("transition-opacity duration-200", refreshing && "opacity-60")}
                 aria-busy={refreshing}
               >
-                <div className="flex flex-wrap gap-2">
+                <div className="mb-4 flex flex-wrap gap-2">
                   <button
                     onClick={() => setFavGroup("")}
                     className={cn(
@@ -689,7 +736,7 @@ export default function AccountPage() {
                     </button>
                   ))}
                 </div>
-                {favorites.length === 0 && (
+                {favorites.length === 0 ? (
                   <div className="py-8 text-center">
                     <p className="text-body-sm text-ink-muted">{t("account.emptyFav")}</p>
                     <Link
@@ -699,91 +746,114 @@ export default function AccountPage() {
                       {t("account.goTheater")}
                     </Link>
                   </div>
-                )}
-                {favorites.map((row) => {
-                  const d = row.drama || row;
-                  const slug = d.slug || d.id;
-                  const dramaId = String(row.dramaId ?? d.id);
-                  const editing = editId === dramaId;
-                  return (
-                    <div key={row.id || slug} className="rounded-lg bg-surface-2/60 px-3 py-2.5">
-                      <div className="flex items-center gap-3">
-                        <Link href={`/drama/${slug}`} className="flex min-w-0 flex-1 items-center gap-3">
-                          {d.coverUrl && (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={d.coverUrl} alt="" className="h-14 w-10 rounded object-cover" />
-                          )}
-                          <div className="min-w-0">
-                            <span className="truncate text-sm text-ink">{titleOf(d)}</span>
+                ) : (
+                  <div className="grid grid-cols-4 gap-x-3 gap-y-5 xl:grid-cols-5">
+                    {favorites.map((row) => {
+                      const d = row.drama || row;
+                      const slug = d.slug || d.id;
+                      const dramaId = String(row.dramaId ?? d.id);
+                      const editing = editId === dramaId;
+                      return (
+                        <div key={row.id || slug} className="group relative min-w-0">
+                          <Link href={`/drama/${slug}`} className="block">
+                            <div className="relative aspect-[2/3] overflow-hidden rounded-lg bg-surface-2">
+                              {d.coverUrl ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={d.coverUrl}
+                                  alt=""
+                                  className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+                                />
+                              ) : null}
+                            </div>
+                            <p className="mt-2 line-clamp-2 text-sm leading-snug text-ink">
+                              {titleOf(d)}
+                            </p>
                             {(row.group || row.note) && (
-                              <div className="truncate text-xs text-ink-muted">
+                              <p className="mt-0.5 truncate text-xs text-ink-muted">
                                 {row.group ? `[${row.group}] ` : ""}
                                 {row.note || ""}
-                              </div>
+                              </p>
                             )}
+                          </Link>
+                          <div className="pointer-events-none absolute right-1.5 top-1.5 flex gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
+                            <button
+                              type="button"
+                              title={t("account.note")}
+                              onClick={() => {
+                                setEditId(editing ? null : dramaId);
+                                setEditGroup(row.group || "");
+                                setEditNote(row.note || "");
+                              }}
+                              className="grid h-7 w-7 place-items-center rounded-full bg-black/65 text-white backdrop-blur-sm hover:bg-black/80"
+                            >
+                              <PenLine className="h-3.5 w-3.5" />
+                            </button>
+                            <button
+                              type="button"
+                              title={t("account.favorites")}
+                              onClick={async () => {
+                                await removeFavorite(d.id);
+                                void loadKind("favorites", { force: true });
+                              }}
+                              className="grid h-7 w-7 place-items-center rounded-full bg-black/65 text-white backdrop-blur-sm hover:bg-red-500/90"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                            </button>
                           </div>
-                        </Link>
-                        <button
-                          onClick={() => {
-                            setEditId(editing ? null : dramaId);
-                            setEditGroup(row.group || "");
-                            setEditNote(row.note || "");
-                          }}
-                          className="text-xs text-ink-muted hover:text-ink"
-                        >
-                          {t("account.note")}
-                        </button>
-                        <button
-                          onClick={async () => {
-                            await removeFavorite(d.id);
-                            void loadKind("favorites", { force: true });
-                          }}
-                          className="text-xs text-ink-muted hover:text-red-400"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                      {editing && (
-                        <div className="mt-2 flex flex-wrap gap-2 border-t border-line pt-2">
-                          <input
-                            value={editGroup}
-                            onChange={(e) => setEditGroup(e.target.value)}
-                            placeholder={t("account.group")}
-                            className="w-28 rounded-md border border-line bg-surface-3 px-2 py-1.5 text-xs text-ink"
-                          />
-                          <input
-                            value={editNote}
-                            onChange={(e) => setEditNote(e.target.value)}
-                            placeholder={t("account.note")}
-                            className="min-w-[140px] flex-1 rounded-md border border-line bg-surface-3 px-2 py-1.5 text-xs text-ink"
-                          />
-                          <button
-                            className="rounded-md bg-brand px-3 py-1.5 text-xs text-white"
-                            onClick={async () => {
-                              await updateFavorite(dramaId, {
-                                group: editGroup.trim() || null,
-                                note: editNote.trim() || null,
-                              });
-                              setEditId(null);
-                              void loadKind("favorites", { force: true });
-                            }}
-                          >
-                            {t("account.save")}
-                          </button>
+                          {editing && (
+                            <div className="absolute left-0 right-0 top-[calc(100%+0.25rem)] z-10 space-y-2 rounded-lg border border-line bg-surface p-2 shadow-lg">
+                              <input
+                                value={editGroup}
+                                onChange={(e) => setEditGroup(e.target.value)}
+                                placeholder={t("account.group")}
+                                className="w-full rounded-md border border-line bg-surface-3 px-2 py-1.5 text-xs text-ink"
+                              />
+                              <input
+                                value={editNote}
+                                onChange={(e) => setEditNote(e.target.value)}
+                                placeholder={t("account.note")}
+                                className="w-full rounded-md border border-line bg-surface-3 px-2 py-1.5 text-xs text-ink"
+                              />
+                              <div className="flex gap-1.5">
+                                <button
+                                  type="button"
+                                  className="flex-1 rounded-md bg-brand px-2 py-1.5 text-xs text-white"
+                                  onClick={async () => {
+                                    await updateFavorite(dramaId, {
+                                      group: editGroup.trim() || null,
+                                      note: editNote.trim() || null,
+                                    });
+                                    setEditId(null);
+                                    void loadKind("favorites", { force: true });
+                                  }}
+                                >
+                                  {t("account.save")}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="rounded-md bg-surface-2 px-2 py-1.5 text-xs text-ink-muted hover:text-ink"
+                                  onClick={() => setEditId(null)}
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
-                  );
-                })}
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
 
             {(!loading || refreshing) && desktopTab === "history" && (
               <div
-                className={cn("space-y-2 transition-opacity duration-200", refreshing && "opacity-60")}
+                className={cn("transition-opacity duration-200", refreshing && "opacity-60")}
                 aria-busy={refreshing}
               >
-                <div className="flex justify-end">
+                <div className="mb-4 flex justify-end">
                   {history.length > 0 && (
                     <button
                       onClick={async () => {
@@ -796,7 +866,7 @@ export default function AccountPage() {
                     </button>
                   )}
                 </div>
-                {history.length === 0 && (
+                {history.length === 0 ? (
                   <div className="py-8 text-center">
                     <p className="text-sm text-ink-muted">{t("account.emptyHistory")}</p>
                     <Link
@@ -806,33 +876,111 @@ export default function AccountPage() {
                       {t("account.goTheater")}
                     </Link>
                   </div>
+                ) : (
+                  <div className="grid grid-cols-4 gap-x-3 gap-y-5 xl:grid-cols-5">
+                    {history.map((row) => {
+                      const d = row.drama;
+                      const slug = d?.slug || row.dramaId;
+                      const epNo = row.episode?.episodeNumber;
+                      const progress =
+                        epNo != null
+                          ? t("account.watchedToEpisode", { n: Number(epNo) })
+                          : null;
+                      const timeLabel = row.progressSec
+                        ? `${Math.floor(row.progressSec / 60)}:${String(row.progressSec % 60).padStart(2, "0")}`
+                        : null;
+                      return (
+                        <Link
+                          key={row.id}
+                          href={`/drama/${slug}/play`}
+                          className="group min-w-0"
+                        >
+                          <div className="relative aspect-[2/3] overflow-hidden rounded-lg bg-surface-2">
+                            {d?.coverUrl ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={d.coverUrl}
+                                alt=""
+                                className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+                              />
+                            ) : null}
+                          </div>
+                          <p className="mt-2 line-clamp-2 text-sm leading-snug text-ink">
+                            {titleOf(d)}
+                          </p>
+                          {(progress || timeLabel) && (
+                            <p className="mt-0.5 truncate text-xs text-ink-muted">
+                              {[progress, timeLabel].filter(Boolean).join(" · ")}
+                            </p>
+                          )}
+                        </Link>
+                      );
+                    })}
+                  </div>
                 )}
-                {history.map((row) => {
-                  const d = row.drama;
-                  const slug = d?.slug || row.dramaId;
-                  const epNo = row.episode?.episodeNumber;
-                  return (
+              </div>
+            )}
+
+            {(!loading || refreshing) && desktopTab === "likes" && (
+              <div
+                className={cn("transition-opacity duration-200", refreshing && "opacity-60")}
+                aria-busy={refreshing}
+              >
+                {likes.length === 0 ? (
+                  <div className="py-8 text-center">
+                    <Heart className="mx-auto h-8 w-8 text-ink-subtle" />
+                    <p className="mt-3 text-body-sm text-ink-muted">{t("account.emptyLiked")}</p>
                     <Link
-                      key={row.id}
-                      href={`/drama/${slug}/play`}
-                      className="flex items-center gap-3 rounded-lg bg-surface-2/60 px-3 py-2.5 transition-colors hover:bg-surface-2"
+                      href="/theater"
+                      className="mt-3 inline-flex rounded-full bg-surface-2 px-4 py-2 text-body-sm text-ink hover:bg-surface-3"
                     >
-                      {d?.coverUrl && (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={d.coverUrl} alt="" className="h-14 w-10 rounded object-cover" />
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm text-ink">{titleOf(d)}</div>
-                        <div className="text-xs text-ink-muted">
-                          {epNo != null ? `${t("account.episode")} ${epNo}` : ""}
-                          {row.progressSec
-                            ? ` · ${Math.floor(row.progressSec / 60)}:${String(row.progressSec % 60).padStart(2, "0")}`
-                            : ""}
-                        </div>
-                      </div>
+                      {t("account.goTheater")}
                     </Link>
-                  );
-                })}
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-4 gap-x-3 gap-y-5 xl:grid-cols-5">
+                    {likes.map((row) => {
+                      const d = row.drama || row;
+                      const slug = d.slug || d.id;
+                      const dramaId = String(row.dramaId ?? d.id);
+                      return (
+                        <div key={row.id || slug} className="group relative min-w-0">
+                          <Link href={`/drama/${slug}`} className="block">
+                            <div className="relative aspect-[2/3] overflow-hidden rounded-lg bg-surface-2">
+                              {d.coverUrl ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={d.coverUrl}
+                                  alt=""
+                                  className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+                                />
+                              ) : null}
+                            </div>
+                            <p className="mt-2 line-clamp-2 text-sm leading-snug text-ink">
+                              {titleOf(d)}
+                            </p>
+                          </Link>
+                          <button
+                            type="button"
+                            title={t("account.tabLiked")}
+                            onClick={async () => {
+                              await removeLike(dramaId);
+                              setLikes((prev) =>
+                                prev.filter(
+                                  (r) => String(r.dramaId ?? r.drama?.id) !== dramaId,
+                                ),
+                              );
+                              cacheRef.current.delete("likes|");
+                            }}
+                            className="absolute right-1.5 top-1.5 grid h-7 w-7 place-items-center rounded-full bg-black/65 text-white opacity-0 backdrop-blur-sm transition-opacity hover:bg-red-500/90 group-hover:opacity-100 group-focus-within:opacity-100"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             )}
 
@@ -841,70 +989,59 @@ export default function AccountPage() {
                 className={cn("space-y-2 transition-opacity duration-200", refreshing && "opacity-60")}
                 aria-busy={refreshing}
               >
-                {orders.length === 0 && (
+                {billingFeed.length === 0 && (
                   <p className="py-8 text-center text-sm text-ink-muted">{t("account.emptyOrders")}</p>
                 )}
-                {orders.map((o) => {
-                  const canRequest =
-                    o.paymentStatus === "PAID" &&
-                    (o.orderType === "TOPUP" || o.orderType === "EPISODE_UNLOCK") &&
-                    !o.refundStatus;
-                  return (
-                    <div
-                      key={o.orderNo}
-                      className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-surface-2/60 px-3 py-2.5"
-                    >
-                      <div className="min-w-0">
-                        <div className="font-mono text-xs text-ink">{o.orderNo}</div>
-                        <div className="text-xs text-ink-muted">
-                          {o.orderType} · {o.paymentStatus}
-                          {o.refundStatus ? ` · ${o.refundStatus}` : ""}
-                          {" · "}
-                          {o.createdAt ? new Date(o.createdAt).toLocaleString(locale) : ""}
+                {billingFeed.map((item) => {
+                  if (item.kind === "order") {
+                    const o = item.order;
+                    const canRequest =
+                      o.paymentStatus === "PAID" &&
+                      (o.orderType === "TOPUP" || o.orderType === "EPISODE_UNLOCK") &&
+                      !o.refundStatus;
+                    return (
+                      <div
+                        key={item.key}
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-surface-2/60 px-3 py-2.5"
+                      >
+                        <div className="min-w-0">
+                          <div className="font-mono text-xs text-ink">{o.orderNo}</div>
+                          <div className="text-xs text-ink-muted">
+                            {o.orderType} · {o.paymentStatus}
+                            {o.refundStatus ? ` · ${o.refundStatus}` : ""}
+                            {" · "}
+                            {o.createdAt ? new Date(o.createdAt).toLocaleString(locale) : ""}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {canRequest ? (
+                            <button
+                              type="button"
+                              disabled={refundBusy === o.orderNo}
+                              className="rounded-lg border border-line px-2.5 py-1 text-xs text-ink-muted hover:text-ink disabled:opacity-50"
+                              onClick={() =>
+                                void onRefund(
+                                  o.orderNo,
+                                  o.orderType === "TOPUP"
+                                    ? t("account.refundTopup")
+                                    : t("account.refundUnlock"),
+                                )
+                              }
+                            >
+                              {t("account.requestRefund")}
+                            </button>
+                          ) : null}
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        {canRequest ? (
-                          <button
-                            type="button"
-                            disabled={refundBusy === o.orderNo}
-                            className="rounded-lg border border-line px-2.5 py-1 text-xs text-ink-muted hover:text-ink disabled:opacity-50"
-                            onClick={() =>
-                              void onRefund(
-                                o.orderNo,
-                                o.orderType === "TOPUP"
-                                  ? t("account.refundTopup")
-                                  : t("account.refundUnlock"),
-                              )
-                            }
-                          >
-                            {t("account.requestRefund")}
-                          </button>
-                        ) : null}
-                      </div>
-                    </div>
-                  );
-                })}
-                {orders.length > 0 && (
-                  <p className="pt-1 text-caption text-ink-muted">{t("account.refundHint")}</p>
-                )}
-              </div>
-            )}
+                    );
+                  }
 
-            {desktopTab === "transactions" && (
-              <div
-                className={cn("space-y-2 transition-opacity duration-200", refreshing && "opacity-60")}
-                aria-busy={refreshing}
-              >
-                {transactions.length === 0 && (
-                  <p className="py-8 text-center text-sm text-ink-muted">{t("account.emptyTx")}</p>
-                )}
-                {transactions.map((tx) => {
+                  const tx = item.tx;
                   const amount = Number(tx.amountCredits ?? 0);
                   const positive = amount > 0;
                   return (
                     <div
-                      key={tx.id}
+                      key={item.key}
                       className="flex items-center justify-between gap-2 rounded-lg bg-surface-2/60 px-3 py-2.5"
                     >
                       <div className="min-w-0">
@@ -931,6 +1068,9 @@ export default function AccountPage() {
                     </div>
                   );
                 })}
+                {orders.length > 0 && (
+                  <p className="pt-1 text-caption text-ink-muted">{t("account.refundHint")}</p>
+                )}
               </div>
             )}
           </div>

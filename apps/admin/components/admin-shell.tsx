@@ -29,7 +29,6 @@ import {
   LogOut,
   Menu,
   Plus,
-  Scale,
   Settings2,
   ShieldCheck,
   Star,
@@ -107,7 +106,6 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/vip-plans", key: "vipPlans", icon: Gift, finance: true },
       { href: "/redeem-codes", key: "redeemCodes", icon: Ticket, finance: true },
       { href: "/wallet", key: "wallet", icon: Coins, finance: true },
-      { href: "/reconcile", key: "reconcile", icon: Scale, finance: true },
     ],
   },
   {

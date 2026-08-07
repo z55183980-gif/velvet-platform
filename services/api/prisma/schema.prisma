@@ -736,11 +736,15 @@ model RedeemCodeBatch {
   @@map("redeem_code_batches")
 }
 
-/// 卡密
+/// 卡密（明文仅创建时返回；库内只存 HMAC 哈希与展示掩码）
 model RedeemCode {
   id              BigInt            @id @default(autoincrement())
   batchId         BigInt
-  code            String            @unique
+  /// HMAC-SHA256(normalized code, REDEEM_CODE_PEPPER)；迁移完成前可为空
+  codeHash        String?           @unique @map("code_hash")
+  codeHint        String            @default("") @map("code_hint")
+  /// 过渡字段：明文迁移完成后清空。勿再写入新行。
+  codeLegacy      String?           @unique @map("code_legacy")
   type            RedeemCodeType
   vipDays         Int?
   creditsAmount   BigInt?

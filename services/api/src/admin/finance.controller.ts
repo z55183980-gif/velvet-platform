@@ -291,12 +291,14 @@ export class FinanceController {
   async listRedeemCodes(
     @Query('batchId') batchId?: string,
     @Query('status') status?: string,
+    @Query('code') code?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
   ) {
     return ok(await this.redeemSvc.listCodes({
       batchId,
       status: (status as any) || 'ALL',
+      code,
       page: page ? Number(page) : 1,
       pageSize: pageSize ? Number(pageSize) : 50,
     }));
@@ -310,17 +312,23 @@ export class FinanceController {
 
   @Get('redeem/redemptions')
   @AdminRoles('SUPER_ADMIN')
-  async listRedemptions(@Query('page') page?: string, @Query('pageSize') pageSize?: string) {
-    return ok(await this.redeemSvc.listRedemptions(
-      page ? Number(page) : 1,
-      pageSize ? Number(pageSize) : 20,
-    ));
+  async listRedemptions(
+    @Query('batchId') batchId?: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    return ok(await this.redeemSvc.listRedemptions({
+      batchId,
+      page: page ? Number(page) : 1,
+      pageSize: pageSize ? Number(pageSize) : 20,
+    }));
   }
 
   @Get('wallet/ledger')
   async walletLedger(
     @Query('userId') userId?: string,
     @Query('type') type?: string,
+    @Query('usage') usage?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('page') page?: string,
@@ -328,7 +336,8 @@ export class FinanceController {
   ) {
     return ok(await this.walletAdmin.listTransactions({
       userId,
-      type: (type as any) || 'ALL',
+      type,
+      usage: usage as any,
       from,
       to,
       page: page ? Number(page) : 1,

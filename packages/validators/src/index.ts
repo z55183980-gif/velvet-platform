@@ -53,15 +53,34 @@ export const topupPackageSchema = z.object({
   active: z.boolean().optional(),
 });
 
-export const redeemBatchSchema = z.object({
-  name: z.string().optional(),
-  type: z.enum(["VIP", "CREDITS"]),
-  vipDays: z.coerce.number().int().positive().optional(),
-  creditsAmount: z.coerce.number().int().positive().optional(),
-  quantity: z.coerce.number().int().positive(),
-  expiresAt: z.string().optional(),
-  note: z.string().optional(),
-});
+export const redeemBatchSchema = z
+  .object({
+    name: z.string().max(120).optional(),
+    type: z.enum(["VIP", "CREDITS"]),
+    vipDays: z.coerce.number().int().positive().max(3650).optional(),
+    creditsAmount: z.coerce.number().int().positive().max(10_000_000).optional(),
+    quantity: z.coerce.number().int().positive().max(5000),
+    expiresAt: z.string().optional(),
+    note: z.string().max(500).optional(),
+  })
+  .superRefine((val, ctx) => {
+    if (val.type === "VIP" && !(val.vipDays && val.vipDays > 0)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "vipDays required", path: ["vipDays"] });
+    }
+    if (val.type === "CREDITS" && !(val.creditsAmount && val.creditsAmount > 0)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "creditsAmount required",
+        path: ["creditsAmount"],
+      });
+    }
+    if (val.expiresAt) {
+      const d = new Date(val.expiresAt);
+      if (Number.isNaN(d.getTime())) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "expiresAt invalid", path: ["expiresAt"] });
+      }
+    }
+  });
 
 export const reasonSchema = z.object({
   reason: z.string().min(1),

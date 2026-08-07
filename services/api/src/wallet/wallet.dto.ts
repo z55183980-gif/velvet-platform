@@ -1,4 +1,4 @@
-import { IsIn, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsIn, IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 const PAYMENT_METHODS = [
   'WALLET',
@@ -25,6 +25,11 @@ export class TopupOrderDto {
   @IsIn(PAYMENT_METHODS)
   paymentMethod?: string = 'STRIPE';
 
+  /** When false, skip Stripe Checkout (dev simulate). Default true for STRIPE. */
+  @IsOptional()
+  @IsBoolean()
+  createCheckout?: boolean;
+
   @IsOptional()
   @IsString()
   idempotencyKey?: string;
@@ -42,6 +47,10 @@ export class VipSubOrderDto {
   @IsOptional()
   @IsIn(PAYMENT_METHODS)
   paymentMethod?: string = 'STRIPE';
+
+  @IsOptional()
+  @IsBoolean()
+  createCheckout?: boolean;
 
   @IsOptional()
   @IsString()

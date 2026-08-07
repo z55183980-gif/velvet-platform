@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   adminUserStatistics,
@@ -56,6 +56,26 @@ function localeLabel(t: ReturnType<typeof useI18n>["t"], locale: string) {
   if (locale === "zh") return t("localeZh");
   if (locale === "fr") return "Français";
   return "English";
+}
+
+function Section({
+  title,
+  action,
+  children,
+}: {
+  title: string;
+  action?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <section className="mb-6">
+      <div className="mb-3 flex items-end justify-between gap-3">
+        <h2 className="text-sm font-semibold tracking-wide text-ink">{title}</h2>
+        {action}
+      </div>
+      {children}
+    </section>
+  );
 }
 
 function KpiCard({
@@ -126,8 +146,8 @@ function RegistrationTrendChart({
   }
 
   return (
-    <div className="card glass-card p-4">
-      <h2 className="mb-3 text-base font-semibold text-ink">{title}</h2>
+    <div className="card glass-card h-full p-4">
+      <h3 className="mb-3 text-base font-semibold text-ink">{title}</h3>
       <svg viewBox={`0 0 ${w} ${h}`} className="h-auto w-full" role="img" aria-label={title}>
         {[0.25, 0.5, 0.75, 1].map((p) => {
           const y = pad.t + innerH * (1 - p);
@@ -196,9 +216,9 @@ function LocaleDistribution({
   t: ReturnType<typeof useI18n>["t"];
 }) {
   return (
-    <div className="card glass-card p-4 md:p-5">
+    <div className="card glass-card h-full p-4 md:p-5">
       <div className="mb-4">
-        <h2 className="text-base font-semibold text-ink">{title}</h2>
+        <h3 className="text-base font-semibold text-ink">{title}</h3>
         <p className="mt-0.5 text-xs text-ink-muted">{subtitle}</p>
       </div>
       {!items.length ? (
@@ -274,6 +294,7 @@ export default function UserOverviewPage() {
   const newUserDelta = summary
     ? pctDelta(summary.newUsers, summary.newPreviousPeriod)
     : null;
+  const periodLabel = data?.period ? `${data.period.start} – ${data.period.end}` : null;
 
   return (
     <AdminShell title={t("userOverview")}>
@@ -283,10 +304,15 @@ export default function UserOverviewPage() {
         </p>
       ) : null}
 
-      <div className="mb-5 flex flex-col gap-3 rounded-xl border border-line bg-white/40 p-3 md:flex-row md:items-center md:justify-between">
+      <div className="mb-6 flex flex-col gap-3 rounded-xl border border-line bg-white/40 p-3 md:flex-row md:items-center md:justify-between">
         <div>
           <p className="text-sm font-medium text-ink">{t("filter")}</p>
-          <p className="mt-0.5 text-xs text-ink-muted">{t("userStatsRangeHint")}</p>
+          <p className="mt-0.5 text-xs text-ink-muted">
+            {periodLabel ? periodLabel : t("userStatsRangeHint")}
+            {periodLabel ? (
+              <span className="text-ink-subtle"> · {t("userStatsRangeHint")}</span>
+            ) : null}
+          </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="inline-flex rounded-xl border border-line bg-surface p-1">
@@ -349,81 +375,86 @@ export default function UserOverviewPage() {
         </div>
       </div>
 
-      <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-3 2xl:grid-cols-6">
-        <KpiCard
-          label={t("userStatsTotal")}
-          value={summary?.totalUsers ?? "—"}
-          description={t("userStatsTotalDesc")}
-        />
-        <KpiCard
-          label={t("userStatsLoggedIn")}
-          value={summary?.activeUsers ?? "—"}
-          description={`${loginRate}% · ${t("userStatsLoggedInDesc")}`}
-        />
-        <KpiCard
-          label={t("userStatsNew")}
-          value={summary?.newUsers ?? "—"}
-          description={t("userStatsNewDesc")}
-          delta={newUserDelta}
-          vsLabel={t("comparedPrevPeriod")}
-        />
-        <KpiCard
-          label={t("userStatsPaidUsers")}
-          value={summary?.paidUsers ?? "—"}
-          description={`${paidUserShare}% · ${t("userStatsPaidUsersDesc")}`}
-        />
-        <KpiCard
-          label={t("userStatsTotalPaid")}
-          value={summary ? fmtNum(summary.totalPaidAmountVnd) : "—"}
-          description={t("userStatsTotalPaidDesc")}
-        />
-        <KpiCard
-          label={t("userStatsTotalUsage")}
-          value={summary ? fmtNum(summary.totalSpentCredits) : "—"}
-          description={t("userStatsUsageDesc")}
-        />
-      </div>
-
-      <div className="mb-6 grid gap-4 lg:grid-cols-[2fr_1fr]">
-        <RegistrationTrendChart
-          trends={data?.registrationTrend ?? []}
-          title={t("userStatsRegTrend")}
-          emptyLabel={t("empty")}
-        />
-        <LocaleDistribution
-          items={data?.localeDistribution ?? []}
-          total={summary?.totalUsers ?? 0}
-          title={t("userStatsLocaleDist")}
-          subtitle={t("userStatsLocaleDistDesc")}
-          t={t}
-        />
-      </div>
-
-      {summary ? (
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <div className="card glass-card p-4">
-            <p className="text-xs font-medium text-ink-muted">{t("userStatsActiveVip")}</p>
-            <p className="mt-2 text-xl font-semibold tabular-nums text-ink">
-              {fmtNum(summary.activeVipUsers)}
-            </p>
-            <p className="mt-1 text-xs text-ink-subtle">{t("userStatsVipDesc")}</p>
-          </div>
-          <div className="card glass-card p-4">
-            <p className="text-xs font-medium text-ink-muted">{t("totalRecharged")}</p>
-            <p className="mt-2 text-xl font-semibold tabular-nums text-ink">
-              {fmtNum(summary.totalRechargedCredits)}
-            </p>
-          </div>
-          {data?.period ? (
-            <div className="card glass-card p-4 lg:col-span-2">
-              <p className="text-xs font-medium text-ink-muted">{t("filter")}</p>
-              <p className="mt-2 text-sm font-medium text-ink">
-                {data.period.start} – {data.period.end}
-              </p>
-            </div>
-          ) : null}
+      <Section title={t("userStatsSectionUsers")}>
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <KpiCard
+            label={t("userStatsTotal")}
+            value={summary?.totalUsers ?? "—"}
+            description={t("userStatsTotalDesc")}
+          />
+          <KpiCard
+            label={t("userStatsLoggedIn")}
+            value={summary?.activeUsers ?? "—"}
+            description={`${loginRate}% · ${t("userStatsLoggedInDesc")}`}
+          />
+          <KpiCard
+            label={t("userStatsNew")}
+            value={summary?.newUsers ?? "—"}
+            description={t("userStatsNewDesc")}
+            delta={newUserDelta}
+            vsLabel={t("comparedPrevPeriod")}
+          />
+          <KpiCard
+            label={t("userStatsPaidUsers")}
+            value={summary?.paidUsers ?? "—"}
+            description={`${paidUserShare}% · ${t("userStatsPaidUsersDesc")}`}
+          />
         </div>
-      ) : null}
+      </Section>
+
+      <Section title={t("userStatsSectionFinance")}>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <KpiCard
+            label={t("userStatsTotalPaid")}
+            value={summary ? fmtNum(summary.totalPaidAmountVnd) : "—"}
+            description={t("userStatsTotalPaidDesc")}
+          />
+          <KpiCard
+            label={t("userStatsTotalUsage")}
+            value={summary ? fmtNum(summary.totalSpentCredits) : "—"}
+            description={t("userStatsUsageDesc")}
+          />
+          <KpiCard
+            label={t("userStatsActiveVip")}
+            value={summary ? fmtNum(summary.activeVipUsers) : "—"}
+            description={t("userStatsVipDesc")}
+          />
+        </div>
+        <div className="mt-3 card glass-card p-4 md:p-5">
+          <p className="text-xs font-medium text-ink-muted">{t("creditBalance")}</p>
+          <div className="mt-3 grid gap-4 sm:grid-cols-2">
+            <div className="rounded-xl bg-white/50 px-4 py-3">
+              <p className="text-3xl font-semibold tabular-nums tracking-tight text-ink">
+                {summary ? fmtNum(summary.totalCreditsBalance) : "—"}
+              </p>
+              <p className="mt-1 text-xs text-ink-subtle">{t("creditsBalanceTotal")}</p>
+            </div>
+            <div className="rounded-xl bg-white/50 px-4 py-3">
+              <p className="text-3xl font-semibold tabular-nums tracking-tight text-ink">
+                {summary ? fmtNum(summary.totalPaidTopupCredits) : "—"}
+              </p>
+              <p className="mt-1 text-xs text-ink-subtle">{t("creditsBalanceFromTopup")}</p>
+            </div>
+          </div>
+        </div>
+      </Section>
+
+      <Section title={t("userStatsSectionCharts")}>
+        <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
+          <RegistrationTrendChart
+            trends={data?.registrationTrend ?? []}
+            title={t("userStatsRegTrend")}
+            emptyLabel={t("empty")}
+          />
+          <LocaleDistribution
+            items={data?.localeDistribution ?? []}
+            total={summary?.totalUsers ?? 0}
+            title={t("userStatsLocaleDist")}
+            subtitle={t("userStatsLocaleDistDesc")}
+            t={t}
+          />
+        </div>
+      </Section>
     </AdminShell>
   );
 }

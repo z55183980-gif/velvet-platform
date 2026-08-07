@@ -10,7 +10,6 @@ import {
   adminSetUserVip,
   adminWalletAdjust,
   asRows,
-  adminUserStatistics,
 } from "@velvet/api-client";
 import { AdminShell } from "@/components/admin-shell";
 import { GlassModal } from "@/components/glass-modal";
@@ -449,12 +448,6 @@ export default function AdminUsersPage() {
     },
   });
 
-  const statsQ = useQuery({
-    queryKey: ["admin", "users", "statistics", "7d"],
-    queryFn: () => adminUserStatistics({ range: "7d" }),
-    staleTime: 60_000,
-  });
-  const summary = statsQ.data?.summary;
   const totalPages = Math.max(1, Math.ceil((data?.total ?? 0) / pageSize));
   const goToPage = (nextPage: number) => {
     const next = Math.min(totalPages, Math.max(1, Math.floor(nextPage)));
@@ -605,13 +598,6 @@ export default function AdminUsersPage() {
   return (
     <AdminShell title={title}>
       {error ? <p className="mb-3 text-body-sm text-danger">{(error as Error).message}</p> : null}
-
-      <div className="mb-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard label={t("userStatsTotal")} value={fmtNum(summary?.totalUsers)} />
-        <StatCard label={t("userStatsNew")} value={fmtNum(summary?.newUsers)} />
-        <StatCard label={t("userStatsPaidUsers")} value={fmtNum(summary?.paidUsers)} />
-        <StatCard label={t("userStatsActiveVip")} value={fmtNum(summary?.activeVipUsers)} />
-      </div>
 
       <div className="mb-4 flex flex-col gap-3 rounded-xl border border-line bg-white/45 p-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-2">

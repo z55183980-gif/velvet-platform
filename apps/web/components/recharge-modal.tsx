@@ -78,8 +78,11 @@ export function RechargeModal({ open, onClose }: { open: boolean; onClose: () =>
     setErr(null);
     setPayHint(null);
     try {
-      const r: any = await topupOrder(selected.id, PAY_CURRENCY, "STRIPE");
-      if (isDev && r?.orderNo && method === "SIMULATE") {
+      const wantSimulate = isDev && method === "SIMULATE";
+      const r: any = await topupOrder(selected.id, PAY_CURRENCY, "STRIPE", {
+        createCheckout: !wantSimulate,
+      });
+      if (wantSimulate && r?.orderNo) {
         await simulatePay(r.orderNo);
         await refreshWallet();
         track("recharge", {
@@ -91,6 +94,19 @@ export function RechargeModal({ open, onClose }: { open: boolean; onClose: () =>
         });
         setDone(true);
         setTimeout(() => onClose(), 1200);
+        return;
+      }
+      const checkoutUrl = String(r?.checkoutUrl || r?.checkout_url || "").trim();
+      if (checkoutUrl) {
+        track("recharge", {
+          method: "STRIPE",
+          currency: PAY_CURRENCY,
+          packageId: selected.id,
+          credits,
+          payAmount,
+        });
+        setPayHint(t("recharge.redirectingStripe"));
+        window.location.assign(checkoutUrl);
         return;
       }
       setErr(t("vip.payPending"));
@@ -205,6 +221,18 @@ export function RechargeModal({ open, onClose }: { open: boolean; onClose: () =>
                     )}
                   >
                     {t("recharge.simulate")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMethod("STRIPE")}
+                    className={cn(
+                      "rounded-full px-4 py-2 text-body-sm font-medium transition-colors",
+                      method === "STRIPE"
+                        ? "bg-brand text-white"
+                        : "bg-surface-2 text-ink-muted hover:text-ink",
+                    )}
+                  >
+                    Stripe
                   </button>
                 </div>
               </div>

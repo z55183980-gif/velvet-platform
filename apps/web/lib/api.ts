@@ -648,15 +648,21 @@ export async function getWallet(): Promise<{
   }
 }
 
-// 币换积分：法币充值下单（返回 credits + devPayUrl）
+// 币换积分：法币充值下单（返回 credits + checkoutUrl / 开发态 simulate）
 export async function topupOrder(
   packageId: string | number,
   currency: string,
   paymentMethod = "STRIPE",
+  opts?: { createCheckout?: boolean },
 ) {
   return request<any>("/orders/topup", {
     method: "POST",
-    body: JSON.stringify({ packageId, currency, paymentMethod }),
+    body: JSON.stringify({
+      packageId,
+      currency,
+      paymentMethod,
+      createCheckout: opts?.createCheckout,
+    }),
   });
 }
 
@@ -664,10 +670,16 @@ export async function vipSubOrder(
   vipPlanId: string | number,
   currency: string,
   paymentMethod = "STRIPE",
+  opts?: { createCheckout?: boolean },
 ) {
   return request<any>("/orders/vip-sub", {
     method: "POST",
-    body: JSON.stringify({ vipPlanId, currency, paymentMethod }),
+    body: JSON.stringify({
+      vipPlanId,
+      currency,
+      paymentMethod,
+      createCheckout: opts?.createCheckout,
+    }),
   });
 }
 
