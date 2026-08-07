@@ -18,7 +18,8 @@ import {
  * - 用户域访问 /admin|/ops|/console → 跳转管理端域名
  * - 误把管理域指到本应用时 → 跳转 ADMIN_ORIGIN
  * - 已删/下架短剧 document 请求 → 硬 404
- * - 首次访问根据 Accept-Language 写入 dv_locale（避免 SSR/CSR 语言不一致）
+ * - 首次访问若 Accept-Language 有值则写入 dv_locale（避免 SSR/CSR 语言不一致）；
+ *   AL 为空时不写 cookie，留给客户端用 navigator.language，最终仍回退到 en。
  *
  * 界面语言只由 dv_locale cookie 承载（layout SSR 读取 + i18n 读写 + api 的
  * Accept-Language）。这里刻意不做 /zh|/en|/fr 路径前缀 rewrite：应用侧从不生成
@@ -85,8 +86,10 @@ function hostRedirects(req: NextRequest, pathname: string): NextResponse | null 
 
 function withDefaultLocaleCookie(req: NextRequest, res: NextResponse) {
   if (req.cookies.get("dv_locale")?.value) return res;
-  const locale = localeFromAcceptLanguage(req.headers.get("accept-language"));
-  localeCookie(res, locale);
+  const acceptLanguage = req.headers.get("accept-language");
+  // Empty AL is common on some mobile WebViews — do not stamp en and block navigator.
+  if (!acceptLanguage?.trim()) return res;
+  localeCookie(res, localeFromAcceptLanguage(acceptLanguage));
   return res;
 }
 

@@ -10,6 +10,7 @@ import {
   saveAuthToken,
 } from "@/lib/api";
 import { useLocale } from "@/lib/i18n";
+import { useSiteConfig } from "@/lib/site-config";
 import { track } from "@/lib/track";
 
 export type AuthMode = "login" | "register" | "forgot";
@@ -98,6 +99,7 @@ export function LoginModal({
   applySession,
 }: LoginModalProps) {
   const { t } = useLocale();
+  const site = useSiteConfig();
 
   const [mode, setMode] = useState<AuthMode>(initialMode);
   const [account, setAccount] = useState("");
@@ -169,7 +171,9 @@ export function LoginModal({
   useEffect(() => {
     if (mode === "forgot") return;
     if (captcha?.captchaRequired) void loadCaptcha();
-  }, [mode]); // eslint-disable-line react-hooks/exhaustive-deps — refresh image when switching login/register
+    // refresh image when switching login/register
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
 
   useEffect(() => {
     const onMessage = (ev: MessageEvent) => {
@@ -635,11 +639,19 @@ export function LoginModal({
 
           <p className="mt-6 text-center text-[11px] leading-relaxed text-ink-subtle">
             {t("login.agreePrefix")}{" "}
-            <Link href="/terms" target="_blank" className="text-sky-400 hover:underline">
+            <Link
+              href={site.termsUrl || "/terms"}
+              target="_blank"
+              className="text-sky-400 hover:underline"
+            >
               {t("login.terms")}
             </Link>{" "}
             {t("login.agreeAnd")}{" "}
-            <Link href="/privacy" target="_blank" className="text-sky-400 hover:underline">
+            <Link
+              href={site.privacyUrl || "/privacy"}
+              target="_blank"
+              className="text-sky-400 hover:underline"
+            >
               {t("login.privacy")}
             </Link>
             {t("login.agreeSuffix")}

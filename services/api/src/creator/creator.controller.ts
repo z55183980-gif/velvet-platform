@@ -75,15 +75,15 @@ class SubmitKycDto {
 
   @IsNotEmpty()
   @IsString()
-  @Matches(/^(https?:\/\/|\/api\/v1\/media\/)/i, {
-    message: 'cccdFrontUrl phải là https:// hoặc /api/v1/media/',
+  @Matches(/^(https?:\/\/|\/api\/v1\/media\/|docs\/)/i, {
+    message: 'cccdFrontUrl phải là https://、/api/v1/media/ 或 docs/',
   })
   cccdFrontUrl!: string;
 
   @IsNotEmpty()
   @IsString()
-  @Matches(/^(https?:\/\/|\/api\/v1\/media\/)/i, {
-    message: 'cccdBackUrl phải là https:// hoặc /api/v1/media/',
+  @Matches(/^(https?:\/\/|\/api\/v1\/media\/|docs\/)/i, {
+    message: 'cccdBackUrl phải là https://、/api/v1/media/ 或 docs/',
   })
   cccdBackUrl!: string;
 
@@ -98,6 +98,16 @@ class SubmitKycDto {
 
   @IsNotEmpty()
   bankAccount!: string | Record<string, unknown>;
+}
+
+class CreateWithdrawDto {
+  @Type(() => Number)
+  @IsNumber()
+  @Min(1)
+  amountVnd!: number;
+
+  @IsOptional()
+  bankInfo?: Record<string, unknown>;
 }
 
 class CreateDramaDto {
@@ -165,6 +175,18 @@ class UpdateDramaDto {
 export class CreatorController {
   constructor(private readonly creator: CreatorService) {}
 
+  /** 用户确认开通创作者账号后调用；幂等 */
+  @Post('activate')
+  async activate(@CurrentUser() user: AuthUser) {
+    return ok(await this.creator.activateCreator(user.userId));
+  }
+
+  /** 是否已开通创作者（不自动建号） */
+  @Get('status')
+  async status(@CurrentUser() user: AuthUser) {
+    return ok(await this.creator.getCreatorStatus(user.userId));
+  }
+
   @Get('dashboard')
   async dashboard(@CurrentUser() user: AuthUser) {
     return ok(await this.creator.getDashboard(user.userId));
@@ -214,7 +236,7 @@ export class CreatorController {
   }
 
   @Post('withdraws')
-  async createWithdraw(@Body() dto: any, @CurrentUser() user: AuthUser) {
+  async createWithdraw(@Body() dto: CreateWithdrawDto, @CurrentUser() user: AuthUser) {
     return ok(await this.creator.createWithdraw(user.userId, dto.amountVnd, dto.bankInfo));
   }
 

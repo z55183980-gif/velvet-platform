@@ -50,9 +50,13 @@ export class AdminsService {
   }
 
   async setStatus(adminId: string, status: 'ACTIVE' | 'DISABLED', actorId?: bigint) {
+    const data: { status: string; tokenVersion?: { increment: number } } = { status };
+    if (status === 'DISABLED') {
+      data.tokenVersion = { increment: 1 };
+    }
     const updated = await this.prisma.adminUser.update({
       where: { id: BigInt(adminId) },
-      data: { status },
+      data,
     });
     await this.audit.write({
       actorId,

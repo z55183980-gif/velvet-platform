@@ -4,12 +4,14 @@ import { BizException, BizCode } from '../common/biz.exception';
 import { toBigInt, genOrderNo } from '../common/money.util';
 import { withPrismaGuard } from '../common/prisma-error.util';
 import { ContentReadinessService } from '../common/content-readiness.service';
+import { PlatformSettingsService } from '../common/platform-settings.service';
 
 @Injectable()
 export class CreatorService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly readiness: ContentReadinessService,
+    private readonly platformSettings: PlatformSettingsService,
   ) {}
 
   /** 确保当前用户有 creator 记录（首次进入创作者中心时自动建） */
@@ -17,11 +19,13 @@ export class CreatorService {
     const existing = await this.prisma.creator.findUnique({ where: { userId } });
     if (existing) return existing;
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    const revenueShare = await this.platformSettings.getRevenueShareDefault();
     try {
       return await this.prisma.creator.create({
         data: {
           userId,
           displayName: user?.nickname || user?.phone || `Creator ${userId}`,
+          revenueShare,
         },
       });
     } catch (e: any) {
@@ -32,6 +36,32 @@ export class CreatorService {
       }
       throw e;
     }
+  }
+
+  /** 确认开通创作者账号（幂等） */
+  async activateCreator(userId: bigint) {
+    const creator = await this.ensureCreator(userId);
+    return {
+      id: creator.id.toString(),
+      displayName: creator.displayName,
+      isCreator: true,
+      kycStatus: creator.kycStatus,
+      status: creator.status,
+    };
+  }
+
+  /** 查询是否已开通；不自动建号 */
+  async getCreatorStatus(userId: bigint) {
+    const creator = await this.prisma.creator.findUnique({ where: { userId } });
+    if (!creator) {
+      return { isCreator: false, status: null, kycStatus: null, displayName: null };
+    }
+    return {
+      isCreator: true,
+      status: creator.status,
+      kycStatus: creator.kycStatus,
+      displayName: creator.displayName,
+    };
   }
 
   async getDashboard(userId: bigint) {
@@ -290,25 +320,37 @@ export class CreatorService {
 
   async createWithdraw(userId: bigint, amountVnd: number | string, bankInfo: any) {
     const creator = await this.ensureCreator(userId);
+    if (creator.kycStatus !== 'APPROVED') {
+      throw new BizException(BizCode.FORBIDDEN, 'creator.kycRequiredForWithdraw');
+    }
+    if (!creator.bankAccount) {
+      throw new BizException(BizCode.BAD_REQUEST, 'creator.bankAccountRequired');
+    }
     const amount = toBigInt(amountVnd);
     if (amount <= 0n) throw new BizException(BizCode.BAD_REQUEST, 'Số tiền không hợp lệ');
+    const minWithdraw = BigInt(await this.platformSettings.getMinWithdrawVnd());
+    if (amount < minWithdraw) {
+      throw new BizException(
+        BizCode.BAD_REQUEST,
+        `creator.withdrawBelowMin:${minWithdraw.toString()}`,
+      );
+    }
 
-    // 申请时冻结 available → 防止并发超额提现；拒绝时归还
+    // 条件扣减：并发超额提现时只有一笔成功
     const req = await this.prisma.$transaction(async (tx) => {
-      const earning = await tx.creatorEarning.findUnique({ where: { creatorId: creator.id } });
-      if (!earning || earning.availableVnd < amount) {
-        throw new BizException(BizCode.INSUFFICIENT_BALANCE, 'Số dư chưa đủ để rút');
-      }
-      await tx.creatorEarning.update({
-        where: { creatorId: creator.id },
+      const frozen = await tx.creatorEarning.updateMany({
+        where: { creatorId: creator.id, availableVnd: { gte: amount } },
         data: { availableVnd: { decrement: amount } },
       });
+      if (frozen.count !== 1) {
+        throw new BizException(BizCode.INSUFFICIENT_BALANCE, 'Số dư chưa đủ để rút');
+      }
       return tx.withdrawRequest.create({
         data: {
           requestNo: genOrderNo('WD'),
           creatorId: creator.id,
           amountVnd: amount,
-          bankInfo: bankInfo || {},
+          bankInfo: bankInfo || creator.bankAccount || {},
         },
       });
     });
@@ -406,9 +448,17 @@ export class CreatorService {
       }
 
       const isFree = !!dto.isFree;
-      const priceVndNum = Number(dto.priceVnd ?? 0);
       const priceCreditsNum =
-        dto.priceCredits != null ? Number(dto.priceCredits) : priceVndNum;
+        dto.priceCredits != null
+          ? Number(dto.priceCredits)
+          : dto.priceVnd != null
+            ? Number(dto.priceVnd)
+            : 0;
+      // Keep priceVnd in sync with charged credits (legacy column name).
+      const priceVndNum =
+        dto.priceVnd != null && Number(dto.priceVnd) > 0
+          ? Number(dto.priceVnd)
+          : priceCreditsNum;
       if (!Number.isFinite(priceVndNum) || priceVndNum < 0) {
         throw new BizException(BizCode.BAD_REQUEST, 'priceVnd phải >= 0');
       }
@@ -428,8 +478,8 @@ export class CreatorService {
         );
       }
 
-      const priceVnd = toBigInt(priceVndNum);
       const priceCredits = toBigInt(priceCreditsNum);
+      const priceVnd = isFree ? 0n : toBigInt(priceVndNum > 0 ? priceVndNum : priceCreditsNum);
       const source = String(dto.hlsUrl || dto.originalUrl || '').trim() || null;
       const sourceIsHls = !!source && /\.m3u8(?:\?|$)/i.test(source);
       if (source && !/^(https?:\/\/|uploads\/|hls\/)/i.test(source)) {
@@ -492,21 +542,39 @@ export class CreatorService {
     if (!/^\d{9}$|^\d{12}$/.test(cccdNumber)) {
       throw new BizException(BizCode.BAD_REQUEST, 'cccdNumber phải là 9 hoặc 12 chữ số');
     }
-    const urlOk = (u: string) =>
-      /^(https?:\/\/|\/api\/v1\/media\/)/i.test(String(u || '').trim());
-    if (!urlOk(dto.cccdFrontUrl)) {
+    const normalizeDoc = (u: string) => {
+      const raw = String(u || '').trim();
+      if (/^https?:\/\//i.test(raw)) return raw;
+      let s = raw.split('?')[0].replace(/^\/+/, '');
+      if (s.startsWith('api/v1/media/')) s = s.slice('api/v1/media/'.length);
+      try {
+        s = decodeURIComponent(s);
+      } catch {
+        /* keep */
+      }
+      s = s.replace(/\\/g, '/');
+      if (s.startsWith('docs/')) return s;
+      if (raw.startsWith('/api/v1/media/')) return s || null;
+      return null;
+    };
+    const front = normalizeDoc(dto.cccdFrontUrl);
+    const back = normalizeDoc(dto.cccdBackUrl);
+    if (!front) {
       throw new BizException(
         BizCode.BAD_REQUEST,
-        'cccdFrontUrl phải là https:// hoặc /api/v1/media/',
+        'cccdFrontUrl phải là https://、/api/v1/media/ 或 docs/',
       );
     }
-    if (!urlOk(dto.cccdBackUrl)) {
+    if (!back) {
       throw new BizException(
         BizCode.BAD_REQUEST,
-        'cccdBackUrl phải là https:// hoặc /api/v1/media/',
+        'cccdBackUrl phải là https://、/api/v1/media/ 或 docs/',
       );
     }
-    if (dto.faceVerified !== true && dto.faceVerified !== 'true' && dto.faceVerified !== 1) {
+    // Client attestation only — admin KYC approval is the real gate for withdraw.
+    const faceAttested =
+      dto.faceVerified === true || dto.faceVerified === 'true' || dto.faceVerified === 1;
+    if (!faceAttested) {
       throw new BizException(BizCode.BAD_REQUEST, 'faceVerified phải là true');
     }
     const taxCode = String(dto.taxCode || '').trim();
@@ -525,12 +593,12 @@ export class CreatorService {
       where: { id: creator.id },
       data: {
         cccdNumber,
-        cccdFrontUrl: String(dto.cccdFrontUrl).trim(),
-        cccdBackUrl: String(dto.cccdBackUrl).trim(),
-        faceVerified: true,
+        cccdFrontUrl: front,
+        cccdBackUrl: back,
+        faceVerified: false,
         taxCode,
         bankAccount: dto.bankAccount as any,
-        bankVerified: true,
+        bankVerified: false,
         kycStatus: 'PENDING',
         kycRejectReason: null,
       },

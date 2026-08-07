@@ -12,6 +12,79 @@ const DEFAULT_KEYS: {
   labelZh: string;
   type: 'number' | 'boolean' | 'string' | 'json';
 }[] = [
+  // —— 通用 ——
+  {
+    key: 'siteName',
+    value: 'Velvet',
+    labelEn: 'Site name',
+    labelZh: '站点名称',
+    type: 'string',
+  },
+  {
+    key: 'supportEmail',
+    value: 'support@velvetmovie.space',
+    labelEn: 'Support email',
+    labelZh: '客服邮箱',
+    type: 'string',
+  },
+  {
+    key: 'supportUrl',
+    value: '',
+    labelEn: 'Support URL',
+    labelZh: '客服链接',
+    type: 'string',
+  },
+  {
+    key: 'termsUrl',
+    value: '/terms',
+    labelEn: 'Terms of service URL',
+    labelZh: '用户协议链接',
+    type: 'string',
+  },
+  {
+    key: 'privacyUrl',
+    value: '/privacy',
+    labelEn: 'Privacy policy URL',
+    labelZh: '隐私政策链接',
+    type: 'string',
+  },
+  {
+    key: 'maintenanceMode',
+    value: false,
+    labelEn: 'Maintenance mode',
+    labelZh: '维护模式',
+    type: 'boolean',
+  },
+  {
+    key: 'maintenanceMessage',
+    value: '',
+    labelEn: 'Maintenance message',
+    labelZh: '维护提示文案',
+    type: 'string',
+  },
+  // —— 商业规则 ——
+  {
+    key: 'revenueShareDefault',
+    value: 0.7,
+    labelEn: 'Default creator revenue share',
+    labelZh: '默认创作者分成',
+    type: 'number',
+  },
+  {
+    key: 'minWithdrawVnd',
+    value: 100000,
+    labelEn: 'Minimum withdraw amount',
+    labelZh: '最低提现金额',
+    type: 'number',
+  },
+  {
+    key: 'pitRate',
+    value: 0.05,
+    labelEn: 'Withdraw PIT rate',
+    labelZh: '提现个税税率',
+    type: 'number',
+  },
+  // —— 播放策略 ——
   {
     key: 'episodeLockMode',
     value: 'FREE_FIRST_N',
@@ -26,12 +99,23 @@ const DEFAULT_KEYS: {
     labelZh: '默认免费集数',
     type: 'number',
   },
+  {
+    key: 'defaultPreviewSeconds',
+    value: 0,
+    labelEn: 'Default preview seconds (paid episodes)',
+    labelZh: '默认试看秒数（付费集）',
+    type: 'number',
+  },
 ];
 
 const ALLOWED_KEYS = new Set(DEFAULT_KEYS.map((d) => d.key));
 /** Keys owned by other admin modules — keep in DB, never list in generic settings UI. */
 const INTERNAL_SETTING_KEYS = new Set([STRIPE_GATEWAY_SETTING_KEY]);
 const PRESERVED_KEYS = new Set([...ALLOWED_KEYS, ...INTERNAL_SETTING_KEYS]);
+
+function clampRate(n: number) {
+  return Math.min(1, Math.max(0, n));
+}
 
 @Injectable()
 export class SettingsService implements OnModuleInit {
@@ -86,7 +170,7 @@ export class SettingsService implements OnModuleInit {
         value = value === true || value === 'true' || value === 1 || value === '1';
         break;
       case 'string':
-        value = String(value ?? '');
+        value = String(value ?? '').trim();
         break;
       default:
         break;
@@ -97,12 +181,37 @@ export class SettingsService implements OnModuleInit {
         'episodeLockMode must be FREE_FIRST_N | VIP_ALL | ALL_FREE',
       );
     }
-    if (key === 'defaultFreeEpisodes') {
+    if (
+      key === 'defaultFreeEpisodes' ||
+      key === 'defaultPreviewSeconds' ||
+      key === 'minWithdrawVnd'
+    ) {
       const n = Math.floor(Number(value));
       if (!Number.isFinite(n) || n < 0) {
-        throw new BizException(BizCode.BAD_REQUEST, `${key} phải >= 0`);
+        throw new BizException(BizCode.BAD_REQUEST, `${key} must be >= 0`);
       }
       value = n;
+    }
+    if (key === 'revenueShareDefault' || key === 'pitRate') {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n < 0 || n > 1) {
+        throw new BizException(BizCode.BAD_REQUEST, `${key} must be between 0 and 1`);
+      }
+      value = clampRate(n);
+    }
+    if (key === 'supportEmail' && value) {
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) {
+        throw new BizException(BizCode.BAD_REQUEST, 'supportEmail is invalid');
+      }
+    }
+    if ((key === 'siteName' || key === 'maintenanceMessage') && value.length > 200) {
+      throw new BizException(BizCode.BAD_REQUEST, `${key} is too long`);
+    }
+    if (
+      (key === 'supportUrl' || key === 'termsUrl' || key === 'privacyUrl') &&
+      value.length > 500
+    ) {
+      throw new BizException(BizCode.BAD_REQUEST, `${key} is too long`);
     }
     const prev = await this.prisma.systemSetting.findUnique({ where: { key } });
     const row = await this.prisma.systemSetting.upsert({

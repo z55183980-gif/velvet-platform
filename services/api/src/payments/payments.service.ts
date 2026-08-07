@@ -5,6 +5,7 @@ import { WalletService } from '../wallet/wallet.service';
 import { PAYMENT_PROVIDERS, ParsedWebhook } from './provider.interface';
 import { BizException, BizCode } from '../common/biz.exception';
 import { StructuredLogger } from '../common/structured-logger.service';
+import { safeEqualString } from '../common/security-config';
 import {
   loadStripeGatewayConfig,
   parseStripeWebhookPayload,
@@ -33,6 +34,12 @@ const STRIPE_PAID_EVENT_TYPES = new Set([
   'invoice_payment.paid',
   'payment_intent.succeeded',
   'charge.succeeded',
+]);
+
+const STRIPE_REFUND_EVENT_TYPES = new Set([
+  'charge.refunded',
+  'refund.updated',
+  'charge.refund.updated',
 ]);
 
 export type WebhookAuthContext = {
@@ -77,7 +84,7 @@ export class PaymentsService {
         'Webhook secret not configured',
       );
     }
-    if (!secretHeader || secretHeader !== secret) {
+    if (!secretHeader || !safeEqualString(secretHeader, secret)) {
       this.log.warn({
         event: 'webhook.auth.invalid',
         provider,
@@ -234,8 +241,15 @@ export class PaymentsService {
         }
       }
 
+      const isRefund = !!(eventType && STRIPE_REFUND_EVENT_TYPES.has(eventType));
+
       // Non-payment / non-creditable event types: acknowledge after allowlist check.
-      if (eventType && !STRIPE_PAID_EVENT_TYPES.has(eventType) && !payload?.orderNo) {
+      if (
+        eventType &&
+        !STRIPE_PAID_EVENT_TYPES.has(eventType) &&
+        !isRefund &&
+        !payload?.orderNo
+      ) {
         this.log.log({
           event: 'webhook.parse.ignored',
           provider: 'stripe',
@@ -257,6 +271,50 @@ export class PaymentsService {
           latencyMs: Date.now() - t0,
         });
         return { received: true, ignored: true };
+      }
+
+      if (isRefund) {
+        const refundStatus = String(
+          payload?.data?.object?.status || payload?.status || '',
+        ).toLowerCase();
+        if (
+          eventType === 'refund.updated' &&
+          refundStatus &&
+          refundStatus !== 'succeeded' &&
+          refundStatus !== 'paid'
+        ) {
+          return { received: true, ignored: true, reason: 'refund_not_succeeded' };
+        }
+        const result = await this.wallet.revokeOnProviderRefund(
+          parsedStripe.orderNo,
+          `Stripe ${eventType}`,
+        );
+        if (eventId) {
+          try {
+            await this.prisma.webhookEvent.create({
+              data: {
+                provider: 'stripe',
+                eventId: String(eventId),
+                orderNo: parsedStripe.orderNo,
+                payload: payload as any,
+              },
+            });
+          } catch (e: any) {
+            if (e?.code === 'P2002') {
+              return { received: true, duplicate: true, eventId: String(eventId) };
+            }
+            throw e;
+          }
+        }
+        this.log.log({
+          event: 'webhook.refund.handled',
+          provider: 'stripe',
+          orderNo: parsedStripe.orderNo,
+          eventId,
+          eventType,
+          latencyMs: Date.now() - t0,
+        });
+        return { received: true, ...result };
       }
 
       const status = String(payload?.status || payload?.trade_status || 'paid').toLowerCase();

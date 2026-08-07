@@ -2,6 +2,8 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { BizException, BizCode } from '../common/biz.exception';
+import { signMediaPath } from '../common/media-sign.util';
+import { requireSecret } from '../common/security-config';
 import { R2StorageService } from '../storage/r2.storage.service';
 import { VIDEO_EXT, VIDEO_MIME_BY_EXT } from '../admin/local-import.util';
 import * as fs from 'fs';
@@ -166,7 +168,7 @@ export class UploadService implements OnModuleInit {
     };
   }
 
-  /** KYC 文档类上传（jpg/png/webp，5MB 限制） */
+  /** KYC 文档类上传（jpg/png/webp，5MB 限制）；返回带签名的 media URL */
   saveDocument(file: Express.Multer.File, kind: 'cccd-front' | 'cccd-back' | 'avatar'): UploadResult {
     if (!file) throw new BizException(BizCode.BAD_REQUEST, '未收到文件');
     const ext = path.extname(file.originalname || '').toLowerCase();
@@ -187,9 +189,20 @@ export class UploadService implements OnModuleInit {
       '.png': 'image/png',
       '.webp': 'image/webp',
     };
+    const key = requireSecret(
+      'CDN_SIGN_KEY',
+      this.config.get<string>('CDN_SIGN_KEY'),
+      'dev',
+    );
+    const exp = Math.floor(Date.now() / 1000) + 30 * 24 * 3600;
+    const sig = signMediaPath(relativePath, exp, key);
+    const mediaUrl = `/api/v1/media/${relativePath
+      .split('/')
+      .map(encodeURIComponent)
+      .join('/')}?sig=${sig}&exp=${exp}`;
     return {
       relativePath,
-      originalUrl: relativePath,
+      originalUrl: mediaUrl,
       filename,
       size: file.size,
       mime: file.mimetype || mimeByExt[ext] || 'image/jpeg',
@@ -405,14 +418,20 @@ export class UploadService implements OnModuleInit {
   }
 
   resolveAbs(relativePath: string): string {
+    const storageRoot = path.resolve(this.getStorageRoot());
     const normalized = path.normalize(relativePath).replace(/^(\.\.(\/|\\|$))+/, '');
-    // storage 内
-    const inStorage = path.join(this.getStorageRoot(), normalized);
+    const inStorage = path.resolve(path.join(storageRoot, normalized));
+    if (inStorage !== storageRoot && !inStorage.startsWith(storageRoot + path.sep)) {
+      throw new BizException(BizCode.FORBIDDEN, 'invalid path');
+    }
     if (fs.existsSync(inStorage)) return inStorage;
-    // MEDIA_ROOT 回退（样片）
-    const mediaRoot = this.config.get<string>('MEDIA_ROOT');
-    if (mediaRoot) {
-      const inMedia = path.join(mediaRoot, normalized);
+    const mediaRootRaw = this.config.get<string>('MEDIA_ROOT');
+    if (mediaRootRaw) {
+      const mediaRoot = path.resolve(mediaRootRaw);
+      const inMedia = path.resolve(path.join(mediaRoot, normalized));
+      if (inMedia !== mediaRoot && !inMedia.startsWith(mediaRoot + path.sep)) {
+        throw new BizException(BizCode.FORBIDDEN, 'invalid path');
+      }
       if (fs.existsSync(inMedia)) return inMedia;
     }
     return inStorage;

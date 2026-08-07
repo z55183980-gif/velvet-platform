@@ -6,6 +6,7 @@ import {
   adminForceLogout,
   adminGetUser,
   adminListUsers,
+  adminResetUserPassword,
   adminSetUserStatus,
   adminSetUserVip,
   adminWalletAdjust,
@@ -15,7 +16,7 @@ import { AdminShell } from "@/components/admin-shell";
 import { GlassModal } from "@/components/glass-modal";
 import { useI18n, statusLabel } from "@/lib/i18n";
 import { useLocationSearchParams } from "@/lib/use-location-search";
-import { Badge, Button, DataTable, Input, Select, StatCard, fmtDate, fmtNum, type Column } from "@velvet/ui";
+import { Badge, Button, cn, DataTable, Input, Select, StatCard, fmtDate, fmtNum, type Column } from "@velvet/ui";
 
 function statusTone(status?: string): "success" | "warning" | "danger" | "default" {
   if (status === "ACTIVE") return "success";
@@ -103,25 +104,80 @@ const COUNTRY_ZH: Record<string, string> = {
   GB: "英国",
   DE: "德国",
   FR: "法国",
+  CA: "加拿大",
+  IN: "印度",
+  BR: "巴西",
+  RU: "俄罗斯",
+  AE: "阿联酋",
+  SA: "沙特",
+  TR: "土耳其",
+  IT: "意大利",
+  ES: "西班牙",
+  NL: "荷兰",
+  NZ: "新西兰",
 };
+
+const COUNTRY_EN: Record<string, string> = {
+  LOCAL: "Local",
+  VN: "Vietnam",
+  CN: "China",
+  HK: "Hong Kong",
+  TW: "Taiwan",
+  MO: "Macao",
+  US: "United States",
+  SG: "Singapore",
+  MY: "Malaysia",
+  TH: "Thailand",
+  JP: "Japan",
+  KR: "South Korea",
+  ID: "Indonesia",
+  PH: "Philippines",
+  AU: "Australia",
+  GB: "United Kingdom",
+  DE: "Germany",
+  FR: "France",
+  CA: "Canada",
+  IN: "India",
+  BR: "Brazil",
+  RU: "Russia",
+  AE: "UAE",
+  SA: "Saudi Arabia",
+  TR: "Turkey",
+  IT: "Italy",
+  ES: "Spain",
+  NL: "Netherlands",
+  NZ: "New Zealand",
+};
+
+function countryFlagEmoji(code: string): string {
+  if (code === "LOCAL") return "🏠";
+  if (!/^[A-Z]{2}$/.test(code)) return "🏳️";
+  const base = 0x1f1e6;
+  return String.fromCodePoint(
+    ...[...code].map((ch) => base + ch.charCodeAt(0) - 65),
+  );
+}
 
 function formatRegion(
   region: Row["region"],
   lang: "zh" | "en",
-): { ip: string; place: string } | null {
+): { flag: string; place: string; ip: string } | null {
   if (!region?.ipAddress && !region?.country && !region?.city) return null;
   const code = (region?.country || "").toUpperCase();
   const country =
-    code === "LOCAL"
-      ? lang === "zh"
-        ? "本地"
-        : "Local"
-      : lang === "zh"
-        ? COUNTRY_ZH[code] || code || ""
-        : code || "";
+    (lang === "zh" ? COUNTRY_ZH[code] : COUNTRY_EN[code]) || code || "";
   const city = region?.city || "";
-  const place = [country, city].filter(Boolean).join(lang === "zh" ? " · " : ", ") || "—";
-  return { ip: region?.ipAddress || "—", place };
+  const place = [country, city].filter(Boolean).join(" · ") || "—";
+  return {
+    flag: code ? countryFlagEmoji(code) : "🏳️",
+    place,
+    ip: region?.ipAddress || "—",
+  };
+}
+
+function subscriptionState(vipExpireAt?: string | null): "active" | "expired" | "none" {
+  if (!vipExpireAt) return "none";
+  return new Date(vipExpireAt).getTime() > Date.now() ? "active" : "expired";
 }
 
 function modalTitle(title: string, subtitle?: string) {
@@ -198,6 +254,17 @@ function UserDetailModal({
   );
 }
 
+type EditTab = "status" | "vip" | "wallet";
+type UserStatus = "ACTIVE" | "SUSPENDED" | "BANNED";
+type VipAction = "extend" | "setExpire" | "clear";
+
+const USER_STATUSES: UserStatus[] = ["ACTIVE", "SUSPENDED", "BANNED"];
+
+function asUserStatus(value?: string): UserStatus {
+  if (value === "SUSPENDED" || value === "BANNED") return value;
+  return "ACTIVE";
+}
+
 function UserEditModal({
   userId,
   onClose,
@@ -210,34 +277,101 @@ function UserEditModal({
   locale: string;
 }) {
   const qc = useQueryClient();
+  const [tab, setTab] = useState<EditTab>("status");
+  const [targetStatus, setTargetStatus] = useState<UserStatus | null>(null);
   const [reason, setReason] = useState("");
+  const [vipAction, setVipAction] = useState<VipAction>("extend");
   const [delta, setDelta] = useState(0);
   const [adjustReason, setAdjustReason] = useState("");
   const [extendDays, setExtendDays] = useState(30);
   const [vipDate, setVipDate] = useState("");
+  const [newPassword, setNewPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
 
   const detailQ = useQuery({
     queryKey: ["admin", "user", userId],
     queryFn: () => adminGetUser(userId) as Promise<Detail>,
   });
   const user = detailQ.data?.user;
+  const currentStatus = asUserStatus(user?.status);
+  const selectedStatus = targetStatus ?? currentStatus;
+  const statusDirty = selectedStatus !== currentStatus;
+  const currentCredits = Number(user?.wallet?.balanceCredits ?? 0);
+  const walletDeltaValid = Number.isFinite(delta) && delta !== 0;
+  const balanceAfter = currentCredits + (Number.isFinite(delta) ? delta : 0);
   const dateLocale = locale === "en" ? "en-US" : "zh-CN";
 
+  useEffect(() => {
+    if (!user) return;
+    setTargetStatus(asUserStatus(user.status));
+  }, [user?.id, user?.status]);
+
   const actionMut = useMutation({
-    mutationFn: (action: () => Promise<unknown>) => action(),
-    onSuccess: async () => {
+    mutationFn: async ({ run, ok }: { run: () => Promise<unknown>; ok: string }) => {
+      await run();
+      return ok;
+    },
+    onSuccess: async (ok) => {
       setError(null);
+      setToast(ok);
+      setReason("");
+      setAdjustReason("");
+      setDelta(0);
+      setNewPassword("");
       await qc.invalidateQueries({ queryKey: ["admin", "user", userId] });
       await qc.invalidateQueries({ queryKey: ["admin", "users"] });
     },
-    onError: (e: Error) => setError(e.message),
+    onError: (e: Error) => {
+      setToast(null);
+      setError(e.message);
+    },
   });
-  const act = (action: () => Promise<unknown>) => actionMut.mutate(action);
+  const act = (run: () => Promise<unknown>, ok: string) => actionMut.mutate({ run, ok });
+
+  const tabs: Array<{ key: EditTab; label: string }> = [
+    { key: "status", label: t("editTabStatus") },
+    { key: "vip", label: t("editTabVip") },
+    { key: "wallet", label: t("editTabWallet") },
+  ];
+
+  const vipActions: Array<{ key: VipAction; label: string }> = [
+    { key: "extend", label: t("vipActionExtend") },
+    { key: "setExpire", label: t("vipActionSetExpire") },
+    { key: "clear", label: t("vipActionClear") },
+  ];
+
+  const vipApplyDisabled =
+    actionMut.isPending ||
+    (vipAction === "extend" && (!Number.isFinite(extendDays) || extendDays <= 0)) ||
+    (vipAction === "setExpire" && !vipDate);
+
+  const applyVip = () => {
+    if (vipAction === "extend") {
+      act(() => adminSetUserVip(userId, { extendDays }), t("userVipUpdated"));
+      return;
+    }
+    if (vipAction === "setExpire") {
+      act(
+        () =>
+          adminSetUserVip(userId, {
+            vipExpireAt: vipDate ? new Date(vipDate).toISOString() : null,
+          }),
+        t("userVipUpdated"),
+      );
+      return;
+    }
+    act(() => adminSetUserVip(userId, { vipExpireAt: null }), t("userVipUpdated"));
+  };
 
   return (
     <GlassModal open onClose={onClose} title={modalTitle(t("edit"), `ID ${userId}`)} size="lg">
       {detailQ.isLoading ? <p className="text-ink-muted">{t("loading")}</p> : null}
+      {toast ? (
+        <div className="mb-3 rounded-xl border border-success/20 bg-success-soft px-3 py-2 text-body-sm text-success">
+          {toast}
+        </div>
+      ) : null}
       {error || detailQ.error ? (
         <p className="mb-3 text-body-sm text-danger">{error || (detailQ.error as Error).message}</p>
       ) : null}
@@ -260,124 +394,312 @@ function UserEditModal({
             </p>
           </div>
 
-          <div className="space-y-4 rounded-xl border border-line bg-white/55 p-4">
-            <section className="space-y-2">
-              <h3 className="text-caption font-semibold uppercase tracking-wide text-ink-subtle">
-                {t("status")}
-              </h3>
-              <div className="flex flex-wrap items-center gap-2">
-                <Input
-                  className="w-56"
-                  placeholder={t("statusChangeReason")}
-                  value={reason}
-                  onChange={(e) => setReason(e.target.value)}
-                />
-                {(["ACTIVE", "SUSPENDED", "BANNED"] as const).map((s) => (
+          <div
+            role="tablist"
+            aria-label={t("edit")}
+            className="inline-flex w-full rounded-2xl border border-line bg-white/80 p-1"
+          >
+            {tabs.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                role="tab"
+                aria-selected={tab === item.key}
+                className={cn(
+                  "flex flex-1 items-center justify-center rounded-xl px-3 py-2 text-body-sm font-semibold transition",
+                  tab === item.key
+                    ? "bg-brand text-white shadow-brand"
+                    : "text-ink-muted hover:bg-panel hover:text-ink",
+                )}
+                onClick={() => {
+                  setTab(item.key);
+                  setToast(null);
+                  setError(null);
+                }}
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="rounded-xl border border-line bg-white/55 p-4">
+            {tab === "status" ? (
+              <section className="space-y-4">
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-2 text-body-sm">
+                    <span className="text-caption font-medium text-ink-subtle">{t("statusCurrent")}</span>
+                    <Badge tone={statusTone(currentStatus)}>{statusLabel(t, currentStatus)}</Badge>
+                  </div>
+                  <p className="text-caption font-medium text-ink-subtle">{t("statusTarget")}</p>
+                  <div
+                    role="radiogroup"
+                    aria-label={t("statusTarget")}
+                    className="inline-flex w-full max-w-md rounded-xl border border-line bg-panel/60 p-1"
+                  >
+                    {USER_STATUSES.map((s) => {
+                      const selected = selectedStatus === s;
+                      return (
+                        <button
+                          key={s}
+                          type="button"
+                          role="radio"
+                          aria-checked={selected}
+                          disabled={actionMut.isPending}
+                          onClick={() => setTargetStatus(s)}
+                          className={cn(
+                            "flex flex-1 items-center justify-center rounded-lg px-2.5 py-2 text-body-sm font-medium transition",
+                            selected
+                              ? s === "BANNED"
+                                ? "bg-danger text-white shadow-sm"
+                                : s === "SUSPENDED"
+                                  ? "bg-warning text-white shadow-sm"
+                                  : "bg-white text-ink shadow-sm ring-1 ring-line"
+                              : "text-ink-muted hover:bg-white/70 hover:text-ink",
+                          )}
+                        >
+                          {statusLabel(t, s)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Input
+                    className="w-full"
+                    placeholder={t("statusChangeReasonOptional")}
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    disabled={actionMut.isPending || !statusDirty}
+                  />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      size="sm"
+                      disabled={actionMut.isPending || !statusDirty}
+                      variant={selectedStatus === "BANNED" ? "danger" : "primary"}
+                      onClick={() =>
+                        act(
+                          () =>
+                            adminSetUserStatus(
+                              userId,
+                              selectedStatus,
+                              reason.trim() || (selectedStatus === "ACTIVE" ? "restore" : "status change"),
+                            ),
+                          t("userStatusUpdated"),
+                        )
+                      }
+                    >
+                      {t("applyStatusChange")}
+                    </Button>
+                    {!statusDirty ? (
+                      <span className="text-caption text-ink-subtle">{t("statusAlreadyCurrent")}</span>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="space-y-2 border-t border-line pt-4">
+                  <p className="text-caption font-semibold uppercase tracking-wide text-ink-subtle">
+                    {t("resetPasswordSection")}
+                  </p>
+                  <p className="text-body-sm text-ink-muted">{t("resetPasswordHint")}</p>
+                  <div className="flex flex-wrap items-end gap-2">
+                    <label className="block min-w-[12rem] flex-1 space-y-1.5 sm:max-w-xs">
+                      <span className="text-caption font-medium text-ink-subtle">{t("newPassword")}</span>
+                      <Input
+                        type="text"
+                        autoComplete="off"
+                        spellCheck={false}
+                        className="w-full"
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        disabled={actionMut.isPending}
+                        placeholder={t("newPassword")}
+                      />
+                    </label>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={actionMut.isPending || !newPassword}
+                      onClick={() => {
+                        if (newPassword.length < 6) {
+                          setToast(null);
+                          setError(t("passwordTooShort"));
+                          return;
+                        }
+                        act(
+                          () => adminResetUserPassword(userId, newPassword),
+                          t("userPasswordResetOk"),
+                        );
+                      }}
+                    >
+                      {t("applyResetPassword")}
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-2 border-t border-line pt-4">
+                  <p className="text-caption font-semibold uppercase tracking-wide text-ink-subtle">
+                    {t("forceLogoutSection")}
+                  </p>
+                  <p className="text-body-sm text-ink-muted">{t("forceLogoutHint")}</p>
                   <Button
-                    key={s}
                     size="sm"
-                    variant={s === "ACTIVE" ? "primary" : "danger"}
+                    variant="secondary"
                     disabled={actionMut.isPending}
+                    onClick={() => act(() => adminForceLogout(userId), t("userForceLogoutOk"))}
+                  >
+                    {t("forceLogout")}
+                  </Button>
+                </div>
+              </section>
+            ) : null}
+
+            {tab === "vip" ? (
+              <section className="space-y-4">
+                <div className="flex flex-wrap items-center gap-2 text-body-sm">
+                  <span className="text-caption font-medium text-ink-subtle">{t("vipExpiry")}</span>
+                  <span className="font-medium text-ink">
+                    {user.vipExpireAt ? fmtDate(user.vipExpireAt, dateLocale) : t("notActivated")}
+                  </span>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-caption font-medium text-ink-subtle">{t("vipAction")}</p>
+                  <div
+                    role="radiogroup"
+                    aria-label={t("vipAction")}
+                    className="inline-flex w-full max-w-md rounded-xl border border-line bg-panel/60 p-1"
+                  >
+                    {vipActions.map((item) => {
+                      const selected = vipAction === item.key;
+                      return (
+                        <button
+                          key={item.key}
+                          type="button"
+                          role="radio"
+                          aria-checked={selected}
+                          disabled={actionMut.isPending}
+                          onClick={() => setVipAction(item.key)}
+                          className={cn(
+                            "flex flex-1 items-center justify-center rounded-lg px-2.5 py-2 text-body-sm font-medium transition",
+                            selected
+                              ? item.key === "clear"
+                                ? "bg-danger text-white shadow-sm"
+                                : "bg-white text-ink shadow-sm ring-1 ring-line"
+                              : "text-ink-muted hover:bg-white/70 hover:text-ink",
+                          )}
+                        >
+                          {item.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {vipAction === "extend" ? (
+                  <label className="block space-y-1.5">
+                    <span className="text-caption font-medium text-ink-subtle">{t("vipExtendDaysLabel")}</span>
+                    <Input
+                      type="number"
+                      min={1}
+                      className="w-36"
+                      value={extendDays}
+                      onChange={(e) => setExtendDays(Number(e.target.value))}
+                      disabled={actionMut.isPending}
+                    />
+                  </label>
+                ) : null}
+
+                {vipAction === "setExpire" ? (
+                  <label className="block space-y-1.5">
+                    <span className="text-caption font-medium text-ink-subtle">{t("vipSetExpireLabel")}</span>
+                    <Input
+                      type="datetime-local"
+                      className="w-full max-w-xs"
+                      value={vipDate}
+                      onChange={(e) => setVipDate(e.target.value)}
+                      disabled={actionMut.isPending}
+                    />
+                  </label>
+                ) : null}
+
+                {vipAction === "clear" ? (
+                  <p className="text-body-sm text-ink-muted">{t("vipClearHint")}</p>
+                ) : null}
+
+                <Button
+                  size="sm"
+                  variant={vipAction === "clear" ? "danger" : "primary"}
+                  disabled={vipApplyDisabled}
+                  onClick={applyVip}
+                >
+                  {t("applyVipChange")}
+                </Button>
+              </section>
+            ) : null}
+
+            {tab === "wallet" ? (
+              <section className="space-y-4">
+                <div className="flex flex-wrap items-center gap-2 text-body-sm">
+                  <span className="text-caption font-medium text-ink-subtle">{t("creditBalance")}</span>
+                  <span className="tabular-nums font-medium text-ink">{fmtNum(currentCredits)}</span>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="block space-y-1.5">
+                    <span className="text-caption font-medium text-ink-subtle">{t("walletAdjustDelta")}</span>
+                    <Input
+                      type="number"
+                      className="w-full"
+                      value={delta}
+                      onChange={(e) => setDelta(Number(e.target.value))}
+                      placeholder={t("adjustCreditsPlaceholder")}
+                      disabled={actionMut.isPending}
+                    />
+                  </label>
+                  <label className="block space-y-1.5">
+                    <span className="text-caption font-medium text-ink-subtle">{t("adjustReasonPlaceholder")}</span>
+                    <Input
+                      className="w-full"
+                      value={adjustReason}
+                      onChange={(e) => setAdjustReason(e.target.value)}
+                      placeholder={t("adjustReasonPlaceholder")}
+                      disabled={actionMut.isPending}
+                    />
+                  </label>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 text-body-sm">
+                  <span className="text-caption font-medium text-ink-subtle">{t("walletAfterBalance")}</span>
+                  <span
+                    className={cn(
+                      "tabular-nums font-medium",
+                      walletDeltaValid ? (balanceAfter < 0 ? "text-danger" : "text-ink") : "text-ink-subtle",
+                    )}
+                  >
+                    {walletDeltaValid ? fmtNum(balanceAfter) : "—"}
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    size="sm"
+                    disabled={actionMut.isPending || !walletDeltaValid}
                     onClick={() =>
-                      act(() =>
-                        adminSetUserStatus(userId, s, reason || (s === "ACTIVE" ? "restore" : "")),
+                      act(
+                        () => adminWalletAdjust(userId, delta, adjustReason),
+                        t("userWalletAdjusted"),
                       )
                     }
                   >
-                    {statusLabel(t, s)}
+                    {t("applyWalletAdjust")}
                   </Button>
-                ))}
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={actionMut.isPending}
-                  onClick={() => act(() => adminForceLogout(userId))}
-                >
-                  {t("forceLogout")}
-                </Button>
-              </div>
-            </section>
-
-            <section className="space-y-2 border-t border-line pt-3">
-              <h3 className="text-caption font-semibold uppercase tracking-wide text-ink-subtle">
-                VIP
-              </h3>
-              <p className="text-body-sm text-ink-muted">
-                {t("vipExpiry")}：
-                {user.vipExpireAt ? fmtDate(user.vipExpireAt, dateLocale) : t("notActivated")}
-              </p>
-              <div className="flex flex-wrap items-center gap-2">
-                <Input
-                  type="number"
-                  className="w-28"
-                  value={extendDays}
-                  onChange={(e) => setExtendDays(Number(e.target.value))}
-                />
-                <Button
-                  size="sm"
-                  disabled={actionMut.isPending}
-                  onClick={() => act(() => adminSetUserVip(userId, { extendDays }))}
-                >
-                  {t("extendVip")}
-                </Button>
-                <Input
-                  type="datetime-local"
-                  className="w-52"
-                  value={vipDate}
-                  onChange={(e) => setVipDate(e.target.value)}
-                />
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  disabled={actionMut.isPending}
-                  onClick={() =>
-                    act(() =>
-                      adminSetUserVip(userId, {
-                        vipExpireAt: vipDate ? new Date(vipDate).toISOString() : null,
-                      }),
-                    )
-                  }
-                >
-                  {t("setExpire")}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={actionMut.isPending}
-                  onClick={() => act(() => adminSetUserVip(userId, { vipExpireAt: null }))}
-                >
-                  {t("clearVip")}
-                </Button>
-              </div>
-            </section>
-
-            <section className="space-y-2 border-t border-line pt-3">
-              <h3 className="text-caption font-semibold uppercase tracking-wide text-ink-subtle">
-                {t("colCredits")}
-              </h3>
-              <div className="flex flex-wrap items-center gap-2">
-                <Input
-                  type="number"
-                  className="w-28"
-                  value={delta}
-                  onChange={(e) => setDelta(Number(e.target.value))}
-                  placeholder={t("adjustCreditsPlaceholder")}
-                />
-                <Input
-                  className="w-48"
-                  value={adjustReason}
-                  onChange={(e) => setAdjustReason(e.target.value)}
-                  placeholder={t("adjustReasonPlaceholder")}
-                />
-                <Button
-                  size="sm"
-                  disabled={actionMut.isPending}
-                  onClick={() => act(() => adminWalletAdjust(userId, delta, adjustReason))}
-                >
-                  {t("adjustBalance")}
-                </Button>
-              </div>
-            </section>
+                  {!walletDeltaValid ? (
+                    <span className="text-caption text-ink-subtle">{t("walletDeltaRequired")}</span>
+                  ) : null}
+                </div>
+              </section>
+            ) : null}
           </div>
 
           <div className="flex justify-end">
@@ -434,6 +756,17 @@ export default function AdminUsersPage() {
     });
   }, [searchParams]);
 
+  // Search box: debounce apply; status/locale apply immediately on change.
+  useEffect(() => {
+    const trimmed = q.trim();
+    if (trimmed === applied.q) return;
+    const timer = window.setTimeout(() => {
+      setPage(1);
+      setApplied((prev) => ({ ...prev, q: trimmed, page: 1 }));
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [q, applied.q]);
+
   const { data, error, isFetching, refetch } = useQuery({
     queryKey: ["admin", "users", applied],
     queryFn: async () => {
@@ -454,9 +787,20 @@ export default function AdminUsersPage() {
     setPage(next);
     setApplied((prev) => ({ ...prev, page: next }));
   };
-  const applyFilters = () => {
+  const applyFiltersNow = () => {
+    const trimmed = q.trim();
     setPage(1);
-    setApplied({ q: q.trim(), status, locale: localeFilter, page: 1, pageSize });
+    setApplied({ q: trimmed, status, locale: localeFilter, page: 1, pageSize });
+  };
+  const setStatusFilter = (next: string) => {
+    setStatus(next);
+    setPage(1);
+    setApplied((prev) => ({ ...prev, status: next, page: 1 }));
+  };
+  const setLocaleFilterImmediate = (next: string) => {
+    setLocaleFilter(next);
+    setPage(1);
+    setApplied((prev) => ({ ...prev, locale: next, page: 1 }));
   };
 
   useEffect(() => {
@@ -505,11 +849,8 @@ export default function AdminUsersPage() {
               </span>
             )}
             <div className="min-w-0">
-              <div className="flex items-center gap-1.5 truncate text-body-sm font-medium text-ink">
-                <span className="truncate">{r.nickname || "—"}</span>
-                {r.vipExpireAt && new Date(r.vipExpireAt).getTime() > Date.now() ? (
-                  <span className="shrink-0 rounded-md bg-warning-soft px-1.5 py-0.5 text-[10px] font-semibold text-warning">VIP</span>
-                ) : null}
+              <div className="truncate text-body-sm font-medium text-ink">
+                {r.nickname || "—"}
               </div>
               <div className="truncate text-caption text-ink-subtle">{r.email || r.phone || `ID ${r.id}`}</div>
             </div>
@@ -532,10 +873,14 @@ export default function AdminUsersPage() {
           const formatted = formatRegion(r.region, locale);
           if (!formatted) return <span className="text-caption text-ink-subtle">—</span>;
           return (
-            <div className="max-w-[11rem] truncate" title={`${formatted.ip} · ${formatted.place}`}>
-              <span className="text-caption text-ink">{formatted.place}</span>
-              <span className="mx-1 text-ink-subtle/50">·</span>
-              <span className="font-mono text-caption tabular-nums text-ink-muted">{formatted.ip}</span>
+            <div
+              className="flex max-w-[16rem] items-center gap-1.5"
+              title={formatted.ip !== "—" ? `IP ${formatted.ip}` : undefined}
+            >
+              <span className="shrink-0 text-[15px] leading-none" aria-hidden>
+                {formatted.flag}
+              </span>
+              <span className="truncate text-body-sm text-ink">{formatted.place}</span>
             </div>
           );
         },
@@ -544,6 +889,36 @@ export default function AdminUsersPage() {
         key: "status",
         header: t("status"),
         cell: (r) => <Badge tone={statusTone(r.status)}>{statusLabel(t, r.status)}</Badge>,
+      },
+      {
+        key: "subscription",
+        header: t("colSubscription"),
+        cell: (r) => {
+          const state = subscriptionState(r.vipExpireAt);
+          const dateLocale = locale === "en" ? "en-US" : "zh-CN";
+          if (state === "none") {
+            return <span className="text-caption text-ink-subtle">{t("notActivated")}</span>;
+          }
+          const date = fmtDate(r.vipExpireAt, dateLocale);
+          if (state === "active") {
+            return (
+              <div className="min-w-[8.5rem]">
+                <Badge tone="warning">VIP</Badge>
+                <div className="mt-1 whitespace-nowrap text-caption text-ink-muted">
+                  {t("vipUntilDate", { date })}
+                </div>
+              </div>
+            );
+          }
+          return (
+            <div className="min-w-[8.5rem]">
+              <Badge tone="default">{t("vipExpired")}</Badge>
+              <div className="mt-1 whitespace-nowrap text-caption text-ink-subtle">
+                {t("vipExpiredAt", { date })}
+              </div>
+            </div>
+          );
+        },
       },
       {
         key: "credits",
@@ -599,55 +974,65 @@ export default function AdminUsersPage() {
     <AdminShell title={title}>
       {error ? <p className="mb-3 text-body-sm text-danger">{(error as Error).message}</p> : null}
 
-      <div className="mb-4 flex flex-col gap-3 rounded-xl border border-line bg-white/45 p-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-wrap items-center gap-2">
-          <Input
-            className="w-full sm:w-64"
-            placeholder={t("userSearchPlaceholder")}
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") applyFilters();
-            }}
-          />
-          <Select className="w-36" value={status} onChange={(e) => setStatus(e.target.value)}>
-            {["ALL", "ACTIVE", "SUSPENDED", "BANNED"].map((s) => (
-              <option key={s} value={s}>
-                {statusLabel(t, s)}
-              </option>
-            ))}
-          </Select>
-          <Select className="w-32" value={localeFilter} onChange={(e) => setLocaleFilter(e.target.value)}>
-            <option value="ALL">{t("localeAll")}</option>
-            <option value="zh">{t("localeZh")}</option>
-            <option value="en">{t("localeEn")}</option>
-            <option value="fr">{t("localeFr")}</option>
-          </Select>
-          <Button size="sm" onClick={applyFilters}>
-            {t("query")}
-          </Button>
-          <Button size="sm" variant="secondary" onClick={() => refetch()} disabled={isFetching}>
-            {t("refresh")}
-          </Button>
-        </div>
-        <div className="flex items-center gap-3 text-caption font-medium text-ink-subtle">
-          <span>{t("totalCount", { n: data?.total ?? 0 })}</span>
-          <Select className="h-8 w-24 text-caption" value={String(pageSize)} onChange={(e) => {
-            const next = Number(e.target.value);
-            setPageSize(next);
-            setPage(1);
-            setApplied((prev) => ({ ...prev, page: 1, pageSize: next }));
-          }}>
-            {[10, 20, 50].map((n) => <option key={n} value={n}>{n} / {t("page")}</option>)}
-          </Select>
-        </div>
+      <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-white/45 p-3">
+        <Input
+          className="w-full sm:w-64"
+          placeholder={t("userSearchPlaceholder")}
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") applyFiltersNow();
+          }}
+        />
+        <Select className="w-36" value={status} onChange={(e) => setStatusFilter(e.target.value)}>
+          {["ALL", "ACTIVE", "SUSPENDED", "BANNED"].map((s) => (
+            <option key={s} value={s}>
+              {statusLabel(t, s)}
+            </option>
+          ))}
+        </Select>
+        <Select className="w-32" value={localeFilter} onChange={(e) => setLocaleFilterImmediate(e.target.value)}>
+          <option value="ALL">{t("localeAll")}</option>
+          <option value="zh">{t("localeZh")}</option>
+          <option value="en">{t("localeEn")}</option>
+          <option value="fr">{t("localeFr")}</option>
+        </Select>
+        <Button size="sm" onClick={applyFiltersNow}>
+          {t("query")}
+        </Button>
+        <Button size="sm" variant="secondary" onClick={() => refetch()} disabled={isFetching}>
+          {t("refresh")}
+        </Button>
       </div>
 
       <DataTable className="users-table" columns={columns} rows={data?.rows || []} loading={isFetching} emptyTitle={t("empty")} />
 
-      {(data?.total ?? 0) > 0 ? (
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-white/45 px-3 py-2 text-caption text-ink-muted">
-          <span>{data?.total ? `${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, data.total)} / ${data.total}` : "0"}</span>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-white/45 px-3 py-2 text-caption text-ink-muted">
+        <div className="flex items-center gap-3 font-medium text-ink-subtle">
+          <span>{t("totalCount", { n: data?.total ?? 0 })}</span>
+          <Select
+            className="h-8 w-24 text-caption"
+            value={String(pageSize)}
+            onChange={(e) => {
+              const next = Number(e.target.value);
+              setPageSize(next);
+              setPage(1);
+              setApplied((prev) => ({ ...prev, page: 1, pageSize: next }));
+            }}
+          >
+            {[10, 20, 50].map((n) => (
+              <option key={n} value={n}>
+                {n} / {t("page")}
+              </option>
+            ))}
+          </Select>
+          {(data?.total ?? 0) > 0 ? (
+            <span className="font-normal text-ink-muted">
+              {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, data!.total)} / {data!.total}
+            </span>
+          ) : null}
+        </div>
+        {(data?.total ?? 0) > 0 ? (
           <div className="flex items-center gap-1">
             <Button size="sm" variant="secondary" disabled={page <= 1 || isFetching} onClick={() => {
               goToPage(page - 1);
@@ -700,8 +1085,8 @@ export default function AdminUsersPage() {
               </div>
             ) : null}
           </div>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
 
       {modal?.mode === "detail" ? (
         <UserDetailModal

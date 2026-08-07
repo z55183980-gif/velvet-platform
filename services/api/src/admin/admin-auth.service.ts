@@ -6,7 +6,10 @@ import { JwtService } from '../common/jwt.service';
 import { BizException, BizCode } from '../common/biz.exception';
 import { AuditService } from '../common/audit.service';
 
-const MIN_PASSWORD_LEN = 5;
+import { isProductionEnv, isWeakSecret } from '../common/security-config';
+
+const MIN_PASSWORD_LEN = 8;
+const MIN_BOOTSTRAP_PASSWORD_LEN = 12;
 
 export interface AdminProfile {
   id: string;
@@ -26,6 +29,8 @@ export interface AdminJwtPayload {
   adminId: string;
   email: string;
   username: string;
+  /** Must match AdminUser.tokenVersion or token is revoked */
+  tv: number;
 }
 
 @Injectable()
@@ -54,11 +59,18 @@ export class AdminAuthService implements OnModuleInit {
 
   /** 启动时：若配置了 bootstrap 邮箱且库中不存在，则创建 */
   async ensureBootstrapAdmin() {
-    const email = this.normalizeEmail(
-      this.config.get<string>('ADMIN_BOOTSTRAP_EMAIL') || 'admin@velvet.local',
-    );
-    const password =
-      this.config.get<string>('ADMIN_BOOTSTRAP_PASSWORD') || 'admin';
+    const emailRaw = this.config.get<string>('ADMIN_BOOTSTRAP_EMAIL');
+    const passwordRaw = this.config.get<string>('ADMIN_BOOTSTRAP_PASSWORD');
+    if (isProductionEnv()) {
+      if (!emailRaw || !passwordRaw) return null;
+      if (passwordRaw.length < MIN_BOOTSTRAP_PASSWORD_LEN || isWeakSecret(passwordRaw)) {
+        throw new Error(
+          '[admin-auth] ADMIN_BOOTSTRAP_PASSWORD must be strong (≥12 chars) in production',
+        );
+      }
+    }
+    const email = this.normalizeEmail(emailRaw || 'admin@velvet.local');
+    const password = passwordRaw || (isProductionEnv() ? '' : 'admin');
     const username = (
       this.config.get<string>('ADMIN_BOOTSTRAP_USERNAME') || 'admin'
     )
@@ -70,7 +82,7 @@ export class AdminAuthService implements OnModuleInit {
     const existing = await this.prisma.adminUser.findUnique({ where: { email } });
     if (existing) {
       // 本地开发：启动时把 bootstrap 密码同步到已有账号（方便改 .env 立即生效）
-      if (process.env.NODE_ENV !== 'production') {
+      if (!isProductionEnv()) {
         await this.prisma.adminUser.update({
           where: { id: existing.id },
           data: {
@@ -109,6 +121,9 @@ export class AdminAuthService implements OnModuleInit {
     password: string;
     username?: string;
   }): Promise<AdminLoginResult> {
+    if (isProductionEnv()) {
+      throw new BizException(BizCode.FORBIDDEN, 'admin.bootstrapDisabledInProduction');
+    }
     const count = await this.prisma.adminUser.count();
     if (count > 0) {
       throw new BizException(BizCode.FORBIDDEN, 'admin.bootstrapExists');
@@ -248,7 +263,19 @@ export class AdminAuthService implements OnModuleInit {
     }
     await this.prisma.adminUser.update({
       where: { id: adminId },
-      data: { passwordHash: this.hashPassword(newPassword) },
+      data: {
+        passwordHash: this.hashPassword(newPassword),
+        tokenVersion: { increment: 1 },
+      },
+    });
+    return { success: true };
+  }
+
+  /** Invalidate all JWTs for this admin (logout / disable). */
+  async revokeAllTokens(adminId: bigint): Promise<{ success: true }> {
+    await this.prisma.adminUser.update({
+      where: { id: adminId },
+      data: { tokenVersion: { increment: 1 } },
     });
     return { success: true };
   }
@@ -256,6 +283,7 @@ export class AdminAuthService implements OnModuleInit {
   verifyAdminToken(token: string): AdminJwtPayload | null {
     const payload = this.jwt.verify<AdminJwtPayload & { typ?: string }>(token);
     if (!payload || payload.typ !== 'admin' || !payload.adminId) return null;
+    if (typeof payload.tv !== 'number') return null;
     return payload as AdminJwtPayload;
   }
 
@@ -273,12 +301,14 @@ export class AdminAuthService implements OnModuleInit {
     username: string;
     displayName: string | null;
     role?: string | null;
+    tokenVersion?: number;
   }): AdminLoginResult {
     const payload: AdminJwtPayload & { role?: string } = {
       typ: 'admin',
       adminId: admin.id.toString(),
       email: admin.email,
       username: admin.username,
+      tv: admin.tokenVersion ?? 0,
       role: admin.role || 'SUPER_ADMIN',
     };
     return {

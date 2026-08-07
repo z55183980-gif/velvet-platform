@@ -1,10 +1,10 @@
 import { NestFactory } from '@nestjs/core';
 import { Logger } from '@nestjs/common';
-import { AppModule } from './app.module';
+import { WorkerModule } from './worker.module';
 import { isWorkerProcess, readRedisUrl } from './upload/transcode.queue';
 
 /**
- * Dedicated transcode worker (no HTTP).
+ * Dedicated transcode worker (no HTTP, no scheduled reconcile/settle jobs).
  * Start with: VELVET_PROCESS=worker REDIS_URL=redis://... node dist/worker.js
  */
 async function bootstrap() {
@@ -19,10 +19,10 @@ async function bootstrap() {
     process.env.VELVET_PROCESS = 'worker';
   }
 
-  const app = await NestFactory.createApplicationContext(AppModule, {
+  const app = await NestFactory.createApplicationContext(WorkerModule, {
     logger: ['log', 'error', 'warn'],
   });
-  logger.log('velvet-worker ready (BullMQ consumer)');
+  logger.log('velvet-worker ready (BullMQ consumer; no cron/reconcile)');
 
   const shutdown = async (signal: string) => {
     logger.log(`shutting down on ${signal}`);

@@ -30,6 +30,7 @@ import {
   Menu,
   Plus,
   Settings2,
+  Activity,
   ShieldCheck,
   Star,
   Ticket,
@@ -120,6 +121,7 @@ const NAV_GROUPS: NavGroup[] = [
     id: "system",
     titleKey: "navSystem",
     items: [
+      { href: "/ops-monitor", key: "opsMonitor", icon: Activity, end: true },
       { href: "/admins", key: "admins", icon: UserCog, finance: true },
       { href: "/audit", key: "audit", icon: FileText },
       { href: "/settings", key: "settings", icon: Settings2, finance: true },

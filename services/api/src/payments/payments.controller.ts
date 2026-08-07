@@ -45,7 +45,7 @@ export class PaymentsController {
    * 其他渠道：x-webhook-secret / 共享 WEBHOOK_SECRET。
    */
   @Post('webhooks/:provider')
-  @Throttle({ webhook: { limit: 30, ttl: 60_000 } })
+  @Throttle({ global: { limit: 60, ttl: 60_000 } })
   async webhook(
     @Param('provider') provider: string,
     @Body() payload: any,

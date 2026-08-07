@@ -1,5 +1,5 @@
 import type { Metadata, Viewport } from "next";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { Inter, Noto_Sans_SC, Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
 import { LocaleProvider } from "@/lib/i18n";
@@ -8,7 +8,11 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { ToastProvider } from "@/components/toast";
 import { AppShell } from "@/components/app-shell";
 import { BrandSplash } from "@/components/brand-splash";
-import { normalizeInterfaceLanguage } from "@/lib/languages";
+import { SiteConfigProvider } from "@/lib/site-config";
+import {
+  localeFromAcceptLanguage,
+  normalizeInterfaceLanguage,
+} from "@/lib/languages";
 
 const plusJakarta = Plus_Jakarta_Sans({
   subsets: ["latin"],
@@ -77,7 +81,12 @@ export const viewport: Viewport = {
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const jar = await cookies();
-  const initialLocale = normalizeInterfaceLanguage(jar.get("dv_locale")?.value);
+  const cookieLocale = jar.get("dv_locale")?.value;
+  // Cookie wins; otherwise try Accept-Language. Empty/unsupported AL → English for this render.
+  // (Middleware leaves cookie unset when AL is empty so the client can still use navigator.)
+  const initialLocale = cookieLocale
+    ? normalizeInterfaceLanguage(cookieLocale)
+    : localeFromAcceptLanguage((await headers()).get("accept-language"));
 
   return (
     <html
@@ -120,8 +129,10 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           <LocaleProvider initialLocale={initialLocale}>
             <ToastProvider>
               <AuthProvider>
-                <AppShell>{children}</AppShell>
-                <BrandSplash />
+                <SiteConfigProvider>
+                  <AppShell>{children}</AppShell>
+                  <BrandSplash />
+                </SiteConfigProvider>
               </AuthProvider>
             </ToastProvider>
           </LocaleProvider>

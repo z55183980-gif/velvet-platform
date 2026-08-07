@@ -6,6 +6,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { BizException, BizCode } from '../common/biz.exception';
 import { AuditService } from '../common/audit.service';
 import { toBigInt, genOrderNo, toDecimal } from '../common/money.util';
+import { requireSecret } from '../common/security-config';
 import { VipPlansService } from '../vip/vip-plans.service';
 
 const WALLET_RETRY = 3;
@@ -39,10 +40,12 @@ export class RedeemService implements OnModuleInit {
     private readonly audit: AuditService,
     private readonly config: ConfigService,
   ) {
-    this.pepper =
+    this.pepper = requireSecret(
+      'REDEEM_CODE_PEPPER',
       this.config.get<string>('REDEEM_CODE_PEPPER')?.trim() ||
-      this.config.get<string>('JWT_SECRET')?.trim() ||
-      'dev-secret';
+        this.config.get<string>('JWT_SECRET')?.trim(),
+      'dev-secret',
+    );
   }
 
   async onModuleInit() {

@@ -32,6 +32,32 @@ export class TranscodeQueueService implements OnModuleInit, OnModuleDestroy {
     return !!this.worker || this.upload.isInlinePumpEnabled();
   }
 
+  async getJobCounts() {
+    if (!this.queue) {
+      return {
+        waiting: 0,
+        active: 0,
+        delayed: 0,
+        failed: 0,
+        completed: 0,
+      };
+    }
+    const counts = await this.queue.getJobCounts(
+      'waiting',
+      'active',
+      'delayed',
+      'failed',
+      'completed',
+    );
+    return {
+      waiting: counts.waiting || 0,
+      active: counts.active || 0,
+      delayed: counts.delayed || 0,
+      failed: counts.failed || 0,
+      completed: counts.completed || 0,
+    };
+  }
+
   async onModuleInit() {
     const redisUrl = readRedisUrl(this.config);
     if (!redisUrl) {

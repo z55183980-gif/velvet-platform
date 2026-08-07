@@ -8,6 +8,7 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { Response } from 'express';
 import { IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
 import { AdminAuthService } from './admin-auth.service';
@@ -50,7 +51,7 @@ class BootstrapDto {
 
   @IsNotEmpty()
   @IsString()
-  @MinLength(5)
+  @MinLength(8)
   password!: string;
 
   @IsOptional()
@@ -65,7 +66,7 @@ class PasswordDto {
 
   @IsNotEmpty()
   @IsString()
-  @MinLength(5)
+  @MinLength(8)
   newPassword!: string;
 }
 
@@ -95,6 +96,7 @@ export class AdminAuthController {
     return ok(this.captcha.issue());
   }
 
+  @Throttle({ global: { limit: 10, ttl: 60_000 } })
   @Post('login')
   async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
     this.captcha.verify(dto.captchaId || '', dto.captchaCode || '');
@@ -127,7 +129,11 @@ export class AdminAuthController {
 
   @Post('logout')
   @UseGuards(AdminGuard)
-  async logout(@Res({ passthrough: true }) res: Response) {
+  async logout(@Req() req: any, @Res({ passthrough: true }) res: Response) {
+    const adminId = req.adminId as bigint | undefined;
+    if (adminId) {
+      await this.auth.revokeAllTokens(adminId);
+    }
     res.clearCookie(this.auth.getCookieName(), { path: '/' });
     return ok({ success: true });
   }
@@ -162,6 +168,7 @@ export class AdminAuthController {
     res.cookie(this.auth.getCookieName(), token, {
       httpOnly: true,
       sameSite: 'lax',
+      secure: process.env.NODE_ENV === 'production',
       path: '/',
       maxAge: 30 * 24 * 3600 * 1000,
     });

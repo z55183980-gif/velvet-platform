@@ -130,11 +130,13 @@ export class R2StorageService {
     return m?.[1] || null;
   }
 
-  /** Cloudflare API token for R2 usage / GraphQL analytics (optional). */
+  /** Prefer R2-scoped token; fall back to general Cloudflare API token. */
   private cloudflareApiToken(): string | null {
     const token = (
-      this.config.get<string>('CLOUDFLARE_API_TOKEN') ||
       this.config.get<string>('R2_API_TOKEN') ||
+      this.config.get<string>('CLOUDFLARE_API_TOKEN') ||
+      process.env.R2_API_TOKEN ||
+      process.env.CLOUDFLARE_API_TOKEN ||
       ''
     ).trim();
     return token || null;
@@ -546,6 +548,47 @@ export class R2StorageService {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  /** Read media-bucket object (optional RFC 7233 Range). */
+  async getMediaObject(
+    key: string,
+    opts?: { range?: string },
+  ): Promise<{ body: Readable; contentType?: string; contentLength?: number; statusCode: number }> {
+    const normalized = String(key || '').replace(/^\/+/, '');
+    if (!normalized || normalized.includes('..')) {
+      throw new Error('invalid media key');
+    }
+    const res = await this.getClient().send(
+      new GetObjectCommand({
+        Bucket: this.mediaBucket(),
+        Key: normalized,
+        ...(opts?.range ? { Range: opts.range } : {}),
+      }),
+    );
+    if (!res.Body) throw new Error('empty R2 object body');
+    return {
+      body: res.Body as Readable,
+      contentType: res.ContentType,
+      contentLength: res.ContentLength != null ? Number(res.ContentLength) : undefined,
+      statusCode: opts?.range ? 206 : 200,
+    };
+  }
+
+  async headMediaObject(key: string): Promise<{ size: number; contentType?: string } | null> {
+    const normalized = String(key || '').replace(/^\/+/, '');
+    if (!normalized || normalized.includes('..')) return null;
+    try {
+      const res = await this.getClient().send(
+        new HeadObjectCommand({ Bucket: this.mediaBucket(), Key: normalized }),
+      );
+      return {
+        size: Number(res.ContentLength || 0),
+        contentType: res.ContentType,
+      };
+    } catch {
+      return null;
     }
   }
 

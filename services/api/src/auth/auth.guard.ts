@@ -32,6 +32,15 @@ export class AuthGuard implements CanActivate {
       throw new BizException(BizCode.UNAUTHORIZED, 'auth.sessionExpired');
     }
 
+    const user = await this.prisma.user.findUnique({
+      where: { id: BigInt(payload.userId) },
+      select: { status: true },
+    });
+    if (!user || user.status === 'BANNED' || user.status === 'SUSPENDED') {
+      await this.prisma.session.deleteMany({ where: { id: payload.sessionId } }).catch(() => undefined);
+      throw new BizException(BizCode.FORBIDDEN, 'auth.accountDisabled');
+    }
+
     req.user = {
       userId: BigInt(payload.userId),
       phone: payload.phone,

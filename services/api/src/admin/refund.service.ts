@@ -73,7 +73,9 @@ export class AdminRefundService {
 
     let refund: { refunded: boolean; alreadyRefunded: boolean; orderNo: string };
     if (order.orderType === 'EPISODE_UNLOCK') {
-      refund = await this.wallet.refundOrder(orderNo, order.userId, 'admin-approve');
+      refund = await this.wallet.refundOrder(orderNo, order.userId, 'admin-approve', {
+        skipWindow: true,
+      });
     } else if (order.orderType === 'TOPUP') {
       refund = await this.wallet.refundTopupByAdmin(orderNo, 'admin-approve');
     } else {

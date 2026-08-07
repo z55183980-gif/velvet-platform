@@ -584,6 +584,29 @@ function AdminContentInner() {
         action: payload.action,
         reason: `admin batch ${payload.action}`,
       }),
+    onMutate: async (variables) => {
+      if (variables.action === "delete") return { previous: undefined };
+
+      await qc.cancelQueries({ queryKey: ["admin", "dramas"] });
+      const previous = qc.getQueriesData<{ rows: Drama[]; total: number }>({
+        queryKey: ["admin", "dramas"],
+      });
+      const nextStatus = variables.action === "online" ? "LIVE" : "OFFLINE";
+      const idSet = new Set(variables.ids);
+      qc.setQueriesData<{ rows: Drama[]; total: number }>(
+        { queryKey: ["admin", "dramas"] },
+        (old) => {
+          if (!old) return old;
+          return {
+            ...old,
+            rows: old.rows.map((row) =>
+              idSet.has(String(row.id)) ? { ...row, status: nextStatus } : row,
+            ),
+          };
+        },
+      );
+      return { previous };
+    },
     onSuccess: async (result, variables) => {
       setLifecycleConfirm(null);
       setRowDelete(null);
@@ -630,7 +653,16 @@ function AdminContentInner() {
       }
       await qc.invalidateQueries({ queryKey: ["admin", "dramas"] });
     },
-    onError: (e: Error) => {
+    onError: (
+      e: Error,
+      _variables,
+      context?: { previous?: ReturnType<typeof qc.getQueriesData<{ rows: Drama[]; total: number }>> },
+    ) => {
+      if (context?.previous) {
+        for (const [key, data] of context.previous) {
+          qc.setQueryData(key, data);
+        }
+      }
       setLifecycleConfirm(null);
       setRowDelete(null);
       setMenuBusyId(null);
@@ -1001,7 +1033,7 @@ function AdminContentInner() {
         className={`content-table${selectedCount > 0 ? " mb-36" : ""}`}
         columns={columns}
         rows={rows}
-        loading={dramasQ.isFetching}
+        loading={dramasQ.isFetching && !dramasQ.data}
         emptyTitle={t("empty")}
       />
 

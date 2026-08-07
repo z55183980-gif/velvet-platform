@@ -1,7 +1,8 @@
 import { Module } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ConfigModule } from '@nestjs/config';
-import { ThrottlerModule } from '@nestjs/throttler';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { PrismaModule } from './prisma/prisma.module';
 import { CommonModule } from './common/common.module';
 import { defaultThrottlerConfig } from './common/throttler-config';
@@ -19,6 +20,8 @@ import { ExchangeModule } from './exchange/exchange.module';
 import { UploadModule } from './upload/upload.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { EventsModule } from './events/events.module';
+import { HealthController } from './health.controller';
+import { SiteConfigController } from './site-config.controller';
 
 @Module({
   imports: [
@@ -42,5 +45,7 @@ import { EventsModule } from './events/events.module';
     NotificationsModule,
     EventsModule,
   ],
+  controllers: [HealthController, SiteConfigController],
+  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
 export class AppModule {}

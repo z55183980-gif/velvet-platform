@@ -60,7 +60,9 @@ export class AuthService {
     private readonly mailer: MailerService,
     config: ConfigService,
   ) {
-    this.adminToken = config.get<string>('ADMIN_TOKEN') || 'dev-admin';
+    this.adminToken =
+      config.get<string>('ADMIN_TOKEN') ||
+      (process.env.NODE_ENV === 'production' ? '' : 'dev-admin');
     this.emailOtpEnabled = this.envFlag(config, 'AUTH_EMAIL_OTP_ENABLED', false);
     this.phoneOtpEnabled = this.envFlag(config, 'AUTH_PHONE_OTP_ENABLED', false);
     this.captchaDisabledWeb = this.envFlag(config, 'AUTH_WEB_CAPTCHA_DISABLED', false);
@@ -372,7 +374,7 @@ export class AuthService {
     if (!/^\+?[0-9]{9,15}$/.test(phone)) {
       throw new BizException(BizCode.BAD_REQUEST, 'auth.invalidPhone');
     }
-    const r = this.otp.generate('phone', phone, purpose);
+    const r = await this.otp.generate('phone', phone, purpose);
     // TODO(公测): 接入 SMS_PROVIDER 真实发信
     const isDev = process.env.NODE_ENV !== 'production';
     return {
@@ -393,7 +395,7 @@ export class AuthService {
     if (!this.phoneOtpEnabled) {
       throw new BizException(BizCode.BAD_REQUEST, 'auth.phoneOtpDisabled');
     }
-    if (!this.otp.verify('phone', phone, code, purpose)) {
+    if (!(await this.otp.verify('phone', phone, code, purpose))) {
       throw new BizException(BizCode.INVALID_OTP, 'auth.invalidOtp');
     }
     const user = await this.upsertUserByPhone(phone);
@@ -401,7 +403,7 @@ export class AuthService {
   }
 
   /** @deprecated 请用 sendPhoneOtp；保留兼容旧调用 */
-  sendOtp(phone: string) {
+  async sendOtp(phone: string) {
     if (!/^\+?[0-9]{9,15}$/.test(phone)) {
       throw new BizException(BizCode.BAD_REQUEST, 'auth.invalidPhone');
     }
@@ -434,13 +436,15 @@ export class AuthService {
     if (purpose === 'reset') {
       const existing = await this.prisma.user.findUnique({ where: { email: normalized } });
       if (!existing) {
-        throw new BizException(BizCode.NOT_FOUND, 'auth.emailNotRegistered');
+        // Anti-enumeration: same shape as success, no OTP issued.
+        return { expiresInSec: 300, mailed: false, purpose };
       }
     }
 
-    const r = this.otp.generate('email', normalized, purpose);
+    const r = await this.otp.generate('email', normalized, purpose);
     const expiresMinutes = Math.max(1, Math.round(r.expiresInSec / 60));
 
+    let mailed = false;
     if (this.mailer.isConfigured()) {
       try {
         if (purpose === 'register') {
@@ -450,16 +454,18 @@ export class AuthService {
         } else {
           await this.mailer.sendLoginOtp(normalized, r.code, expiresMinutes);
         }
+        mailed = true;
       } catch (e: any) {
         // eslint-disable-next-line no-console
         console.error(`[email OTP/${purpose}] send failed:`, e?.message || e);
+        mailed = false;
       }
     }
 
     const isDev = process.env.NODE_ENV !== 'production';
     return {
       expiresInSec: r.expiresInSec,
-      mailed: this.mailer.isConfigured(),
+      mailed,
       purpose,
       ...(isDev ? { devCode: r.code } : {}),
     };
@@ -477,7 +483,7 @@ export class AuthService {
     if (!normalized) {
       throw new BizException(BizCode.BAD_REQUEST, 'auth.invalidEmail');
     }
-    if (!this.otp.verify('email', normalized, code, 'login')) {
+    if (!(await this.otp.verify('email', normalized, code, 'login'))) {
       throw new BizException(BizCode.INVALID_OTP, 'auth.invalidOtp');
     }
     const user = await this.upsertUserByEmail(normalized);
@@ -511,10 +517,10 @@ export class AuthService {
 
     const code = String(opts.code || '').trim();
     if (this.emailOtpEnabled) {
-      if (!code || !this.otp.verify('email', normalized, code, 'register')) {
+      if (!code || !(await this.otp.verify('email', normalized, code, 'register'))) {
         throw new BizException(BizCode.INVALID_OTP, 'auth.invalidOtp');
       }
-    } else if (code && !this.otp.verify('email', normalized, code, 'register')) {
+    } else if (code && !(await this.otp.verify('email', normalized, code, 'register'))) {
       throw new BizException(BizCode.INVALID_OTP, 'auth.invalidOtp');
     }
 
@@ -621,7 +627,7 @@ export class AuthService {
         min: MIN_PASSWORD_LEN,
       });
     }
-    if (!this.otp.verify('email', normalized, opts.code, 'reset')) {
+    if (!(await this.otp.verify('email', normalized, opts.code, 'reset'))) {
       throw new BizException(BizCode.INVALID_OTP, 'auth.invalidOtp');
     }
 
@@ -647,6 +653,10 @@ export class AuthService {
       include: { creator: true },
     });
     if (!user) throw new BizException(BizCode.UNAUTHORIZED, 'auth.sessionInvalid');
+    if (user.status === 'BANNED' || user.status === 'SUSPENDED') {
+      await this.prisma.session.deleteMany({ where: { userId } });
+      throw new BizException(BizCode.FORBIDDEN, 'auth.accountDisabled');
+    }
     return this.toProfile(user);
   }
 
@@ -760,9 +770,21 @@ export class AuthService {
       phone: string | null;
       email?: string | null;
       locale: string;
+      status?: string;
     },
     meta?: ClientMeta | null,
   ): Promise<LoginResult> {
+    const status =
+      user.status ||
+      (
+        await this.prisma.user.findUnique({
+          where: { id: user.id },
+          select: { status: true },
+        })
+      )?.status;
+    if (status === 'BANNED' || status === 'SUSPENDED') {
+      throw new BizException(BizCode.FORBIDDEN, 'auth.accountDisabled');
+    }
     const sessionId = crypto.randomUUID();
     const expiresAt = new Date(Date.now() + 30 * 24 * 3600 * 1000);
     const geo = meta ? await enrichClientMeta(meta) : null;

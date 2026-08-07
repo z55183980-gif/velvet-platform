@@ -34,6 +34,14 @@ export class AdminGuard implements CanActivate {
           where: { id: BigInt(payload.adminId) },
         });
         if (admin && admin.status === 'ACTIVE') {
+          const tv = typeof payload.tv === 'number' ? payload.tv : -1;
+          if (tv !== (admin as any).tokenVersion) {
+            throw new BizException(
+              BizCode.FORBIDDEN,
+              'admin.forbidden',
+              HttpStatus.FORBIDDEN,
+            );
+          }
           req.adminId = admin.id;
           req.adminAuthMode = 'jwt';
           req.adminRole = (admin as any).role || 'SUPER_ADMIN';

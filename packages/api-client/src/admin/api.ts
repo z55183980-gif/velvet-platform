@@ -327,6 +327,135 @@ export async function adminStorageProbe() {
   }>("/admin/storage/probe");
 }
 
+export type AdminOpsMonitorOverview = {
+  fetchedAt: string;
+  rangeHours: number;
+  server: {
+    available: boolean;
+    collected_at: string;
+    poll_interval_sec: number;
+    message?: string;
+    host: {
+      hostname: string;
+      platform: string;
+      platform_release: string;
+      architecture: string;
+      uptime_seconds: number;
+      uptime_human: string;
+    };
+    cpu: { percent: number; cores_logical: number; cores_physical: number; load_avg: number[] };
+    memory: {
+      total_gb: number;
+      used_gb: number;
+      available_gb: number;
+      percent: number;
+    };
+    root_disk: {
+      mount: string;
+      total_gb: number;
+      used_gb: number;
+      free_gb: number;
+      percent: number;
+    } | null;
+    disks: Array<{
+      mount: string;
+      total_gb: number;
+      used_gb: number;
+      free_gb: number;
+      percent: number;
+    }>;
+    network: {
+      sent_gb: number;
+      recv_gb: number;
+      upload_bps: number;
+      download_bps: number;
+      samples: Array<{ timestamp: string; upload_bps: number; download_bps: number }>;
+    };
+    processes?: Array<{
+      name: string;
+      status: string;
+      cpu: number | null;
+      memory: number | null;
+      restarts: number | null;
+      uptime_ms: number | null;
+    }>;
+  };
+  storage: {
+    storageBackend: string;
+    r2Enabled: boolean;
+    r2Configured: boolean;
+    mediaBucket: string;
+    uploadBucket: string;
+    cdnBase: string;
+    ffmpegReady: boolean;
+    transcodeQueue?: "bullmq" | "inline";
+    redisConfigured?: boolean;
+    probe: AdminStorageProbe;
+  };
+  cloudflare: {
+    configured: boolean;
+    accountId: string | null;
+    zoneId: string | null;
+    mediaBucket: string;
+    uploadBucket: string;
+    rangeHours: number;
+    fetchedAt: string;
+    error?: string;
+    r2: {
+      available: boolean;
+      storageBytes: number | null;
+      objectOps: number;
+      bytesIn: number;
+      bytesOut: number;
+      series: Array<{ timestamp: string; requests: number; bytes: number }>;
+      byAction: Array<{ action: string; requests: number; bytes: number }>;
+    };
+    cdn: {
+      available: boolean;
+      requests: number;
+      bytes: number;
+      cachedRequests: number;
+      cachedBytes: number;
+      cacheHitRatio: number | null;
+      series: Array<{
+        timestamp: string;
+        requests: number;
+        bytes: number;
+        cachedRequests?: number;
+        cachedBytes?: number;
+      }>;
+    };
+  };
+  transcode: {
+    episodeCounts: Record<string, number>;
+    jobCounts: Record<string, number>;
+    recentFailed: Array<{
+      id: string;
+      episodeId: string | null;
+      status: string;
+      error: string | null;
+      attempts: number;
+      createdAt: string;
+      updatedAt: string;
+      finishedAt: string | null;
+    }>;
+  };
+  queue: {
+    mode: "bullmq" | "inline";
+    workerRunning: boolean;
+    waiting: number;
+    active: number;
+    delayed: number;
+    failed: number;
+    completed: number;
+    error?: string;
+  };
+};
+
+export async function adminOpsMonitorOverview(hours = 24) {
+  return adminRequest<AdminOpsMonitorOverview>(`/admin/ops-monitor?hours=${hours}`);
+}
+
 export async function adminDramaStorage(dramaId: string) {
   return adminRequest<{
     storageBackend: string;
@@ -700,6 +829,13 @@ export async function adminSetUserStatus(id: string, status: string, reason: str
 
 export async function adminForceLogout(id: string) {
   return adminRequest(`/admin/users/${id}/force-logout`, { method: "POST", body: "{}" });
+}
+
+export async function adminResetUserPassword(id: string, password: string) {
+  return adminRequest<{ ok: boolean; clearedSessions: number }>(`/admin/users/${id}/password`, {
+    method: "POST",
+    body: JSON.stringify({ password }),
+  });
 }
 
 export async function adminSetUserVip(

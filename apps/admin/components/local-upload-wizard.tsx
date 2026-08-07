@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   adminCreateOnlineDrama,
   adminListCategories,
+  adminListSettings,
   adminStorageProbe,
   adminStorageStatus,
   adminUploadImage,
@@ -616,6 +617,27 @@ export const LocalUploadWizard = forwardRef<
     queryKey: ["admin", "categories"],
     queryFn: () => adminListCategories(true) as Promise<Category[]>,
   });
+  const settingsQ = useQuery({
+    queryKey: ["admin", "settings"],
+    queryFn: async () => {
+      const result = (await adminListSettings()) as {
+        items?: Array<{ key: string; value: unknown }>;
+      };
+      return result.items ?? [];
+    },
+    staleTime: 60_000,
+  });
+  const appliedPreviewDefaultRef = useRef(false);
+  useEffect(() => {
+    if (!settingsQ.data || appliedPreviewDefaultRef.current || editingDraftId) return;
+    appliedPreviewDefaultRef.current = true;
+    const raw = Number(
+      settingsQ.data.find((item) => item.key === "defaultPreviewSeconds")?.value,
+    );
+    const n = Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 0;
+    setAllowPreview(n > 0);
+    if (n > 0) setPreviewSeconds(n);
+  }, [settingsQ.data, editingDraftId]);
   const storageQ = useQuery({
     queryKey: ["admin", "storage-status"],
     queryFn: () => adminStorageStatus(),

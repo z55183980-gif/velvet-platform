@@ -1,8 +1,11 @@
 import { Injectable } from '@nestjs/common';
+import * as crypto from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { BizException, BizCode } from '../common/biz.exception';
 import { AuditService } from '../common/audit.service';
 import { VipPlansService } from '../vip/vip-plans.service';
+
+const MIN_PASSWORD_LEN = 6;
 
 @Injectable()
 export class AdminUsersService {
@@ -159,6 +162,7 @@ export class AdminUsersService {
       payload: { status, reason },
     });
     if (status === 'SUSPENDED' || status === 'BANNED') {
+      await this.prisma.session.deleteMany({ where: { userId: user.id } });
       try {
         await this.prisma.notification.create({
           data: {
@@ -188,6 +192,42 @@ export class AdminUsersService {
       payload: { cleared: cnt.count },
     });
     return { cleared: cnt.count };
+  }
+
+  async resetPassword(id: string, password: string, actorId?: bigint) {
+    const userId = BigInt(id);
+    const pwd = String(password || '');
+    if (pwd.length < MIN_PASSWORD_LEN) {
+      throw new BizException(BizCode.BAD_REQUEST, 'auth.passwordMinLength', undefined, {
+        min: MIN_PASSWORD_LEN,
+      });
+    }
+
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!user) throw new BizException(BizCode.NOT_FOUND, 'user.notFound');
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash: this.hashPassword(pwd) },
+    });
+    const cleared = await this.prisma.session.deleteMany({ where: { userId } });
+    await this.audit.write({
+      actorId,
+      action: 'user.resetPassword',
+      targetType: 'user',
+      targetId: id,
+      payload: { clearedSessions: cleared.count },
+    });
+    return { ok: true, clearedSessions: cleared.count };
+  }
+
+  private hashPassword(password: string): string {
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+    return `${salt}:${hash}`;
   }
 
   async setVip(

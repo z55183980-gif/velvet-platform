@@ -135,20 +135,47 @@ async function main() {
   // eslint-disable-next-line no-console
   console.log(`[seed] viewer phone=+84901234567 wallet=200000 credits`);
 
-  const keepSettingKeys = ['episodeLockMode', 'defaultFreeEpisodes', 'paymentGateways.stripe'];
+  const keepSettingKeys = [
+    'siteName',
+    'supportEmail',
+    'supportUrl',
+    'termsUrl',
+    'privacyUrl',
+    'maintenanceMode',
+    'maintenanceMessage',
+    'revenueShareDefault',
+    'minWithdrawVnd',
+    'pitRate',
+    'episodeLockMode',
+    'defaultFreeEpisodes',
+    'defaultPreviewSeconds',
+    'paymentGateways.stripe',
+  ];
   await prisma.systemSetting.deleteMany({
     where: { key: { notIn: keepSettingKeys } },
   });
-  await prisma.systemSetting.upsert({
-    where: { key: 'episodeLockMode' },
-    create: { key: 'episodeLockMode', value: 'FREE_FIRST_N' },
-    update: {},
-  });
-  await prisma.systemSetting.upsert({
-    where: { key: 'defaultFreeEpisodes' },
-    create: { key: 'defaultFreeEpisodes', value: 3 },
-    update: {},
-  });
+  const settingDefaults: Array<{ key: string; value: unknown }> = [
+    { key: 'siteName', value: 'Velvet' },
+    { key: 'supportEmail', value: 'support@velvetmovie.space' },
+    { key: 'supportUrl', value: '' },
+    { key: 'termsUrl', value: '/terms' },
+    { key: 'privacyUrl', value: '/privacy' },
+    { key: 'maintenanceMode', value: false },
+    { key: 'maintenanceMessage', value: '' },
+    { key: 'revenueShareDefault', value: 0.7 },
+    { key: 'minWithdrawVnd', value: 100000 },
+    { key: 'pitRate', value: 0.05 },
+    { key: 'episodeLockMode', value: 'FREE_FIRST_N' },
+    { key: 'defaultFreeEpisodes', value: 3 },
+    { key: 'defaultPreviewSeconds', value: 0 },
+  ];
+  for (const item of settingDefaults) {
+    await prisma.systemSetting.upsert({
+      where: { key: item.key },
+      create: { key: item.key, value: item.value as any },
+      update: {},
+    });
+  }
 
   // eslint-disable-next-line no-console
   console.log('[seed] done');

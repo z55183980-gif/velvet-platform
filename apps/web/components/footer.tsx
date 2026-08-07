@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
 import { useLocale } from "@/lib/i18n";
+import { useSiteConfig } from "@/lib/site-config";
 import { BrandLogo } from "@/components/brand-logo";
 import { cn } from "@/lib/utils";
 
@@ -67,16 +68,21 @@ function resolveHref(value: string) {
 /** PC footer — centered multi-line legal block (hongguoduanju.com style). */
 export function Footer() {
   const { t } = useLocale();
+  const site = useSiteConfig();
+  const termsHref = resolveHref(site.termsUrl) || resolveHref(t("footer.filing1Href"));
+  const privacyHref = resolveHref(site.privacyUrl) || resolveHref(t("footer.filing2Href"));
+  const supportEmail = site.supportEmail || t("footer.supportEmail");
+  const supportHref = resolveHref(site.supportUrl) || `mailto:${supportEmail}`;
 
   return (
     <footer className="mt-24 w-full border-t border-white/10">
       <div className="flex w-full flex-col items-center justify-center px-4 pb-[50px] pt-10 md:px-10">
         <FooterText className="flex flex-wrap items-center justify-center">
-          <FooterLink href={resolveHref(t("footer.filing1Href"))}>
+          <FooterLink href={termsHref}>
             {t("footer.filing1")}
           </FooterLink>
           <Sep />
-          <FooterLink href={resolveHref(t("footer.filing2Href"))}>
+          <FooterLink href={privacyHref}>
             {t("footer.filing2")}
           </FooterLink>
           <Sep />
@@ -105,15 +111,13 @@ export function Footer() {
 
         <FooterText>
           {t("footer.supportLabel")}
-          <FooterLink href={`mailto:${t("footer.supportEmail")}`}>
-            {t("footer.supportEmail")}
-          </FooterLink>
+          <FooterLink href={supportHref}>{supportEmail}</FooterLink>
         </FooterText>
 
         <Link
           href="/"
           className="mt-5 transition-opacity hover:opacity-90"
-          aria-label="Velvet"
+          aria-label={site.siteName || "Velvet"}
         >
           <BrandLogo size={28} />
         </Link>

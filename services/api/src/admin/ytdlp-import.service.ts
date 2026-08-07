@@ -6,6 +6,7 @@ import * as path from 'path';
 import { PrismaService } from '../prisma/prisma.service';
 import { BizCode, BizException } from '../common/biz.exception';
 import { signMediaPath } from '../common/media-sign.util';
+import { requireSecret } from '../common/security-config';
 import { UploadService } from '../upload/upload.service';
 import { AdminService } from './admin.service';
 import { AdminEpisodesService } from './episodes.service';
@@ -827,7 +828,11 @@ export class YtdlpImportService implements OnModuleInit {
 
   private signLocalMedia(filename: string): string {
     const rel = `uploads/${filename}`.replace(/^\/+/, '');
-    const key = this.config.get<string>('CDN_SIGN_KEY') || 'dev';
+    const key = requireSecret(
+      'CDN_SIGN_KEY',
+      this.config.get<string>('CDN_SIGN_KEY'),
+      'dev',
+    );
     const exp = Math.floor(Date.now() / 1000) + 3600;
     const sig = signMediaPath(rel, exp, key);
     const encoded = rel.split('/').map(encodeURIComponent).join('/');

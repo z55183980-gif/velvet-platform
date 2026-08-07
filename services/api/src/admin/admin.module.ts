@@ -39,6 +39,9 @@ import { AdminNotificationsController } from './notifications.controller';
 import { YtdlpProvider } from './ytdlp.provider';
 import { YtdlpImportService } from './ytdlp-import.service';
 import { UploadModule } from '../upload/upload.module';
+import { OpsMonitorController } from './ops-monitor.controller';
+import { OpsMonitorService } from './ops-monitor.service';
+import { CloudflareAnalyticsService } from './cloudflare-analytics.service';
 
 @Module({
   imports: [WalletModule, ExchangeModule, ReconcileModule, AuthModule, RedeemModule, UploadModule],
@@ -54,6 +57,7 @@ import { UploadModule } from '../upload/upload.module';
     OpsController,
     SettingsController,
     AdminNotificationsController,
+    OpsMonitorController,
   ],
   providers: [
     AdminService,
@@ -79,6 +83,8 @@ import { UploadModule } from '../upload/upload.module';
     AdminOpsService,
     YtdlpProvider,
     YtdlpImportService,
+    CloudflareAnalyticsService,
+    OpsMonitorService,
   ],
   exports: [
     AdminService,

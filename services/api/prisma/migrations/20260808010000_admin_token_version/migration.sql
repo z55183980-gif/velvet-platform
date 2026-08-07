@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "admin_users" ADD COLUMN IF NOT EXISTS "tokenVersion" INTEGER NOT NULL DEFAULT 0;

@@ -1,6 +1,6 @@
 import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { Type } from 'class-transformer';
-import { IsNotEmpty, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { IsNotEmpty, IsNumber, IsOptional, IsString, Min, MinLength } from 'class-validator';
 import { ok } from '../common/response';
 import { AdminRoleGuard, AdminRoles } from './admin-role.guard';
 import { AdminGuard } from './admin.guard';
@@ -18,6 +18,10 @@ class UserStatusDto {
 class SetUserVipDto {
   @IsOptional() vipExpireAt?: string | null;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(1) extendDays?: number;
+}
+
+class ResetUserPasswordDto {
+  @IsNotEmpty() @IsString() @MinLength(6) password!: string;
 }
 
 @Controller('v1/admin')
@@ -57,6 +61,7 @@ export class UsersController {
   }
 
   @Post('users/:id/status')
+  @AdminRoles('SUPER_ADMIN')
   async setUserStatus(
     @Param('id') id: string,
     @Body() dto: UserStatusDto,
@@ -66,8 +71,19 @@ export class UsersController {
   }
 
   @Post('users/:id/force-logout')
+  @AdminRoles('SUPER_ADMIN')
   async forceLogout(@Param('id') id: string, @Req() req: any) {
     return ok(await this.users.forceLogout(id, getActor(req)));
+  }
+
+  @Post('users/:id/password')
+  @AdminRoles('SUPER_ADMIN')
+  async resetUserPassword(
+    @Param('id') id: string,
+    @Body() dto: ResetUserPasswordDto,
+    @Req() req: any,
+  ) {
+    return ok(await this.users.resetPassword(id, dto.password, getActor(req)));
   }
 
   @Post('users/:id/vip')

@@ -829,6 +829,8 @@ model AdminUser {
   status       String    @default("ACTIVE") // ACTIVE | DISABLED
   /// SUPER_ADMIN（全部权限）| OPS（不可改 finance/设置）| 默认 SUPER_ADMIN
   role         String    @default("SUPER_ADMIN")
+  /// Increment to revoke all outstanding admin JWTs (password change / logout / disable).
+  tokenVersion Int       @default(0)
   lastLoginAt  DateTime?
   createdAt    DateTime  @default(now()) @db.Timestamptz
   updatedAt    DateTime  @updatedAt

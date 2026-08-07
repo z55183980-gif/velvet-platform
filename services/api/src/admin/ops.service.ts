@@ -179,10 +179,10 @@ export class AdminOpsService {
       if (dto.priceCredits != null) {
         const price = toBigInt(dto.priceCredits);
         if (price < 0n) throw new BizException(BizCode.BAD_REQUEST, 'priceCredits không hợp lệ');
-        // 仅更新付费集（非 isFree）；免费集保持 0
+        // 仅更新付费集（非 isFree）；免费集保持 0；同步 priceVnd 以免分成漂移
         const r = await tx.episode.updateMany({
           where: { dramaId: { in: ids }, isFree: false },
-          data: { priceCredits: price },
+          data: { priceCredits: price, priceVnd: price },
         });
         episodesUpdated = r.count;
       }

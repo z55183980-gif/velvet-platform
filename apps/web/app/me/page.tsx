@@ -311,6 +311,13 @@ export default function AccountPage() {
             {t("account.freeRegister")}
           </button>
         </div>
+        <div className="mt-10 rounded-2xl border border-line/80 bg-surface text-left">
+          <div className="flex items-center gap-3 px-4 py-3">
+            <Languages className="h-4 w-4 text-ink-muted" />
+            <span className="flex-1 text-body-sm text-ink">{t("account.language")}</span>
+            <LanguageSwitcher />
+          </div>
+        </div>
       </div>
     );
   }

@@ -1,12 +1,24 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Request, Response } from 'express';
+import * as fs from 'fs';
+import * as path from 'path';
+import { Readable, Transform } from 'stream';
 import { PrismaService } from '../prisma/prisma.service';
 import { DramasService } from '../dramas/dramas.service';
 import { BizException, BizCode } from '../common/biz.exception';
-import { signMediaPath } from '../common/media-sign.util';
+import { signMediaPath, signPlaylistUri } from '../common/media-sign.util';
+import { requireSecret } from '../common/security-config';
 import { LockAccessService } from '../common/lock-access.service';
 import { YtdlpProvider } from '../admin/ytdlp.provider';
 import { inferExternalUrlExpiry } from '../admin/online-drama.util';
+import { R2StorageService } from '../storage/r2.storage.service';
+import {
+  estimatePreviewMaxBytes,
+  signEpisodePreview,
+  truncateM3u8ByDuration,
+  verifyEpisodePreviewSig,
+} from './preview-media.util';
 
 @Injectable()
 export class EpisodesService {
@@ -18,6 +30,7 @@ export class EpisodesService {
     private readonly config: ConfigService,
     private readonly lockAccess: LockAccessService,
     private readonly ytdlp: YtdlpProvider,
+    private readonly r2: R2StorageService,
   ) {}
 
   /** 生成 HLS/片源短时签名播放地址；未登录仅允许免费集 */
@@ -31,32 +44,55 @@ export class EpisodesService {
       throw new BizException(BizCode.NOT_FOUND, 'common.notFound');
     }
 
+    if (userId) {
+      const account = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { status: true, vipExpireAt: true },
+      });
+      if (!account || account.status === 'BANNED' || account.status === 'SUSPENDED') {
+        throw new BizException(BizCode.FORBIDDEN, 'user.accountRestricted');
+      }
+    }
+
     const policy = await this.lockAccess.resolveForDrama(episode.drama);
     const free = this.lockAccess.isFree(episode, policy);
     let unlocked = free;
-    let previewOnly = false;
-    if (!free) {
-      if (userId) {
-        const [u, user, dramaUnlock] = await Promise.all([
-          this.prisma.userUnlock.findUnique({
-            where: { userId_episodeId: { userId, episodeId } },
-          }),
-          this.prisma.user.findUnique({ where: { id: userId }, select: { vipExpireAt: true } }),
-          this.prisma.userDramaUnlock.findUnique({
-            where: { userId_dramaId: { userId, dramaId: episode.dramaId } },
-          }),
-        ]);
-        const vipActive = !!(user?.vipExpireAt && user.vipExpireAt.getTime() > Date.now());
-        unlocked = !!u || vipActive || !!dramaUnlock;
-      }
-    }
-    if (!unlocked) {
-      if (episode.previewSeconds > 0) previewOnly = true;
-      else if (!userId) throw new BizException(BizCode.UNAUTHORIZED, 'Chưa đăng nhập');
-      else throw new BizException(BizCode.FORBIDDEN, 'Tập này cần mở khóa để xem', 402 as any);
+    if (!free && userId) {
+      const [u, user, dramaUnlock] = await Promise.all([
+        this.prisma.userUnlock.findUnique({
+          where: { userId_episodeId: { userId, episodeId } },
+        }),
+        this.prisma.user.findUnique({ where: { id: userId }, select: { vipExpireAt: true } }),
+        this.prisma.userDramaUnlock.findUnique({
+          where: { userId_dramaId: { userId, dramaId: episode.dramaId } },
+        }),
+      ]);
+      const vipActive = !!(user?.vipExpireAt && user.vipExpireAt.getTime() > Date.now());
+      unlocked = !!u || vipActive || !!dramaUnlock;
     }
 
-    const key = this.config.get('CDN_SIGN_KEY') || 'dev';
+    // 未解锁：绝不下发完整片源 URL；仅签发 API 预览网关（按时长裁剪）
+    if (!unlocked) {
+      if (episode.previewSeconds > 0) {
+        const key = requireSecret('CDN_SIGN_KEY', this.config.get('CDN_SIGN_KEY'), 'dev');
+        const exp = Math.floor(Date.now() / 1000) + 600; // preview tokens: 10m
+        const sig = signEpisodePreview(episodeId, episode.previewSeconds, exp, key);
+        return {
+          playUrl: `/api/v1/episodes/${episodeId}/preview?sig=${sig}&exp=${exp}`,
+          expiresAt: new Date(exp * 1000).toISOString(),
+          durationSec: episode.durationSec,
+          previewSeconds: episode.previewSeconds,
+          previewOnly: true,
+          mediaWidth: episode.mediaWidth,
+          mediaHeight: episode.mediaHeight,
+          mediaOrientation: episode.mediaOrientation,
+        };
+      }
+      if (!userId) throw new BizException(BizCode.UNAUTHORIZED, 'Chưa đăng nhập');
+      throw new BizException(BizCode.FORBIDDEN, 'Tập này cần mở khóa để xem', 402 as any);
+    }
+
+    const key = requireSecret('CDN_SIGN_KEY', this.config.get('CDN_SIGN_KEY'), 'dev');
     const base = (this.config.get<string>('CDN_BASE_URL') || 'https://cdn.velvetmovie.space').replace(
       /\/$/,
       '',
@@ -74,8 +110,8 @@ export class EpisodesService {
         playUrl: `/api/v1/media/${encoded}?sig=${sig}&exp=${exp}`,
         expiresAt: new Date(exp * 1000).toISOString(),
         durationSec: episode.durationSec,
-        previewSeconds: previewOnly ? episode.previewSeconds : 0,
-        previewOnly,
+        previewSeconds: 0,
+        previewOnly: false,
         mediaWidth: episode.mediaWidth,
         mediaHeight: episode.mediaHeight,
         mediaOrientation: episode.mediaOrientation,
@@ -89,8 +125,8 @@ export class EpisodesService {
         playUrl: raw,
         expiresAt: new Date(exp * 1000).toISOString(),
         durationSec: episode.durationSec,
-        previewSeconds: previewOnly ? episode.previewSeconds : 0,
-        previewOnly,
+        previewSeconds: 0,
+        previewOnly: false,
         mediaWidth: episode.mediaWidth,
         mediaHeight: episode.mediaHeight,
         mediaOrientation: episode.mediaOrientation,
@@ -114,12 +150,261 @@ export class EpisodesService {
       playUrl,
       expiresAt: new Date(exp * 1000).toISOString(),
       durationSec: episode.durationSec,
-      previewSeconds: previewOnly ? episode.previewSeconds : 0,
-      previewOnly,
+      previewSeconds: 0,
+      previewOnly: false,
       mediaWidth: episode.mediaWidth,
       mediaHeight: episode.mediaHeight,
       mediaOrientation: episode.mediaOrientation,
     };
+  }
+
+  /**
+   * 付费预览流：服务端按时长截断 HLS，或按字节上限代理渐进式视频。
+   * 客户端永远拿不到完整片源签名 URL。
+   */
+  async streamPreview(
+    episodeId: bigint,
+    sig: string | undefined,
+    exp: string | undefined,
+    req: Request,
+    res: Response,
+  ) {
+    const episode = await this.prisma.episode.findUnique({
+      where: { id: episodeId },
+      include: { drama: true },
+    });
+    if (!episode || episode.drama?.status !== 'LIVE') {
+      throw new BizException(BizCode.NOT_FOUND, 'episode.notFound');
+    }
+    if (episode.previewSeconds <= 0) {
+      throw new BizException(BizCode.FORBIDDEN, 'preview.unavailable');
+    }
+
+    const key = requireSecret('CDN_SIGN_KEY', this.config.get('CDN_SIGN_KEY'), 'dev');
+    if (!verifyEpisodePreviewSig(episodeId, episode.previewSeconds, exp, sig, key)) {
+      throw new BizException(BizCode.FORBIDDEN, 'preview.invalidSig');
+    }
+
+    const refreshed = await this.refreshExternalUrlIfNeeded(episode);
+    const base = (this.config.get<string>('CDN_BASE_URL') || 'https://cdn.velvetmovie.space').replace(
+      /\/$/,
+      '',
+    );
+    const raw = refreshed || episode.hlsUrl || `${base}/v/${episodeId}/index.m3u8`;
+    const expN = typeof exp === 'string' ? parseInt(exp, 10) : Number(exp);
+
+    res.setHeader('Cache-Control', 'private, no-store');
+    res.setHeader('X-Preview-Only', '1');
+    res.setHeader('X-Preview-Seconds', String(episode.previewSeconds));
+
+    if (/\.m3u8(\?|$)/i.test(raw) || (!/^https?:\/\//.test(raw) && raw.endsWith('.m3u8'))) {
+      const playlist = await this.loadTextSource(raw, base);
+      const truncated = truncateM3u8ByDuration(playlist, episode.previewSeconds);
+      let playlistRel = raw.replace(/^\/+/, '').replace(/\\/g, '/');
+      let segmentBase = '';
+      if (/^https?:\/\//.test(raw) && base && raw.startsWith(base)) {
+        try {
+          const u = new URL(raw);
+          playlistRel = decodeURIComponent(u.pathname.replace(/^\/+/, ''));
+          segmentBase = base;
+        } catch {
+          playlistRel = 'index.m3u8';
+        }
+      } else if (!/^https?:\/\//.test(raw)) {
+        segmentBase = '/api/v1/media';
+      }
+
+      let body = truncated;
+      if (segmentBase) {
+        body = this.toAbsoluteSignedPlaylist(truncated, playlistRel, expN, key, segmentBase);
+      }
+      const buf = Buffer.from(body, 'utf8');
+      res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+      res.setHeader('Content-Length', buf.length);
+      res.setHeader('Accept-Ranges', 'none');
+      res.status(200).end(buf);
+      return;
+    }
+
+    // Progressive container: byte-capped proxy — never 302 to full object
+    let fileSize: number | null = null;
+    if (!/^https?:\/\//.test(raw)) {
+      const abs = this.resolveLocalFile(raw);
+      if (!abs) throw new BizException(BizCode.NOT_FOUND, 'preview.sourceMissing');
+      fileSize = fs.statSync(abs).size;
+      const maxBytes = estimatePreviewMaxBytes(episode.previewSeconds, episode.durationSec, fileSize);
+      const end = Math.min(fileSize - 1, maxBytes - 1);
+      res.status(206);
+      res.setHeader('Content-Type', this.guessMime(abs));
+      res.setHeader('Accept-Ranges', 'bytes');
+      res.setHeader('Content-Range', `bytes 0-${end}/${fileSize}`);
+      res.setHeader('Content-Length', end + 1);
+      fs.createReadStream(abs, { start: 0, end }).pipe(res);
+      return;
+    }
+
+    if (base && raw.startsWith(base) && this.r2.hasCredentials()) {
+      try {
+        const u = new URL(raw);
+        const objectKey = decodeURIComponent(u.pathname.replace(/^\/+/, ''));
+        const head = await this.r2.headMediaObject(objectKey);
+        fileSize = head?.size ?? null;
+        const maxBytes = estimatePreviewMaxBytes(
+          episode.previewSeconds,
+          episode.durationSec,
+          fileSize,
+        );
+        const end = Math.max(0, maxBytes - 1);
+        const ranged = await this.r2.getMediaObject(objectKey, {
+          range: `bytes=0-${end}`,
+        });
+        res.status(206);
+        res.setHeader('Content-Type', ranged.contentType || this.guessMime(objectKey));
+        res.setHeader('Accept-Ranges', 'bytes');
+        if (fileSize != null) {
+          const actualEnd = Math.min(end, fileSize - 1);
+          res.setHeader('Content-Range', `bytes 0-${actualEnd}/${fileSize}`);
+        }
+        if (ranged.contentLength != null) res.setHeader('Content-Length', ranged.contentLength);
+        ranged.body.pipe(res);
+        return;
+      } catch {
+        /* fall through to fetch proxy */
+      }
+    }
+
+    const maxBytes = estimatePreviewMaxBytes(episode.previewSeconds, episode.durationSec, null);
+    const upstream = await fetch(raw, {
+      headers: { Range: `bytes=0-${maxBytes - 1}`, 'User-Agent': 'VelvetPreview/1.0' },
+    });
+    if (!(upstream.ok || upstream.status === 206)) {
+      throw new BizException(BizCode.NOT_FOUND, 'preview.sourceUnavailable');
+    }
+    res.status(upstream.status === 206 ? 206 : 200);
+    const ct = upstream.headers.get('content-type');
+    if (ct) res.setHeader('Content-Type', ct);
+    else res.setHeader('Content-Type', this.guessMime(raw));
+    res.setHeader('Accept-Ranges', 'bytes');
+    const cr = upstream.headers.get('content-range');
+    if (cr) res.setHeader('Content-Range', cr);
+    if (!upstream.body) {
+      res.end();
+      return;
+    }
+    const nodeStream = Readable.fromWeb(upstream.body as any);
+    let sent = 0;
+    const limiter = new Transform({
+      transform(chunk, _enc, cb) {
+        if (sent >= maxBytes) {
+          cb();
+          return;
+        }
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        const remain = maxBytes - sent;
+        const slice = buf.length > remain ? buf.subarray(0, remain) : buf;
+        sent += slice.length;
+        cb(null, slice);
+        if (sent >= maxBytes) {
+          this.push(null);
+          nodeStream.destroy();
+        }
+      },
+    });
+    nodeStream.pipe(limiter).pipe(res);
+    req.on('close', () => {
+      nodeStream.destroy();
+      limiter.destroy();
+    });
+  }
+
+  private toAbsoluteSignedPlaylist(
+    body: string,
+    playlistRelPath: string,
+    exp: number,
+    key: string,
+    absoluteBase: string,
+  ): string {
+    const base = absoluteBase.replace(/\/$/, '');
+    const endsWithNl = /\r?\n$/.test(body);
+    const mapUri = (uri: string) => {
+      if (!uri || /^https?:\/\//i.test(uri) || /^data:/i.test(uri)) return uri;
+      const signedRel = signPlaylistUri(playlistRelPath, uri, exp, key);
+      const qIdx = signedRel.indexOf('?');
+      const pathOnly = (qIdx >= 0 ? signedRel.slice(0, qIdx) : signedRel).replace(/^\/+/, '');
+      const query = qIdx >= 0 ? signedRel.slice(qIdx) : '';
+      // /api/v1/media paths need encoded segments; CDN paths stay raw path
+      if (base.startsWith('/')) {
+        const encoded = pathOnly.split('/').map(encodeURIComponent).join('/');
+        return `${base}/${encoded}${query}`;
+      }
+      return `${base}/${pathOnly}${query}`;
+    };
+    const lines = body.split(/\r?\n/);
+    const out = lines.map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return line;
+      if (trimmed.startsWith('#')) {
+        return line.replace(/URI="([^"]+)"/gi, (_m, uri: string) => `URI="${mapUri(uri)}"`);
+      }
+      return mapUri(trimmed);
+    });
+    const joined = out.join('\n');
+    return endsWithNl ? `${joined}\n` : joined;
+  }
+
+  private async loadTextSource(raw: string, cdnBase: string): Promise<string> {
+    if (!/^https?:\/\//.test(raw)) {
+      const abs = this.resolveLocalFile(raw);
+      if (!abs) throw new BizException(BizCode.NOT_FOUND, 'preview.sourceMissing');
+      return fs.readFileSync(abs, 'utf8');
+    }
+    if (cdnBase && raw.startsWith(cdnBase) && this.r2.hasCredentials()) {
+      try {
+        const u = new URL(raw);
+        const objectKey = decodeURIComponent(u.pathname.replace(/^\/+/, ''));
+        const obj = await this.r2.getMediaObject(objectKey);
+        const chunks: Buffer[] = [];
+        for await (const c of obj.body) {
+          chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c));
+        }
+        return Buffer.concat(chunks).toString('utf8');
+      } catch {
+        /* fetch fallback */
+      }
+    }
+    const res = await fetch(raw, { headers: { 'User-Agent': 'VelvetPreview/1.0' } });
+    if (!res.ok) throw new BizException(BizCode.NOT_FOUND, 'preview.sourceUnavailable');
+    return await res.text();
+  }
+
+  private resolveLocalFile(raw: string): string | null {
+    const normalized = path.normalize(raw.replace(/^\/+/, '')).replace(/^(\.\.(\/|\\|$))+/, '');
+    const roots: string[] = [];
+    const storage =
+      this.config.get<string>('STORAGE_ROOT') || path.join(process.cwd(), 'storage');
+    if (storage) roots.push(path.resolve(storage));
+    const media = this.config.get<string>('MEDIA_ROOT');
+    if (media) roots.push(path.resolve(media));
+    const importRoot = this.config.get<string>('ADMIN_IMPORT_ROOT');
+    if (importRoot) roots.push(path.resolve(importRoot));
+    for (const root of [...new Set(roots)]) {
+      const candidate = path.join(root, normalized);
+      if (candidate !== root && !candidate.startsWith(root + path.sep)) continue;
+      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+    }
+    return null;
+  }
+
+  private guessMime(name: string): string {
+    const ext = path.extname(name).toLowerCase();
+    const map: Record<string, string> = {
+      '.mp4': 'video/mp4',
+      '.webm': 'video/webm',
+      '.mov': 'video/quicktime',
+      '.m3u8': 'application/vnd.apple.mpegurl',
+      '.ts': 'video/mp2t',
+    };
+    return map[ext] || 'application/octet-stream';
   }
 
   private async refreshExternalUrlIfNeeded(episode: {

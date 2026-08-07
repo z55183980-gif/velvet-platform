@@ -4,8 +4,10 @@ import { json, urlencoded } from 'express';
 import { AppModule } from './app.module';
 import { BigIntInterceptor } from './common/bigint.interceptor';
 import { AllExceptionsFilter } from './common/all-exceptions.filter';
+import { assertProductionSecrets } from './common/security-config';
 
 async function bootstrap() {
+  assertProductionSecrets();
   const app = await NestFactory.create(AppModule);
   // Behind Cloudflare / nginx so req.ip uses X-Forwarded-For
   app.getHttpAdapter().getInstance().set('trust proxy', 1);

@@ -4,10 +4,12 @@ import {
   Get,
   Param,
   Post,
+  Query,
   Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
-import { Request } from 'express';
+import { Request, Response } from 'express';
 import { AuthGuard } from '../auth/auth.guard';
 import { AuthService } from '../auth/auth.service';
 import { SessionService } from '../auth/session.service';
@@ -42,6 +44,18 @@ export class EpisodesController {
     return ok(await this.episodes.getPlayUrl(BigInt(id), userId));
   }
 
+  /** 付费预览切片/字节裁剪网关（不返回完整片源） */
+  @Get('episodes/:id/preview')
+  async preview(
+    @Param('id') id: string,
+    @Query('sig') sig: string | undefined,
+    @Query('exp') exp: string | undefined,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    await this.episodes.streamPreview(BigInt(id), sig, exp, req, res);
+  }
+
   @Post('episodes/:id/progress')
   @UseGuards(AuthGuard)
   async progress(
@@ -67,6 +81,11 @@ export class EpisodesController {
       if (!payload) return undefined;
       const sess = await this.prisma.session.findUnique({ where: { id: payload.sessionId } });
       if (!sess || sess.expiresAt < new Date()) return undefined;
+      const user = await this.prisma.user.findUnique({
+        where: { id: BigInt(payload.userId) },
+        select: { status: true },
+      });
+      if (!user || user.status === 'BANNED' || user.status === 'SUSPENDED') return undefined;
       return BigInt(payload.userId);
     } catch {
       return undefined;

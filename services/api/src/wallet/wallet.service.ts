@@ -7,6 +7,7 @@ import { PackagesService } from '../packages/packages.service';
 import { VipPlansService } from '../vip/vip-plans.service';
 import { StructuredLogger } from '../common/structured-logger.service';
 import { LockAccessService } from '../common/lock-access.service';
+import { PlatformSettingsService } from '../common/platform-settings.service';
 import { createStripeCheckoutSession } from '../payments/stripe-checkout';
 
 const WALLET_RETRY = 3;
@@ -25,7 +26,12 @@ export class WalletService {
     private readonly vipPlans: VipPlansService,
     private readonly log: StructuredLogger,
     private readonly lockAccess: LockAccessService,
+    private readonly platformSettings: PlatformSettingsService,
   ) {}
+
+  private async defaultRevenueShare() {
+    return new Prisma.Decimal(await this.platformSettings.getRevenueShareDefault());
+  }
 
   // ============ 查询 ============
   async getBalance(userId: bigint) {
@@ -90,10 +96,15 @@ export class WalletService {
     if (existing) return this.orderView(existing);
 
     const amountVnd = usdToCents(payAmount);
-    const method = (dto.paymentMethod || 'STRIPE') as any;
-
+    const requested = String(dto.paymentMethod || 'STRIPE').toUpperCase();
+    const method = (
+      process.env.NODE_ENV === 'production' ? 'STRIPE' : requested || 'STRIPE'
+    ) as any;
     if (method === 'ALIPAY') {
       throw new BizException(BizCode.BAD_REQUEST, 'Alipay is not supported for USD payments');
+    }
+    if (process.env.NODE_ENV === 'production' && requested && requested !== 'STRIPE') {
+      throw new BizException(BizCode.BAD_REQUEST, 'Only STRIPE is supported');
     }
 
     await this.ensureWallet(userId);
@@ -168,10 +179,15 @@ export class WalletService {
     if (existing) return this.orderView(existing);
 
     const amountVnd = usdToCents(payAmount);
-    const method = (dto.paymentMethod || 'STRIPE') as any;
-
+    const requested = String(dto.paymentMethod || 'STRIPE').toUpperCase();
+    const method = (
+      process.env.NODE_ENV === 'production' ? 'STRIPE' : requested || 'STRIPE'
+    ) as any;
     if (method === 'ALIPAY') {
       throw new BizException(BizCode.BAD_REQUEST, 'Alipay is not supported for USD payments');
+    }
+    if (process.env.NODE_ENV === 'production' && requested && requested !== 'STRIPE') {
+      throw new BizException(BizCode.BAD_REQUEST, 'Only STRIPE is supported');
     }
 
     const order = await this.prisma.order.create({
@@ -266,8 +282,9 @@ export class WalletService {
         let order = await tx.order.findUnique({ where: { idempotencyKey: idem } });
         if (!order) {
           const creator = await tx.creator.findUnique({ where: { id: drama.creatorId } });
-          const share = creator?.revenueShare ?? new Prisma.Decimal(0.7);
-          // 用积分×参考：amountVnd 存 0（积分计价）；创作者分润按 0 或后续扩展
+          const share = creator?.revenueShare ?? (await this.defaultRevenueShare());
+          const creatorIncome = toBigInt(Math.floor(Number(buyout) * Number(share)));
+          const platformFee = buyout - creatorIncome;
           order = await tx.order.create({
             data: {
               orderNo: genOrderNo('DB'),
@@ -276,10 +293,10 @@ export class WalletService {
               creatorId: drama.creatorId,
               orderType: 'DRAMA_BUYOUT',
               dramaId,
-              amountVnd: 0n,
+              amountVnd: buyout,
               amountCredits: buyout,
-              creatorIncomeVnd: 0n,
-              platformFeeVnd: 0n,
+              creatorIncomeVnd: creatorIncome,
+              platformFeeVnd: platformFee,
               payCurrency: 'CREDITS',
               payAmount: new Prisma.Decimal(buyout.toString()),
               fxRate: new Prisma.Decimal(1),
@@ -328,6 +345,9 @@ export class WalletService {
           where: { id: dramaId },
           data: { unlockCount: { increment: 1 } },
         });
+        if (order.creatorIncomeVnd > 0n) {
+          await this.creditCreator(tx, drama.creatorId, order.creatorIncomeVnd);
+        }
 
         return {
           unlocked: true,
@@ -571,9 +591,15 @@ export class WalletService {
         if (order.paymentStatus === 'PAID') {
           return { alreadyPaid: true, orderNo: order.orderNo, status: order.paymentStatus };
         }
+        if (order.paymentStatus !== 'PENDING') {
+          throw new BizException(
+            BizCode.CONFLICT,
+            `order.statusNotPayable:${order.paymentStatus}`,
+          );
+        }
 
-        await tx.order.update({
-          where: { id: order.id },
+        const claimed = await tx.order.updateMany({
+          where: { id: order.id, paymentStatus: 'PENDING' },
           data: {
             paymentStatus: 'PAID',
             externalRef: opts?.externalRef,
@@ -583,6 +609,16 @@ export class WalletService {
             fxSource: order.fxSource || 'webhook',
           },
         });
+        if (claimed.count !== 1) {
+          const again = await tx.order.findUnique({ where: { id: order.id } });
+          if (again?.paymentStatus === 'PAID') {
+            return { alreadyPaid: true, orderNo: order.orderNo, status: 'PAID' as const };
+          }
+          throw new BizException(
+            BizCode.CONFLICT,
+            `order.statusNotPayable:${again?.paymentStatus || 'unknown'}`,
+          );
+        }
 
         if (order.orderType === 'TOPUP') {
           await this.creditTopup(tx, order);
@@ -613,7 +649,12 @@ export class WalletService {
   }
 
   // ============ 退款（原路退回积分 + 回滚收益/计数）============
-  async refundOrder(orderNo: string, userId: bigint, reason?: string) {
+  async refundOrder(
+    orderNo: string,
+    userId: bigint,
+    reason?: string,
+    opts?: { skipWindow?: boolean },
+  ) {
     const order = await this.prisma.order.findUnique({ where: { orderNo } });
     if (!order) throw new BizException(BizCode.NOT_FOUND, 'order.notFound');
     if (order.userId !== userId) {
@@ -637,6 +678,12 @@ export class WalletService {
     if (order.paymentStatus !== 'PAID') {
       throw new BizException(BizCode.ORDER_NOT_PAID, 'order.unpaidCannotCompleteRefund');
     }
+    const paidAt = order.paidAt ? new Date(order.paidAt).getTime() : 0;
+    const REFUND_WINDOW_MS = 2 * 60 * 60 * 1000;
+    const skipWindow = !!opts?.skipWindow || String(reason || '').startsWith('admin-');
+    if (!skipWindow && (!paidAt || Date.now() - paidAt > REFUND_WINDOW_MS)) {
+      throw new BizException(BizCode.FORBIDDEN, 'wallet.refundWindowExpired');
+    }
 
     const t0 = Date.now();
     const result = await this.prisma.$transaction(async (tx) => {
@@ -649,6 +696,7 @@ export class WalletService {
         return { refunded: true, alreadyRefunded: true, orderNo };
       }
 
+      let credited = false;
       for (let attempt = 0; attempt < WALLET_RETRY; attempt++) {
         const wallet = await tx.wallet.findUnique({ where: { userId } });
         if (!wallet) break;
@@ -672,21 +720,28 @@ export class WalletService {
               remark: reason || 'Hoàn tiền',
             },
           });
+          credited = true;
           break;
         }
       }
+      if (!credited) {
+        throw new BizException(BizCode.CONFLICT, 'Hoàn tiền thất bại, vui lòng thử lại');
+      }
 
       if (order.orderType === 'EPISODE_UNLOCK' && order.creatorId) {
-        if (order.earningSettled) {
-          await tx.creatorEarning.updateMany({
-            where: { creatorId: order.creatorId },
-            data: { availableVnd: { decrement: order.creatorIncomeVnd } },
-          });
-        } else {
-          await tx.creatorEarning.updateMany({
-            where: { creatorId: order.creatorId },
-            data: { pendingVnd: { decrement: order.creatorIncomeVnd } },
-          });
+        const income = order.creatorIncomeVnd;
+        if (income > 0n) {
+          if (order.earningSettled) {
+            await tx.creatorEarning.updateMany({
+              where: { creatorId: order.creatorId, availableVnd: { gte: income } },
+              data: { availableVnd: { decrement: income } },
+            });
+          } else {
+            await tx.creatorEarning.updateMany({
+              where: { creatorId: order.creatorId, pendingVnd: { gte: income } },
+              data: { pendingVnd: { decrement: income } },
+            });
+          }
         }
         await tx.userUnlock.deleteMany({ where: { userId, episodeId: order.episodeId! } });
         if (order.episodeId) {
@@ -743,12 +798,10 @@ export class WalletService {
 
       for (let attempt = 0; attempt < WALLET_RETRY; attempt++) {
         const w = await tx.wallet.findUnique({ where: { userId: order.userId } });
-        if (!w || w.balanceCredits < credits) {
-          throw new BizException(
-            BizCode.CONFLICT,
-            'Số dư credits không đủ để hoàn (người dùng đã tiêu hết)',
-          );
+        if (!w) {
+          throw new BizException(BizCode.NOT_FOUND, 'wallet.notFound');
         }
+        // Allow negative balance (debt) so channel-side refunds can always settle locally.
         const newBalance = w.balanceCredits - credits;
         const res = await tx.wallet.updateMany({
           where: { userId: order.userId, version: w.version },
@@ -766,7 +819,9 @@ export class WalletService {
               amountCredits: -credits,
               orderId: order.id,
               balanceAfter: newBalance,
-              remark: reason || 'Hoàn nạp (admin)',
+              remark:
+                (reason || 'Hoàn nạp') +
+                (newBalance < 0n ? ' (debt/negative balance)' : ''),
             },
           });
           break;
@@ -804,8 +859,14 @@ export class WalletService {
     if (existing && existing.paymentStatus !== 'REFUNDED') return existing;
 
     const creator = await tx.creator.findUnique({ where: { id: episode.drama.creatorId } });
-    const share = creator?.revenueShare ?? new Prisma.Decimal(0.7);
-    const price = episode.priceVnd;
+    const share = creator?.revenueShare ?? (await this.defaultRevenueShare());
+    // Ledger unit follows charged credits (priceVnd is legacy alias; sync when zero).
+    const price =
+      episode.priceCredits > 0n
+        ? episode.priceCredits
+        : episode.priceVnd > 0n
+          ? episode.priceVnd
+          : 0n;
     const creatorIncome = toBigInt(Math.floor(Number(price) * Number(share)));
     const platformFee = price - creatorIncome;
 
@@ -819,10 +880,10 @@ export class WalletService {
         episodeId: episode.id,
         dramaId: episode.dramaId,
         amountVnd: price,
-        amountCredits: episode.priceCredits,
+        amountCredits: episode.priceCredits > 0n ? episode.priceCredits : price,
         creatorIncomeVnd: creatorIncome,
         platformFeeVnd: platformFee,
-        payCurrency: 'VND',
+        payCurrency: 'CREDITS',
         payAmount: new Prisma.Decimal(price.toString()),
         fxRate: new Prisma.Decimal(1),
         fxSource: 'wallet',
@@ -840,6 +901,12 @@ export class WalletService {
     type: 'TOPUP' | 'UNLOCK' | 'REFUND',
     remark: string,
   ): Promise<boolean> {
+    const already = await tx.walletTransaction.findFirst({
+      where: { orderId, type },
+      select: { id: true },
+    });
+    if (already) return true;
+
     for (let attempt = 0; attempt < WALLET_RETRY; attempt++) {
       const wallet = await tx.wallet.findUnique({ where: { userId } });
       if (!wallet || wallet.balanceCredits < amount) return false;
@@ -867,13 +934,75 @@ export class WalletService {
           return true;
         } catch (e: any) {
           if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-            return true; // 同订单同类型已入账
+            // Concurrent loser debited after peer already wrote ledger — compensate.
+            await tx.wallet.update({
+              where: { userId },
+              data: {
+                balanceCredits: { increment: amount },
+                totalSpentCredits: { decrement: amount },
+                version: { increment: 1 },
+              },
+            });
+            return true;
           }
           throw e;
         }
       }
     }
     return false;
+  }
+
+  /**
+   * Stripe charge.refunded / refund.updated：回收 TOPUP 积分或缩短 VIP。
+   * 幂等：已 REFUNDED 直接返回。
+   */
+  async revokeOnProviderRefund(orderNo: string, reason?: string) {
+    const order = await this.prisma.order.findUnique({ where: { orderNo } });
+    if (!order) throw new BizException(BizCode.NOT_FOUND, 'order.notFound');
+    if (order.paymentStatus === 'REFUNDED') {
+      return { refunded: true, alreadyRefunded: true, orderNo };
+    }
+    if (order.paymentStatus !== 'PAID') {
+      throw new BizException(BizCode.ORDER_NOT_PAID, 'order.unpaidCannotCompleteRefund');
+    }
+    if (order.orderType === 'TOPUP') {
+      return this.refundTopupByAdmin(orderNo, reason || 'Stripe refund');
+    }
+    if (order.orderType === 'VIP_SUB') {
+      return this.prisma.$transaction(async (tx) => {
+        const claimed = await tx.order.updateMany({
+          where: { id: order.id, paymentStatus: 'PAID' },
+          data: { paymentStatus: 'REFUNDED', refundedAt: new Date() },
+        });
+        if (claimed.count !== 1) {
+          return { refunded: true, alreadyRefunded: true, orderNo };
+        }
+        let durationDays = 0;
+        if (order.vipPlanId) {
+          const plan = await tx.vipPlan.findUnique({ where: { id: order.vipPlanId } });
+          durationDays = plan?.durationDays ?? 0;
+        }
+        if (!durationDays && order.meta && typeof order.meta === 'object') {
+          durationDays = Number((order.meta as any).durationDays) || 0;
+        }
+        if (durationDays > 0) {
+          const user = await tx.user.findUnique({
+            where: { id: order.userId },
+            select: { vipExpireAt: true },
+          });
+          if (user?.vipExpireAt) {
+            const next = new Date(user.vipExpireAt.getTime() - durationDays * 86400000);
+            const floor = new Date();
+            await tx.user.update({
+              where: { id: order.userId },
+              data: { vipExpireAt: next > floor ? next : floor },
+            });
+          }
+        }
+        return { refunded: true, alreadyRefunded: false, orderNo };
+      });
+    }
+    throw new BizException(BizCode.FORBIDDEN, 'order.typeNoRefund');
   }
 
   private async activateVip(tx: Prisma.TransactionClient, order: any) {

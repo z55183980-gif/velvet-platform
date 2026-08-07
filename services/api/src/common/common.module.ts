@@ -3,6 +3,8 @@ import { AuditService } from './audit.service';
 import { StructuredLogger } from './structured-logger.service';
 import { LockAccessService } from './lock-access.service';
 import { ContentReadinessService } from './content-readiness.service';
+import { PlatformSettingsService } from './platform-settings.service';
+import { ServerMetricsService } from './server-metrics.service';
 
 /**
  * 跨模块共享的服务（审计、结构化日志、限流等）
@@ -10,7 +12,21 @@ import { ContentReadinessService } from './content-readiness.service';
  */
 @Global()
 @Module({
-  providers: [AuditService, StructuredLogger, LockAccessService, ContentReadinessService],
-  exports: [AuditService, StructuredLogger, LockAccessService, ContentReadinessService],
+  providers: [
+    AuditService,
+    StructuredLogger,
+    LockAccessService,
+    ContentReadinessService,
+    PlatformSettingsService,
+    ServerMetricsService,
+  ],
+  exports: [
+    AuditService,
+    StructuredLogger,
+    LockAccessService,
+    ContentReadinessService,
+    PlatformSettingsService,
+    ServerMetricsService,
+  ],
 })
 export class CommonModule {}

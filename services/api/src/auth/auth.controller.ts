@@ -9,6 +9,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { SkipThrottle, Throttle } from '@nestjs/throttler';
+import { SKIP_ALL_THROTTLES } from '../common/throttler-config';
 import { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { AuthGuard } from './auth.guard';
@@ -166,14 +167,14 @@ export class AuthController {
    * 内测：password 登录/注册；forgot 走邮箱重置码。
    * 公测预留：emailOtp / phoneOtp。
    */
-  @SkipThrottle()
+  @SkipThrottle(SKIP_ALL_THROTTLES)
   @Get('channels')
   authChannels() {
     return ok(this.auth.getAuthChannels());
   }
 
   /** Web 登录/注册图形验证码（对齐管理端 SVG captcha） */
-  @SkipThrottle()
+  @SkipThrottle(SKIP_ALL_THROTTLES)
   @Get('captcha')
   captchaChallenge() {
     return ok(this.captcha.issue('web'));
@@ -295,10 +296,7 @@ export class AuthController {
   /**
    * 发送手机 OTP：1 分钟 1 次 + 1 小时 10 次
    */
-  @Throttle({
-    otp: { limit: 1, ttl: 60_000 },
-    'otp-hour': { limit: 10, ttl: 3_600_000 },
-  })
+  @Throttle({ global: { limit: 1, ttl: 60_000 } })
   @Post('phone-number/send-otp')
   async sendOtp(@Body() body: any, @Req() req: Request) {
     const phone = String(body?.phone || body?.phoneNumber || '').trim();
@@ -323,10 +321,7 @@ export class AuthController {
 
   // —— 公测预留：邮箱 OTP（登录/注册激活）；找回密码内测已启用 ——
   @Post('email/send-otp')
-  @Throttle({
-    otp: { limit: 1, ttl: 60_000 },
-    'otp-hour': { limit: 10, ttl: 3_600_000 },
-  })
+  @Throttle({ global: { limit: 1, ttl: 60_000 } })
   async sendEmailOtp(@Body() dto: SendEmailOtpDto, @Req() req: Request) {
     const purpose = dto.purpose || 'login';
     const r = await this.auth.sendEmailOtp(dto.email, purpose);
@@ -348,6 +343,7 @@ export class AuthController {
   }
 
   /** 内测：邮箱 + 账号 + 密码（无需验证码）。公测可传 code 做邮箱激活。 */
+  @Throttle({ global: { limit: 10, ttl: 60_000 } })
   @Post('email/register')
   async registerEmail(
     @Body() dto: RegisterEmailDto,
@@ -361,6 +357,7 @@ export class AuthController {
   }
 
   /** 内测：账号或邮箱 + 密码登录 */
+  @Throttle({ global: { limit: 10, ttl: 60_000 } })
   @Post('email/login')
   async loginPassword(
     @Body() dto: LoginPasswordDto,
@@ -375,10 +372,7 @@ export class AuthController {
   }
 
   @Post('email/forgot')
-  @Throttle({
-    otp: { limit: 1, ttl: 60_000 },
-    'otp-hour': { limit: 10, ttl: 3_600_000 },
-  })
+  @Throttle({ global: { limit: 1, ttl: 60_000 } })
   async forgotPassword(@Body() dto: ForgotPasswordDto, @Req() req: Request) {
     const r = await this.auth.forgotPassword(dto.email);
     return ok(

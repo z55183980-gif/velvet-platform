@@ -45,6 +45,7 @@ export type AuthUser = {
   hasPassword?: boolean;
   isVip?: boolean;
   vipExpireAt?: string | null;
+  isCreator?: boolean;
 };
 
 interface AuthValue {
@@ -116,6 +117,7 @@ function toUser(s: any, fallback?: string): AuthUser {
     hasPassword: !!s?.hasPassword,
     isVip: !!s?.isVip,
     vipExpireAt: s?.vipExpireAt ?? null,
+    isCreator: !!s?.isCreator,
   };
 }
 
@@ -133,7 +135,8 @@ function usersEqual(a: AuthUser | null, b: AuthUser | null): boolean {
     a.label === b.label &&
     a.hasPassword === b.hasPassword &&
     a.isVip === b.isVip &&
-    a.vipExpireAt === b.vipExpireAt
+    a.vipExpireAt === b.vipExpireAt &&
+    a.isCreator === b.isCreator
   );
 }
 
@@ -233,6 +236,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (s && (s.phone || s.email || s.username || s.id)) {
           setUser((prev) => nextUser(prev, s));
           void refreshWallet();
+        } else {
+          setUser(null);
         }
       });
     };

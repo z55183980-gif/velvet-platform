@@ -207,6 +207,45 @@ function mapEpisode(e: any): Episode {
   };
 }
 
+export type SiteConfig = {
+  siteName: string;
+  supportEmail: string;
+  supportUrl: string;
+  termsUrl: string;
+  privacyUrl: string;
+  maintenanceMode: boolean;
+  maintenanceMessage: string;
+  minWithdrawVnd: number;
+};
+
+export async function loadSiteConfig(opts?: { signal?: AbortSignal }): Promise<SiteConfig> {
+  try {
+    const data = await request<Partial<SiteConfig>>("/site-config", { signal: opts?.signal });
+    return {
+      siteName: String(data.siteName || "Velvet"),
+      supportEmail: String(data.supportEmail || "support@velvetmovie.space"),
+      supportUrl: String(data.supportUrl || ""),
+      termsUrl: String(data.termsUrl || "/terms"),
+      privacyUrl: String(data.privacyUrl || "/privacy"),
+      maintenanceMode: Boolean(data.maintenanceMode),
+      maintenanceMessage: String(data.maintenanceMessage || ""),
+      minWithdrawVnd: Math.max(0, Math.floor(Number(data.minWithdrawVnd) || 100000)),
+    };
+  } catch (err) {
+    if (isAbortError(err)) throw err;
+    return {
+      siteName: "Velvet",
+      supportEmail: "support@velvetmovie.space",
+      supportUrl: "",
+      termsUrl: "/terms",
+      privacyUrl: "/privacy",
+      maintenanceMode: false,
+      maintenanceMessage: "",
+      minWithdrawVnd: 100000,
+    };
+  }
+}
+
 // ---- 对外数据加载（dev 下 mock 兜底；production 永不暴露假目录）----
 export async function loadCategories(opts?: { signal?: AbortSignal }): Promise<Category[]> {
   return cachedGet(
@@ -562,6 +601,10 @@ export async function getSession(): Promise<{
   locale: string;
   id?: string;
   hasPassword?: boolean;
+  isCreator?: boolean;
+  isVip?: boolean;
+  vipExpireAt?: string | null;
+  avatarUrl?: string | null;
 } | null> {
   try {
     return await request("/auth/session");
@@ -834,6 +877,23 @@ export async function getPlayUrl(episodeId: string | number, opts?: { signal?: A
 // ---- 创作者中心 ----
 export async function creatorDashboard() {
   return request<any>("/creator/dashboard");
+}
+export async function creatorActivate() {
+  return request<{
+    id: string;
+    displayName: string;
+    isCreator: boolean;
+    kycStatus: string;
+    status: string;
+  }>("/creator/activate", { method: "POST" });
+}
+export async function creatorStatus() {
+  return request<{
+    isCreator: boolean;
+    status: string | null;
+    kycStatus: string | null;
+    displayName: string | null;
+  }>("/creator/status");
 }
 export async function creatorDramas() {
   return request<any[]>("/creator/dramas");

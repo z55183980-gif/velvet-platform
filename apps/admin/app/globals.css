@@ -2492,6 +2492,12 @@
     max-width: 38rem;
   }
 
+  @media (max-width: 720px) {
+    .policy-mode-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
   .policy-mode-card {
     display: flex;
     align-items: flex-start;

@@ -19,6 +19,7 @@ import { convertExternalPlayUrl, inferExternalUrlExpiry, manualExternalRef, manu
 import { AuditService } from '../common/audit.service';
 import { UploadService } from '../upload/upload.service';
 import { ContentReadinessService } from '../common/content-readiness.service';
+import { PlatformSettingsService } from '../common/platform-settings.service';
 import { mergeDramaSourceTags } from '../dramas/drama-tags';
 
 export interface LocalImportOptions {
@@ -97,7 +98,7 @@ export interface CreateLocalUploadDramaInput {
 @Injectable()
 export class AdminService {
   private readonly logger = new Logger(AdminService.name);
-  private readonly pitRate: number;
+  private readonly pitRateEnvFallback: number;
   private readonly defaultImportRoot: string;
   constructor(
     private readonly prisma: PrismaService,
@@ -106,8 +107,9 @@ export class AdminService {
     private readonly audit: AuditService,
     private readonly upload: UploadService,
     private readonly readiness: ContentReadinessService,
+    private readonly platformSettings: PlatformSettingsService,
   ) {
-    this.pitRate = Number(config.get('PIT_RATE') || 0.05);
+    this.pitRateEnvFallback = Number(config.get('PIT_RATE') || 0.05);
     this.defaultImportRoot =
       config.get<string>('ADMIN_IMPORT_ROOT') ||
       config.get<string>('MEDIA_ROOT') ||
@@ -186,7 +188,12 @@ export class AdminService {
     }
     const c = await this.prisma.creator.update({
       where: { id: BigInt(creatorId) },
-      data: { kycStatus: 'APPROVED', kycRejectReason: null },
+      data: {
+        kycStatus: 'APPROVED',
+        kycRejectReason: null,
+        faceVerified: true,
+        bankVerified: true,
+      },
     });
     await this.audit.write({
       actorId,
@@ -198,8 +205,8 @@ export class AdminService {
     await this.notifyCreator(c.userId, 'kyc.approved', {
       titleEn: 'KYC approved',
       titleZh: 'KYC 已通过',
-      bodyEn: 'You can create and publish dramas now.',
-      bodyZh: '您现在可以创建并发布短剧了。',
+      bodyEn: 'Identity verified. You can request withdrawals when earnings are available.',
+      bodyZh: '身份已通过审核，收益可用时可申请提现。',
     });
     return { creatorId: c.id.toString(), kycStatus: c.kycStatus };
   }
@@ -290,20 +297,23 @@ export class AdminService {
     if (req.status !== 'PENDING') {
       throw new BizException(BizCode.CONFLICT, 'request.alreadyProcessed');
     }
-    const pitVnd = toBigInt(Math.floor(Number(req.amountVnd) * this.pitRate));
+    const pitRate = await this.platformSettings.getPitRate(this.pitRateEnvFallback);
+    const pitVnd = toBigInt(Math.floor(Number(req.amountVnd) * pitRate));
     const netVnd = req.amountVnd - pitVnd;
 
     const result = await this.prisma.$transaction(async (tx) => {
-      // 申请时已从 availableVnd 冻结；审核通过只记 withdrawn
-      const updated = await tx.withdrawRequest.update({
-        where: { id: req.id },
-        data: { status: 'PAID', paidAt: new Date(), pitRate: this.pitRate, pitVnd, netVnd },
+      const claimed = await tx.withdrawRequest.updateMany({
+        where: { id: req.id, status: 'PENDING' },
+        data: { status: 'PAID', paidAt: new Date(), pitRate, pitVnd, netVnd },
       });
+      if (claimed.count !== 1) {
+        throw new BizException(BizCode.CONFLICT, 'request.alreadyProcessed');
+      }
       await tx.creatorEarning.update({
         where: { creatorId: req.creatorId },
         data: { withdrawnVnd: { increment: req.amountVnd } },
       });
-      return updated;
+      return tx.withdrawRequest.findUniqueOrThrow({ where: { id: req.id } });
     });
     await this.audit.write({
       actorId,
@@ -334,16 +344,18 @@ export class AdminService {
       throw new BizException(BizCode.CONFLICT, 'request.alreadyProcessed');
     }
     const result = await this.prisma.$transaction(async (tx) => {
-      const updated = await tx.withdrawRequest.update({
-        where: { id: req.id },
+      const claimed = await tx.withdrawRequest.updateMany({
+        where: { id: req.id, status: 'PENDING' },
         data: { status: 'REJECTED', rejectReason: String(reason).trim() },
       });
-      // 归还申请时冻结的 available
+      if (claimed.count !== 1) {
+        throw new BizException(BizCode.CONFLICT, 'request.alreadyProcessed');
+      }
       await tx.creatorEarning.update({
         where: { creatorId: req.creatorId },
         data: { availableVnd: { increment: req.amountVnd } },
       });
-      return updated;
+      return tx.withdrawRequest.findUniqueOrThrow({ where: { id: req.id } });
     });
     await this.audit.write({
       actorId,
@@ -760,7 +772,7 @@ export class AdminService {
           userId: u.id,
           creatorType: 'INDIVIDUAL',
           displayName: 'Sample Studio',
-          revenueShare: 0.7,
+          revenueShare: await this.platformSettings.getRevenueShareDefault(),
           kycStatus: 'APPROVED',
         },
       });
@@ -1369,7 +1381,7 @@ export class AdminService {
           userId: u.id,
           creatorType: 'INDIVIDUAL',
           displayName: 'Sample Studio',
-          revenueShare: 0.7,
+          revenueShare: await this.platformSettings.getRevenueShareDefault(),
           kycStatus: 'APPROVED',
         },
       });
@@ -1519,7 +1531,7 @@ export class AdminService {
           userId: u.id,
           creatorType: 'INDIVIDUAL',
           displayName: 'Sample Studio',
-          revenueShare: 0.7,
+          revenueShare: await this.platformSettings.getRevenueShareDefault(),
           kycStatus: 'APPROVED',
         },
       });

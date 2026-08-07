@@ -164,9 +164,21 @@ export function parseStripeWebhookPayload(payload: any): {
   }
 
   const meta = obj.metadata && typeof obj.metadata === 'object' ? obj.metadata : {};
+  const chargeMeta =
+    obj.charge?.metadata && typeof obj.charge.metadata === 'object'
+      ? obj.charge.metadata
+      : {};
+  const piMeta =
+    obj.payment_intent?.metadata && typeof obj.payment_intent.metadata === 'object'
+      ? obj.payment_intent.metadata
+      : {};
   const orderNo =
     meta.orderNo ||
     meta.order_no ||
+    chargeMeta.orderNo ||
+    chargeMeta.order_no ||
+    piMeta.orderNo ||
+    piMeta.order_no ||
     obj.client_reference_id ||
     meta.orderId ||
     null;
@@ -176,7 +188,11 @@ export function parseStripeWebhookPayload(payload: any): {
     eventType,
     orderNo: orderNo ? String(orderNo) : null,
     externalRef: obj.payment_intent
-      ? String(obj.payment_intent)
+      ? String(
+          typeof obj.payment_intent === 'object'
+            ? obj.payment_intent.id || obj.payment_intent
+            : obj.payment_intent,
+        )
       : obj.id
         ? String(obj.id)
         : undefined,

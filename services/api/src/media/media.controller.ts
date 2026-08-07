@@ -5,6 +5,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { ConfigService } from '@nestjs/config';
 import { rewriteSignedPlaylist, verifyMediaSig } from '../common/media-sign.util';
+import { requireSecret } from '../common/security-config';
+import { SKIP_ALL_THROTTLES } from '../common/throttler-config';
 
 const MIME: Record<string, string> = {
   '.mp4': 'video/mp4',
@@ -61,7 +63,7 @@ const VIDEO_EXTS = new Set([
  * 视频类资源必须带短时签名 ?sig=&exp=；封面图可公开。
  */
 @Controller('v1/media')
-@SkipThrottle()
+@SkipThrottle(SKIP_ALL_THROTTLES)
 export class MediaController {
   constructor(private readonly config: ConfigService) {}
 
@@ -110,21 +112,30 @@ export class MediaController {
     if (!abs || !matchedRoot) throw new NotFoundException('not found');
 
     const ext = path.extname(abs).toLowerCase();
-    if (VIDEO_EXTS.has(ext)) {
-      const key = this.config.get<string>('CDN_SIGN_KEY') || 'dev';
-      if (!verifyMediaSig(normalized.replace(/\\/g, '/'), exp, sig, key)) {
+    const posixRel = normalized.replace(/\\/g, '/');
+    const isPrivateDoc =
+      posixRel === 'docs' || posixRel.startsWith('docs/');
+    const needsSig = VIDEO_EXTS.has(ext) || isPrivateDoc;
+    const key = requireSecret(
+      'CDN_SIGN_KEY',
+      this.config.get<string>('CDN_SIGN_KEY'),
+      'dev',
+    );
+    if (needsSig) {
+      if (!verifyMediaSig(posixRel, exp, sig, key)) {
         throw new ForbiddenException('invalid or expired media signature');
       }
     }
 
     const mime = MIME[ext] || 'application/octet-stream';
-    const posixRel = normalized.replace(/\\/g, '/');
     res.setHeader('Content-Type', mime);
-    res.setHeader('Cache-Control', VIDEO_EXTS.has(ext) ? 'private, max-age=60' : 'public, max-age=3600');
+    res.setHeader(
+      'Cache-Control',
+      needsSig ? 'private, max-age=60' : 'public, max-age=3600',
+    );
 
     // HLS 播放列表：相对分片/子清单补 path 绑定签名，否则浏览器二次请求无 sig → 403
     if (ext === '.m3u8') {
-      const key = this.config.get<string>('CDN_SIGN_KEY') || 'dev';
       const expN = typeof exp === 'string' ? parseInt(exp, 10) : Number(exp);
       const raw = fs.readFileSync(abs, 'utf8');
       const rewritten = rewriteSignedPlaylist(raw, posixRel, expN, key);

@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { markInAppNavigation } from "@/lib/nav-history";
 import { Navbar } from "@/components/navbar";
 import { Footer } from "@/components/footer";
+import { MaintenanceBanner } from "@/components/maintenance-banner";
 import { BottomTabBar } from "@/components/mobile/bottom-tab-bar";
 import {
   MobileFeedLockProvider,
@@ -57,6 +58,7 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
           "feed-immersive fixed inset-0 flex h-dvh flex-col overflow-hidden overscroll-none",
       )}
     >
+      <MaintenanceBanner />
       {mobileReady && !isMobile ? (
         <Suspense fallback={<header className="sticky top-0 z-50 h-16 shrink-0 bg-base/70 backdrop-blur-xl" />}>
           <Navbar />
