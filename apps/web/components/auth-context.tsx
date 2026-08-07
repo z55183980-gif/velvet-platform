@@ -189,6 +189,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [refreshWallet]);
 
+  // Full-page Google OAuth return (mobile / popup-blocked fallback)
+  useEffect(() => {
+    if (!ready || typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    const googleOk = url.searchParams.get("google") === "ok";
+    const googleError = url.searchParams.get("google_error");
+    if (!googleOk && !googleError) return;
+
+    url.searchParams.delete("google");
+    url.searchParams.delete("google_error");
+    const cleaned = `${url.pathname}${url.search}${url.hash}`;
+    window.history.replaceState({}, "", cleaned || "/");
+
+    if (googleError) {
+      try {
+        sessionStorage.setItem("velvet_google_error", googleError);
+      } catch {
+        /* ignore */
+      }
+      setLoginInitialMode("login");
+      setLoginOpen(true);
+      return;
+    }
+
+    void (async () => {
+      const ok = await applySession();
+      if (ok) {
+        track("login", { method: "google" });
+        setLoginOpen(false);
+      } else {
+        setLoginInitialMode("login");
+        setLoginOpen(true);
+      }
+    })();
+  }, [ready, applySession]);
+
   // 切回前台时用 cookie+token 再校验一次，避免短暂失败被当成未登录
   useEffect(() => {
     if (!ready) return;

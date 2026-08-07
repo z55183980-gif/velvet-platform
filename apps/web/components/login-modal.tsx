@@ -132,6 +132,15 @@ export function LoginModal({
     setMode(initialMode);
     setStep("form");
     setErr(null);
+    try {
+      const ge = sessionStorage.getItem("velvet_google_error");
+      if (ge) {
+        sessionStorage.removeItem("velvet_google_error");
+        setErr(ge);
+      }
+    } catch {
+      /* ignore */
+    }
   }, [initialMode]);
 
   useEffect(() => {
@@ -232,11 +241,33 @@ export function LoginModal({
       setErr(t("login.googleDisabled"));
       return;
     }
+    const returnTo =
+      typeof window !== "undefined"
+        ? `${window.location.pathname}${window.location.search}` || "/"
+        : "/";
+    const preferRedirect =
+      typeof window !== "undefined" &&
+      (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent) ||
+        window.matchMedia("(pointer: coarse)").matches ||
+        window.innerWidth < 768);
+
     setBusy(true);
-    const popup = openCenteredPopup(getGoogleAuthStartUrl(window.location.origin), "velvet-google");
+    if (preferRedirect) {
+      window.location.assign(
+        getGoogleAuthStartUrl(window.location.origin, { mode: "redirect", returnTo }),
+      );
+      return;
+    }
+
+    const popup = openCenteredPopup(
+      getGoogleAuthStartUrl(window.location.origin, { mode: "popup", returnTo }),
+      "velvet-google",
+    );
     if (!popup) {
-      setBusy(false);
-      setErr(t("login.popupBlocked"));
+      // Desktop popup blocked → fall back to same-tab redirect
+      window.location.assign(
+        getGoogleAuthStartUrl(window.location.origin, { mode: "redirect", returnTo }),
+      );
       return;
     }
     const timer = window.setInterval(() => {

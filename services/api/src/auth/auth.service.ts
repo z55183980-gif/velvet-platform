@@ -26,8 +26,12 @@ const USERNAME_RE = /^[a-zA-Z0-9_]{3,24}$/;
 
 const MIN_PASSWORD_LEN = 6;
 
+type GoogleOAuthMode = 'popup' | 'redirect';
+
 type GoogleOAuthState = {
   origin: string;
+  mode: GoogleOAuthMode;
+  returnTo: string;
   expiresAt: number;
 };
 
@@ -119,16 +123,24 @@ export class AuthService {
     return this.defaultWebOrigin;
   }
 
-  /** Build Google authorize URL; `origin` is the opener web origin for postMessage. */
-  beginGoogleOAuth(originHint?: string): string {
+  /** Build Google authorize URL; `origin` is the web origin for postMessage / redirect. */
+  beginGoogleOAuth(
+    originHint?: string,
+    opts?: { mode?: string; returnTo?: string },
+  ): string {
     if (!this.isGoogleEnabled()) {
       throw new BizException(BizCode.BAD_REQUEST, 'auth.googleDisabled');
     }
     const origin = this.resolveOAuthOrigin(originHint);
+    const mode: GoogleOAuthMode =
+      String(opts?.mode || '').trim().toLowerCase() === 'redirect' ? 'redirect' : 'popup';
+    const returnTo = this.sanitizeReturnTo(opts?.returnTo);
     this.purgeExpiredGoogleStates();
     const state = crypto.randomBytes(24).toString('hex');
     this.googleStates.set(state, {
       origin,
+      mode,
+      returnTo,
       expiresAt: Date.now() + 10 * 60 * 1000,
     });
     const params = new URLSearchParams({
@@ -145,39 +157,58 @@ export class AuthService {
 
   /**
    * Exchange code, upsert/bind user, issue session.
-   * Returns login result + opener origin for popup postMessage.
+   * Returns login result + opener origin / redirect mode.
    */
   async finishGoogleOAuth(
     opts: { code?: string; state?: string; error?: string },
     meta?: ClientMeta | null,
-  ): Promise<{ result: LoginResult; origin: string }> {
-    const origin = this.peekGoogleStateOrigin(opts.state) || this.defaultWebOrigin;
+  ): Promise<{
+    result: LoginResult;
+    origin: string;
+    mode: GoogleOAuthMode;
+    returnTo: string;
+  }> {
+    const state = String(opts.state || '').trim();
+    const st = state ? this.googleStates.get(state) : undefined;
+    if (st) this.googleStates.delete(state);
+
+    const origin = st?.origin || this.defaultWebOrigin;
+    const mode = st?.mode || 'popup';
+    const returnTo = st?.returnTo || '/';
+
     if (opts.error) {
       throw new BizException(BizCode.BAD_REQUEST, 'auth.googleExchangeFailed');
     }
     if (!this.isGoogleEnabled()) {
       throw new BizException(BizCode.BAD_REQUEST, 'auth.googleDisabled');
     }
-    const state = String(opts.state || '').trim();
     const code = String(opts.code || '').trim();
-    if (!state || !code) {
-      throw new BizException(BizCode.BAD_REQUEST, 'auth.googleInvalidState');
-    }
-    const st = this.googleStates.get(state);
-    this.googleStates.delete(state);
-    if (!st || st.expiresAt < Date.now()) {
+    if (!state || !code || !st || st.expiresAt < Date.now()) {
       throw new BizException(BizCode.BAD_REQUEST, 'auth.googleInvalidState');
     }
 
     const profile = await this.fetchGoogleProfile(code);
     const user = await this.upsertUserFromGoogle(profile);
     const result = await this.issueSession(user, meta);
-    return { result, origin: st.origin || origin };
+    return {
+      result,
+      origin,
+      mode,
+      returnTo,
+    };
   }
 
-  private peekGoogleStateOrigin(state?: string): string | null {
+  /** Peek OAuth state before consuming (for error HTML / redirects). */
+  peekGoogleState(state?: string): GoogleOAuthState | null {
     const st = this.googleStates.get(String(state || '').trim());
-    return st?.origin || null;
+    return st || null;
+  }
+
+  sanitizeReturnTo(raw?: string): string {
+    const v = String(raw || '').trim() || '/';
+    if (!v.startsWith('/') || v.startsWith('//') || v.includes('\\')) return '/';
+    if (v.length > 512) return '/';
+    return v;
   }
 
   private resolveOAuthOrigin(hint?: string): string {

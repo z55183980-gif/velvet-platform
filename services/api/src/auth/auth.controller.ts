@@ -184,15 +184,26 @@ export class AuthController {
   @Get('google/start')
   googleStart(
     @Query('origin') origin: string | undefined,
+    @Query('mode') mode: string | undefined,
+    @Query('returnTo') returnTo: string | undefined,
     @Req() req: Request,
     @Res() res: Response,
   ) {
     try {
-      const url = this.auth.beginGoogleOAuth(origin);
+      const url = this.auth.beginGoogleOAuth(origin, { mode, returnTo });
       return res.redirect(302, url);
     } catch (e: any) {
       const key =
         e instanceof BizException ? String(e.message) : 'auth.googleDisabled';
+      const isRedirect = String(mode || '').trim().toLowerCase() === 'redirect';
+      if (isRedirect) {
+        const dest = this.auth.sanitizeReturnTo(returnTo);
+        const originSafe = this.auth.getDefaultWebOrigin();
+        return res.redirect(
+          302,
+          `${originSafe}${dest}${dest.includes('?') ? '&' : '?'}google_error=${encodeURIComponent(this.msg(req, key))}`,
+        );
+      }
       return res
         .status(503)
         .type('html')
@@ -206,7 +217,7 @@ export class AuthController {
     }
   }
 
-  /** Google OAuth callback: set cookie + postMessage to opener, then close */
+  /** Google OAuth callback: set cookie + postMessage (popup) or full-page redirect (mobile) */
   @Throttle({ global: { limit: 30, ttl: 60_000 } })
   @Get('google/callback')
   async googleCallback(
@@ -216,13 +227,29 @@ export class AuthController {
     @Req() req: Request,
     @Res() res: Response,
   ) {
-    const fallbackOrigin = this.auth.getDefaultWebOrigin();
+    const peeked = this.auth.peekGoogleState(state);
+    const fallbackOrigin = peeked?.origin || this.auth.getDefaultWebOrigin();
+    const fallbackMode = peeked?.mode || 'popup';
+    const fallbackReturnTo = peeked?.returnTo || '/';
     try {
-      const { result, origin } = await this.auth.finishGoogleOAuth(
+      const { result, origin, mode, returnTo } = await this.auth.finishGoogleOAuth(
         { code, state, error },
         getClientMeta(req),
       );
       this.setSessionCookie(res, result.token);
+      if (mode === 'redirect') {
+        return res
+          .status(200)
+          .type('html')
+          .send(
+            this.oauthRedirectHtml({
+              ok: true,
+              origin: origin || fallbackOrigin,
+              returnTo,
+              token: result.token,
+            }),
+          );
+      }
       return res
         .status(200)
         .type('html')
@@ -237,13 +264,27 @@ export class AuthController {
     } catch (e: any) {
       const key =
         e instanceof BizException ? String(e.message) : 'auth.googleExchangeFailed';
+      const msg = this.msg(req, key);
+      if (fallbackMode === 'redirect') {
+        return res
+          .status(200)
+          .type('html')
+          .send(
+            this.oauthRedirectHtml({
+              ok: false,
+              origin: fallbackOrigin,
+              returnTo: fallbackReturnTo,
+              error: msg,
+            }),
+          );
+      }
       return res
         .status(200)
         .type('html')
         .send(
           this.oauthPopupHtml({
             ok: false,
-            error: this.msg(req, key),
+            error: msg,
             origin: fallbackOrigin,
           }),
         );
@@ -434,6 +475,41 @@ export class AuthController {
 <p style="font-family:system-ui,sans-serif;text-align:center;margin-top:40vh;color:#888">
   ${payload.ok ? 'Signed in — you can close this window.' : 'Sign-in failed — you can close this window.'}
 </p>
+</body></html>`;
+  }
+
+  /** Full-page OAuth return (mobile): persist token then navigate back into the app. */
+  private oauthRedirectHtml(payload: {
+    ok: boolean;
+    origin: string;
+    returnTo: string;
+    token?: string;
+    error?: string;
+  }): string {
+    const returnTo = this.auth.sanitizeReturnTo(payload.returnTo);
+    const origin = String(payload.origin || this.auth.getDefaultWebOrigin()).replace(/\/$/, '');
+    const url = new URL(returnTo, origin);
+    if (payload.ok) {
+      url.searchParams.set('google', 'ok');
+    } else {
+      url.searchParams.set('google_error', payload.error || 'Google sign-in failed');
+    }
+    const dest = JSON.stringify(url.toString());
+    const token = JSON.stringify(payload.token || '');
+    const ok = payload.ok ? 'true' : 'false';
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Velvet</title></head><body>
+<script>
+(function () {
+  var ok = ${ok};
+  var token = ${token};
+  var dest = ${dest};
+  try {
+    if (ok && token) localStorage.setItem('dv_token', token);
+  } catch (e) {}
+  location.replace(dest);
+})();
+</script>
+<p style="font-family:system-ui,sans-serif;text-align:center;margin-top:40vh;color:#888">Redirecting…</p>
 </body></html>`;
   }
 

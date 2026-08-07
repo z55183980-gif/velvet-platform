@@ -537,10 +537,17 @@ export async function fetchAuthCaptcha(): Promise<{
   return request("/auth/captcha");
 }
 
-/** Absolute or same-origin URL to open Google OAuth in a popup */
-export function getGoogleAuthStartUrl(origin = typeof window !== "undefined" ? window.location.origin : ""): string {
-  const qs = origin ? `?origin=${encodeURIComponent(origin)}` : "";
-  return `${API_BASE}/auth/google/start${qs}`;
+/** Absolute or same-origin URL to open Google OAuth in a popup or full-page redirect */
+export function getGoogleAuthStartUrl(
+  origin = typeof window !== "undefined" ? window.location.origin : "",
+  opts?: { mode?: "popup" | "redirect"; returnTo?: string },
+): string {
+  const qs = new URLSearchParams();
+  if (origin) qs.set("origin", origin);
+  if (opts?.mode) qs.set("mode", opts.mode);
+  if (opts?.returnTo) qs.set("returnTo", opts.returnTo);
+  const q = qs.toString();
+  return `${API_BASE}/auth/google/start${q ? `?${q}` : ""}`;
 }
 
 export function saveAuthToken(token?: string | null) {
