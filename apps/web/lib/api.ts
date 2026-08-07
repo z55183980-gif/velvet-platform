@@ -500,14 +500,24 @@ export async function resetPassword(opts: { email: string; code: string; passwor
   return authPost<{ token: string; user?: any }>("/auth/email/reset", opts);
 }
 
-/** 鉴权通道能力（内测 password；公测 emailOtp/phoneOtp） */
 export async function getAuthChannels(): Promise<{
   password: boolean;
   registerRequiresOtp: boolean;
   emailOtp: { enabled: boolean; configured: boolean; resetAlwaysOn: boolean };
   phoneOtp: { enabled: boolean; configured: boolean };
+  google: { enabled: boolean };
 }> {
   return request("/auth/channels");
+}
+
+/** Absolute or same-origin URL to open Google OAuth in a popup */
+export function getGoogleAuthStartUrl(origin = typeof window !== "undefined" ? window.location.origin : ""): string {
+  const qs = origin ? `?origin=${encodeURIComponent(origin)}` : "";
+  return `${API_BASE}/auth/google/start${qs}`;
+}
+
+export function saveAuthToken(token?: string | null) {
+  saveToken(token || undefined);
 }
 
 export async function getSession(): Promise<{

@@ -25,7 +25,7 @@ import {
 } from "@/lib/api";
 import { RechargeModal } from "@/components/recharge-modal";
 import { VipModal } from "@/components/vip-modal";
-import { useLocale } from "@/lib/i18n";
+import { LoginModal, type AuthMode } from "@/components/login-modal";
 import { track } from "@/lib/track";
 
 export interface WalletInfo {
@@ -46,8 +46,6 @@ export type AuthUser = {
   isVip?: boolean;
   vipExpireAt?: string | null;
 };
-
-type AuthMode = "login" | "register" | "forgot";
 
 interface AuthValue {
   user: AuthUser | null;
@@ -137,12 +135,6 @@ function nextUser(prev: AuthUser | null, s: any, fallback?: string): AuthUser {
   const next = toUser(s, fallback);
   return prev && usersEqual(prev, next) ? prev : next;
 }
-
-const inputCls =
-  "w-full rounded-xl border border-line bg-surface-3 px-4 py-3 text-white outline-none transition-colors placeholder:text-ink-subtle focus:border-brand";
-const primaryBtnCls =
-  "w-full rounded-xl bg-brand py-3 font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50";
-const linkBtnCls = "w-full text-center text-sm text-ink-muted hover:text-white";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -354,299 +346,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }}
     >
       {children}
-      {loginOpen && <LoginModal initialMode={loginInitialMode} />}
+      {loginOpen && (
+        <LoginModal
+          initialMode={loginInitialMode}
+          onClose={closeLogin}
+          loginPassword={loginPassword}
+          register={register}
+          forgot={forgot}
+          reset={reset}
+          applySession={applySession}
+        />
+      )}
       <RechargeModal open={rechargeOpen} onClose={closeRecharge} />
       <VipModal open={vipOpen} onClose={closeVip} />
     </AuthContext.Provider>
-  );
-}
-
-/**
- * 内测登录窗：登录 / 注册 / 找回密码。
- * 公测预留的手机/邮箱 OTP 接口在后端，本窗默认不展示。
- */
-function LoginModal({ initialMode }: { initialMode: AuthMode }) {
-  const ctx = useAuth();
-  const { t } = useLocale();
-
-  const [mode, setMode] = useState<AuthMode>(initialMode);
-  const [account, setAccount] = useState("");
-  const [email, setEmail] = useState("");
-  const [username, setUsername] = useState("");
-  const [code, setCode] = useState("");
-  const [password, setPassword] = useState("");
-  const [step, setStep] = useState<"form" | "code">("form");
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [devCode, setDevCode] = useState<string | null>(null);
-  const [mailed, setMailed] = useState<boolean | null>(null);
-
-  const switchMode = (m: AuthMode) => {
-    setMode(m);
-    setStep("form");
-    setCode("");
-    setPassword("");
-    setDevCode(null);
-    setMailed(null);
-    setErr(null);
-  };
-
-  const title =
-    mode === "register"
-      ? t("login.registerTitle")
-      : mode === "forgot"
-        ? t("login.forgotTitle")
-        : t("login.title");
-  const subtitle =
-    mode === "register"
-      ? t("login.registerSubtitle")
-      : mode === "forgot"
-        ? t("login.forgotSubtitle")
-        : t("login.subtitle");
-
-  const canLogin = account.trim().length >= 2 && password.length >= 6;
-  const canRegister =
-    email.includes("@") &&
-    /^[a-zA-Z0-9_]{3,24}$/.test(username.trim()) &&
-    password.length >= 6;
-  const canSendReset = email.includes("@");
-  const canReset = email.includes("@") && code.length >= 4 && password.length >= 6;
-
-  const onLogin = async () => {
-    setErr(null);
-    setBusy(true);
-    try {
-      await ctx.loginPassword(account.trim(), password);
-    } catch (e: any) {
-      setErr(e?.message || t("login.verifyFail"));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const onRegister = async () => {
-    setErr(null);
-    setBusy(true);
-    try {
-      await ctx.register({
-        email: email.trim(),
-        username: username.trim(),
-        password,
-      });
-    } catch (e: any) {
-      setErr(e?.message || t("login.verifyFail"));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const onSendResetCode = async () => {
-    setErr(null);
-    setBusy(true);
-    try {
-      const r = await ctx.forgot(email.trim());
-      setDevCode(r.devCode ?? null);
-      setMailed(r.mailed ?? null);
-      setStep("code");
-    } catch (e: any) {
-      setErr(e?.message || t("login.sendFail"));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const onReset = async () => {
-    setErr(null);
-    setBusy(true);
-    try {
-      await ctx.reset({ email: email.trim(), code, password });
-    } catch (e: any) {
-      setErr(e?.message || t("login.verifyFail"));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={ctx.closeLogin} />
-      <div className="relative w-full max-w-sm rounded-2xl border border-line bg-surface p-6 shadow-3 max-h-[90vh] overflow-y-auto">
-        <button
-          onClick={ctx.closeLogin}
-          className="absolute right-4 top-4 text-ink-muted transition-colors hover:text-white"
-          aria-label="close"
-        >
-          ✕
-        </button>
-        <h2 className="text-xl font-semibold tracking-tight text-white">{title}</h2>
-        <p className="mt-1 text-sm text-ink-muted">{subtitle}</p>
-
-        {mode !== "forgot" && (
-          <div className="mt-5 flex rounded-xl bg-surface-3 p-1">
-            {(["login", "register"] as const).map((k) => (
-              <button
-                key={k}
-                type="button"
-                onClick={() => switchMode(k)}
-                className={`flex-1 rounded-lg py-2 text-sm font-medium transition-colors ${
-                  mode === k
-                    ? "bg-surface text-white shadow-sm"
-                    : "text-ink-muted hover:text-ink"
-                }`}
-              >
-                {k === "login" ? t("login.tabLogin") : t("login.tabRegister")}
-              </button>
-            ))}
-          </div>
-        )}
-
-        {/* —— 登录 —— */}
-        {mode === "login" && (
-          <div className="mt-5 space-y-3">
-            <input
-              value={account}
-              onChange={(e) => setAccount(e.target.value)}
-              placeholder={t("login.accountPlaceholder")}
-              autoComplete="username"
-              className={inputCls}
-            />
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder={t("login.passwordPlaceholder")}
-              autoComplete="current-password"
-              className={inputCls}
-            />
-            <button
-              type="button"
-              onClick={onLogin}
-              disabled={busy || !canLogin}
-              className={primaryBtnCls}
-            >
-              {busy ? t("login.verifying") : t("login.confirm")}
-            </button>
-            <button type="button" onClick={() => switchMode("forgot")} className={linkBtnCls}>
-              {t("login.forgotLink")}
-            </button>
-          </div>
-        )}
-
-        {/* —— 注册 —— */}
-        {mode === "register" && (
-          <div className="mt-5 space-y-3">
-            <input
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder={t("login.emailPlaceholder")}
-              inputMode="email"
-              autoComplete="email"
-              className={inputCls}
-            />
-            <input
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder={t("login.usernamePlaceholder")}
-              autoComplete="username"
-              className={inputCls}
-            />
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder={t("login.setPasswordPlaceholder")}
-              autoComplete="new-password"
-              className={inputCls}
-            />
-            <button
-              type="button"
-              onClick={onRegister}
-              disabled={busy || !canRegister}
-              className={primaryBtnCls}
-            >
-              {busy ? t("login.verifying") : t("login.registerConfirm")}
-            </button>
-          </div>
-        )}
-
-        {/* —— 忘记密码：发识别码 —— */}
-        {mode === "forgot" && step === "form" && (
-          <div className="mt-5 space-y-3">
-            <input
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder={t("login.emailPlaceholder")}
-              inputMode="email"
-              autoComplete="email"
-              className={inputCls}
-            />
-            <button
-              type="button"
-              onClick={onSendResetCode}
-              disabled={busy || !canSendReset}
-              className={primaryBtnCls}
-            >
-              {busy ? t("login.sending") : t("login.sendResetCode")}
-            </button>
-            <button type="button" onClick={() => switchMode("login")} className={linkBtnCls}>
-              {t("login.backToLogin")}
-            </button>
-          </div>
-        )}
-
-        {/* —— 忘记密码：填识别码 + 新密码 —— */}
-        {mode === "forgot" && step === "code" && (
-          <div className="mt-5 space-y-3">
-            <p className="text-xs text-ink-subtle">{t("login.resetCodeHint")}</p>
-            <input
-              value={code}
-              onChange={(e) => setCode(e.target.value)}
-              placeholder={t("login.resetCodePlaceholder")}
-              inputMode="numeric"
-              className={`${inputCls} text-center text-lg tracking-[0.3em]`}
-            />
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder={t("login.newPasswordPlaceholder")}
-              autoComplete="new-password"
-              className={inputCls}
-            />
-            {devCode && (
-              <p className="text-center text-xs text-ink-subtle">
-                Dev: <span className="font-mono text-gold">{devCode}</span>
-                {mailed === false && (
-                  <span className="ml-2">{t("login.smtpNotConfigured")}</span>
-                )}
-              </p>
-            )}
-            <button
-              type="button"
-              onClick={onReset}
-              disabled={busy || !canReset}
-              className={primaryBtnCls}
-            >
-              {busy ? t("login.verifying") : t("login.resetConfirm")}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setStep("form");
-                setCode("");
-                setPassword("");
-                setDevCode(null);
-              }}
-              className={linkBtnCls}
-            >
-              {t("login.changeIdentity")}
-            </button>
-          </div>
-        )}
-
-        {err && <p className="mt-3 text-sm text-red-400">{err}</p>}
-      </div>
-    </div>
   );
 }
 

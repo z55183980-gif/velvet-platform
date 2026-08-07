@@ -26,6 +26,11 @@ const USERNAME_RE = /^[a-zA-Z0-9_]{3,24}$/;
 
 const MIN_PASSWORD_LEN = 6;
 
+type GoogleOAuthState = {
+  origin: string;
+  expiresAt: number;
+};
+
 @Injectable()
 export class AuthService {
   private readonly cookieName = 'dv_session';
@@ -35,6 +40,13 @@ export class AuthService {
   /** 公测开关：手机 OTP 登录 */
   private readonly phoneOtpEnabled: boolean;
   private readonly smsConfigured: boolean;
+  private readonly googleClientId: string;
+  private readonly googleClientSecret: string;
+  private readonly googleRedirectUri: string;
+  private readonly defaultWebOrigin: string;
+  private readonly allowedOrigins: Set<string>;
+  /** Short-lived OAuth CSRF states (single-process; OK for current deploy). */
+  private readonly googleStates = new Map<string, GoogleOAuthState>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -49,6 +61,27 @@ export class AuthService {
     this.smsConfigured = Boolean(
       String(config.get('SMS_API_KEY') || config.get('SMS_PROVIDER') || '').trim(),
     );
+    this.googleClientId = String(config.get('GOOGLE_CLIENT_ID') || '').trim();
+    this.googleClientSecret = String(config.get('GOOGLE_CLIENT_SECRET') || '').trim();
+    const publicBase = String(config.get('PUBLIC_BASE_URL') || '').trim().replace(/\/$/, '');
+    const webBase = String(config.get('WEB_BASE_URL') || '').trim().replace(/\/$/, '');
+    // Prefer web origin so Next rewrite / cookie / postMessage stay same-site
+    this.googleRedirectUri =
+      String(config.get('GOOGLE_REDIRECT_URI') || '').trim() ||
+      (webBase ? `${webBase}/api/v1/auth/google/callback` : '') ||
+      (publicBase ? `${publicBase}/api/v1/auth/google/callback` : '');
+    this.defaultWebOrigin = String(
+      config.get('AUTH_WEB_ORIGIN') || config.get('WEB_BASE_URL') || 'https://velvetmovie.space',
+    )
+      .trim()
+      .replace(/\/$/, '');
+    this.allowedOrigins = new Set(
+      String(config.get('ALLOWED_ORIGINS') || '')
+        .split(',')
+        .map((s) => s.trim().replace(/\/$/, ''))
+        .filter(Boolean),
+    );
+    if (this.defaultWebOrigin) this.allowedOrigins.add(this.defaultWebOrigin);
   }
 
   /** 前台/管理端读取鉴权通道能力 */
@@ -67,7 +100,229 @@ export class AuthService {
         enabled: this.phoneOtpEnabled,
         configured: this.smsConfigured,
       },
+      google: {
+        enabled: this.isGoogleEnabled(),
+      },
     };
+  }
+
+  isGoogleEnabled(): boolean {
+    return Boolean(this.googleClientId && this.googleClientSecret && this.googleRedirectUri);
+  }
+
+  getDefaultWebOrigin(): string {
+    return this.defaultWebOrigin;
+  }
+
+  /** Build Google authorize URL; `origin` is the opener web origin for postMessage. */
+  beginGoogleOAuth(originHint?: string): string {
+    if (!this.isGoogleEnabled()) {
+      throw new BizException(BizCode.BAD_REQUEST, 'auth.googleDisabled');
+    }
+    const origin = this.resolveOAuthOrigin(originHint);
+    this.purgeExpiredGoogleStates();
+    const state = crypto.randomBytes(24).toString('hex');
+    this.googleStates.set(state, {
+      origin,
+      expiresAt: Date.now() + 10 * 60 * 1000,
+    });
+    const params = new URLSearchParams({
+      client_id: this.googleClientId,
+      redirect_uri: this.googleRedirectUri,
+      response_type: 'code',
+      scope: 'openid email profile',
+      state,
+      prompt: 'select_account',
+      access_type: 'online',
+    });
+    return `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`;
+  }
+
+  /**
+   * Exchange code, upsert/bind user, issue session.
+   * Returns login result + opener origin for popup postMessage.
+   */
+  async finishGoogleOAuth(
+    opts: { code?: string; state?: string; error?: string },
+    meta?: ClientMeta | null,
+  ): Promise<{ result: LoginResult; origin: string }> {
+    const origin = this.peekGoogleStateOrigin(opts.state) || this.defaultWebOrigin;
+    if (opts.error) {
+      throw new BizException(BizCode.BAD_REQUEST, 'auth.googleExchangeFailed');
+    }
+    if (!this.isGoogleEnabled()) {
+      throw new BizException(BizCode.BAD_REQUEST, 'auth.googleDisabled');
+    }
+    const state = String(opts.state || '').trim();
+    const code = String(opts.code || '').trim();
+    if (!state || !code) {
+      throw new BizException(BizCode.BAD_REQUEST, 'auth.googleInvalidState');
+    }
+    const st = this.googleStates.get(state);
+    this.googleStates.delete(state);
+    if (!st || st.expiresAt < Date.now()) {
+      throw new BizException(BizCode.BAD_REQUEST, 'auth.googleInvalidState');
+    }
+
+    const profile = await this.fetchGoogleProfile(code);
+    const user = await this.upsertUserFromGoogle(profile);
+    const result = await this.issueSession(user, meta);
+    return { result, origin: st.origin || origin };
+  }
+
+  private peekGoogleStateOrigin(state?: string): string | null {
+    const st = this.googleStates.get(String(state || '').trim());
+    return st?.origin || null;
+  }
+
+  private resolveOAuthOrigin(hint?: string): string {
+    const raw = String(hint || '').trim().replace(/\/$/, '');
+    if (raw) {
+      try {
+        const u = new URL(raw);
+        const origin = u.origin;
+        if (this.allowedOrigins.size === 0 || this.allowedOrigins.has(origin)) {
+          return origin;
+        }
+        // Local dev: allow localhost / 127.0.0.1 when configured for one of them
+        if (
+          (origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) &&
+          [...this.allowedOrigins].some(
+            (o) => o.includes('localhost') || o.includes('127.0.0.1'),
+          )
+        ) {
+          return origin;
+        }
+        if (process.env.NODE_ENV !== 'production') {
+          return origin;
+        }
+        throw new BizException(BizCode.FORBIDDEN, 'auth.googleOriginDenied');
+      } catch (e) {
+        if (e instanceof BizException) throw e;
+        throw new BizException(BizCode.FORBIDDEN, 'auth.googleOriginDenied');
+      }
+    }
+    return this.defaultWebOrigin;
+  }
+
+  private purgeExpiredGoogleStates() {
+    const now = Date.now();
+    for (const [k, v] of this.googleStates) {
+      if (v.expiresAt < now) this.googleStates.delete(k);
+    }
+  }
+
+  private async fetchGoogleProfile(code: string): Promise<{
+    googleId: string;
+    email: string | null;
+    emailVerified: boolean;
+    name: string | null;
+    picture: string | null;
+  }> {
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: this.googleClientId,
+        client_secret: this.googleClientSecret,
+        redirect_uri: this.googleRedirectUri,
+        grant_type: 'authorization_code',
+      }),
+    });
+    const tokenJson = (await tokenRes.json().catch(() => ({}))) as {
+      access_token?: string;
+      error?: string;
+    };
+    if (!tokenRes.ok || !tokenJson.access_token) {
+      // eslint-disable-next-line no-console
+      console.error('[google oauth] token exchange failed:', tokenJson?.error || tokenRes.status);
+      throw new BizException(BizCode.BAD_REQUEST, 'auth.googleExchangeFailed');
+    }
+
+    const infoRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${tokenJson.access_token}` },
+    });
+    const info = (await infoRes.json().catch(() => ({}))) as {
+      sub?: string;
+      email?: string;
+      email_verified?: boolean | string;
+      name?: string;
+      picture?: string;
+    };
+    if (!infoRes.ok || !info.sub) {
+      throw new BizException(BizCode.BAD_REQUEST, 'auth.googleExchangeFailed');
+    }
+    const emailVerified = info.email_verified === true || info.email_verified === 'true';
+    return {
+      googleId: String(info.sub),
+      email: this.normalizeEmail(info.email || '') ,
+      emailVerified,
+      name: String(info.name || '').trim() || null,
+      picture: String(info.picture || '').trim() || null,
+    };
+  }
+
+  private async upsertUserFromGoogle(profile: {
+    googleId: string;
+    email: string | null;
+    emailVerified: boolean;
+    name: string | null;
+    picture: string | null;
+  }) {
+    const byGoogle = await this.prisma.user.findUnique({
+      where: { googleId: profile.googleId },
+    });
+    if (byGoogle) {
+      const patch: { nickname?: string; avatarUrl?: string; email?: string } = {};
+      if (!byGoogle.nickname && profile.name) patch.nickname = profile.name;
+      if (!byGoogle.avatarUrl && profile.picture) patch.avatarUrl = profile.picture;
+      if (!byGoogle.email && profile.email && profile.emailVerified) patch.email = profile.email;
+      if (Object.keys(patch).length) {
+        return this.prisma.user.update({ where: { id: byGoogle.id }, data: patch });
+      }
+      return byGoogle;
+    }
+
+    if (profile.email && profile.emailVerified) {
+      const byEmail = await this.prisma.user.findUnique({ where: { email: profile.email } });
+      if (byEmail) {
+        if (byEmail.googleId && byEmail.googleId !== profile.googleId) {
+          throw new BizException(BizCode.CONFLICT, 'auth.emailAlreadyRegistered');
+        }
+        return this.prisma.user.update({
+          where: { id: byEmail.id },
+          data: {
+            googleId: profile.googleId,
+            nickname: byEmail.nickname || profile.name || undefined,
+            avatarUrl: byEmail.avatarUrl || profile.picture || undefined,
+          },
+        });
+      }
+    } else if (!profile.email) {
+      // No email from Google — still allow create by googleId only
+    } else if (!profile.emailVerified) {
+      throw new BizException(BizCode.BAD_REQUEST, 'auth.googleEmailUnverified');
+    }
+
+    const nickname =
+      profile.name ||
+      (profile.email ? profile.email.split('@')[0] : null) ||
+      `user_${profile.googleId.slice(0, 8)}`;
+    const user = await this.prisma.user.create({
+      data: {
+        googleId: profile.googleId,
+        email: profile.emailVerified ? profile.email : null,
+        nickname,
+        avatarUrl: profile.picture,
+      },
+    });
+    await this.prisma.wallet.upsert({
+      where: { userId: user.id },
+      create: { userId: user.id },
+      update: {},
+    });
+    return user;
   }
 
   /**

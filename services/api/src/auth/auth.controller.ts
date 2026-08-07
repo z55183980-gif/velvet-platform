@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Post,
+  Query,
   Req,
   Res,
   UseGuards,
@@ -17,6 +18,7 @@ import { CurrentUser, AuthUser } from '../common/current-user.decorator';
 import { ok } from '../common/response';
 import { enrichClientMeta, getClientMeta } from '../common/request-meta';
 import { tFromAcceptLanguage } from '../common/i18n/translate';
+import { BizException } from '../common/biz.exception';
 import {
   IsEmail,
   IsIn,
@@ -147,6 +149,77 @@ export class AuthController {
   @Get('channels')
   authChannels() {
     return ok(this.auth.getAuthChannels());
+  }
+
+  /** Google OAuth: open in popup → redirect to Google */
+  @Throttle({ global: { limit: 20, ttl: 60_000 } })
+  @Get('google/start')
+  googleStart(
+    @Query('origin') origin: string | undefined,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    try {
+      const url = this.auth.beginGoogleOAuth(origin);
+      return res.redirect(302, url);
+    } catch (e: any) {
+      const key =
+        e instanceof BizException ? String(e.message) : 'auth.googleDisabled';
+      return res
+        .status(503)
+        .type('html')
+        .send(
+          this.oauthPopupHtml({
+            ok: false,
+            error: this.msg(req, key),
+            origin: this.auth.getDefaultWebOrigin(),
+          }),
+        );
+    }
+  }
+
+  /** Google OAuth callback: set cookie + postMessage to opener, then close */
+  @Throttle({ global: { limit: 30, ttl: 60_000 } })
+  @Get('google/callback')
+  async googleCallback(
+    @Query('code') code: string | undefined,
+    @Query('state') state: string | undefined,
+    @Query('error') error: string | undefined,
+    @Req() req: Request,
+    @Res() res: Response,
+  ) {
+    const fallbackOrigin = this.auth.getDefaultWebOrigin();
+    try {
+      const { result, origin } = await this.auth.finishGoogleOAuth(
+        { code, state, error },
+        getClientMeta(req),
+      );
+      this.setSessionCookie(res, result.token);
+      return res
+        .status(200)
+        .type('html')
+        .send(
+          this.oauthPopupHtml({
+            ok: true,
+            token: result.token,
+            user: result.user,
+            origin: origin || fallbackOrigin,
+          }),
+        );
+    } catch (e: any) {
+      const key =
+        e instanceof BizException ? String(e.message) : 'auth.googleExchangeFailed';
+      return res
+        .status(200)
+        .type('html')
+        .send(
+          this.oauthPopupHtml({
+            ok: false,
+            error: this.msg(req, key),
+            origin: fallbackOrigin,
+          }),
+        );
+    }
   }
 
   // —— 公测预留：手机 OTP 登录（管理员配置 SMS 并打开 AUTH_PHONE_OTP_ENABLED 后启用）——
@@ -298,6 +371,40 @@ export class AuthController {
 
   private msg(req: Request, key: string) {
     return tFromAcceptLanguage(key, req.headers['accept-language']);
+  }
+
+  private oauthPopupHtml(payload: {
+    ok: boolean;
+    origin: string;
+    token?: string;
+    user?: unknown;
+    error?: string;
+  }): string {
+    const origin = JSON.stringify(payload.origin || '*');
+    const body = JSON.stringify({
+      type: 'velvet-oauth',
+      ok: payload.ok,
+      token: payload.token ?? null,
+      user: payload.user ?? null,
+      error: payload.error ?? null,
+    });
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Velvet</title></head><body>
+<script>
+(function () {
+  var payload = ${body};
+  var target = ${origin};
+  try {
+    if (window.opener && !window.opener.closed) {
+      window.opener.postMessage(payload, target);
+    }
+  } catch (e) {}
+  setTimeout(function () { window.close(); }, 120);
+})();
+</script>
+<p style="font-family:system-ui,sans-serif;text-align:center;margin-top:40vh;color:#888">
+  ${payload.ok ? 'Signed in — you can close this window.' : 'Sign-in failed — you can close this window.'}
+</p>
+</body></html>`;
   }
 
   private setSessionCookie(res: Response, token: string) {

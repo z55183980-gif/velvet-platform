@@ -194,6 +194,21 @@ const en = {
   login: {
     title: "Log in",
     subtitle: "Account or email + password",
+    entryTitle: "Sign in to Velvet",
+    entrySubtitle: "Continue with Google or email",
+    brandTagline: "Short dramas worth finishing",
+    withGoogle: "Google",
+    continueEmail: "Email",
+    or: "or",
+    backToEntry: "Back to other options",
+    popupBlocked: "Pop-up blocked. Allow pop-ups for this site and try again.",
+    googleFail: "Google sign-in failed",
+    googleDisabled: "Google sign-in is not configured yet",
+    agreePrefix: "By continuing, you agree to the",
+    terms: "Terms of Service",
+    agreeAnd: "and",
+    privacy: "Privacy Policy",
+    agreeSuffix: ".",
     tabLogin: "Log in",
     tabRegister: "Sign up",
     tabEmail: "Email",
@@ -229,6 +244,29 @@ const en = {
     forgotTitle: "Reset password",
     forgotSubtitle: "Enter your registered email to receive a code",
     resetConfirm: "Reset password",
+  },
+  legal: {
+    termsTitle: "Terms of Service",
+    privacyTitle: "Privacy Policy",
+    updated: "Last updated: August 2026",
+    termsIntro:
+      "By using Velvet, you agree to these terms. Velvet provides short-drama streaming and related wallet features.",
+    termsAccount:
+      "You are responsible for your account credentials and for activity under your account. Do not share access or misuse the service.",
+    termsContent:
+      "Content on Velvet is for personal, non-commercial viewing. Copying, redistributing, or reverse-engineering the platform without permission is prohibited.",
+    termsPayment:
+      "Credits, unlocks, and VIP purchases are subject to the product terms shown at checkout. Refunds follow platform review rules where applicable.",
+    termsContact: "For questions about these terms, contact support via the account help section.",
+    privacyIntro:
+      "This policy explains what information Velvet collects and how it is used when you browse, sign in, or pay.",
+    privacyData:
+      "We may process account identifiers (email, username, Google account id), profile details, device/session metadata, viewing history, and payment-related order records.",
+    privacyUse:
+      "Data is used to authenticate you, deliver content, process payments, improve the product, and meet security or legal obligations.",
+    privacyThird:
+      "Payment and sign-in providers (for example Stripe or Google) process data under their own policies when you use those features.",
+    privacyContact: "To request account or data help, use the in-app account center or support channels published on the site.",
   },
   account: {
     title: "Account",
@@ -366,9 +404,9 @@ const en = {
     tagline: "Premium short-drama platform",
     rights: "© 2026 Velvet. All rights reserved.",
     filing1: "Terms of Use",
-    filing1Href: "",
+    filing1Href: "/terms",
     filing2: "Privacy Policy",
-    filing2Href: "",
+    filing2Href: "/privacy",
     filing3: "About Us",
     filing3Href: "",
     filing4: "Business",
@@ -619,6 +657,21 @@ const zh: typeof en = {
   login: {
     title: "登录",
     subtitle: "账号或邮箱 + 密码",
+    entryTitle: "登录 Velvet",
+    entrySubtitle: "使用 Google 或邮箱继续",
+    brandTagline: "好看的短剧，值得一次看完",
+    withGoogle: "Google",
+    continueEmail: "Email",
+    or: "或",
+    backToEntry: "返回其他方式",
+    popupBlocked: "弹窗被拦截，请允许本站弹窗后重试",
+    googleFail: "Google 登录失败",
+    googleDisabled: "尚未配置 Google 登录",
+    agreePrefix: "如果您继续使用，即表示您已同意",
+    terms: "服务条款",
+    agreeAnd: "及",
+    privacy: "隐私权政策",
+    agreeSuffix: "。",
     tabLogin: "登录",
     tabRegister: "注册",
     tabEmail: "邮箱",
@@ -654,6 +707,23 @@ const zh: typeof en = {
     forgotTitle: "找回密码",
     forgotSubtitle: "输入注册时的邮箱，获取重置识别码",
     resetConfirm: "重置密码",
+  },
+  legal: {
+    termsTitle: "服务条款",
+    privacyTitle: "隐私权政策",
+    updated: "最近更新：2026 年 8 月",
+    termsIntro: "使用 Velvet 即表示您同意本条款。Velvet 提供短剧播放及相关钱包服务。",
+    termsAccount: "您须妥善保管账号凭证，并对账号下的行为负责。请勿分享账号或滥用服务。",
+    termsContact: "对本条款有疑问，可通过个人中心帮助入口联系支持。",
+    termsContent: "平台内容仅供个人非商业观看。未经许可，不得复制、传播或逆向工程。",
+    termsPayment: "积分、解锁与 VIP 购买以结账时展示的规则为准；退款按平台审核政策处理。",
+    privacyIntro: "本政策说明您在浏览、登录或支付时，Velvet 收集哪些信息以及如何使用。",
+    privacyData:
+      "我们可能处理账号标识（邮箱、用户名、Google 账号 id）、资料信息、设备/会话元数据、观看记录与支付相关订单信息。",
+    privacyUse: "数据用于身份验证、内容分发、支付处理、产品改进以及安全与合规义务。",
+    privacyThird:
+      "当您使用支付或登录能力时，Stripe、Google 等第三方按其自身政策处理相关数据。",
+    privacyContact: "如需账号或数据协助，请通过站内个人中心或公布的支持渠道联系我们。",
   },
   account: {
     title: "个人中心",
@@ -791,9 +861,9 @@ const zh: typeof en = {
     tagline: "越南领先的短剧平台",
     rights: "© 2026 Velvet. 版权所有。",
     filing1: "用户协议",
-    filing1Href: "",
+    filing1Href: "/terms",
     filing2: "隐私政策",
-    filing2Href: "",
+    filing2Href: "/privacy",
     filing3: "关于我们",
     filing3Href: "",
     filing4: "商务合作",
@@ -1044,6 +1114,21 @@ const fr: typeof en = {
   login: {
     title: "Connexion",
     subtitle: "Compte ou e-mail + mot de passe",
+    entryTitle: "Connexion à Velvet",
+    entrySubtitle: "Continuer avec Google ou e-mail",
+    brandTagline: "Des dramas courts à finir d’une traite",
+    withGoogle: "Google",
+    continueEmail: "E-mail",
+    or: "ou",
+    backToEntry: "Autres options",
+    popupBlocked: "Pop-up bloquée. Autorisez les pop-ups puis réessayez.",
+    googleFail: "Échec de la connexion Google",
+    googleDisabled: "Connexion Google non configurée",
+    agreePrefix: "En continuant, vous acceptez les",
+    terms: "Conditions d’utilisation",
+    agreeAnd: "et la",
+    privacy: "Politique de confidentialité",
+    agreeSuffix: ".",
     tabLogin: "Connexion",
     tabRegister: "Inscription",
     tabEmail: "E-mail",
@@ -1079,6 +1164,30 @@ const fr: typeof en = {
     forgotTitle: "Réinitialiser le mot de passe",
     forgotSubtitle: "Entrez l’e-mail enregistré pour recevoir un code",
     resetConfirm: "Réinitialiser",
+  },
+  legal: {
+    termsTitle: "Conditions d’utilisation",
+    privacyTitle: "Politique de confidentialité",
+    updated: "Dernière mise à jour : août 2026",
+    termsIntro:
+      "En utilisant Velvet, vous acceptez ces conditions. Velvet propose des dramas courts et des fonctions de portefeuille.",
+    termsAccount:
+      "Vous êtes responsable de vos identifiants et de l’activité de votre compte. Ne partagez pas l’accès et n’abusez pas du service.",
+    termsContent:
+      "Le contenu est destiné à un usage personnel non commercial. La copie, la redistribution ou l’ingénierie inverse sans autorisation sont interdites.",
+    termsPayment:
+      "Crédits, déblocages et VIP suivent les conditions affichées au paiement. Les remboursements obéissent aux règles de revue du produit.",
+    termsContact: "Pour toute question, contactez le support via l’aide du compte.",
+    privacyIntro:
+      "Cette politique décrit les informations collectées lorsque vous naviguez, vous connectez ou payez.",
+    privacyData:
+      "Nous pouvons traiter des identifiants de compte (e-mail, identifiant, id Google), le profil, des métadonnées d’appareil/session, l’historique de visionnage et des données de commande.",
+    privacyUse:
+      "Les données servent à l’authentification, à la diffusion, aux paiements, à l’amélioration du produit et aux obligations de sécurité / légales.",
+    privacyThird:
+      "Les prestataires (ex. Stripe, Google) traitent des données selon leurs propres politiques lorsque vous utilisez ces fonctions.",
+    privacyContact:
+      "Pour une demande liée au compte ou aux données, utilisez le centre de compte ou les canaux de support du site.",
   },
   account: {
     title: "Compte",
@@ -1216,9 +1325,9 @@ const fr: typeof en = {
     tagline: "Plateforme de mini-dramas",
     rights: "© 2026 Velvet. Tous droits réservés.",
     filing1: "Conditions d’utilisation",
-    filing1Href: "",
+    filing1Href: "/terms",
     filing2: "Confidentialité",
-    filing2Href: "",
+    filing2Href: "/privacy",
     filing3: "À propos",
     filing3Href: "",
     filing4: "Partenariats",
