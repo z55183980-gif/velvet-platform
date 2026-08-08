@@ -880,10 +880,14 @@ export class UploadService implements OnModuleInit {
     if (!ffmpeg) {
       throw new BizException(BizCode.BAD_REQUEST, '未检测到 ffmpeg，无法抽取首帧');
     }
-    const inputAbs = path.isAbsolute(inputRelOrAbs)
-      ? inputRelOrAbs
-      : this.resolveAbs(inputRelOrAbs);
-    if (!fs.existsSync(inputAbs)) {
+    const raw = String(inputRelOrAbs || '').trim();
+    const isRemote = /^https?:\/\//i.test(raw);
+    const inputAbs = isRemote
+      ? raw
+      : path.isAbsolute(raw)
+        ? raw
+        : this.resolveAbs(raw);
+    if (!isRemote && !fs.existsSync(inputAbs)) {
       throw new BizException(BizCode.BAD_REQUEST, '源视频不存在');
     }
     const outDir = path.join(this.getStorageRoot(), 'tmp', 'frames');
@@ -904,7 +908,7 @@ export class UploadService implements OnModuleInit {
         '2',
         outAbs,
       ],
-      { timeout: 60_000, maxBuffer: 2 * 1024 * 1024 },
+      { timeout: 90_000, maxBuffer: 2 * 1024 * 1024 },
     );
     if (!fs.existsSync(outAbs)) {
       throw new BizException(BizCode.BAD_REQUEST, '首帧抽取失败');

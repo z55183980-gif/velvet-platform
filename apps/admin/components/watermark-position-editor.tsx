@@ -30,6 +30,28 @@ type Props = {
   className?: string;
 };
 
+function frameAspect(frameWidth?: number, frameHeight?: number) {
+  return frameWidth && frameHeight && frameHeight > 0 ? frameWidth / frameHeight : 16 / 9;
+}
+
+/** Keep watermark top-left inside the frame for the given relative width. */
+function clampPlacement(
+  x: number,
+  y: number,
+  scale: number,
+  frameWidth?: number,
+  frameHeight?: number,
+): Pick<WatermarkPlacement, "x" | "y" | "scale"> {
+  const s = Math.min(0.4, Math.max(0.04, scale));
+  const aspect = frameAspect(frameWidth, frameHeight);
+  const markH = s * aspect;
+  return {
+    scale: s,
+    x: Math.min(1 - s, Math.max(0, x)),
+    y: Math.min(1 - markH, Math.max(0, y)),
+  };
+}
+
 /**
  * Toggle burn-in watermark + drag mark on first-frame preview.
  * Coordinates are top-left of watermark as fractions of the frame (0–1).
@@ -46,12 +68,19 @@ export function WatermarkPositionEditor({
 }: Props) {
   const { t } = useI18n();
   const [local, setLocal] = useState<WatermarkPlacement>(value || DEFAULT_PLACEMENT);
+  const [frameBroken, setFrameBroken] = useState(false);
   const stageRef = useRef<HTMLDivElement>(null);
   const dragging = useRef(false);
+
+  const effectiveFrameUrl = frameUrl && !frameBroken ? frameUrl : null;
 
   useEffect(() => {
     if (value) setLocal(value);
   }, [value]);
+
+  useEffect(() => {
+    setFrameBroken(false);
+  }, [frameUrl]);
 
   function commit(next: WatermarkPlacement) {
     setLocal(next);
@@ -59,7 +88,7 @@ export function WatermarkPositionEditor({
   }
 
   function onPointerDown(e: ReactPointerEvent) {
-    if (!local.enabled || busy || !frameUrl) return;
+    if (!local.enabled || busy || !effectiveFrameUrl) return;
     dragging.current = true;
     (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
     moveTo(e.clientX, e.clientY);
@@ -80,9 +109,7 @@ export function WatermarkPositionEditor({
     const rect = el.getBoundingClientRect();
     if (rect.width <= 0 || rect.height <= 0) return;
     const markW = local.scale;
-    // Square-ish badge: height fraction = width_px / frameHeight = scale * (W/H)
-    const aspect =
-      frameWidth && frameHeight && frameHeight > 0 ? frameWidth / frameHeight : 16 / 9;
+    const aspect = frameAspect(frameWidth, frameHeight);
     const markH = markW * aspect;
     let x = (clientX - rect.left) / rect.width - markW / 2;
     let y = (clientY - rect.top) / rect.height - markH / 2;
@@ -114,21 +141,33 @@ export function WatermarkPositionEditor({
           <p className="text-caption text-ink-muted">{t("watermarkPositionHint")}</p>
           <div
             ref={stageRef}
-            className="relative aspect-video w-full cursor-crosshair overflow-hidden rounded-lg border border-line bg-surface-2 select-none"
+            className="relative w-full cursor-crosshair overflow-hidden rounded-lg border border-line bg-surface-2 select-none"
+            style={{
+              aspectRatio:
+                frameWidth && frameHeight && frameHeight > 0
+                  ? `${frameWidth} / ${frameHeight}`
+                  : "16 / 9",
+            }}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
             onPointerUp={onPointerUp}
             onPointerCancel={onPointerUp}
           >
-            {frameUrl ? (
+            {effectiveFrameUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={frameUrl} alt="" className="h-full w-full object-contain" draggable={false} />
+              <img
+                src={effectiveFrameUrl}
+                alt=""
+                className="h-full w-full object-cover"
+                draggable={false}
+                onError={() => setFrameBroken(true)}
+              />
             ) : (
-              <div className="flex h-full items-center justify-center text-caption text-ink-muted">
+              <div className="flex aspect-video h-full min-h-40 items-center justify-center text-caption text-ink-muted">
                 {t("watermarkNeedFrame")}
               </div>
             )}
-            {frameUrl ? (
+            {effectiveFrameUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={watermarkSrc}
@@ -153,18 +192,19 @@ export function WatermarkPositionEditor({
                 onChange={(e) => {
                   const n = Number(e.target.value);
                   if (!Number.isFinite(n)) return;
-                  commit({
-                    ...local,
-                    scale: Math.min(0.4, Math.max(0.04, n)),
-                  });
+                  const next = clampPlacement(local.x, local.y, n, frameWidth, frameHeight);
+                  commit({ ...local, ...next });
                 }}
               />
             </label>
             <Button
               size="sm"
               variant="ghost"
-              disabled={busy || !frameUrl}
-              onClick={() => commit({ ...local, x: 0.84, y: 0.84, scale: 0.12 })}
+              disabled={busy || !effectiveFrameUrl}
+              onClick={() => {
+                const next = clampPlacement(0.84, 0.84, 0.12, frameWidth, frameHeight);
+                commit({ ...local, ...next });
+              }}
             >
               {t("watermarkResetCorner")}
             </Button>

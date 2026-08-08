@@ -10,6 +10,7 @@ import {
   adminStorageStatus,
   adminTranslateTitles,
   adminUploadImage,
+  adminYtdlpPreviewFrame,
   adminYtdlpTransfer,
 } from "@velvet/api-client";
 import { Button, Input, Select, cn } from "@velvet/ui";
@@ -31,6 +32,11 @@ import {
 import { useRouter } from "next/navigation";
 import { DramaCoverField } from "@/components/drama-cover-field";
 import { GlassModal } from "@/components/glass-modal";
+import {
+  WatermarkPositionEditor,
+  DEFAULT_PLACEMENT,
+  type WatermarkPlacement,
+} from "@/components/watermark-position-editor";
 import {
   captureVideoFirstFrameWithMeta,
   probeLocalVideoDuration,
@@ -145,6 +151,8 @@ type EpisodeDraft = {
   sourceUrl?: string;
   /** Public page URL for a probe item (may need server resolve). */
   webpageUrl?: string;
+  /** yt-dlp playlist entry index when applicable. */
+  playlistIndex?: number;
   title: string;
   isFree: boolean;
   previewSeconds: number;
@@ -166,6 +174,10 @@ type OnlineIngestMeta = {
   maxEpisodes?: number;
   cookiesFile?: string;
   authBearer?: string;
+  watermarkEnabled?: boolean;
+  watermarkX?: number;
+  watermarkY?: number;
+  watermarkScale?: number;
 };
 
 function fmtSize(n: number) {
@@ -343,6 +355,13 @@ export const LocalUploadWizard = forwardRef<
   const [episodes, setEpisodes] = useState<EpisodeDraft[]>([]);
   /** Page-level online ingest preference (R2 transfer / parse-import); episodes live in `episodes`. */
   const [onlineIngest, setOnlineIngest] = useState<OnlineIngestMeta | null>(null);
+  const [watermark, setWatermark] = useState<WatermarkPlacement>(DEFAULT_PLACEMENT);
+  const [watermarkFrame, setWatermarkFrame] = useState<{
+    url: string;
+    width: number;
+    height: number;
+  } | null>(null);
+  const [watermarkFrameBusy, setWatermarkFrameBusy] = useState(false);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [progress, setProgress] = useState<Record<string, { status: ProgressStatus; error?: string }>>(
     {},
@@ -425,6 +444,7 @@ export const LocalUploadWizard = forwardRef<
               kind: "link" as const,
               sourceUrl,
               webpageUrl,
+              playlistIndex: ep.playlistIndex,
               title: title.slice(0, 80),
               isFree: true,
               previewSeconds: 0,
@@ -442,6 +462,16 @@ export const LocalUploadWizard = forwardRef<
             maxEpisodes: payload.online.maxEpisodes,
             cookiesFile: payload.online.cookiesFile,
             authBearer: payload.online.authBearer,
+            watermarkEnabled: payload.online.watermarkEnabled,
+            watermarkX: payload.online.watermarkX,
+            watermarkY: payload.online.watermarkY,
+            watermarkScale: payload.online.watermarkScale,
+          });
+          setWatermark({
+            enabled: !!payload.online.watermarkEnabled,
+            x: payload.online.watermarkX ?? DEFAULT_PLACEMENT.x,
+            y: payload.online.watermarkY ?? DEFAULT_PLACEMENT.y,
+            scale: payload.online.watermarkScale ?? DEFAULT_PLACEMENT.scale,
           });
           if (incoming.length) {
             setEpisodes((prev) => {
@@ -467,6 +497,127 @@ export const LocalUploadWizard = forwardRef<
     }),
     [t, freeRangeEnd],
   );
+
+  /** Watermark preview: online R2 uses server first-frame; local files use browser capture. */
+  useEffect(() => {
+    if (!watermark.enabled) {
+      setWatermarkFrame((prev) => {
+        if (prev?.url?.startsWith("blob:")) URL.revokeObjectURL(prev.url);
+        return null;
+      });
+      setWatermarkFrameBusy(false);
+      return;
+    }
+
+    const onlineR2 = onlineIngest?.ingestForm === "r2";
+    if (onlineR2) {
+      const linkEps = episodes.filter((ep) => ep.kind === "link");
+      const pick =
+        linkEps.find((ep) => isPlayableMediaUrl(ep.sourceUrl?.trim())) ||
+        linkEps.find((ep) => (ep.sourceUrl || ep.webpageUrl || "").trim()) ||
+        null;
+      const direct = pick?.sourceUrl?.trim();
+      const targetUrl =
+        (direct && isPlayableMediaUrl(direct) ? direct : undefined) ||
+        pick?.webpageUrl?.trim() ||
+        direct ||
+        "";
+      if (!/^https?:\/\//i.test(targetUrl)) {
+        setWatermarkFrame((prev) => {
+          if (prev?.url?.startsWith("blob:")) URL.revokeObjectURL(prev.url);
+          return null;
+        });
+        setWatermarkFrameBusy(false);
+        return;
+      }
+
+      let cancelled = false;
+      setWatermarkFrameBusy(true);
+      void adminYtdlpPreviewFrame({
+        url: targetUrl,
+        formatPreference:
+          onlineIngest.formatPreference === "best_hls"
+            ? "best_mp4"
+            : onlineIngest.formatPreference || "best_mp4",
+        playlistIndex: pick?.playlistIndex,
+        cookiesFile: onlineIngest.cookiesFile,
+        authBearer: onlineIngest.authBearer,
+      })
+        .then((frame) => {
+          if (cancelled) return;
+          setWatermarkFrame((prev) => {
+            if (prev?.url?.startsWith("blob:")) URL.revokeObjectURL(prev.url);
+            return {
+              url: frame.url,
+              width: frame.width,
+              height: frame.height,
+            };
+          });
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setWatermarkFrame((prev) => {
+              if (prev?.url?.startsWith("blob:")) URL.revokeObjectURL(prev.url);
+              return null;
+            });
+          }
+        })
+        .finally(() => {
+          if (!cancelled) setWatermarkFrameBusy(false);
+        });
+
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const firstFile = episodes.find((ep) => ep.kind === "file" && ep.file)?.file;
+    if (!firstFile) {
+      setWatermarkFrame((prev) => {
+        if (prev?.url?.startsWith("blob:")) URL.revokeObjectURL(prev.url);
+        return null;
+      });
+      setWatermarkFrameBusy(false);
+      return;
+    }
+
+    let cancelled = false;
+    setWatermarkFrameBusy(true);
+    void captureVideoFirstFrameWithMeta(firstFile)
+      .then(async ({ blob }) => {
+        const url = URL.createObjectURL(blob);
+        const dims = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+          const img = new Image();
+          img.onload = () =>
+            resolve({ width: img.naturalWidth || 1280, height: img.naturalHeight || 720 });
+          img.onerror = () => reject(new Error("frame image decode failed"));
+          img.src = url;
+        });
+        if (cancelled) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        setWatermarkFrame((prev) => {
+          if (prev?.url?.startsWith("blob:")) URL.revokeObjectURL(prev.url);
+          return { url, ...dims };
+        });
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setWatermarkFrame((prev) => {
+            if (prev?.url?.startsWith("blob:")) URL.revokeObjectURL(prev.url);
+            return null;
+          });
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setWatermarkFrameBusy(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [onlineIngest, watermark.enabled, episodes]);
 
   useEffect(() => {
     try {
@@ -1190,11 +1341,17 @@ export const LocalUploadWizard = forwardRef<
     setProgress({});
     setSelectedIds([]);
     setOnlineIngest(null);
+    setWatermark(DEFAULT_PLACEMENT);
+    setWatermarkFrame(null);
+    setWatermarkFrameBusy(false);
   }
 
   function resetWizardAfterEnqueue() {
     clearAllEpisodes();
     setOnlineIngest(null);
+    setWatermark(DEFAULT_PLACEMENT);
+    setWatermarkFrame(null);
+    setWatermarkFrameBusy(false);
     setEditingDraftId(null);
     setProgress({});
     setTitleZh("");
@@ -1277,6 +1434,7 @@ export const LocalUploadWizard = forwardRef<
             title: ep.title,
             webpageUrl: ep.webpageUrl?.trim() || undefined,
             sourceUrl: ep.sourceUrl?.trim() || undefined,
+            playlistIndex: ep.playlistIndex,
             durationSec: ep.durationSec,
           }))
           .filter((ep) => ep.webpageUrl || ep.sourceUrl);
@@ -1296,6 +1454,10 @@ export const LocalUploadWizard = forwardRef<
               : onlineIngest.formatPreference || "best",
           cookiesFile: onlineIngest.cookiesFile,
           authBearer: onlineIngest.authBearer,
+          watermarkEnabled: watermark.enabled,
+          watermarkX: watermark.x,
+          watermarkY: watermark.y,
+          watermarkScale: watermark.scale,
           ...(transferEps.length ? { episodes: transferEps } : {}),
         }).then((data) => ({
           kind: "transfer" as const,
@@ -1446,6 +1608,10 @@ export const LocalUploadWizard = forwardRef<
         publishWhenReady,
         createDrama,
         episodes: queueEpisodes,
+        watermarkEnabled: watermark.enabled,
+        watermarkX: watermark.x,
+        watermarkY: watermark.y,
+        watermarkScale: watermark.scale,
       });
 
       return {
@@ -1937,6 +2103,41 @@ export const LocalUploadWizard = forwardRef<
             )}
           </div>
       </section>
+
+      {onlineIngest?.ingestForm === "r2" || fileEpisodeCount > 0 ? (
+        <section className="upload-panel space-y-3">
+          <div className="upload-panel__head">
+            <div>
+              <h2>{t("watermarkEnable")}</h2>
+              <p>{t("watermarkOnlineHint")}</p>
+            </div>
+          </div>
+          {watermarkFrameBusy ? (
+            <p className="text-caption text-ink-muted">{t("watermarkLoadingFrame")}</p>
+          ) : null}
+          <WatermarkPositionEditor
+            frameUrl={watermarkFrame?.url || null}
+            frameWidth={watermarkFrame?.width}
+            frameHeight={watermarkFrame?.height}
+            value={watermark}
+            busy={busy || watermarkFrameBusy}
+            onChange={(next) => {
+              setWatermark(next);
+              setOnlineIngest((prev) =>
+                prev
+                  ? {
+                      ...prev,
+                      watermarkEnabled: next.enabled,
+                      watermarkX: next.x,
+                      watermarkY: next.y,
+                      watermarkScale: next.scale,
+                    }
+                  : prev,
+              );
+            }}
+          />
+        </section>
+      ) : null}
 
       <section id="local-drama-info" className="upload-panel upload-panel--info">
             <div className="upload-panel__head">

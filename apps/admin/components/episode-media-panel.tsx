@@ -19,6 +19,7 @@ import {
   DEFAULT_PLACEMENT,
   type WatermarkPlacement,
 } from "@/components/watermark-position-editor";
+import { captureVideoFirstFrameWithMeta } from "@/lib/capture-video-frame";
 
 function fmtBytes(n: number) {
   if (!Number.isFinite(n) || n <= 0) return "0 B";
@@ -41,42 +42,20 @@ async function firstFrameFromFile(file: File): Promise<{
   width: number;
   height: number;
 }> {
-  const objectUrl = URL.createObjectURL(file);
+  const { blob } = await captureVideoFirstFrameWithMeta(file);
+  const url = URL.createObjectURL(blob);
   try {
-    const video = document.createElement("video");
-    video.preload = "auto";
-    video.muted = true;
-    video.playsInline = true;
-    video.src = objectUrl;
-    await new Promise<void>((resolve, reject) => {
-      video.onloadeddata = () => resolve();
-      video.onerror = () => reject(new Error("failed to load video for first frame"));
+    const dims = await new Promise<{ width: number; height: number }>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve({ width: img.naturalWidth || 1280, height: img.naturalHeight || 720 });
+      img.onerror = () => reject(new Error("frame image decode failed"));
+      img.src = url;
     });
-    try {
-      video.currentTime = Math.min(0.05, (video.duration || 1) * 0.01);
-      await new Promise<void>((resolve) => {
-        const done = () => resolve();
-        video.onseeked = done;
-        window.setTimeout(done, 800);
-      });
-    } catch {
-      /* use frame 0 */
-    }
-    const width = video.videoWidth || 1280;
-    const height = video.videoHeight || 720;
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) throw new Error("canvas unavailable");
-    ctx.drawImage(video, 0, 0, width, height);
-    return {
-      url: canvas.toDataURL("image/jpeg", 0.86),
-      width,
-      height,
-    };
-  } finally {
-    URL.revokeObjectURL(objectUrl);
+    // Keep object URL for the modal lifetime; caller revokes on close.
+    return { url, ...dims };
+  } catch (e) {
+    URL.revokeObjectURL(url);
+    throw e;
   }
 }
 
@@ -139,8 +118,11 @@ export function EpisodeVideoUploadButton({
   }, [jobId, onDone, onError, t]);
 
   function closeWatermarkModal() {
+    setFrame((prev) => {
+      if (prev?.url?.startsWith("blob:")) URL.revokeObjectURL(prev.url);
+      return null;
+    });
     setPendingFile(null);
-    setFrame(null);
     setPlacement(DEFAULT_PLACEMENT);
     setFrameBusy(false);
   }
@@ -194,9 +176,14 @@ export function EpisodeVideoUploadButton({
           const file = e.target.files?.[0];
           e.target.value = "";
           if (!file) return;
+          // Clear prior page errors (e.g. thumb-from-video) so replace isn't blocked visually.
+          onError("");
           setPendingFile(file);
           setPlacement(DEFAULT_PLACEMENT);
-          setFrame(null);
+          setFrame((prev) => {
+            if (prev?.url?.startsWith("blob:")) URL.revokeObjectURL(prev.url);
+            return null;
+          });
           setFrameBusy(true);
           void firstFrameFromFile(file)
             .then(setFrame)
@@ -204,7 +191,7 @@ export function EpisodeVideoUploadButton({
             .finally(() => setFrameBusy(false));
         }}
       />
-      <GlassModal open={!!pendingFile} onClose={closeWatermarkModal} title={label} size="lg">
+      <GlassModal open={!!pendingFile} onClose={closeWatermarkModal} title={label} size="lg" zIndex={95}>
         <div className="space-y-4">
           {pendingFile ? (
             <p className="truncate text-caption text-ink-muted">{pendingFile.name}</p>
@@ -373,6 +360,10 @@ export function NewEpisodeUploadForm({
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [fileName, setFileName] = useState("");
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [frame, setFrame] = useState<{ url: string; width: number; height: number } | null>(null);
+  const [frameBusy, setFrameBusy] = useState(false);
+  const [placement, setPlacement] = useState<WatermarkPlacement>(DEFAULT_PLACEMENT);
   const storageQ = useQuery({
     queryKey: ["admin", "storage-status"],
     queryFn: () => adminStorageStatus(),
@@ -380,6 +371,44 @@ export function NewEpisodeUploadForm({
   });
   const preferDirect =
     !!storageQ.data?.r2DirectUpload || !!storageQ.data?.r2Configured;
+
+  function closeWatermarkModal() {
+    setFrame((prev) => {
+      if (prev?.url?.startsWith("blob:")) URL.revokeObjectURL(prev.url);
+      return null;
+    });
+    setPendingFile(null);
+    setPlacement(DEFAULT_PLACEMENT);
+    setFrameBusy(false);
+  }
+
+  async function confirmUpload() {
+    if (!pendingFile || busy) return;
+    const file = pendingFile;
+    const wm = { ...placement };
+    closeWatermarkModal();
+    setBusy(true);
+    setFileName(file.name);
+    try {
+      await adminCreateEpisodeWithUploadSmart(dramaId, file, {
+        title: title || undefined,
+        isFree,
+        priceCredits: isFree ? 0 : priceCredits,
+        thumbnailUrl: thumbnailUrl || undefined,
+        preferDirect,
+        watermarkEnabled: wm.enabled,
+        watermarkX: wm.x,
+        watermarkY: wm.y,
+        watermarkScale: wm.scale,
+      });
+      setFileName("");
+      await onDone();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -403,28 +432,53 @@ export function NewEpisodeUploadForm({
           const file = e.target.files?.[0];
           e.target.value = "";
           if (!file) return;
-          setFileName(file.name);
-          setBusy(true);
-          void (async () => {
-            try {
-              await adminCreateEpisodeWithUploadSmart(dramaId, file, {
-                title: title || undefined,
-                isFree,
-                priceCredits: isFree ? 0 : priceCredits,
-                thumbnailUrl: thumbnailUrl || undefined,
-                preferDirect,
-              });
-              setFileName("");
-              await onDone();
-            } catch (err) {
-              onError(err instanceof Error ? err.message : String(err));
-            } finally {
-              setBusy(false);
-            }
-          })();
+          onError("");
+          setPendingFile(file);
+          setPlacement(DEFAULT_PLACEMENT);
+          setFrame((prev) => {
+            if (prev?.url?.startsWith("blob:")) URL.revokeObjectURL(prev.url);
+            return null;
+          });
+          setFrameBusy(true);
+          void firstFrameFromFile(file)
+            .then(setFrame)
+            .catch(() => setFrame(null))
+            .finally(() => setFrameBusy(false));
         }}
       />
       <p className={cn("w-full text-xs leading-5 text-ink-subtle")}>{t("uploadVideoHint")}</p>
+      <GlassModal
+        open={!!pendingFile}
+        onClose={closeWatermarkModal}
+        title={t("addEpisodeByUpload")}
+        size="lg"
+        zIndex={95}
+      >
+        <div className="space-y-4">
+          {pendingFile ? (
+            <p className="truncate text-caption text-ink-muted">{pendingFile.name}</p>
+          ) : null}
+          {frameBusy ? (
+            <p className="text-caption text-ink-muted">{t("watermarkLoadingFrame")}</p>
+          ) : null}
+          <WatermarkPositionEditor
+            frameUrl={frame?.url || null}
+            frameWidth={frame?.width}
+            frameHeight={frame?.height}
+            value={placement}
+            busy={frameBusy}
+            onChange={setPlacement}
+          />
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="ghost" onClick={closeWatermarkModal}>
+              {t("cancel")}
+            </Button>
+            <Button size="sm" disabled={!pendingFile || busy} onClick={() => void confirmUpload()}>
+              {t("uploadVideo")}
+            </Button>
+          </div>
+        </div>
+      </GlassModal>
     </div>
   );
 }

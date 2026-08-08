@@ -298,6 +298,26 @@ export async function adminEpisodeFirstFrame(id: string) {
   }>(`/admin/episodes/${id}/first-frame`, { method: "POST", body: "{}" });
 }
 
+/** Resolve (if needed) then extract first video frame for watermark placement. */
+export async function adminYtdlpPreviewFrame(body: {
+  url: string;
+  formatPreference?: "best_hls" | "best_mp4" | "best";
+  playlistIndex?: number;
+  cookiesFile?: string;
+  authBearer?: string;
+}) {
+  return adminRequest<{
+    relativePath: string;
+    url: string;
+    width: number;
+    height: number;
+    playUrl: string;
+  }>("/admin/ytdlp/preview-frame", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export async function adminStorageStatus() {
   return adminRequest<{
     storageBackend: string;
@@ -618,6 +638,10 @@ export async function adminCreateEpisodeWithUpload(
     previewSeconds?: number;
     priceCredits?: number;
     thumbnailUrl?: string;
+    watermarkEnabled?: boolean;
+    watermarkX?: number;
+    watermarkY?: number;
+    watermarkScale?: number;
   },
 ) {
   const form = new FormData();
@@ -628,6 +652,12 @@ export async function adminCreateEpisodeWithUpload(
   if (opts?.previewSeconds != null) form.append("previewSeconds", String(opts.previewSeconds));
   if (opts?.priceCredits != null) form.append("priceCredits", String(opts.priceCredits));
   if (opts?.thumbnailUrl) form.append("thumbnailUrl", opts.thumbnailUrl);
+  if (opts?.watermarkEnabled != null) {
+    form.append("watermarkEnabled", opts.watermarkEnabled ? "true" : "false");
+  }
+  if (opts?.watermarkX != null) form.append("watermarkX", String(opts.watermarkX));
+  if (opts?.watermarkY != null) form.append("watermarkY", String(opts.watermarkY));
+  if (opts?.watermarkScale != null) form.append("watermarkScale", String(opts.watermarkScale));
   return adminRequest<{
     jobId: string;
     transcodeStatus: string;
@@ -705,6 +735,10 @@ export async function adminCreateEpisodeFromR2(
     previewSeconds?: number;
     priceCredits?: number;
     thumbnailUrl?: string;
+    watermarkEnabled?: boolean;
+    watermarkX?: number;
+    watermarkY?: number;
+    watermarkScale?: number;
   },
 ) {
   return adminRequest<{
@@ -736,8 +770,18 @@ export async function adminCreateEpisodeWithUploadSmart(
     priceCredits?: number;
     thumbnailUrl?: string;
     preferDirect?: boolean;
+    watermarkEnabled?: boolean;
+    watermarkX?: number;
+    watermarkY?: number;
+    watermarkScale?: number;
   },
 ) {
+  const watermark = {
+    watermarkEnabled: opts?.watermarkEnabled,
+    watermarkX: opts?.watermarkX,
+    watermarkY: opts?.watermarkY,
+    watermarkScale: opts?.watermarkScale,
+  };
   if (opts?.preferDirect !== false) {
     try {
       const contentType = file.type || guessVideoContentType(file.name);
@@ -752,13 +796,14 @@ export async function adminCreateEpisodeWithUploadSmart(
         previewSeconds: opts?.previewSeconds,
         priceCredits: opts?.priceCredits,
         thumbnailUrl: opts?.thumbnailUrl,
+        ...watermark,
       });
     } catch (e) {
       if (opts?.preferDirect === true) throw e;
       // fall through to multipart when auto mode
     }
   }
-  return adminCreateEpisodeWithUpload(dramaId, file, opts);
+  return adminCreateEpisodeWithUpload(dramaId, file, { ...opts, ...watermark });
 }
 
 export async function adminAppendPublicEpisodes(
@@ -1845,6 +1890,10 @@ export async function adminYtdlpTransfer(body: {
   formatPreference?: "best_hls" | "best_mp4" | "best";
   cookiesFile?: string;
   authBearer?: string;
+  watermarkEnabled?: boolean;
+  watermarkX?: number;
+  watermarkY?: number;
+  watermarkScale?: number;
   episodes?: Array<{
     episodeNumber?: number;
     title?: string;

@@ -363,6 +363,10 @@ export class AdminEpisodesService {
       previewSeconds?: number;
       priceCredits?: number | string;
       thumbnailUrl?: string;
+      watermarkEnabled?: boolean;
+      watermarkX?: number;
+      watermarkY?: number;
+      watermarkScale?: number;
     },
     actorId?: bigint,
   ) {
@@ -385,7 +389,12 @@ export class AdminEpisodesService {
       },
       actorId,
     );
-    return this.uploadVideo(created.id, file, actorId);
+    return this.uploadVideo(created.id, file, actorId, {
+      watermarkEnabled: dto.watermarkEnabled,
+      watermarkX: dto.watermarkX,
+      watermarkY: dto.watermarkY,
+      watermarkScale: dto.watermarkScale,
+    });
   }
 
   /**
@@ -402,6 +411,10 @@ export class AdminEpisodesService {
       previewSeconds?: number;
       priceCredits?: number | string;
       thumbnailUrl?: string;
+      watermarkEnabled?: boolean;
+      watermarkX?: number;
+      watermarkY?: number;
+      watermarkScale?: number;
     },
     actorId?: bigint,
   ) {
@@ -429,7 +442,12 @@ export class AdminEpisodesService {
     );
 
     try {
-      return await this.attachDirectUpload(created.id, key, dto.filename, actorId);
+      return await this.attachDirectUpload(created.id, key, dto.filename, actorId, {
+        watermarkEnabled: dto.watermarkEnabled,
+        watermarkX: dto.watermarkX,
+        watermarkY: dto.watermarkY,
+        watermarkScale: dto.watermarkScale,
+      });
     } catch (e) {
       // Avoid orphan occupied episode numbers on confirm failure
       await this.delete(created.id, actorId).catch(() => undefined);
@@ -704,7 +722,7 @@ export class AdminEpisodesService {
     const ep = await this.prisma.episode.findUnique({ where: { id: BigInt(id) } });
     if (!ep) throw new BizException(BizCode.NOT_FOUND, 'episode.notFound');
     const inputRel = ep.originalUrl || ep.hlsUrl;
-    if (!inputRel || /^https?:\/\//i.test(inputRel)) {
+    if (!inputRel) {
       throw new BizException(BizCode.BAD_REQUEST, '无可抽取首帧的本地源文件');
     }
     return this.upload.extractFirstFrame(inputRel);

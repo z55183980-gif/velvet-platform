@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { adminUploadImage } from "@velvet/api-client";
+import { adminEpisodeFirstFrame, adminUploadImage } from "@velvet/api-client";
 import { cn } from "@velvet/ui";
 import { ChevronDown, ImageIcon, ImagePlus, LoaderCircle, Trash2, Video } from "lucide-react";
 import { captureRemoteVideoFrame, captureVideoFirstFrame } from "@/lib/capture-video-frame";
+import { isHlsSource } from "@/lib/load-hls";
 import { useI18n } from "@/lib/i18n";
 import { mediaUrl } from "@/lib/media-url";
 
@@ -15,6 +16,7 @@ import { mediaUrl } from "@/lib/media-url";
 export function DramaCoverField({
   url,
   disabled,
+  episodeId,
   videoFile,
   videoSrc,
   videoIsHls,
@@ -24,6 +26,8 @@ export function DramaCoverField({
 }: {
   url?: string;
   disabled?: boolean;
+  /** Prefer server ffmpeg first-frame when an episode id is available. */
+  episodeId?: string;
   /** Local video already in the episode queue — enables one-click frame capture. */
   videoFile?: File | null;
   /** Hosted video URL for frame capture when no local file. */
@@ -44,7 +48,7 @@ export function DramaCoverField({
   const [cropX, setCropX] = useState(50);
   const [cropY, setCropY] = useState(50);
 
-  const hasKnownVideo = !!(videoFile || videoSrc);
+  const hasKnownVideo = !!(videoFile || videoSrc || episodeId);
   const previewSrc = mediaUrl(url);
   const [imgFailed, setImgFailed] = useState(false);
 
@@ -57,7 +61,14 @@ export function DramaCoverField({
     try {
       await task();
     } catch (e) {
-      onError(e instanceof Error ? e.message : String(e));
+      const raw = e instanceof Error ? e.message : String(e);
+      onError(
+        /failed to load video|capture timed out|HLS|CORS|SecurityError|signature|403|无可抽取/i.test(
+          raw,
+        )
+          ? t("thumbFromVideoFailed")
+          : raw,
+      );
     } finally {
       setBusy(false);
     }
@@ -86,13 +97,19 @@ export function DramaCoverField({
       const baseH = sourceAspect > aspect ? image.height : image.width / aspect;
       const cropW = baseW / cropZoom;
       const cropH = baseH / cropZoom;
-      const sx = Math.max(0, Math.min(image.width - cropW, (image.width - cropW) * cropX / 100));
-      const sy = Math.max(0, Math.min(image.height - cropH, (image.height - cropH) * cropY / 100));
+      const sx = Math.max(0, Math.min(image.width - cropW, ((image.width - cropW) * cropX) / 100));
+      const sy = Math.max(0, Math.min(image.height - cropH, ((image.height - cropH) * cropY) / 100));
       const canvas = document.createElement("canvas");
       canvas.width = targetW;
       canvas.height = targetH;
       canvas.getContext("2d")?.drawImage(image, sx, sy, cropW, cropH, 0, 0, targetW, targetH);
-      const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error(t("coverCropFailed"))), "image/jpeg", 0.9));
+      const blob = await new Promise<Blob>((resolve, reject) =>
+        canvas.toBlob(
+          (value) => (value ? resolve(value) : reject(new Error(t("coverCropFailed")))),
+          "image/jpeg",
+          0.9,
+        ),
+      );
       await uploadBlob(blob, cropFileName.replace(/\.[^.]+$/, "") || "cover");
       URL.revokeObjectURL(cropSource);
       setCropSource(null);
@@ -107,9 +124,22 @@ export function DramaCoverField({
       });
       return;
     }
+    if (episodeId) {
+      void run(async () => {
+        const frame = await adminEpisodeFirstFrame(episodeId);
+        const res = await fetch(frame.url);
+        if (!res.ok) throw new Error(t("thumbFromVideoFailed"));
+        const blob = await res.blob();
+        await uploadBlob(blob, "cover");
+      });
+      return;
+    }
     if (videoSrc) {
       void run(async () => {
-        const blob = await captureRemoteVideoFrame(videoSrc, { isHls: videoIsHls });
+        const resolved = mediaUrl(videoSrc) || videoSrc;
+        const blob = await captureRemoteVideoFrame(resolved, {
+          isHls: videoIsHls ?? isHlsSource(resolved),
+        });
         await uploadBlob(blob, "cover");
       });
     }
@@ -151,11 +181,7 @@ export function DramaCoverField({
           type="button"
           className="drama-cover-field__btn"
           disabled={disabled || busy}
-          title={
-            hasKnownVideo
-              ? t("coverFromEpisodeHint")
-              : t("coverPickVideoHint")
-          }
+          title={hasKnownVideo ? t("coverFromEpisodeHint") : t("coverPickVideoHint")}
           onClick={() => {
             if (hasKnownVideo) captureFromKnown();
             else videoRef.current?.click();
@@ -181,11 +207,65 @@ export function DramaCoverField({
 
       {cropSource ? (
         <div className="drama-cover-field__crop" role="dialog" aria-label={t("coverCropTitle")}>
-          <div className="drama-cover-field__crop-preview" style={{ backgroundImage: `url(${cropSource})`, backgroundSize: `${cropZoom * 100}%`, backgroundPosition: `${cropX}% ${cropY}%` }} />
-          <label>{t("coverCropZoom")}<input type="range" min="1" max="2.5" step="0.05" value={cropZoom} onChange={(e) => setCropZoom(Number(e.target.value))} /></label>
-          <label>{t("coverCropHorizontal")}<input type="range" min="0" max="100" value={cropX} onChange={(e) => setCropX(Number(e.target.value))} /></label>
-          <label>{t("coverCropVertical")}<input type="range" min="0" max="100" value={cropY} onChange={(e) => setCropY(Number(e.target.value))} /></label>
-          <div className="drama-cover-field__crop-actions"><button type="button" className="drama-cover-field__btn" onClick={() => { URL.revokeObjectURL(cropSource); setCropSource(null); }}>{t("cancel")}</button><button type="button" className="drama-cover-field__btn drama-cover-field__btn--primary" onClick={applyCrop} disabled={busy}>{t("coverCropApply")}</button></div>
+          <div
+            className="drama-cover-field__crop-preview"
+            style={{
+              backgroundImage: `url(${cropSource})`,
+              backgroundSize: `${cropZoom * 100}%`,
+              backgroundPosition: `${cropX}% ${cropY}%`,
+            }}
+          />
+          <label>
+            {t("coverCropZoom")}
+            <input
+              type="range"
+              min="1"
+              max="2.5"
+              step="0.05"
+              value={cropZoom}
+              onChange={(e) => setCropZoom(Number(e.target.value))}
+            />
+          </label>
+          <label>
+            {t("coverCropHorizontal")}
+            <input
+              type="range"
+              min="0"
+              max="100"
+              value={cropX}
+              onChange={(e) => setCropX(Number(e.target.value))}
+            />
+          </label>
+          <label>
+            {t("coverCropVertical")}
+            <input
+              type="range"
+              min="0"
+              max="100"
+              value={cropY}
+              onChange={(e) => setCropY(Number(e.target.value))}
+            />
+          </label>
+          <div className="drama-cover-field__crop-actions">
+            <button
+              type="button"
+              className="drama-cover-field__btn"
+              onClick={() => {
+                URL.revokeObjectURL(cropSource);
+                setCropSource(null);
+              }}
+            >
+              {t("cancel")}
+            </button>
+            <button
+              type="button"
+              className="drama-cover-field__btn drama-cover-field__btn--primary"
+              onClick={applyCrop}
+              disabled={busy}
+            >
+              {t("coverCropApply")}
+            </button>
+          </div>
         </div>
       ) : null}
 
@@ -225,7 +305,7 @@ export function DramaCoverField({
           if (!file) return;
           void run(async () => {
             const source = URL.createObjectURL(file);
-            setCropFileName(file.name);
+            setCropFileName(file.name || "cover");
             setCropZoom(1);
             setCropX(50);
             setCropY(50);

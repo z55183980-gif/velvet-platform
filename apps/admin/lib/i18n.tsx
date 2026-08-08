@@ -843,6 +843,10 @@ const zh = {
   watermarkLoadingFrame: "正在抽取首帧…",
   watermarkScale: "水印相对宽度",
   watermarkResetCorner: "重置到右下角",
+  watermarkOnlineHint:
+    "转码时可烧录水印；开启后从首帧预览定位。本地上传与在线「转存 R2」均生效（外链播放不转码，不烧录）。",
+  thumbFromVideoFailed:
+    "无法从成片取帧（CDN/相对路径需签名或 CORS，或浏览器不支持该编码）。请改用「上传图片」，或替换本地视频后再试。",
   dramaDetail: "短剧详情",
   favorites: "收藏",
   likes: "点赞",
@@ -2286,6 +2290,10 @@ const en: Record<LabelKey, string> = {
   watermarkLoadingFrame: "Extracting first frame…",
   watermarkScale: "Watermark relative width",
   watermarkResetCorner: "Reset to bottom-right",
+  watermarkOnlineHint:
+    "Burn during transcode; drag on the first-frame preview. Applies to local uploads and “Transfer to R2” (link-only playback has no burn-in).",
+  thumbFromVideoFailed:
+    "Could not grab a frame from the hosted video (signed media / CORS / codec). Upload an image instead, or replace with a local file first.",
   dramaDetail: "Drama detail",
   favorites: "Favorites",
   likes: "Likes",

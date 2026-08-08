@@ -474,8 +474,9 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
         <EpisodeThumbnailField
           url={episode.thumbnailUrl}
           disabled={actionMut.isPending}
+          episodeId={String(episode.id)}
           videoSrc={episode.hlsUrl || episode.originalUrl || undefined}
-          videoIsHls={!!episode.hlsUrl}
+          videoIsHls={/\.m3u8(\?|$)/i.test(episode.hlsUrl || "")}
           fromVideoLabel={t("thumbFromVideo")}
           uploadLabel={t("thumbUpload")}
           onError={setError}
@@ -869,8 +870,9 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
               <DramaCoverField
                 url={draft.coverUrl || undefined}
                 disabled={actionMut.isPending}
+                episodeId={episodes[0] ? String(episodes[0].id) : undefined}
                 videoSrc={episodes[0]?.hlsUrl || episodes[0]?.originalUrl || undefined}
-                videoIsHls={!!episodes[0]?.hlsUrl}
+                videoIsHls={/\.m3u8(\?|$)/i.test(episodes[0]?.hlsUrl || "")}
                 onChange={(next) => setDraft((v) => ({ ...v, coverUrl: next }))}
                 onError={setError}
               />
@@ -1150,6 +1152,7 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
         }}
         title={t("retryTranscode")}
         size="lg"
+        zIndex={95}
       >
         <div className="space-y-4">
           {watermarkFrameBusy ? (

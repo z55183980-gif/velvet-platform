@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { AlertTriangle, CircleHelp, LoaderCircle, X } from "lucide-react";
 import { Button } from "./components";
 import { cn } from "./cn";
@@ -16,6 +17,8 @@ export type ModalProps = {
   hideClose?: boolean;
   closeLabel?: string;
   className?: string;
+  /** Stacking order; nested modals should use a higher value (default 80). */
+  zIndex?: number;
 };
 
 const sizeWidth: Record<ModalSize, string> = {
@@ -26,6 +29,10 @@ const sizeWidth: Record<ModalSize, string> = {
   "2xl": "76rem",
 };
 
+/** Open Modal instance ids (push order); only the topmost handles Escape. */
+const openModalStack: number[] = [];
+let modalInstanceSeq = 0;
+
 export function Modal({
   open,
   onClose,
@@ -35,20 +42,37 @@ export function Modal({
   hideClose = false,
   closeLabel = "Close",
   className,
+  zIndex = 80,
 }: ModalProps) {
   useEffect(() => {
     if (!open) return;
+    const id = ++modalInstanceSeq;
+    openModalStack.push(id);
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key !== "Escape") return;
+      if (openModalStack[openModalStack.length - 1] !== id) return;
+      e.preventDefault();
+      onClose();
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      const idx = openModalStack.lastIndexOf(id);
+      if (idx >= 0) openModalStack.splice(idx, 1);
+      document.body.style.overflow = prevOverflow;
+    };
   }, [open, onClose]);
 
   if (!open) return null;
+  if (typeof document === "undefined") return null;
 
-  return (
-    <div className="fixed inset-0 z-[80] flex items-end justify-center overflow-hidden p-0 sm:items-center sm:p-4">
+  return createPortal(
+    <div
+      className="fixed inset-0 flex items-end justify-center overflow-hidden p-0 sm:items-center sm:p-4"
+      style={{ zIndex }}
+    >
       <div className="absolute inset-0 bg-black/45 backdrop-blur-sm" onClick={onClose} aria-hidden />
       <div
         role="dialog"
@@ -91,7 +115,8 @@ export function Modal({
         ) : null}
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -147,6 +172,7 @@ export function ConfirmDialog({
         </div>
       }
       size="sm"
+      zIndex={90}
       closeLabel={closeLabel}
       className={cn(
         "!border-white/90 !bg-white/95 !shadow-[0_24px_70px_rgba(15,23,42,0.24)]",
@@ -189,7 +215,8 @@ export function ConfirmDialog({
           variant={confirmVariant}
           className={cn(
             "min-w-24 cursor-pointer hover:-translate-y-0.5 hover:shadow-lg active:translate-y-0 active:scale-[0.97] disabled:cursor-not-allowed",
-            destructive && "border-transparent bg-danger text-white shadow-[0_6px_16px_rgba(190,18,60,0.22)] hover:bg-danger hover:brightness-95",
+            destructive &&
+              "border-transparent bg-danger text-white shadow-[0_6px_16px_rgba(190,18,60,0.22)] hover:bg-danger hover:brightness-95",
           )}
           disabled={busy}
           onClick={onConfirm}

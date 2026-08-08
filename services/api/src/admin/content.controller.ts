@@ -111,6 +111,10 @@ class R2DirectEpisodeDto {
   @IsOptional() previewSeconds?: string | number;
   @IsOptional() priceCredits?: string | number;
   @IsOptional() @IsString() thumbnailUrl?: string;
+  @IsOptional() watermarkEnabled?: string | boolean;
+  @IsOptional() watermarkX?: string | number;
+  @IsOptional() watermarkY?: string | number;
+  @IsOptional() watermarkScale?: string | number;
 }
 
 class R2AttachEpisodeDto {
@@ -363,6 +367,13 @@ class YtdlpResolveDto extends YtdlpAuthFields {
   @IsOptional() @Type(() => Number) @IsNumber() @Min(1) playlistIndex?: number;
 }
 
+class YtdlpPreviewFrameDto extends YtdlpAuthFields {
+  @IsNotEmpty() @IsString() url!: string;
+  @IsOptional() @IsIn(['best_hls', 'best_mp4', 'best'])
+  formatPreference?: 'best_hls' | 'best_mp4' | 'best';
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) playlistIndex?: number;
+}
+
 class YtdlpResolveBatchItemDto {
   @IsOptional() @Type(() => Number) @IsNumber() @Min(1) index?: number;
   @IsNotEmpty() @IsString() url!: string;
@@ -429,6 +440,10 @@ class YtdlpTransferDto extends YtdlpAuthFields {
   @ValidateNested({ each: true })
   @Type(() => YtdlpTransferEpisodeDto)
   episodes?: YtdlpTransferEpisodeDto[];
+  @IsOptional() watermarkEnabled?: boolean | string;
+  @IsOptional() @Type(() => Number) @IsNumber() watermarkX?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() watermarkY?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() watermarkScale?: number;
 }
 
 class YtdlpAppendDto extends YtdlpAuthFields {
@@ -519,6 +534,7 @@ export class ContentController {
   @Post('dramas/:id/episodes/from-r2')
   @AdminRoles('SUPER_ADMIN', 'OPS')
   async createEpisodeFromR2(@Param('id') id: string, @Body() dto: R2DirectEpisodeDto, @Req() req: any) {
+    const wm = parseWatermarkOpts(dto);
     return ok(
       await this.episodes.createWithR2DirectUpload(
         id,
@@ -531,6 +547,10 @@ export class ContentController {
           previewSeconds: dto.previewSeconds != null ? Number(dto.previewSeconds) : undefined,
           priceCredits: dto.priceCredits != null ? Number(dto.priceCredits) : undefined,
           thumbnailUrl: dto.thumbnailUrl,
+          watermarkEnabled: wm?.watermarkEnabled,
+          watermarkX: wm?.watermarkX,
+          watermarkY: wm?.watermarkY,
+          watermarkScale: wm?.watermarkScale,
         },
         getActor(req),
       ),
@@ -624,10 +644,15 @@ export class ContentController {
       previewSeconds?: string | number;
       priceCredits?: string | number;
       thumbnailUrl?: string;
+      watermarkEnabled?: string | boolean;
+      watermarkX?: string | number;
+      watermarkY?: string | number;
+      watermarkScale?: string | number;
     },
     @Req() req: any,
   ) {
     try {
+      const wm = parseWatermarkOpts(body);
       return ok(
         await this.episodes.createWithUpload(
           id,
@@ -639,6 +664,10 @@ export class ContentController {
             previewSeconds: body?.previewSeconds != null ? Number(body.previewSeconds) : undefined,
             priceCredits: body?.priceCredits != null ? Number(body.priceCredits) : undefined,
             thumbnailUrl: body?.thumbnailUrl,
+            watermarkEnabled: wm?.watermarkEnabled,
+            watermarkX: wm?.watermarkX,
+            watermarkY: wm?.watermarkY,
+            watermarkScale: wm?.watermarkScale,
           },
           getActor(req),
         ),
@@ -876,6 +905,21 @@ export class ContentController {
     );
   }
 
+  /** Resolve (if needed) + ffmpeg first frame for watermark placement (not cover art). */
+  @Post('ytdlp/preview-frame')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async ytdlpPreviewFrame(@Body() dto: YtdlpPreviewFrameDto) {
+    return ok(
+      await this.ytdlp.previewFrame({
+        url: dto.url,
+        formatPreference: dto.formatPreference,
+        playlistIndex: dto.playlistIndex,
+        cookiesFile: dto.cookiesFile,
+        authBearer: dto.authBearer,
+      }),
+    );
+  }
+
   /** After AI extract: batch yt-dlp resolve episode page URLs → playable media URLs. */
   @Post('ytdlp/resolve-batch')
   @AdminRoles('SUPER_ADMIN', 'OPS')
@@ -970,7 +1014,30 @@ export class ContentController {
   @Post('ytdlp/transfer')
   @AdminRoles('SUPER_ADMIN', 'OPS')
   async ytdlpTransfer(@Body() dto: YtdlpTransferDto, @Req() req: any) {
-    return ok(await this.ytdlp.transferDrama(dto, getActor(req)));
+    const wm = parseWatermarkOpts(dto);
+    return ok(
+      await this.ytdlp.transferDrama(
+        {
+          url: dto.url,
+          categorySlug: dto.categorySlug,
+          target: dto.target,
+          titleZh: dto.titleZh,
+          titleEn: dto.titleEn,
+          coverUrl: dto.coverUrl,
+          descriptionZh: dto.descriptionZh,
+          maxEpisodes: dto.maxEpisodes,
+          formatPreference: dto.formatPreference,
+          cookiesFile: dto.cookiesFile,
+          authBearer: dto.authBearer,
+          episodes: dto.episodes,
+          watermarkEnabled: wm?.watermarkEnabled,
+          watermarkX: wm?.watermarkX,
+          watermarkY: wm?.watermarkY,
+          watermarkScale: wm?.watermarkScale,
+        },
+        getActor(req),
+      ),
+    );
   }
 
   @Get('ytdlp/transfer/:jobId')

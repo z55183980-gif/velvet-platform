@@ -56,6 +56,10 @@ export type YtdlpTransferOptions = YtdlpImportOptions & {
   episodes?: YtdlpTransferEpisodeInput[];
   coverUrl?: string;
   descriptionZh?: string;
+  watermarkEnabled?: boolean;
+  watermarkX?: number;
+  watermarkY?: number;
+  watermarkScale?: number;
 };
 
 export type YtdlpEpisodeFailure = {
@@ -103,6 +107,10 @@ type TransferPayload = {
   actorId?: string;
   cookiesFile?: string;
   authBearer?: string;
+  watermarkEnabled?: boolean;
+  watermarkX?: number;
+  watermarkY?: number;
+  watermarkScale?: number;
   selected: Array<{
     index: number;
     id: string;
@@ -404,6 +412,38 @@ export class YtdlpImportService implements OnModuleInit {
         playUrl,
         originalUrl: url,
       }));
+  }
+
+  /**
+   * Resolve (if needed) then ffmpeg-extract first frame for watermark placement UI.
+   * Never uses drama cover art — always a decoded video frame.
+   */
+  async previewFrame(opts: {
+    url: string;
+    formatPreference?: YtdlpFormatPreference;
+    playlistIndex?: number;
+    cookiesFile?: string;
+    authBearer?: string;
+  }) {
+    const raw = String(opts.url || '').trim();
+    if (!/^https?:\/\//i.test(raw)) {
+      throw new BizException(BizCode.BAD_REQUEST, '请提供可访问的视频或分集页 URL');
+    }
+    const auth = this.authFromOpts(opts);
+    let playUrl = raw;
+    if (!isPlayableMediaUrl(playUrl)) {
+      playUrl = await this.provider.resolvePlayUrl(
+        playUrl,
+        opts.formatPreference || 'best_mp4',
+        opts.playlistIndex,
+        auth,
+      );
+    }
+    if (!playUrl) {
+      throw new BizException(BizCode.BAD_REQUEST, '未能解析到可取帧的播放地址');
+    }
+    const frame = await this.upload.extractFirstFrame(playUrl);
+    return { ...frame, playUrl };
   }
 
   /**
@@ -926,6 +966,10 @@ export class YtdlpImportService implements OnModuleInit {
       actorId: actorId != null ? String(actorId) : undefined,
       cookiesFile: opts.cookiesFile?.trim() || undefined,
       authBearer: opts.authBearer?.trim() || undefined,
+      watermarkEnabled: !!opts.watermarkEnabled,
+      watermarkX: opts.watermarkX,
+      watermarkY: opts.watermarkY,
+      watermarkScale: opts.watermarkScale,
       selected,
     };
 
@@ -1137,6 +1181,10 @@ export class YtdlpImportService implements OnModuleInit {
 
           const mediaJob = await this.upload.enqueueTranscode(relativePath, created.id, {
             preferR2: payload.preferR2,
+            watermarkEnabled: !!payload.watermarkEnabled,
+            watermarkX: payload.watermarkX,
+            watermarkY: payload.watermarkY,
+            watermarkScale: payload.watermarkScale,
           });
           const entry: YtdlpTransferJobEntry = {
             episodeId: created.id,

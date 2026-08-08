@@ -1,10 +1,13 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { adminUploadImage } from "@velvet/api-client";
+import { adminEpisodeFirstFrame, adminUploadImage } from "@velvet/api-client";
 import { cn } from "@velvet/ui";
 import { ImageIcon, ImagePlus, LoaderCircle, Video } from "lucide-react";
 import { captureRemoteVideoFrame, captureVideoFirstFrame } from "@/lib/capture-video-frame";
+import { isHlsSource } from "@/lib/load-hls";
+import { mediaUrl } from "@/lib/media-url";
+import { useI18n } from "@/lib/i18n";
 
 export function EpisodeThumbnailField({
   url,
@@ -15,6 +18,7 @@ export function EpisodeThumbnailField({
   onError,
   fromVideoLabel,
   uploadLabel,
+  episodeId,
   videoFile,
   videoSrc,
   videoIsHls,
@@ -28,12 +32,15 @@ export function EpisodeThumbnailField({
   onError: (message: string) => void;
   fromVideoLabel: string;
   uploadLabel: string;
+  /** When set, prefer server ffmpeg first-frame (works for local originals without browser CORS). */
+  episodeId?: string;
   /** A video file already picked/selected locally (e.g. queued for upload) — captured directly, no file dialog. */
   videoFile?: File;
   /** URL of a video already hosted on the server (HLS or MP4) — captured directly, no file dialog. Takes effect only when `videoFile` is absent. */
   videoSrc?: string;
   videoIsHls?: boolean;
 }) {
+  const { t } = useI18n();
   const videoRef = useRef<HTMLInputElement>(null);
   const imageRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -43,7 +50,12 @@ export function EpisodeThumbnailField({
     try {
       await task();
     } catch (e) {
-      onError(e instanceof Error ? e.message : String(e));
+      const raw = e instanceof Error ? e.message : String(e);
+      onError(
+        /failed to load video|capture timed out|HLS|CORS|SecurityError|signature|403/i.test(raw)
+          ? t("thumbFromVideoFailed")
+          : raw,
+      );
     } finally {
       setBusy(false);
     }
@@ -54,21 +66,36 @@ export function EpisodeThumbnailField({
     await onUploaded(saved.url);
   };
 
-  // When a video is already selected/hosted, grab the frame straight from it —
-  // no file picker. Only fall back to asking for a local file when neither is set.
+  const captureFromServer = episodeId
+    ? () =>
+        run(async () => {
+          const frame = await adminEpisodeFirstFrame(episodeId);
+          const res = await fetch(frame.url);
+          if (!res.ok) throw new Error(t("thumbFromVideoFailed"));
+          const blob = await res.blob();
+          await uploadFrame(blob, "frame");
+        })
+    : null;
+
+  // Prefer local file → server ffmpeg → browser remote capture → file picker.
   const captureFromKnownSource = videoFile
     ? () =>
         run(async () => {
           const blob = await captureVideoFirstFrame(videoFile);
           await uploadFrame(blob, videoFile.name.replace(/\.[^.]+$/, "") || "media");
         })
-    : videoSrc
-      ? () =>
-          run(async () => {
-            const blob = await captureRemoteVideoFrame(videoSrc, { isHls: videoIsHls });
-            await uploadFrame(blob, "frame");
-          })
-      : null;
+    : captureFromServer
+      ? captureFromServer
+      : videoSrc
+        ? () =>
+            run(async () => {
+              const resolved = mediaUrl(videoSrc) || videoSrc;
+              const blob = await captureRemoteVideoFrame(resolved, {
+                isHls: videoIsHls ?? isHlsSource(resolved),
+              });
+              await uploadFrame(blob, "frame");
+            })
+        : null;
 
   return (
     <div

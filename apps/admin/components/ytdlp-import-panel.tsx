@@ -6,6 +6,7 @@ import {
   adminStorageStatus,
   adminYtdlpAiExtract,
   adminYtdlpDownloadEpisode,
+  adminYtdlpPreviewFrame,
   adminYtdlpProbe,
   adminYtdlpResolve,
   adminYtdlpStatus,
@@ -22,6 +23,11 @@ import {
 } from "@/lib/drama-info-fill";
 import { useI18n } from "@/lib/i18n";
 import { isPlayableMediaUrl } from "@/lib/playable-url";
+import {
+  WatermarkPositionEditor,
+  DEFAULT_PLACEMENT,
+  type WatermarkPlacement,
+} from "@/components/watermark-position-editor";
 
 type AiProbeResult = Awaited<ReturnType<typeof adminYtdlpAiExtract>>;
 type YtProbeResult = Awaited<ReturnType<typeof adminYtdlpProbe>>;
@@ -85,6 +91,13 @@ export function YtdlpImportPanel({
   const [epRangeStart, setEpRangeStart] = useState("");
   const [epRangeEnd, setEpRangeEnd] = useState("");
   const [formatPreference, setFormatPreference] = useState<FormatPreference>("best");
+  const [watermark, setWatermark] = useState<WatermarkPlacement>(DEFAULT_PLACEMENT);
+  const [watermarkFrame, setWatermarkFrame] = useState<{
+    url: string;
+    width: number;
+    height: number;
+  } | null>(null);
+  const [watermarkFrameBusy, setWatermarkFrameBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [engineOpen, setEngineOpen] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
@@ -139,6 +152,8 @@ export function YtdlpImportPanel({
     setApplied(false);
     setResolveProgress(null);
     setSelectedIndexes([]);
+    setWatermarkFrame(null);
+    setWatermarkFrameBusy(false);
     probeSelectKeyRef.current = "";
     resolveAbortRef.current = true;
     downloadAbortRef.current = true;
@@ -202,6 +217,81 @@ export function YtdlpImportPanel({
     if (!file && !bearer) return undefined;
     return { cookiesFile: file, authBearer: bearer };
   }
+
+  /** Pull a real video first frame for watermark placement (never cover art). */
+  useEffect(() => {
+    if (ingestForm !== "r2" || !probe?.episodes?.length) {
+      setWatermarkFrame(null);
+      setWatermarkFrameBusy(false);
+      return;
+    }
+    if (!watermark.enabled) {
+      setWatermarkFrame(null);
+      setWatermarkFrameBusy(false);
+      return;
+    }
+
+    const selected = probe.episodes.filter((ep) => selectedIndexes.includes(ep.index));
+    const pool = selected.length ? selected : probe.episodes;
+    const pick =
+      pool.find((ep) => isPlayableMediaUrl(episodeSourceUrl(ep))) ||
+      pool.find((ep) => {
+        const src = episodeSourceUrl(ep);
+        const page = (ep.webpageUrl || "").trim();
+        return !!(src || page);
+      }) ||
+      null;
+    const direct = pick ? episodeSourceUrl(pick) : undefined;
+    const targetUrl =
+      (direct && isPlayableMediaUrl(direct) ? direct : undefined) ||
+      (pick?.webpageUrl || "").trim() ||
+      (direct || "").trim();
+
+    if (!/^https?:\/\//i.test(targetUrl)) {
+      setWatermarkFrame(null);
+      setWatermarkFrameBusy(false);
+      return;
+    }
+
+    let cancelled = false;
+    setWatermarkFrameBusy(true);
+    const auth = authPayload();
+    void adminYtdlpPreviewFrame({
+      url: targetUrl,
+      formatPreference: formatPreference === "best_hls" ? "best_mp4" : formatPreference,
+      playlistIndex: pick?.playlistIndex,
+      cookiesFile: auth?.cookiesFile,
+      authBearer: auth?.authBearer,
+    })
+      .then((frame) => {
+        if (cancelled) return;
+        setWatermarkFrame({
+          url: frame.url,
+          width: frame.width,
+          height: frame.height,
+        });
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setWatermarkFrame(null);
+      })
+      .finally(() => {
+        if (!cancelled) setWatermarkFrameBusy(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- auth strings are read when deps fire
+  }, [
+    ingestForm,
+    watermark.enabled,
+    probe,
+    selectedIndexes,
+    formatPreference,
+    cookiesFile,
+    authBearer,
+  ]);
 
   async function downloadEpisode(ep: ProbeResult["episodes"][number]) {
     setError(null);
@@ -663,6 +753,10 @@ export function YtdlpImportPanel({
         episodeIndexes: selectedIndexes,
         cookiesFile: auth?.cookiesFile,
         authBearer: auth?.authBearer,
+        watermarkEnabled: ingestForm === "r2" ? watermark.enabled : false,
+        watermarkX: watermark.x,
+        watermarkY: watermark.y,
+        watermarkScale: watermark.scale,
         includeMeta: true,
         includeOnline: true,
         overwriteMeta,
@@ -1141,6 +1235,7 @@ export function YtdlpImportPanel({
                       onClick={() => {
                         setIngestForm(key);
                         setFormatPreference(key === "link" ? "best_hls" : "best");
+                        if (key === "link") setWatermark(DEFAULT_PLACEMENT);
                         setApplied(false);
                       }}
                     >
@@ -1171,6 +1266,25 @@ export function YtdlpImportPanel({
                 </p>
               ) : null}
             </div>
+
+            {ingestForm === "r2" ? (
+              <div className="space-y-2">
+                {watermarkFrameBusy ? (
+                  <p className="text-caption text-ink-muted">{t("watermarkLoadingFrame")}</p>
+                ) : null}
+                <WatermarkPositionEditor
+                  frameUrl={watermarkFrame?.url || null}
+                  frameWidth={watermarkFrame?.width}
+                  frameHeight={watermarkFrame?.height}
+                  value={watermark}
+                  busy={busy || watermarkFrameBusy}
+                  onChange={(next) => {
+                    setWatermark(next);
+                    setApplied(false);
+                  }}
+                />
+              </div>
+            ) : null}
 
             {onFillDramaInfo ? (
               <div

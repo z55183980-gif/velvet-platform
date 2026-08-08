@@ -71,6 +71,10 @@ export type UploadJob = {
   updatedAt: number;
   error?: string;
   episodes: UploadEpisodeSnapshot[];
+  watermarkEnabled?: boolean;
+  watermarkX?: number;
+  watermarkY?: number;
+  watermarkScale?: number;
 };
 
 export type EnqueueUploadEpisode = {
@@ -94,6 +98,10 @@ export type EnqueueUploadJobInput = {
   createDrama?: UploadCreateDramaMeta;
   appendSourceTags?: string[];
   episodes: EnqueueUploadEpisode[];
+  watermarkEnabled?: boolean;
+  watermarkX?: number;
+  watermarkY?: number;
+  watermarkScale?: number;
 };
 
 type UploadQueueContextValue = {
@@ -403,6 +411,10 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
               priceCredits: nextEp.isFree ? 0 : nextEp.priceCredits,
               thumbnailUrl,
               preferDirect: live.preferDirect,
+              watermarkEnabled: live.watermarkEnabled,
+              watermarkX: live.watermarkX,
+              watermarkY: live.watermarkY,
+              watermarkScale: live.watermarkScale,
             });
 
             if (cancelledRef.current.has(jobId)) {
@@ -569,6 +581,10 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
         publishWhenReady: !!input.publishWhenReady,
         createDrama: input.createDrama,
         appendSourceTags: input.appendSourceTags,
+        watermarkEnabled: input.watermarkEnabled,
+        watermarkX: input.watermarkX,
+        watermarkY: input.watermarkY,
+        watermarkScale: input.watermarkScale,
         status: "queued",
         createdAt: Date.now(),
         updatedAt: Date.now(),

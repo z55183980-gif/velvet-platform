@@ -13,6 +13,8 @@ export type OnlineEpisodeFill = {
   /** Direct playable URL when already known (manual paste / AI extract). */
   sourceUrl?: string;
   durationSec?: number;
+  /** yt-dlp playlist entry index when the page is a playlist. */
+  playlistIndex?: number;
 };
 
 /** Staged online resources — executed only when the main window submits. */
@@ -26,6 +28,11 @@ export type OnlineSourcePackage = {
   /** Optional yt-dlp auth carried from the online dialog into submit. */
   cookiesFile?: string;
   authBearer?: string;
+  /** Burn Velvet watermark during R2 transfer transcode. */
+  watermarkEnabled?: boolean;
+  watermarkX?: number;
+  watermarkY?: number;
+  watermarkScale?: number;
 };
 
 export type DramaInfoFillPayload = {
@@ -51,6 +58,7 @@ type ProbeEpisodeLike = {
   webpageUrl?: string | null;
   sourceUrl?: string | null;
   durationSec?: number | null;
+  playlistIndex?: number | null;
 };
 
 type ProbeLike = {
@@ -72,6 +80,10 @@ type ProbeExtras = {
   episodeIndexes?: number[];
   cookiesFile?: string;
   authBearer?: string;
+  watermarkEnabled?: boolean;
+  watermarkX?: number;
+  watermarkY?: number;
+  watermarkScale?: number;
   /** Include title/cover/desc/totalEpisodes. Default true. */
   includeMeta?: boolean;
   /** Include staged online package. Default true. */
@@ -144,6 +156,10 @@ export function dramaInfoFromYtdlpProbe(
         : extras?.maxEpisodes,
       cookiesFile: extras?.cookiesFile?.trim() || undefined,
       authBearer: extras?.authBearer?.trim() || undefined,
+      watermarkEnabled: extras?.watermarkEnabled,
+      watermarkX: extras?.watermarkX,
+      watermarkY: extras?.watermarkY,
+      watermarkScale: extras?.watermarkScale,
       episodes: selected.map((ep, i) => {
         const webpageRaw = (ep.webpageUrl || "").trim() || undefined;
         const sourceRaw = (ep.sourceUrl || "").trim() || undefined;
@@ -160,12 +176,17 @@ export function dramaInfoFromYtdlpProbe(
               ? sourceRaw
               : webpageRaw;
         const indexNum = Number(ep.index);
+        const playlistIndex =
+          typeof ep.playlistIndex === "number" && Number.isFinite(ep.playlistIndex)
+            ? ep.playlistIndex
+            : undefined;
         return {
           episodeNumber: Number.isFinite(indexNum) && indexNum > 0 ? indexNum : i + 1,
           title: (ep.title || "").trim() || undefined,
           webpageUrl,
           sourceUrl: playableSource,
           durationSec: typeof ep.durationSec === "number" ? ep.durationSec : undefined,
+          playlistIndex,
         };
       }),
     };

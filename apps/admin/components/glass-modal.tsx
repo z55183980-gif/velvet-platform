@@ -12,6 +12,8 @@ type GlassModalProps = {
   size?: ModalSize;
   hideClose?: boolean;
   className?: string;
+  /** Higher than parent modals when nesting (e.g. replace-video over drama editor). */
+  zIndex?: number;
 };
 
 export function GlassModal({
@@ -22,6 +24,7 @@ export function GlassModal({
   size = "md",
   hideClose = false,
   className,
+  zIndex,
 }: GlassModalProps) {
   const { t } = useI18n();
 
@@ -33,6 +36,7 @@ export function GlassModal({
       size={size}
       hideClose={hideClose}
       closeLabel={t("close")}
+      zIndex={zIndex}
       className={cn("glass-modal", className)}
     >
       {children}
