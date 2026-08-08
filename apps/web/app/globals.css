@@ -87,9 +87,10 @@
     font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
 
     /*
-      Mobile bottom-tab clearance = raw home-indicator inset (no +air / floor).
-      Home + theater share one fixed tab: h-12 + this token.
-      Feed video stays full-bleed under the overlay; only UI pads clear of it.
+      Bottom-tab safe inset. Non-zero only after PWA black-translucent expands
+      the canvas into the home-indicator band (with viewport-fit=cover).
+      Theater/me keep padding with this token; home feed flushes (pb-0) so the
+      band is not painted as an empty chrome slab over video.
     */
     --mobile-tab-safe-bottom: env(safe-area-inset-bottom, 0px);
     --mobile-tab-chrome-height: calc(3rem + var(--mobile-tab-safe-bottom));

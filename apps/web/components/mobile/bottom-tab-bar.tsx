@@ -20,21 +20,33 @@ const tabs = [
 ] as const;
 
 /**
- * One fixed tab for home + theater + me.
- * Height = h-12 (3rem) + --mobile-tab-safe-bottom (raw env safe-area only).
- * Home feed video stays full-bleed under this overlay; feed UI pads itself clear.
+ * Fixed tab for home + theater + me.
+ *
+ * After apple-mobile-web-app-status-bar-style=black-translucent the page canvas
+ * includes the home-indicator band and env(safe-area-inset-bottom) becomes
+ * non-zero. Theater/me keep that pad so labels clear the indicator. Home feed
+ * must NOT solid-pad it — that pad is the visible “extra bottom safe area”
+ * over full-bleed video (flushSafeArea).
  */
-export function BottomTabBar() {
+export function BottomTabBar({
+  flushSafeArea = false,
+}: {
+  flushSafeArea?: boolean;
+}) {
   const pathname = usePathname() || "/";
   const { t } = useLocale();
 
   return (
     <nav
-      className="fixed inset-x-0 bottom-0 z-50 border-t border-line/60 bg-base/90 pb-[var(--mobile-tab-safe-bottom)] backdrop-blur-xl"
+      className={cn(
+        "fixed inset-x-0 bottom-0 z-50 border-t border-line/60 bg-base/90 backdrop-blur-xl",
+        flushSafeArea ? "pb-0" : "pb-[var(--mobile-tab-safe-bottom)]",
+      )}
       aria-label="Primary"
       style={{
-        ["--mobile-tab-chrome-height" as string]:
-          "calc(3rem + var(--mobile-tab-safe-bottom))",
+        ["--mobile-tab-chrome-height" as string]: flushSafeArea
+          ? "3rem"
+          : "calc(3rem + var(--mobile-tab-safe-bottom))",
       }}
     >
       <div className="mx-auto flex h-12 max-w-lg items-stretch justify-around">
