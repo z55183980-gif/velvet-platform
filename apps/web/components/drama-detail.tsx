@@ -1672,7 +1672,7 @@ export function DramaDetail({
           <div className="absolute inset-x-0 bottom-0 z-40">
             <div className="flex flex-col">
               {showWatchMetaChrome ? (
-                <div className="relative px-3.5 pb-1.5">
+                <div className="relative px-3.5 pb-1">
                   <div className="pointer-events-none max-w-[calc(100%-4.75rem)]">
                     <button
                       type="button"
@@ -1684,7 +1684,7 @@ export function DramaDetail({
                     </button>
                     <button
                       type="button"
-                      className="pointer-events-auto mt-1 flex w-full items-start text-left text-[12px] leading-[17px] text-white/88 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
+                      className="pointer-events-auto mt-0.5 flex w-full items-start text-left text-[12px] leading-[17px] text-white/88 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
                       onClick={() => setEpLineExpanded((v) => !v)}
                     >
                       <span className="min-w-0 flex-1">
@@ -1726,21 +1726,22 @@ export function DramaDetail({
                 </div>
               ) : null}
 
-              {/* 竖屏底栏：整体贴底；PWA 不垫 safe-area（避免多出安全区空条）。 */}
-              <div className="relative z-10 w-full">
+              {/* 整组贴底：标题/进度/选集同一列，压缩内间距，无 safe-area 垫高 */}
+              <div className="relative z-10 w-full bg-[#000000]">
                 <WatchSeekBar
                   videoRef={videoRef}
                   absolute={false}
+                  compact
                   className="!px-0"
                   mediaKey={playUrl}
                   disabled={!playUrl || needsLogin || locked}
                   onSeekingChange={onSeekingChange}
                 />
-                <div className="flex items-center gap-6 bg-[#000000] px-[18px] pb-0 pt-2.5">
+                <div className="flex items-center gap-6 px-[18px] pb-0 pt-1">
                   <button
                     type="button"
                     onClick={() => setDrawerOpen(true)}
-                    className="flex h-[42px] min-w-0 flex-1 items-center justify-between gap-2 rounded-[10px] bg-[#19191b] px-3.5 text-white"
+                    className="flex h-10 min-w-0 flex-1 items-center justify-between gap-2 rounded-[10px] bg-[#19191b] px-3.5 text-white"
                   >
                     <span className="min-w-0 truncate text-left text-[13px] font-medium leading-none">
                       {t("detail.pickEpisodesBar", { n: drama.episodesCount })}
@@ -1758,7 +1759,7 @@ export function DramaDetail({
                         void enterPortraitFullscreen();
                       }
                     }}
-                    className="grid h-[42px] w-[42px] shrink-0 place-items-center text-white"
+                    className="grid h-10 w-10 shrink-0 place-items-center text-white"
                     aria-label={
                       uiImmersive
                         ? t("player.exitFullscreen")

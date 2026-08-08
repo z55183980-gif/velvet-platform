@@ -27,6 +27,8 @@ type WatchSeekBarProps = {
   rotated?: boolean;
   /** Fired when scrub drag starts/ends (parent uses this to ignore swipe gestures). */
   onSeekingChange?: (seeking: boolean) => void;
+  /** Tighter hit area for Hongguo-flush portrait watch chrome. */
+  compact?: boolean;
 };
 
 /**
@@ -44,6 +46,7 @@ export function WatchSeekBar({
   mediaKey,
   rotated = false,
   onSeekingChange,
+  compact = false,
 }: WatchSeekBarProps) {
   const seekRef = useRef<HTMLDivElement>(null);
   const [current, setCurrent] = useState(0);
@@ -277,7 +280,10 @@ export function WatchSeekBar({
     >
       {dragging ? (
         <div
-          className="pointer-events-none absolute bottom-[1.05rem] -translate-x-1/2 whitespace-nowrap text-[12px] font-semibold tabular-nums tracking-wide text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.75)]"
+          className={cn(
+            "pointer-events-none absolute -translate-x-1/2 whitespace-nowrap text-[12px] font-semibold tabular-nums tracking-wide text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.75)]",
+            compact ? "bottom-[0.85rem]" : "bottom-[1.05rem]",
+          )}
           style={{ left: `${timeLeft}%` }}
         >
           {fmtTime(duration > 0 ? current : 0)} / {fmtTime(duration)}
@@ -287,7 +293,8 @@ export function WatchSeekBar({
       <div
         ref={seekRef}
         className={cn(
-          "relative h-5 touch-none select-none",
+          "relative touch-none select-none",
+          compact ? "h-3.5" : "h-5",
           disabled ? "pointer-events-none opacity-40" : "cursor-pointer",
         )}
         onPointerDown={(e) => {
@@ -308,7 +315,8 @@ export function WatchSeekBar({
       >
         <div
           className={cn(
-            "absolute inset-x-0 bottom-[7px] overflow-visible rounded-full transition-[height,background-color] duration-150",
+            "absolute inset-x-0 overflow-visible rounded-full transition-[height,background-color] duration-150",
+            compact ? "bottom-[5px]" : "bottom-[7px]",
             dragging ? "h-[3px] bg-white/30" : "h-px bg-white/45",
           )}
         >

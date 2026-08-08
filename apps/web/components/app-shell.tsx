@@ -74,14 +74,18 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
             isMobile &&
             !onDrama &&
             "pt-[env(safe-area-inset-top,0px)]",
-          // Same bottom reserve for home feed + theater/me: matches fixed BottomTabBar
-          // height (h-12 + --mobile-tab-safe-bottom). Do not use inline tab on home —
-          // that layout diverged from theater under black-translucent PWA.
-          !onDrama && isMobile && "pb-[calc(3rem+var(--mobile-tab-safe-bottom))]",
+          // Theater/me: reserve fixed tab height under scroll content.
+          // Home feed must NOT get this pb — it shrinks the video stage (h-full)
+          // and makes the bottom look taller than theater. Feed overlays the tab
+          // instead (see VerticalFeed bottom chrome pad).
+          !lockMobileHome &&
+            !onDrama &&
+            isMobile &&
+            "pb-[calc(3rem+var(--mobile-tab-safe-bottom))]",
           onDrama && isMobile && "bg-base",
           lockMobileHome &&
             isMobile &&
-            "min-h-0 flex-1 overflow-hidden overscroll-none",
+            "min-h-0 flex-1 overflow-hidden overscroll-none pb-0",
         )}
       >
         {children}

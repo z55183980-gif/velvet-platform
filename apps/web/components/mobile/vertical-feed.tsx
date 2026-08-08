@@ -941,88 +941,90 @@ function FeedPage({
         </div>
       ) : null}
 
-      {/* Bottom info stack: title → tags → episode bar; side actions hug the top */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex flex-col">
-        <div className="pointer-events-auto absolute bottom-full right-2.5 mb-2 flex flex-col items-center gap-5">
-          <SideAction
-            label={t("feed.favorite")}
-            count={formatCount(favCount, locale)}
-            active={favorited}
-            onClick={() => void toggleFavorite()}
-          >
-            <Star
-              className={cn(
-                "h-[30px] w-[30px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]",
-                favorited ? "fill-[#ffb000] text-[#ffb000]" : "fill-none text-white",
-              )}
-              strokeWidth={1.75}
-            />
-          </SideAction>
-          <SideAction
-            label={t("feed.like")}
-            count={formatCount(likeCount, locale)}
-            active={liked}
-            onClick={() => void toggleLike()}
-          >
-            <Heart
-              className={cn(
-                "h-[30px] w-[30px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]",
-                liked ? "fill-[#ff4d6d] text-[#ff4d6d]" : "fill-none text-white",
-              )}
-              strokeWidth={1.75}
-            />
-          </SideAction>
-          <SideAction
-            label={muted ? t("player.unmute") : t("player.mute")}
-            count={muted ? t("player.unmute") : t("player.mute")}
-            active={muted}
-            onClick={toggleMuted}
-          >
-            {muted ? (
-              <VolumeX
-                className="h-[30px] w-[30px] text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
+      {/* Video stays full-bleed under the fixed tab; only this chrome lifts above it. */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 pb-[calc(3rem+var(--mobile-tab-safe-bottom))]">
+        <div className="relative flex flex-col">
+          <div className="pointer-events-auto absolute bottom-full right-2.5 mb-2 flex flex-col items-center gap-5">
+            <SideAction
+              label={t("feed.favorite")}
+              count={formatCount(favCount, locale)}
+              active={favorited}
+              onClick={() => void toggleFavorite()}
+            >
+              <Star
+                className={cn(
+                  "h-[30px] w-[30px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]",
+                  favorited ? "fill-[#ffb000] text-[#ffb000]" : "fill-none text-white",
+                )}
                 strokeWidth={1.75}
               />
-            ) : (
-              <Volume2
-                className="h-[30px] w-[30px] text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
+            </SideAction>
+            <SideAction
+              label={t("feed.like")}
+              count={formatCount(likeCount, locale)}
+              active={liked}
+              onClick={() => void toggleLike()}
+            >
+              <Heart
+                className={cn(
+                  "h-[30px] w-[30px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]",
+                  liked ? "fill-[#ff4d6d] text-[#ff4d6d]" : "fill-none text-white",
+                )}
                 strokeWidth={1.75}
               />
+            </SideAction>
+            <SideAction
+              label={muted ? t("player.unmute") : t("player.mute")}
+              count={muted ? t("player.unmute") : t("player.mute")}
+              active={muted}
+              onClick={toggleMuted}
+            >
+              {muted ? (
+                <VolumeX
+                  className="h-[30px] w-[30px] text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
+                  strokeWidth={1.75}
+                />
+              ) : (
+                <Volume2
+                  className="h-[30px] w-[30px] text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
+                  strokeWidth={1.75}
+                />
+              )}
+            </SideAction>
+          </div>
+
+          <div className="pointer-events-auto max-w-[calc(100%-4.75rem)] px-3">
+            <Link
+              href={`/drama/${drama.id}`}
+              className="inline-flex max-w-full items-center gap-0.5 text-[17px] font-semibold leading-snug text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.65)]"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <span className="truncate">{meta.title}</span>
+              <ChevronRight className="h-5 w-5 shrink-0 opacity-90" strokeWidth={2.25} />
+            </Link>
+
+            {meta.tags.length > 0 && (
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] leading-4 text-white/90 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]">
+                {meta.tags.map((tag, i) => (
+                  <span key={tag.key} className="inline-flex max-w-full items-center">
+                    {i > 0 ? <span className="mr-1.5 text-white/35">·</span> : null}
+                    <span className="truncate">{tag.node}</span>
+                  </span>
+                ))}
+              </div>
             )}
-          </SideAction>
+          </div>
+
+          <FeedEpisodeBar
+            className="pointer-events-auto mt-1.5"
+            href={`/drama/${drama.id}/play`}
+            label={t("feed.watchFull", { n: drama.episodesCount })}
+            videoRef={videoRef}
+            mediaKey={playUrl}
+            seekEnabled={active && !!playUrl && canPlay && !locked && !needsLogin && !playErr}
+            onSeekingChange={active ? onSeekingChange : undefined}
+          />
         </div>
-
-        <div className="pointer-events-auto max-w-[calc(100%-4.75rem)] px-3">
-          <Link
-            href={`/drama/${drama.id}`}
-            className="inline-flex max-w-full items-center gap-0.5 text-[17px] font-semibold leading-snug text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.65)]"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <span className="truncate">{meta.title}</span>
-            <ChevronRight className="h-5 w-5 shrink-0 opacity-90" strokeWidth={2.25} />
-          </Link>
-
-          {meta.tags.length > 0 && (
-            <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] leading-4 text-white/90 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]">
-              {meta.tags.map((tag, i) => (
-                <span key={tag.key} className="inline-flex max-w-full items-center">
-                  {i > 0 ? <span className="mr-1.5 text-white/35">·</span> : null}
-                  <span className="truncate">{tag.node}</span>
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-
-        <FeedEpisodeBar
-          className="pointer-events-auto mt-1.5"
-          href={`/drama/${drama.id}/play`}
-          label={t("feed.watchFull", { n: drama.episodesCount })}
-          videoRef={videoRef}
-          mediaKey={playUrl}
-          seekEnabled={active && !!playUrl && canPlay && !locked && !needsLogin && !playErr}
-          onSeekingChange={active ? onSeekingChange : undefined}
-        />
       </div>
 
       <UnlockSheet
