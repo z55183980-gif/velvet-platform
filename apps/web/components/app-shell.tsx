@@ -51,8 +51,8 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
   return (
     <div
       className={cn(
-        // Home feed: video stage + bottom tab as siblings (heights decoupled).
-        // Prefer inset-0 stretch over h-dvh so PWA translucent sizing is stable.
+        // Home feed: full-bleed stage under a fixed tab (same chrome as theater).
+        // Prefer inset-0 over h-dvh so PWA translucent sizing stays stable.
         lockMobileHome &&
           isMobile &&
           "feed-immersive fixed inset-0 flex flex-col overflow-hidden overscroll-none",
@@ -71,8 +71,8 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
             isMobile &&
             !onDrama &&
             "pt-[env(safe-area-inset-top,0px)]",
-          // Theater/me scroll clear of the fixed tab. Home feed uses an inline tab
-          // sibling instead — do not pad main or the video stage shrinks.
+          // Theater/me: reserve fixed tab under scroll content.
+          // Home feed: no main pb — video stays full-bleed; feed overlays clear the tab.
           !lockMobileHome &&
             !onDrama &&
             isMobile &&
@@ -86,9 +86,7 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
         {children}
       </main>
       {mobileReady && !isMobile ? <Footer /> : null}
-      {mobileReady && isMobile && !onDrama ? (
-        <BottomTabBar inline={lockMobileHome} />
-      ) : null}
+      {mobileReady && isMobile && !onDrama ? <BottomTabBar /> : null}
       <PwaInstallRoot />
     </div>
   );

@@ -20,26 +20,19 @@ const tabs = [
 ] as const;
 
 /**
- * Fixed bottom height = h-12 (3rem) + --mobile-tab-safe-bottom.
- * Home (inline) and theater (fixed) share the same token so chrome height matches;
- * video stage size is independent (flex-1 sibling above inline tab).
+ * One fixed tab for home + theater + me.
+ * Height = h-12 (3rem) + --mobile-tab-safe-bottom (raw env safe-area only).
+ * Home feed video stays full-bleed under this overlay; feed UI pads itself clear.
  */
-export function BottomTabBar({ inline = false }: { inline?: boolean }) {
+export function BottomTabBar() {
   const pathname = usePathname() || "/";
   const { t } = useLocale();
 
   return (
     <nav
-      className={cn(
-        "z-50 border-t border-line/60 pb-[var(--mobile-tab-safe-bottom)]",
-        inline
-          ? // Home feed: solid dark chrome via .feed-immersive; sits under video stage.
-            "relative shrink-0 bg-base"
-          : "fixed inset-x-0 bottom-0 bg-base/90 backdrop-blur-xl",
-      )}
+      className="fixed inset-x-0 bottom-0 z-50 border-t border-line/60 bg-base/90 pb-[var(--mobile-tab-safe-bottom)] backdrop-blur-xl"
       aria-label="Primary"
       style={{
-        // Explicit total chrome height contract for layout math elsewhere.
         ["--mobile-tab-chrome-height" as string]:
           "calc(3rem + var(--mobile-tab-safe-bottom))",
       }}

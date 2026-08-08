@@ -941,8 +941,8 @@ function FeedPage({
         </div>
       ) : null}
 
-      {/* Bottom chrome sits on the video; tab is a flex sibling below the stage (decoupled). */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 flex flex-col">
+      {/* Video full-bleed under fixed tab; only this chrome lifts above tab height. */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 pb-[calc(3rem+var(--mobile-tab-safe-bottom))]">
         <div className="relative flex flex-col">
           <div className="pointer-events-auto absolute bottom-full right-2.5 mb-2 flex flex-col items-center gap-5">
             <SideAction

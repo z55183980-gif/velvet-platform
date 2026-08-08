@@ -87,28 +87,12 @@
     font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
 
     /*
-      Mobile bottom-tab clearance above the home indicator / gesture bar.
-      Total chrome height = 3rem (h-12) + --mobile-tab-safe-bottom.
-      Home (inline tab) and theater (fixed tab) share this token so heights match;
-      feed video size is flex-1 above the inline tab and is not driven by tab pad.
+      Mobile bottom-tab clearance = raw home-indicator inset (no +air / floor).
+      Home + theater share one fixed tab: h-12 + this token.
+      Feed video stays full-bleed under the overlay; only UI pads clear of it.
     */
     --mobile-tab-safe-bottom: env(safe-area-inset-bottom, 0px);
     --mobile-tab-chrome-height: calc(3rem + var(--mobile-tab-safe-bottom));
-  }
-
-  /*
-    Installed to home screen: no browser toolbar — page sits on the device
-    safe area. Same token for home + theater (keep heights locked together).
-  */
-  @media (display-mode: standalone),
-    (display-mode: fullscreen),
-    (display-mode: minimal-ui) {
-    :root {
-      --mobile-tab-safe-bottom: max(
-        0.5rem,
-        calc(env(safe-area-inset-bottom, 0px) + 0.25rem)
-      );
-    }
   }
 
   * {
