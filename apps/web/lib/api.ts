@@ -158,6 +158,7 @@ function mapDrama(d: any): Drama {
     numericId: d.id != null ? String(d.id) : undefined,
     titleEn: d.titleEn || "",
     titleZh: d.titleZh || "",
+    titleFr: d.titleFr || "",
     descEn: d.descriptionEn || "",
     descZh: d.descriptionZh || "",
     categorySlug: d.categorySlug || "",

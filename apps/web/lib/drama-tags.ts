@@ -1,7 +1,18 @@
 /** Strip internal Drama.tags markers before showing on the consumer web. */
 
 const SYSTEM_TAG_PREFIXES = ["type:", "completion:", "ytdlp"] as const;
-const SYSTEM_TAG_EXACT = new Set(["upload", "r2", "transfer", "ytdlp"]);
+const SYSTEM_TAG_EXACT = new Set([
+  "upload",
+  "r2",
+  "transfer",
+  "ytdlp",
+  "placeholder",
+  "public",
+  "vertical",
+  "horizontal",
+  "manual",
+  "smoke",
+]);
 
 export function isDramaSystemTag(tag: string): boolean {
   const t = String(tag || "").trim();

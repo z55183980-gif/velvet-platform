@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 import { useLocale } from "@/lib/i18n";
 import { buttonVariants } from "@/components/ui/button";
 import { WatchSeekBar } from "@/components/mobile/watch-seek-bar";
+import { SafeImage } from "@/components/safe-image";
 
 const ACCENT = "#ff7e0d";
 export const PLAYER_RATES = [0.75, 1, 1.25, 1.5, 2] as const;
@@ -468,8 +469,7 @@ export function VerticalPlayer({
     overlay = (
       <Overlay dim>
         {poster && isImg(poster) ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={poster} alt="" className="absolute inset-0 h-full w-full object-cover opacity-50" />
+          <SafeImage src={poster} alt="" className="absolute inset-0 h-full w-full object-cover opacity-50" />
         ) : null}
         <div className="absolute inset-0 bg-gradient-to-t from-black via-black/60 to-black/30" />
         <div className="relative flex flex-col items-center gap-4 px-6 text-center">
@@ -537,8 +537,7 @@ export function VerticalPlayer({
           )}
         />
       ) : poster && isImg(poster) && !overlay ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
+        <SafeImage
           src={poster}
           alt=""
           className={cn(
@@ -549,8 +548,7 @@ export function VerticalPlayer({
       ) : null}
 
       {poster && isImg(poster) && !src && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={poster} alt="" className="absolute inset-0 h-full w-full object-cover" />
+        <SafeImage src={poster} alt="" className="absolute inset-0 h-full w-full object-cover" />
       )}
 
       {overlay}

@@ -32,7 +32,20 @@ export interface TranscodeJob {
   createdAt: number;
   /** true=push R2 after HLS; false=keep local; undefined=follow STORAGE_BACKEND */
   preferR2?: boolean;
+  watermarkEnabled?: boolean;
+  /** Top-left X/Y as 0–1 of frame; scale = watermark width / frame width. */
+  watermarkX?: number;
+  watermarkY?: number;
+  watermarkScale?: number;
 }
+
+export type TranscodeEnqueueOpts = {
+  preferR2?: boolean;
+  watermarkEnabled?: boolean;
+  watermarkX?: number;
+  watermarkY?: number;
+  watermarkScale?: number;
+};
 
 type JobDispatcher = (jobId: string) => Promise<void>;
 
@@ -452,9 +465,28 @@ export class UploadService implements OnModuleInit {
   async enqueueTranscode(
     inputRel: string,
     episodeId?: string,
-    opts?: { preferR2?: boolean },
+    opts?: TranscodeEnqueueOpts,
   ): Promise<TranscodeJob> {
     const id = crypto.randomUUID();
+    const watermarkEnabled = !!opts?.watermarkEnabled;
+    const watermarkX =
+      watermarkEnabled && opts?.watermarkX != null && Number.isFinite(opts.watermarkX)
+        ? Math.min(1, Math.max(0, opts.watermarkX))
+        : watermarkEnabled
+          ? 0.84
+          : undefined;
+    const watermarkY =
+      watermarkEnabled && opts?.watermarkY != null && Number.isFinite(opts.watermarkY)
+        ? Math.min(1, Math.max(0, opts.watermarkY))
+        : watermarkEnabled
+          ? 0.84
+          : undefined;
+    const watermarkScale =
+      watermarkEnabled && opts?.watermarkScale != null && Number.isFinite(opts.watermarkScale)
+        ? Math.min(0.4, Math.max(0.04, opts.watermarkScale))
+        : watermarkEnabled
+          ? 0.12
+          : undefined;
     const job: TranscodeJob = {
       id,
       episodeId,
@@ -462,6 +494,10 @@ export class UploadService implements OnModuleInit {
       status: 'queued',
       createdAt: Date.now(),
       preferR2: opts?.preferR2,
+      watermarkEnabled: watermarkEnabled || undefined,
+      watermarkX,
+      watermarkY,
+      watermarkScale,
     };
     await this.prisma.mediaTranscodeJob.create({
       data: {
@@ -470,6 +506,10 @@ export class UploadService implements OnModuleInit {
         inputRel,
         status: 'QUEUED',
         preferR2: opts?.preferR2,
+        watermarkEnabled: watermarkEnabled || null,
+        watermarkX: watermarkX ?? null,
+        watermarkY: watermarkY ?? null,
+        watermarkScale: watermarkScale ?? null,
       },
     });
     this.jobs.set(id, job);
@@ -491,6 +531,10 @@ export class UploadService implements OnModuleInit {
       error: saved.error ?? undefined,
       createdAt: saved.createdAt.getTime(),
       preferR2: saved.preferR2 ?? undefined,
+      watermarkEnabled: saved.watermarkEnabled ?? undefined,
+      watermarkX: saved.watermarkX ?? undefined,
+      watermarkY: saved.watermarkY ?? undefined,
+      watermarkScale: saved.watermarkScale ?? undefined,
     };
   }
 
@@ -509,6 +553,10 @@ export class UploadService implements OnModuleInit {
       error: saved.error ?? undefined,
       createdAt: saved.createdAt.getTime(),
       preferR2: saved.preferR2 ?? undefined,
+      watermarkEnabled: saved.watermarkEnabled ?? undefined,
+      watermarkX: saved.watermarkX ?? undefined,
+      watermarkY: saved.watermarkY ?? undefined,
+      watermarkScale: saved.watermarkScale ?? undefined,
     };
     this.jobs.set(jobId, job);
     return job;
@@ -606,7 +654,12 @@ export class UploadService implements OnModuleInit {
     const outputRel = `hls/${jobId}/index.m3u8`;
 
     try {
-      await this.execFfmpeg(ffmpeg, inputAbs, playlist);
+      await this.execFfmpeg(ffmpeg, inputAbs, playlist, {
+        watermarkEnabled: !!job.watermarkEnabled,
+        watermarkX: job.watermarkX,
+        watermarkY: job.watermarkY,
+        watermarkScale: job.watermarkScale,
+      });
       job.status = 'completed';
       job.outputRel = outputRel;
       const durationSec = await this.probeDurationSec(ffmpeg, inputAbs);
@@ -799,30 +852,156 @@ export class UploadService implements OnModuleInit {
     }
   }
 
-  private execFfmpeg(bin: string, input: string, playlist: string): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const args = [
+  /** Absolute path to Velvet watermark PNG (API host). */
+  watermarkAssetPath(): string | null {
+    const configured = this.config.get<string>('WATERMARK_PATH')?.trim();
+    const candidates = [
+      configured,
+      path.join(process.cwd(), 'assets', 'velvet-watermark.png'),
+      path.join(__dirname, '..', '..', 'assets', 'velvet-watermark.png'),
+    ].filter(Boolean) as string[];
+    for (const p of candidates) {
+      const abs = path.resolve(p);
+      if (fs.existsSync(abs) && fs.statSync(abs).isFile()) return abs;
+    }
+    return null;
+  }
+
+  /**
+   * Extract first video frame as JPEG under STORAGE_ROOT/tmp/frames for watermark placement UI.
+   */
+  async extractFirstFrame(inputRelOrAbs: string): Promise<{
+    relativePath: string;
+    url: string;
+    width: number;
+    height: number;
+  }> {
+    const ffmpeg = await this.detectFfmpeg();
+    if (!ffmpeg) {
+      throw new BizException(BizCode.BAD_REQUEST, '未检测到 ffmpeg，无法抽取首帧');
+    }
+    const inputAbs = path.isAbsolute(inputRelOrAbs)
+      ? inputRelOrAbs
+      : this.resolveAbs(inputRelOrAbs);
+    if (!fs.existsSync(inputAbs)) {
+      throw new BizException(BizCode.BAD_REQUEST, '源视频不存在');
+    }
+    const outDir = path.join(this.getStorageRoot(), 'tmp', 'frames');
+    fs.mkdirSync(outDir, { recursive: true });
+    const filename = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}.jpg`;
+    const outAbs = path.join(outDir, filename);
+    await execFileAsync(
+      ffmpeg,
+      [
         '-y',
+        '-ss',
+        '0.4',
         '-i',
-        input,
-        '-c:v',
-        'libx264',
-        '-preset',
-        'veryfast',
-        '-c:a',
-        'aac',
-        '-ac',
+        inputAbs,
+        '-frames:v',
+        '1',
+        '-q:v',
         '2',
-        '-f',
-        'hls',
-        '-hls_time',
-        '6',
-        '-hls_list_size',
-        '0',
-        '-hls_segment_filename',
-        path.join(path.dirname(playlist), 'seg_%03d.ts'),
-        playlist,
-      ];
+        outAbs,
+      ],
+      { timeout: 60_000, maxBuffer: 2 * 1024 * 1024 },
+    );
+    if (!fs.existsSync(outAbs)) {
+      throw new BizException(BizCode.BAD_REQUEST, '首帧抽取失败');
+    }
+    const dims = await this.probeMediaDimensions(ffmpeg, outAbs);
+    const relativePath = `tmp/frames/${filename}`;
+    const key = requireSecret(
+      'CDN_SIGN_KEY',
+      this.config.get<string>('CDN_SIGN_KEY'),
+      'dev',
+    );
+    const exp = Math.floor(Date.now() / 1000) + 3600;
+    const sig = signMediaPath(relativePath, exp, key);
+    const url = `/api/v1/media/${relativePath
+      .split('/')
+      .map(encodeURIComponent)
+      .join('/')}?sig=${sig}&exp=${exp}`;
+    return {
+      relativePath,
+      url,
+      width: dims?.mediaWidth || 0,
+      height: dims?.mediaHeight || 0,
+    };
+  }
+
+  private execFfmpeg(
+    bin: string,
+    input: string,
+    playlist: string,
+    watermark?: {
+      watermarkEnabled?: boolean;
+      watermarkX?: number;
+      watermarkY?: number;
+      watermarkScale?: number;
+    },
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const wmPath = watermark?.watermarkEnabled ? this.watermarkAssetPath() : null;
+      const useWm = !!wmPath;
+      if (watermark?.watermarkEnabled && !wmPath) {
+        reject(new Error('watermark asset missing (WATERMARK_PATH / assets/velvet-watermark.png)'));
+        return;
+      }
+      const scale = watermark?.watermarkScale ?? 0.12;
+      const wx = watermark?.watermarkX ?? 0.84;
+      const wy = watermark?.watermarkY ?? 0.84;
+
+      // scale2ref: watermark width = video_width * scale; keep aspect.
+      const args = useWm
+        ? [
+            '-y',
+            '-i',
+            input,
+            '-i',
+            wmPath!,
+            '-filter_complex',
+            `[1:v][0:v]scale2ref=w=iw*${scale}:h=ow/mdar[wm][base];[base][wm]overlay=x='main_w*${wx}':y='main_h*${wy}'`,
+            '-c:v',
+            'libx264',
+            '-preset',
+            'veryfast',
+            '-c:a',
+            'aac',
+            '-ac',
+            '2',
+            '-f',
+            'hls',
+            '-hls_time',
+            '6',
+            '-hls_list_size',
+            '0',
+            '-hls_segment_filename',
+            path.join(path.dirname(playlist), 'seg_%03d.ts'),
+            playlist,
+          ]
+        : [
+            '-y',
+            '-i',
+            input,
+            '-c:v',
+            'libx264',
+            '-preset',
+            'veryfast',
+            '-c:a',
+            'aac',
+            '-ac',
+            '2',
+            '-f',
+            'hls',
+            '-hls_time',
+            '6',
+            '-hls_list_size',
+            '0',
+            '-hls_segment_filename',
+            path.join(path.dirname(playlist), 'seg_%03d.ts'),
+            playlist,
+          ];
       const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
       let stderr = '';
       child.stderr.on('data', (d) => {

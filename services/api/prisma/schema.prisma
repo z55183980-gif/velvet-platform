@@ -155,6 +155,7 @@ model Drama {
 
   titleEn         String
   titleZh         String?
+  titleFr         String?
   descriptionEn   String?
   descriptionZh   String?
 
@@ -339,6 +340,14 @@ model MediaTranscodeJob {
   outputRel   String?
   error       String?
   preferR2    Boolean?
+  /** Burn Velvet watermark during HLS encode. */
+  watermarkEnabled Boolean?
+  /** Top-left X as fraction of frame width (0–1). */
+  watermarkX  Float?
+  /** Top-left Y as fraction of frame height (0–1). */
+  watermarkY  Float?
+  /** Watermark width as fraction of frame width (default ~0.12). */
+  watermarkScale Float?
   attempts    Int            @default(0)
   createdAt   DateTime       @default(now()) @db.Timestamptz
   startedAt   DateTime?

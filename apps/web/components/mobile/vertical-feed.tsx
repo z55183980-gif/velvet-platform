@@ -37,6 +37,7 @@ import {
   lockPortraitOrientation,
   unlockScreenOrientation,
 } from "@/lib/screen-orientation";
+import { DataErrorState } from "@/components/data-error-state";
 
 function isUrl(s: string) {
   return /^https?:\/\//.test(s) || s.startsWith("/");
@@ -210,7 +211,7 @@ function buildFeedMeta(
   locale: Locale,
   t: (key: string, vars?: Record<string, string | number>) => string,
 ) {
-  const title = pickTitleText(locale, drama.titleEn, drama.titleZh);
+  const title = pickTitleText(locale, drama.titleEn, drama.titleZh, drama.titleFr);
   const cat = categories.find((c) => c.slug === drama.categorySlug);
   const catName = cat ? pickContentText(locale, cat.nameEn, cat.nameZh) : "";
   const ratingLabel = formatRating(drama.rating);
@@ -289,6 +290,8 @@ export function VerticalFeed({
     restoredHomeFeed?.hasMore ?? source === "home",
   );
   const [loadingMore, setLoadingMore] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const loadMoreLock = useRef(false);
   const shouldRestoreHomeFeed = !!(restoredHomeFeed && restoredHomeFeed.dramas.length > 0);
 
@@ -320,6 +323,7 @@ export function VerticalFeed({
     if (shouldRestoreHomeFeed) return;
     const ac = new AbortController();
     setBootLoading(true);
+    setLoadError(false);
     void loadFeed(1, FEED_PAGE_SIZE, { pinHottest: FEED_PIN_HOTTEST, signal: ac.signal })
       .then((r) => {
         if (ac.signal.aborted) return;
@@ -331,12 +335,13 @@ export function VerticalFeed({
         if (ac.signal.aborted) return;
         setDramas([]);
         setHasMore(false);
+        setLoadError(true);
       })
       .finally(() => {
         if (!ac.signal.aborted) setBootLoading(false);
       });
     return () => ac.abort();
-  }, [source, shouldRestoreHomeFeed]);
+  }, [source, shouldRestoreHomeFeed, reloadKey]);
 
   useEffect(() => {
     if (source !== "home" || dramas.length === 0) return;
@@ -438,6 +443,13 @@ export function VerticalFeed({
   }
 
   if (dramas.length === 0) {
+    if (loadError) {
+      return (
+        <div className="flex h-full min-h-0 items-center justify-center px-5">
+          <DataErrorState compact onRetry={() => setReloadKey((key) => key + 1)} />
+        </div>
+      );
+    }
     return (
       <div className="flex h-full min-h-0 items-center justify-center text-ink-muted">
         {t("theater.empty")}

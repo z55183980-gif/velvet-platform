@@ -8,6 +8,7 @@ import { loadCategories, loadHome, loadHottest } from "@/lib/api";
 import type { Category, Drama } from "@/lib/mock-data";
 import { pickContentText } from "@/lib/languages";
 import { cn } from "@/lib/utils";
+import { DataErrorState } from "@/components/data-error-state";
 
 type SortMode = "hot" | "latest" | "hottest";
 type CacheKey = string;
@@ -26,8 +27,21 @@ export default function TheaterPage() {
   const [rows, setRows] = useState<Drama[]>([]);
   const [initialLoading, setInitialLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [urlReady, setUrlReady] = useState(false);
   const cacheRef = useRef<Map<CacheKey, Drama[]>>(new Map());
   const hasContentRef = useRef(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const nextSort = params.get("sort");
+    setCat(params.get("cat") || "");
+    setSort(nextSort === "latest" || nextSort === "hottest" ? nextSort : "hot");
+    setQuery(params.get("q") || "");
+    setQ(params.get("q")?.trim() || "");
+    setUrlReady(true);
+  }, []);
 
   useEffect(() => {
     const trimmed = query.trim();
@@ -50,6 +64,20 @@ export default function TheaterPage() {
   }, []);
 
   useEffect(() => {
+    if (!urlReady) return;
+    const params = new URLSearchParams(window.location.search);
+    if (cat) params.set("cat", cat);
+    else params.delete("cat");
+    if (sort !== "hot") params.set("sort", sort);
+    else params.delete("sort");
+    if (q) params.set("q", q);
+    else params.delete("q");
+    const search = params.toString();
+    window.history.replaceState(null, "", `${window.location.pathname}${search ? `?${search}` : ""}`);
+  }, [cat, sort, q, urlReady]);
+
+  useEffect(() => {
+    if (!urlReady) return;
     const key = cacheKey(cat, sort, q);
     const cached = cacheRef.current.get(key);
 
@@ -67,6 +95,7 @@ export default function TheaterPage() {
     }
 
     const ac = new AbortController();
+    setLoadError(false);
     const load =
       sort === "hottest" && !cat && !q
         ? loadHottest({ signal: ac.signal }).then((list) => ({ rows: list, total: list.length }))
@@ -86,6 +115,7 @@ export default function TheaterPage() {
       })
       .catch((err) => {
         if (ac.signal.aborted || (err instanceof DOMException && err.name === "AbortError")) return;
+        setLoadError(true);
         if (!cacheRef.current.has(key)) {
           hasContentRef.current = false;
           setRows([]);
@@ -100,7 +130,7 @@ export default function TheaterPage() {
     return () => {
       ac.abort();
     };
-  }, [cat, sort, q]);
+  }, [cat, sort, q, reloadKey, urlReady]);
 
   function selectAll() {
     if (!cat && sort === "hot") return;
@@ -186,14 +216,18 @@ export default function TheaterPage() {
         </div>
       </div>
 
-      {initialLoading ? (
+      {!urlReady || initialLoading ? (
         <div className="grid min-w-0 grid-cols-2 gap-3 md:grid-cols-4 md:gap-5 lg:grid-cols-5 xl:grid-cols-6">
           {Array.from({ length: 12 }).map((_, i) => (
             <div key={i} className="aspect-[2/3] min-w-0 animate-pulse rounded-md bg-surface-2" />
           ))}
         </div>
+      ) : loadError && rows.length === 0 ? (
+        <DataErrorState onRetry={() => setReloadKey((key) => key + 1)} />
       ) : rows.length === 0 ? (
-        <p className="py-20 text-center text-ink-muted">{t("theater.empty")}</p>
+        <p className="py-20 text-center text-ink-muted">
+          {q ? t("theater.searchEmpty") : t("theater.empty")}
+        </p>
       ) : (
         <div
           className={cn(
@@ -228,7 +262,7 @@ function Chip({
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        "shrink-0 touch-manipulation rounded-full px-3.5 py-1.5 text-body-sm transition-colors",
+        "min-h-11 shrink-0 touch-manipulation rounded-full px-3.5 py-2 text-body-sm transition-colors",
         active
           ? "bg-brand font-medium text-white"
           : "bg-surface-2 text-ink-muted hover:bg-surface-3 hover:text-ink",

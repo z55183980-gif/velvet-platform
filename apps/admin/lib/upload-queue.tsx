@@ -26,8 +26,9 @@ export type UploadJobStatus = "queued" | "running" | "completed" | "failed" | "c
 export type UploadPublishStatus = "waiting" | "publishing" | "published" | "failed";
 
 export type UploadCreateDramaMeta = {
-  titleZh: string;
   titleEn: string;
+  titleZh?: string;
+  titleFr?: string;
   categorySlug: string;
   coverUrl?: string;
   descriptionZh?: string;

@@ -82,6 +82,7 @@ export class ContentService {
       where.OR = [
         { titleEn: { contains: filter.q, mode: 'insensitive' } },
         { titleZh: { contains: filter.q, mode: 'insensitive' } },
+        { titleFr: { contains: filter.q, mode: 'insensitive' } },
         { slug: { contains: filter.q, mode: 'insensitive' } },
         { creator: { displayName: { contains: filter.q, mode: 'insensitive' } } },
       ];

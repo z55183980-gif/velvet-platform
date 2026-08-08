@@ -73,6 +73,7 @@ export class UsersService {
               slug: r.drama.slug,
               titleEn: r.drama.titleEn,
               titleZh: r.drama.titleZh,
+              titleFr: r.drama.titleFr,
               coverUrl: r.drama.coverUrl,
               creator: r.drama.creator,
             }
@@ -266,6 +267,7 @@ export class UsersService {
               slug: true,
               titleEn: true,
               titleZh: true,
+              titleFr: true,
               coverUrl: true,
               totalEpisodes: true,
             },
@@ -301,6 +303,7 @@ export class UsersService {
                 slug: d.slug,
                 titleEn: d.titleEn,
                 titleZh: d.titleZh,
+                titleFr: d.titleFr,
                 coverUrl: d.coverUrl,
                 totalEpisodes,
               }
@@ -343,6 +346,7 @@ export class UsersService {
               slug: r.drama.slug,
               titleEn: r.drama.titleEn,
               titleZh: r.drama.titleZh,
+              titleFr: r.drama.titleFr,
               coverUrl: r.drama.coverUrl,
               creator: r.drama.creator,
             }

@@ -8,6 +8,7 @@ import { categoryName, type Drama } from "@/lib/mock-data";
 import { pickContentText, pickTitleText, type Locale } from "@/lib/languages";
 import { heroObjectPosition } from "@/lib/hero-crop";
 import { cn } from "@/lib/utils";
+import { SafeImage } from "@/components/safe-image";
 
 function isImg(s: string) {
   return /^https?:\/\//.test(s) || s.startsWith("/");
@@ -22,6 +23,7 @@ export type HeroSlide = {
   id: string;
   titleEn: string;
   titleZh: string;
+  titleFr?: string;
   descEn?: string;
   descZh?: string;
   cover: [string, string];
@@ -51,6 +53,7 @@ export function dramaToHeroSlide(
     id: drama.id,
     titleEn: drama.titleEn,
     titleZh: drama.titleZh,
+    titleFr: drama.titleFr,
     descEn: drama.descEn,
     descZh: drama.descZh,
     cover: drama.cover,
@@ -101,7 +104,7 @@ export function Hero({ slides }: { slides: HeroSlide[] }) {
   if (items.length === 0) return null;
 
   const current = items[index] ?? items[0];
-  const title = pickTitleText(locale, current.titleEn, current.titleZh);
+  const title = pickTitleText(locale, current.titleEn, current.titleZh, current.titleFr);
   const desc = pickContentText(locale, current.descEn || "", current.descZh || "");
   const tags = current.tags ?? [];
   const cover = current.cover[0];
@@ -130,16 +133,15 @@ export function Hero({ slides }: { slides: HeroSlide[] }) {
         {isImg(cover) ? (
           <>
             {/* Mobile: full-bleed cover */}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
+            <SafeImage
               src={cover}
-              alt=""
+              alt={title}
               className="h-full w-full object-cover opacity-0 md:hidden [animation:hero-fade_0.55s_var(--ease-out)_forwards,hero-ken_16s_ease-out_forwards]"
               style={{ objectPosition: objectPos }}
+              fallbackLabel={t("common.imageUnavailable")}
             />
             {/* Desktop ambient — same soft wash for any source ratio */}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
+            <SafeImage
               src={cover}
               alt=""
               aria-hidden
@@ -159,12 +161,12 @@ export function Hero({ slides }: { slides: HeroSlide[] }) {
             <div
               className="absolute bottom-[4%] right-0 top-[2%] hidden w-[min(74%,1200px)] overflow-hidden opacity-0 md:block [animation:hero-fade_0.55s_var(--ease-out)_forwards] [mask-image:radial-gradient(ellipse_68%_78%_at_58%_40%,#000_22%,transparent_72%)] [-webkit-mask-image:radial-gradient(ellipse_68%_78%_at_58%_40%,#000_22%,transparent_72%)]"
             >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
+              <SafeImage
                 src={cover}
-                alt=""
+                alt={title}
                 className="h-full w-full object-cover [animation:hero-ken_16s_ease-out_forwards]"
                 style={{ objectPosition: objectPos }}
+                fallbackLabel={t("common.imageUnavailable")}
               />
             </div>
           </>
@@ -241,7 +243,7 @@ export function Hero({ slides }: { slides: HeroSlide[] }) {
               {items.map((d, i) => {
                 const active = i === index;
                 const thumb = d.cover[0];
-                const tip = pickTitleText(locale, d.titleEn, d.titleZh);
+                const tip = pickTitleText(locale, d.titleEn, d.titleZh, d.titleFr);
                 return (
                   <button
                     key={d.id}
@@ -257,8 +259,12 @@ export function Hero({ slides }: { slides: HeroSlide[] }) {
                     )}
                   >
                     {isImg(thumb) ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img src={thumb} alt="" className="h-full w-full object-cover" />
+                      <SafeImage
+                        src={thumb}
+                        alt={tip}
+                        className="h-full w-full object-cover"
+                        fallbackLabel={t("common.imageUnavailable")}
+                      />
                     ) : (
                       <div
                         className="h-full w-full"
@@ -280,7 +286,7 @@ export function Hero({ slides }: { slides: HeroSlide[] }) {
               <button
                 key={d.id}
                 type="button"
-                aria-label={`slide ${i + 1}`}
+                aria-label={`${pickTitleText(locale, d.titleEn, d.titleZh, d.titleFr)} · ${i + 1}`}
                 onClick={() => goTo(i)}
                 className={cn(
                   "h-1.5 rounded-full transition-all duration-300",

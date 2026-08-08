@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { PrismaService } from '../prisma/prisma.service';
@@ -11,7 +11,7 @@ import { requireSecret } from '../common/security-config';
 import { UploadService } from '../upload/upload.service';
 import { AdminService } from './admin.service';
 import { AdminEpisodesService } from './episodes.service';
-import { inferExternalUrlExpiry } from './online-drama.util';
+import { inferExternalUrlExpiry, isPlayableMediaUrl } from './online-drama.util';
 import { LockAccessService } from '../common/lock-access.service';
 import {
   YtdlpAuthOverride,
@@ -40,9 +40,22 @@ export type YtdlpImportOptions = {
   authBearer?: string;
 };
 
+export type YtdlpTransferEpisodeInput = {
+  episodeNumber?: number;
+  title?: string;
+  webpageUrl?: string;
+  sourceUrl?: string;
+  playlistIndex?: number;
+  durationSec?: number | null;
+};
+
 export type YtdlpTransferOptions = YtdlpImportOptions & {
   /** local = keep HLS on disk; r2 = push HLS to R2 after transcode */
   target: 'local' | 'r2';
+  /** When set, skip yt-dlp playlist probe and transfer these episodes only. */
+  episodes?: YtdlpTransferEpisodeInput[];
+  coverUrl?: string;
+  descriptionZh?: string;
 };
 
 export type YtdlpEpisodeFailure = {
@@ -88,11 +101,17 @@ type TransferPayload = {
   preferR2: boolean;
   dramaId: string;
   actorId?: string;
+  cookiesFile?: string;
+  authBearer?: string;
   selected: Array<{
     index: number;
     id: string;
     title?: string;
+    /** Page / canonical URL for bookkeeping. */
     webpageUrl: string;
+    /** Preferred download target (playable media or episode page). */
+    downloadUrl: string;
+    sourceUrl?: string;
     playlistIndex?: number;
     durationSec?: number | null;
   }>;
@@ -353,13 +372,15 @@ export class YtdlpImportService implements OnModuleInit {
       textChars: bestHtml ? buildExtractContext(bestHtml, bestHtmlUrl).length : 0,
       resolvedFrom: candidates,
       episodes: episodes.map((ep) => {
-        const mediaLike = /\.(m3u8|mp4|webm|mkv)(\?|$)/i.test(ep.sourceUrl);
+        const mediaLike = /\.(m3u8|mp4|webm|mkv|mov|m4v)(\?|$)/i.test(ep.sourceUrl)
+          || /\/(hls|playlist|index\.m3u8|master\.m3u8)\b/i.test(ep.sourceUrl);
         return {
           index: ep.episodeNumber,
           id: `ai-ep-${ep.episodeNumber}`,
           title: ep.title,
           webpageUrl: mediaLike ? bestHtmlUrl || pageUrl : ep.sourceUrl,
-          sourceUrl: ep.sourceUrl,
+          // Page URLs must not be treated as playable sourceUrl.
+          sourceUrl: mediaLike ? ep.sourceUrl : undefined,
           candidateCount: 1,
         };
       }),
@@ -645,11 +666,15 @@ export class YtdlpImportService implements OnModuleInit {
       );
     }
 
-    const titleZh = (opts.titleZh || probe.title || '').trim();
+    const titleEn = (opts.titleEn || probe.title || opts.titleZh || '').trim();
+    if (!titleEn) {
+      throw new BizException(BizCode.BAD_REQUEST, '英文标题必填');
+    }
+    const titleZh = (opts.titleZh || '').trim() || undefined;
     const created = await this.admin.createOnlineDrama(
       {
+        titleEn,
         titleZh,
-        titleEn: opts.titleEn?.trim() || titleZh,
         descriptionZh: probe.description || undefined,
         descriptionEn: probe.description || undefined,
         categorySlug,
@@ -774,10 +799,12 @@ export class YtdlpImportService implements OnModuleInit {
   /**
    * Start async transfer: create drama shell immediately, download+transcode in background.
    * Poll GET /ytdlp/transfer/:jobId for progress. Job state is DB-backed (survives restart).
+   *
+   * When `opts.episodes` is provided (AI/manual selection), skip playlist probe and
+   * download only those URLs (prefer playable sourceUrl, else webpageUrl).
    */
   async transferDrama(opts: YtdlpTransferOptions, actorId?: bigint) {
     const pageUrl = String(opts.url || '').trim();
-    if (!pageUrl) throw new BizException(BizCode.BAD_REQUEST, '请填写公开视频页链接');
     const categorySlug = String(opts.categorySlug || '').trim();
     if (!categorySlug) throw new BizException(BizCode.BAD_REQUEST, '请选择分类');
     const target = opts.target === 'r2' ? 'r2' : 'local';
@@ -797,12 +824,62 @@ export class YtdlpImportService implements OnModuleInit {
     }
 
     const auth = this.authFromOpts(opts);
-    const probe = await this.provider.probe(pageUrl, auth);
-    const externalRef = this.provider.externalRefFor(
-      probe.webpageUrl,
-      probe.extractor,
-      probe.id,
-    );
+    const preference =
+      opts.formatPreference === 'best_hls' ? 'best' : opts.formatPreference || 'best';
+    const explicit = this.normalizeTransferEpisodes(opts.episodes);
+
+    let selected: TransferPayload['selected'];
+    let extractor: string;
+    let probeId: string;
+    let kind: 'single' | 'playlist';
+    let coverUrl = opts.coverUrl?.trim() || undefined;
+    let description = opts.descriptionZh?.trim() || undefined;
+    let probeTitle: string | undefined;
+    let refUrl = pageUrl;
+
+    if (explicit.length) {
+      const limit =
+        opts.maxEpisodes && opts.maxEpisodes > 0
+          ? Math.min(opts.maxEpisodes, explicit.length)
+          : explicit.length;
+      selected = explicit.slice(0, limit);
+      if (!refUrl) refUrl = selected[0]?.webpageUrl || selected[0]?.downloadUrl || '';
+      if (!refUrl) throw new BizException(BizCode.BAD_REQUEST, '请填写公开视频页链接');
+      extractor = 'episode-list';
+      probeId = createHash('sha1')
+        .update(selected.map((ep) => ep.downloadUrl).join('|'))
+        .digest('hex')
+        .slice(0, 20);
+      kind = selected.length > 1 ? 'playlist' : 'single';
+    } else {
+      if (!pageUrl) throw new BizException(BizCode.BAD_REQUEST, '请填写公开视频页链接');
+      const probe = await this.provider.probe(pageUrl, auth);
+      if (!probe.episodes.length) {
+        throw new BizException(BizCode.BAD_REQUEST, '未解析到分集，无法转存');
+      }
+      const limit =
+        opts.maxEpisodes && opts.maxEpisodes > 0
+          ? Math.min(opts.maxEpisodes, probe.episodes.length)
+          : probe.episodes.length;
+      selected = probe.episodes.slice(0, limit).map((ep) => ({
+        index: ep.index,
+        id: ep.id,
+        title: ep.title,
+        webpageUrl: ep.webpageUrl,
+        downloadUrl: ep.webpageUrl,
+        playlistIndex: ep.playlistIndex,
+        durationSec: ep.durationSec ?? null,
+      }));
+      extractor = probe.extractor;
+      probeId = probe.id;
+      kind = probe.kind;
+      coverUrl = coverUrl || probe.coverUrl;
+      description = description || probe.description || undefined;
+      probeTitle = probe.title;
+      refUrl = probe.webpageUrl || pageUrl;
+    }
+
+    const externalRef = this.provider.externalRefFor(refUrl, extractor, probeId);
 
     const existing = await this.prisma.drama.findFirst({
       where: { externalRef } as any,
@@ -815,33 +892,25 @@ export class YtdlpImportService implements OnModuleInit {
       );
     }
 
-    if (!probe.episodes.length) {
-      throw new BizException(BizCode.BAD_REQUEST, '未解析到分集，无法转存');
+    const titleEn = (opts.titleEn || probeTitle || opts.titleZh || '').trim();
+    if (!titleEn) {
+      throw new BizException(BizCode.BAD_REQUEST, '英文标题必填');
     }
-
-    const preference =
-      opts.formatPreference === 'best_hls' ? 'best' : opts.formatPreference || 'best';
-    const limit =
-      opts.maxEpisodes && opts.maxEpisodes > 0
-        ? Math.min(opts.maxEpisodes, probe.episodes.length)
-        : probe.episodes.length;
-    const selected = probe.episodes.slice(0, limit);
-
-    const titleZh = (opts.titleZh || probe.title || '').trim();
+    const titleZh = (opts.titleZh || '').trim() || undefined;
     const sourceType = target === 'r2' ? 'R2' : 'LOCAL';
     const drama = await this.admin.createLocalUploadDrama(
       {
+        titleEn,
         titleZh,
-        titleEn: opts.titleEn?.trim() || titleZh,
-        descriptionZh: probe.description || undefined,
-        descriptionEn: probe.description || undefined,
+        descriptionZh: description,
+        descriptionEn: description,
         categorySlug,
-        coverUrl: probe.coverUrl,
+        coverUrl,
         lockMode: 'ALL_FREE',
         freeEpisodeCount: selected.length,
         status: 'DRAFT',
         sourceType,
-        sourceTags: ['ytdlp', 'transfer', target, probe.extractor, `ytdlp:${probe.id}`],
+        sourceTags: ['ytdlp', 'transfer', target, extractor, `ytdlp:${probeId}`],
         totalEpisodes: selected.length,
         externalRef,
       },
@@ -855,14 +924,9 @@ export class YtdlpImportService implements OnModuleInit {
       preferR2,
       dramaId: drama.id,
       actorId: actorId != null ? String(actorId) : undefined,
-      selected: selected.map((ep) => ({
-        index: ep.index,
-        id: ep.id,
-        title: ep.title,
-        webpageUrl: ep.webpageUrl,
-        playlistIndex: ep.playlistIndex,
-        durationSec: ep.durationSec ?? null,
-      })),
+      cookiesFile: opts.cookiesFile?.trim() || undefined,
+      authBearer: opts.authBearer?.trim() || undefined,
+      selected,
     };
 
     const row = await this.prisma.ytdlpTransferJob.create({
@@ -879,8 +943,8 @@ export class YtdlpImportService implements OnModuleInit {
         failedEpisodes: [],
         jobs: [],
         payload: payload as any,
-        extractor: probe.extractor,
-        kind: probe.kind,
+        extractor,
+        kind,
         externalRef,
         sourceType: drama.sourceType,
       },
@@ -890,7 +954,7 @@ export class YtdlpImportService implements OnModuleInit {
     await this.pruneTransferJobs();
 
     return {
-      jobId,
+      jobId: row.id,
       id: drama.id,
       slug: drama.slug,
       status: drama.status,
@@ -901,16 +965,50 @@ export class YtdlpImportService implements OnModuleInit {
       storageBackend: storage.storageBackend,
       r2Configured: storage.r2Configured,
       ffmpegReady: true,
-      extractor: probe.extractor,
-      kind: probe.kind,
+      extractor,
+      kind,
       externalRef,
       totalEpisodes: selected.length,
       transferredEpisodes: 0,
       failedEpisodes: [] as YtdlpEpisodeFailure[],
       jobs: [] as YtdlpTransferJobEntry[],
       async: true as const,
-      createdAt: row.createdAt.toISOString(),
     };
+  }
+
+  private normalizeTransferEpisodes(
+    episodes?: YtdlpTransferEpisodeInput[],
+  ): TransferPayload['selected'] {
+    if (!Array.isArray(episodes) || !episodes.length) return [];
+    const out: TransferPayload['selected'] = [];
+    for (let i = 0; i < episodes.length; i++) {
+      const ep = episodes[i];
+      const sourceUrl = String(ep.sourceUrl || '').trim() || undefined;
+      const webpageUrl = String(ep.webpageUrl || '').trim() || undefined;
+      const downloadUrl =
+        (sourceUrl && isPlayableMediaUrl(sourceUrl) ? sourceUrl : undefined) ||
+        webpageUrl ||
+        sourceUrl;
+      if (!downloadUrl) {
+        throw new BizException(
+          BizCode.BAD_REQUEST,
+          `第 ${ep.episodeNumber || i + 1} 集缺少下载地址（webpageUrl / sourceUrl）`,
+        );
+      }
+      const n = Number(ep.episodeNumber);
+      const index = Number.isFinite(n) && n > 0 ? n : i + 1;
+      out.push({
+        index,
+        id: `xfer-ep-${index}`,
+        title: (ep.title || '').trim() || undefined,
+        webpageUrl: webpageUrl || downloadUrl,
+        downloadUrl,
+        sourceUrl,
+        playlistIndex: ep.playlistIndex,
+        durationSec: ep.durationSec ?? null,
+      });
+    }
+    return out;
   }
 
   private async recoverPendingTransferJobs() {
@@ -977,7 +1075,11 @@ export class YtdlpImportService implements OnModuleInit {
       );
 
       for (const ep of payload.selected) {
-        if (doneUrls.has(ep.webpageUrl)) continue;
+        const downloadUrl =
+          (ep as { downloadUrl?: string }).downloadUrl ||
+          ep.sourceUrl ||
+          ep.webpageUrl;
+        if (doneUrls.has(ep.webpageUrl) || doneUrls.has(downloadUrl)) continue;
 
         await this.prisma.ytdlpTransferJob.update({
           where: { id: jobId },
@@ -986,10 +1088,11 @@ export class YtdlpImportService implements OnModuleInit {
 
         try {
           const downloaded = await this.provider.downloadToFile(
-            ep.webpageUrl,
+            downloadUrl,
             uploadDir,
             payload.preference,
             ep.playlistIndex,
+            this.authFromOpts(payload),
           );
           const relativePath = `uploads/${path.basename(downloaded.absPath)}`;
           const absInUploads = this.upload.resolveAbs(relativePath);
@@ -1046,7 +1149,10 @@ export class YtdlpImportService implements OnModuleInit {
           };
           jobs = [...jobs, entry];
           doneUrls.add(ep.webpageUrl);
-          failedEpisodes = failedEpisodes.filter((f) => f.url !== ep.webpageUrl);
+          doneUrls.add(downloadUrl);
+          failedEpisodes = failedEpisodes.filter(
+            (f) => f.url !== ep.webpageUrl && f.url !== downloadUrl,
+          );
 
           const previewUrl =
             row.previewUrl || this.signLocalMedia(path.basename(absInUploads));
@@ -1068,7 +1174,7 @@ export class YtdlpImportService implements OnModuleInit {
             ...failedEpisodes,
             {
               episodeNumber: ep.index,
-              url: ep.webpageUrl,
+              url: downloadUrl,
               error: e?.message || 'download failed',
             },
           ];

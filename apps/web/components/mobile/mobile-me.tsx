@@ -27,6 +27,7 @@ import { useTheme } from "@/components/theme-provider";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { cn, formatAmount, mediaUrl } from "@/lib/utils";
 import { isPwaStandalone, openPwaInstallGuide } from "@/lib/pwa";
+import { SafeImage } from "@/components/safe-image";
 
 export type MobileMeTab = "history" | "favorites" | "liked";
 
@@ -256,6 +257,7 @@ export function MobileMe(props: Props) {
   };
 
   const deleteSelectedFavorites = async () => {
+    if (!window.confirm(t("account.confirmDeleteSelected"))) return;
     const ids = [...selected];
     for (const id of ids) {
       await onRemoveFavorite(id);
@@ -265,6 +267,7 @@ export function MobileMe(props: Props) {
   };
 
   const deleteSelectedLikes = async () => {
+    if (!window.confirm(t("account.confirmDeleteSelected"))) return;
     const ids = [...selected];
     for (const id of ids) {
       await onRemoveLike(id);
@@ -314,8 +317,12 @@ export function MobileMe(props: Props) {
       <div className="mt-1 flex items-center gap-3.5 px-4">
         <label className="relative grid h-[4.25rem] w-[4.25rem] shrink-0 cursor-pointer place-items-center overflow-hidden rounded-full bg-surface-2 ring-2 ring-line">
           {avatar ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={avatar} alt="" className="h-full w-full object-cover" />
+            <SafeImage
+              src={avatar}
+              alt={nickname}
+              className="h-full w-full object-cover"
+              fallback={(nickname || "?").slice(0, 1).toUpperCase()}
+            />
           ) : (
             <span className="text-h3 font-semibold text-ink-muted">
               {(nickname || "?").slice(0, 1).toUpperCase()}
@@ -558,6 +565,7 @@ export function MobileMe(props: Props) {
           <button
             type="button"
             onClick={async () => {
+              if (!window.confirm(t("account.confirmClearHistory"))) return;
               await onClearHistory();
               exitEdit();
             }}
@@ -624,11 +632,11 @@ export function MobileMe(props: Props) {
                     <Link key={row.id} href={`/drama/${slug}/play`} className="group min-w-0">
                       <div className="relative aspect-[2/3] overflow-hidden rounded-lg bg-surface-2">
                         {d?.coverUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
+                          <SafeImage
                             src={d.coverUrl}
-                            alt=""
+                            alt={titleOf(d)}
                             className="absolute inset-0 h-full w-full object-cover"
+                            fallbackLabel={t("common.imageUnavailable")}
                           />
                         ) : null}
                       </div>
@@ -694,11 +702,11 @@ export function MobileMe(props: Props) {
                       >
                         <div className="relative aspect-[2/3] overflow-hidden rounded-lg bg-surface-2">
                           {d.coverUrl ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
+                            <SafeImage
                               src={d.coverUrl}
-                              alt=""
+                              alt={titleOf(d)}
                               className="absolute inset-0 h-full w-full object-cover"
+                              fallbackLabel={t("common.imageUnavailable")}
                             />
                           ) : null}
                         </div>
@@ -763,11 +771,11 @@ export function MobileMe(props: Props) {
                       >
                         <div className="relative aspect-[2/3] overflow-hidden rounded-lg bg-surface-2">
                           {d.coverUrl ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
+                            <SafeImage
                               src={d.coverUrl}
-                              alt=""
+                              alt={titleOf(d)}
                               className="absolute inset-0 h-full w-full object-cover"
+                              fallbackLabel={t("common.imageUnavailable")}
                             />
                           ) : null}
                         </div>

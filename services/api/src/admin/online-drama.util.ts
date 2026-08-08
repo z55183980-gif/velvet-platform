@@ -2,7 +2,7 @@
 
 import { createHash } from 'crypto';
 
-const PLAYABLE_RE = /\.(m3u8|mp4|webm|mov|m4v)(\?|$)/i;
+const PLAYABLE_RE = /\.(m3u8|mp4|webm|mov|m4v|mkv)(\?|$)/i;
 const STREAM_PATH_RE = /\/(hls|playlist|index\.m3u8|master\.m3u8)\b/i;
 const EMBED_KEYS = ['url', 'src', 'playUrl', 'play_url', 'video', 'm3u8', 'media', 'videoUrl'];
 

@@ -10,6 +10,7 @@ import { useIsMobile } from "@/hooks/use-is-mobile";
 import { loadBanners, loadFeatured, loadHome, type HomeBanner } from "@/lib/api";
 import type { Drama } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
+import { DataErrorState } from "@/components/data-error-state";
 
 function bannerToSlide(banner: HomeBanner): HeroSlide {
   const href =
@@ -60,6 +61,8 @@ function HomeInner() {
   const [featured, setFeatured] = useState<Drama[]>([]);
   const [initialLoading, setInitialLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const cacheRef = useRef<Map<string, HomeCache>>(new Map());
   const hasContentRef = useRef(false);
 
@@ -94,6 +97,7 @@ function HomeInner() {
 
     const run = async () => {
       try {
+        setLoadError(false);
         if (filtered) {
           const [f, h] = await Promise.all([
             loadFeatured({ signal: ac.signal }),
@@ -149,6 +153,7 @@ function HomeInner() {
         }
       } catch {
         if (ac.signal.aborted) return;
+        setLoadError(true);
         if (!cacheRef.current.has(key)) {
           hasContentRef.current = false;
           setHeroSlides([]);
@@ -169,7 +174,7 @@ function HomeInner() {
     return () => ac.abort();
     // locale/t only affect labels — remapped in separate effect
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [category, q, sort, filtered, mobileReady, isMobile]);
+  }, [category, q, sort, filtered, mobileReady, isMobile, reloadKey]);
 
   // Remap hero titles when locale changes without refetching
   useEffect(() => {
@@ -227,6 +232,8 @@ function HomeInner() {
                   <div key={i} className="aspect-[2/3] animate-pulse rounded-lg bg-surface-2" />
                 ))}
               </div>
+            ) : loadError && rows.length === 0 ? (
+              <DataErrorState onRetry={() => setReloadKey((key) => key + 1)} />
             ) : rows.length === 0 ? (
               <p className="py-16 text-center text-ink-muted">{t("theater.empty")}</p>
             ) : (
@@ -256,6 +263,8 @@ function HomeInner() {
                   <div key={i} className="aspect-[2/3] animate-pulse rounded-lg bg-surface-2" />
                 ))}
               </div>
+            ) : loadError && gridDramas.length === 0 ? (
+              <DataErrorState onRetry={() => setReloadKey((key) => key + 1)} />
             ) : (
               <div
                 className={cn(

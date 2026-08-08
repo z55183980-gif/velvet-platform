@@ -12,6 +12,7 @@ import {
 import { useLocale } from "@/lib/i18n";
 import { useSiteConfig } from "@/lib/site-config";
 import { track } from "@/lib/track";
+import { useDialogFocus } from "@/hooks/use-dialog-focus";
 
 export type AuthMode = "login" | "register" | "forgot";
 
@@ -116,6 +117,7 @@ export function LoginModal({
   const [devCode, setDevCode] = useState<string | null>(null);
   const [mailed, setMailed] = useState<boolean | null>(null);
   const [googleEnabled, setGoogleEnabled] = useState(true);
+  const dialogRef = useDialogFocus<HTMLDivElement>(true, onClose);
 
   const loadCaptcha = useCallback(async () => {
     setCaptchaLoading(true);
@@ -362,8 +364,16 @@ export function LoginModal({
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-4">
-      <div className="absolute inset-0 bg-black/75 backdrop-blur-sm" onClick={onClose} />
-      <div className="auth-modal-dark relative flex w-full max-w-lg overflow-hidden rounded-2xl border border-line bg-surface shadow-3 max-h-[92vh] md:max-w-3xl">
+      <div className="absolute inset-0 bg-black/75 backdrop-blur-sm" onClick={onClose} aria-hidden />
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="login-dialog-title"
+        aria-describedby="login-dialog-subtitle"
+        tabIndex={-1}
+        className="auth-modal-dark relative flex max-h-[92vh] w-full max-w-lg overflow-hidden rounded-2xl border border-line bg-surface shadow-3 md:max-w-3xl"
+      >
         <div className="relative hidden w-[42%] shrink-0 md:block">
           <div
             className="absolute inset-0"
@@ -389,8 +399,8 @@ export function LoginModal({
         <div className="relative flex min-h-0 flex-1 flex-col overflow-y-auto p-6 sm:p-8">
           <button
             onClick={onClose}
-            className="absolute right-4 top-4 text-ink-muted transition-colors hover:text-ink"
-            aria-label="close"
+            className="absolute right-3 top-3 grid h-11 w-11 place-items-center rounded-full text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+            aria-label={t("common.close")}
             type="button"
           >
             ✕
@@ -401,8 +411,8 @@ export function LoginModal({
             <span className="text-lg font-semibold text-ink">Velvet</span>
           </div>
 
-          <h2 className="pr-8 text-xl font-semibold tracking-tight text-ink">{title}</h2>
-          <p className="mt-1 text-sm text-ink-muted">{subtitle}</p>
+          <h2 id="login-dialog-title" className="pr-8 text-xl font-semibold tracking-tight text-ink">{title}</h2>
+          <p id="login-dialog-subtitle" className="mt-1 text-sm text-ink-muted">{subtitle}</p>
 
           {mode !== "forgot" && (
             <div className="mt-5 flex rounded-xl bg-surface-3 p-1">
@@ -424,8 +434,17 @@ export function LoginModal({
           )}
 
           {mode === "login" && (
-            <div className="mt-5 space-y-3">
+            <form
+              className="mt-5 space-y-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void onLogin();
+              }}
+            >
               <input
+                data-dialog-initial-focus
+                name="account"
+                aria-label={t("login.emailPlaceholder")}
                 value={account}
                 onChange={(e) => setAccount(e.target.value)}
                 placeholder={t("login.emailPlaceholder")}
@@ -435,6 +454,8 @@ export function LoginModal({
               />
               <input
                 type="password"
+                name="password"
+                aria-label={t("login.passwordPlaceholder")}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder={t("login.passwordPlaceholder")}
@@ -444,6 +465,8 @@ export function LoginModal({
               {captchaRequired ? (
                 <div className="flex items-center gap-3">
                   <input
+                    name="captcha"
+                    aria-label={t("login.captchaPlaceholder")}
                     value={captchaCode}
                     onChange={(e) => setCaptchaCode(e.target.value.toUpperCase())}
                     placeholder={t("login.captchaPlaceholder")}
@@ -470,8 +493,7 @@ export function LoginModal({
                 </div>
               ) : null}
               <button
-                type="button"
-                onClick={onLogin}
+                type="submit"
                 disabled={busy || !canLogin}
                 className={primaryBtnCls}
               >
@@ -480,12 +502,21 @@ export function LoginModal({
               <button type="button" onClick={() => switchMode("forgot")} className={linkBtnCls}>
                 {t("login.forgotLink")}
               </button>
-            </div>
+            </form>
           )}
 
           {mode === "register" && (
-            <div className="mt-5 space-y-3">
+            <form
+              className="mt-5 space-y-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void onRegister();
+              }}
+            >
               <input
+                data-dialog-initial-focus
+                name="email"
+                aria-label={t("login.emailPlaceholder")}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder={t("login.emailPlaceholder")}
@@ -495,6 +526,8 @@ export function LoginModal({
               />
               <input
                 type="password"
+                name="password"
+                aria-label={t("login.setPasswordPlaceholder")}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder={t("login.setPasswordPlaceholder")}
@@ -503,6 +536,8 @@ export function LoginModal({
               />
               <input
                 type="password"
+                name="passwordConfirm"
+                aria-label={t("login.confirmPasswordPlaceholder")}
                 value={passwordConfirm}
                 onChange={(e) => setPasswordConfirm(e.target.value)}
                 placeholder={t("login.confirmPasswordPlaceholder")}
@@ -512,6 +547,8 @@ export function LoginModal({
               {captchaRequired ? (
                 <div className="flex items-center gap-3">
                   <input
+                    name="captcha"
+                    aria-label={t("login.captchaPlaceholder")}
                     value={captchaCode}
                     onChange={(e) => setCaptchaCode(e.target.value.toUpperCase())}
                     placeholder={t("login.captchaPlaceholder")}
@@ -538,19 +575,27 @@ export function LoginModal({
                 </div>
               ) : null}
               <button
-                type="button"
-                onClick={onRegister}
+                type="submit"
                 disabled={busy || !canRegister}
                 className={primaryBtnCls}
               >
                 {busy ? t("login.verifying") : t("login.registerConfirm")}
               </button>
-            </div>
+            </form>
           )}
 
           {mode === "forgot" && step === "form" && (
-            <div className="mt-5 space-y-3">
+            <form
+              className="mt-5 space-y-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void onSendResetCode();
+              }}
+            >
               <input
+                data-dialog-initial-focus
+                name="email"
+                aria-label={t("login.emailPlaceholder")}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder={t("login.emailPlaceholder")}
@@ -559,8 +604,7 @@ export function LoginModal({
                 className={inputCls}
               />
               <button
-                type="button"
-                onClick={onSendResetCode}
+                type="submit"
                 disabled={busy || !canSendReset}
                 className={primaryBtnCls}
               >
@@ -569,13 +613,22 @@ export function LoginModal({
               <button type="button" onClick={() => switchMode("login")} className={linkBtnCls}>
                 {t("login.backToLogin")}
               </button>
-            </div>
+            </form>
           )}
 
           {mode === "forgot" && step === "code" && (
-            <div className="mt-5 space-y-3">
+            <form
+              className="mt-5 space-y-3"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void onReset();
+              }}
+            >
               <p className="text-xs text-ink-subtle">{t("login.resetCodeHint")}</p>
               <input
+                data-dialog-initial-focus
+                name="code"
+                aria-label={t("login.resetCodePlaceholder")}
                 value={code}
                 onChange={(e) => setCode(e.target.value)}
                 placeholder={t("login.resetCodePlaceholder")}
@@ -584,6 +637,8 @@ export function LoginModal({
               />
               <input
                 type="password"
+                name="newPassword"
+                aria-label={t("login.newPasswordPlaceholder")}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder={t("login.newPasswordPlaceholder")}
@@ -599,8 +654,7 @@ export function LoginModal({
                 </p>
               )}
               <button
-                type="button"
-                onClick={onReset}
+                type="submit"
                 disabled={busy || !canReset}
                 className={primaryBtnCls}
               >
@@ -618,7 +672,7 @@ export function LoginModal({
               >
                 {t("login.changeIdentity")}
               </button>
-            </div>
+            </form>
           )}
 
           {showGoogle && (
@@ -635,7 +689,7 @@ export function LoginModal({
             </div>
           )}
 
-          {err && <p className="mt-3 text-sm text-red-400">{err}</p>}
+          {err && <p className="mt-3 text-sm text-red-400" role="alert" aria-live="polite">{err}</p>}
 
           <p className="mt-6 text-center text-[11px] leading-relaxed text-ink-subtle">
             {t("login.agreePrefix")}{" "}

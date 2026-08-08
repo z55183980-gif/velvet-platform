@@ -13,6 +13,7 @@ export interface Episode {
   no: number;
   titleEn: string;
   titleZh: string;
+  titleFr?: string;
   isFree: boolean;
   previewSeconds?: number;
   price: number;
@@ -37,6 +38,7 @@ export interface Drama {
   numericId?: string;
   titleEn: string;
   titleZh: string;
+  titleFr?: string;
   descEn: string;
   descZh: string;
   categorySlug: string;

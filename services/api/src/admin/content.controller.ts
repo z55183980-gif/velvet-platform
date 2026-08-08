@@ -54,9 +54,43 @@ function getActor(req: any): bigint | undefined {
   return req?.adminId as bigint | undefined;
 }
 
+function parseWatermarkOpts(body?: {
+  watermarkEnabled?: string | boolean;
+  watermarkX?: string | number;
+  watermarkY?: string | number;
+  watermarkScale?: string | number;
+  preferR2?: string | boolean;
+}) {
+  if (!body) return undefined;
+  const enabled =
+    body.watermarkEnabled === true ||
+    body.watermarkEnabled === 'true' ||
+    body.watermarkEnabled === '1';
+  const num = (v: string | number | undefined) => {
+    if (v == null || v === '') return undefined;
+    const n = typeof v === 'number' ? v : Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  };
+  const preferR2 =
+    body.preferR2 === true || body.preferR2 === 'true'
+      ? true
+      : body.preferR2 === false || body.preferR2 === 'false'
+        ? false
+        : undefined;
+  if (!enabled && preferR2 == null) return undefined;
+  return {
+    ...(preferR2 != null ? { preferR2 } : {}),
+    watermarkEnabled: enabled,
+    watermarkX: num(body.watermarkX),
+    watermarkY: num(body.watermarkY),
+    watermarkScale: num(body.watermarkScale),
+  };
+}
+
 class TranslateTitlesDto {
   @IsOptional() @IsString() titleZh?: string;
   @IsOptional() @IsString() titleEn?: string;
+  @IsOptional() @IsString() titleFr?: string;
 }
 
 class ReasonDto {
@@ -82,6 +116,10 @@ class R2DirectEpisodeDto {
 class R2AttachEpisodeDto {
   @IsNotEmpty() @IsString() key!: string;
   @IsOptional() @IsString() filename?: string;
+  @IsOptional() watermarkEnabled?: string | boolean;
+  @IsOptional() watermarkX?: string | number;
+  @IsOptional() watermarkY?: string | number;
+  @IsOptional() watermarkScale?: string | number;
 }
 
 class LocalImportDto {
@@ -131,6 +169,7 @@ class CategoryDto {
 class DramaUpdateDto {
   @IsOptional() @IsString() titleEn?: string;
   @IsOptional() @IsString() titleZh?: string;
+  @IsOptional() @IsString() titleFr?: string;
   @IsOptional() @IsString() descriptionEn?: string;
   @IsOptional() @IsString() descriptionZh?: string;
   @IsOptional() @IsString() categorySlug?: string;
@@ -256,8 +295,9 @@ class OnlineEpisodeDto {
 }
 
 class CreateOnlineDramaDto {
-  @IsNotEmpty() @IsString() titleZh!: string;
-  @IsOptional() @IsString() titleEn?: string;
+  @IsNotEmpty() @IsString() titleEn!: string;
+  @IsOptional() @IsString() titleZh?: string;
+  @IsOptional() @IsString() titleFr?: string;
   @IsOptional() @IsString() slug?: string;
   @IsOptional() @IsString() descriptionZh?: string;
   @IsOptional() @IsString() descriptionEn?: string;
@@ -279,8 +319,9 @@ class CreateOnlineDramaDto {
 }
 
 class CreateLocalUploadDramaDto {
-  @IsNotEmpty() @IsString() titleZh!: string;
-  @IsOptional() @IsString() titleEn?: string;
+  @IsNotEmpty() @IsString() titleEn!: string;
+  @IsOptional() @IsString() titleZh?: string;
+  @IsOptional() @IsString() titleFr?: string;
   @IsOptional() @IsString() slug?: string;
   @IsOptional() @IsString() descriptionZh?: string;
   @IsOptional() @IsString() descriptionEn?: string;
@@ -361,6 +402,15 @@ class YtdlpImportDto extends YtdlpAuthFields {
   formatPreference?: 'best_hls' | 'best_mp4' | 'best';
 }
 
+class YtdlpTransferEpisodeDto {
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) episodeNumber?: number;
+  @IsOptional() @IsString() title?: string;
+  @IsOptional() @IsString() webpageUrl?: string;
+  @IsOptional() @IsString() sourceUrl?: string;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) playlistIndex?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() durationSec?: number;
+}
+
 class YtdlpTransferDto extends YtdlpAuthFields {
   @IsNotEmpty() @IsString() url!: string;
   @IsNotEmpty() @IsString() categorySlug!: string;
@@ -368,9 +418,17 @@ class YtdlpTransferDto extends YtdlpAuthFields {
   target!: 'local' | 'r2';
   @IsOptional() @IsString() titleZh?: string;
   @IsOptional() @IsString() titleEn?: string;
+  @IsOptional() @IsString() coverUrl?: string;
+  @IsOptional() @IsString() descriptionZh?: string;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(1) maxEpisodes?: number;
   @IsOptional() @IsIn(['best_hls', 'best_mp4', 'best'])
   formatPreference?: 'best_hls' | 'best_mp4' | 'best';
+  /** Explicit episode list — skips playlist probe; honors AI/manual selection. */
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => YtdlpTransferEpisodeDto)
+  episodes?: YtdlpTransferEpisodeDto[];
 }
 
 class YtdlpAppendDto extends YtdlpAuthFields {
@@ -393,7 +451,7 @@ export class ContentController {
     private readonly openai: OpenaiService,
   ) {}
 
-  /** 用 OpenAI 补全缺失的中/英标题（只填空侧，不覆盖已有）。 */
+  /** 以英文标题为源，LLM 一次返回并覆盖中/法标题。 */
   @Post('translate/titles')
   @AdminRoles('SUPER_ADMIN', 'OPS')
   async translateTitles(@Body() dto: TranslateTitlesDto) {
@@ -504,7 +562,13 @@ export class ContentController {
     @Req() req: any,
   ) {
     return ok(
-      await this.episodes.attachDirectUpload(id, dto.key, dto.filename, getActor(req)),
+      await this.episodes.attachDirectUpload(
+        id,
+        dto.key,
+        dto.filename,
+        getActor(req),
+        parseWatermarkOpts(dto),
+      ),
     );
   }
 
@@ -521,10 +585,19 @@ export class ContentController {
   async uploadEpisodeVideo(
     @Param('id') id: string,
     @UploadedFile() file: Express.Multer.File,
+    @Body()
+    body: {
+      watermarkEnabled?: string | boolean;
+      watermarkX?: string | number;
+      watermarkY?: string | number;
+      watermarkScale?: string | number;
+    },
     @Req() req: any,
   ) {
     try {
-      return ok(await this.episodes.uploadVideo(id, file, getActor(req)));
+      return ok(
+        await this.episodes.uploadVideo(id, file, getActor(req), parseWatermarkOpts(body)),
+      );
     } finally {
       cleanupMultipartFiles(file);
     }
@@ -680,8 +753,9 @@ export class ContentController {
     @UploadedFiles() files: Express.Multer.File[],
     @Body()
     body: {
-      titleZh?: string;
       titleEn?: string;
+      titleZh?: string;
+      titleFr?: string;
       slug?: string;
       descriptionZh?: string;
       categorySlug?: string;
@@ -700,8 +774,9 @@ export class ContentController {
       }
       const drama = await this.admin.createLocalUploadDrama(
         {
-          titleZh: body.titleZh || '',
-          titleEn: body.titleEn,
+          titleEn: body.titleEn || '',
+          titleZh: body.titleZh,
+          titleFr: body.titleFr,
           slug: body.slug,
           descriptionZh: body.descriptionZh,
           categorySlug: body.categorySlug || '',
@@ -1055,8 +1130,25 @@ export class ContentController {
 
   @Post('episodes/:id/transcode-retry')
   @AdminRoles('SUPER_ADMIN', 'OPS')
-  async retryTranscode(@Param('id') id: string, @Req() req: any) {
-    return ok(await this.episodes.retryTranscode(id, getActor(req)));
+  async retryTranscode(
+    @Param('id') id: string,
+    @Body()
+    body: {
+      watermarkEnabled?: boolean;
+      watermarkX?: number;
+      watermarkY?: number;
+      watermarkScale?: number;
+      preferR2?: boolean;
+    },
+    @Req() req: any,
+  ) {
+    return ok(await this.episodes.retryTranscode(id, getActor(req), body));
+  }
+
+  @Post('episodes/:id/first-frame')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async episodeFirstFrame(@Param('id') id: string) {
+    return ok(await this.episodes.firstFrame(id));
   }
 
   @Post('import/local')

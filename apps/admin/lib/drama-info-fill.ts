@@ -1,5 +1,7 @@
 /** Payload for filling the local-upload main form from online probe/manual meta. */
 
+import { isPlayableMediaUrl } from "./playable-url";
+
 export type OnlineIngestForm = "r2" | "link";
 export type OnlineFormatPreference = "best_hls" | "best_mp4" | "best";
 
@@ -21,11 +23,15 @@ export type OnlineSourcePackage = {
   formatPreference?: OnlineFormatPreference;
   maxEpisodes?: number;
   episodes: OnlineEpisodeFill[];
+  /** Optional yt-dlp auth carried from the online dialog into submit. */
+  cookiesFile?: string;
+  authBearer?: string;
 };
 
 export type DramaInfoFillPayload = {
   titleZh?: string;
   titleEn?: string;
+  titleFr?: string;
   coverUrl?: string;
   descriptionZh?: string;
   totalEpisodes?: number;
@@ -62,6 +68,10 @@ type ProbeExtras = {
   ingestForm?: OnlineIngestForm;
   formatPreference?: OnlineFormatPreference;
   maxEpisodes?: number;
+  /** When set, only these probe episode `index` values are staged (order preserved). */
+  episodeIndexes?: number[];
+  cookiesFile?: string;
+  authBearer?: string;
   /** Include title/cover/desc/totalEpisodes. Default true. */
   includeMeta?: boolean;
   /** Include staged online package. Default true. */
@@ -69,17 +79,21 @@ type ProbeExtras = {
   overwriteMeta?: boolean;
 };
 
-function selectProbeEpisodes(probe: ProbeLike, maxEpisodes?: number) {
+function selectProbeEpisodes(
+  probe: ProbeLike,
+  opts?: { maxEpisodes?: number; episodeIndexes?: number[] },
+) {
   const episodeRows = Array.isArray(probe.episodes) ? probe.episodes : [];
+  let rows = episodeRows;
+  if (opts?.episodeIndexes && opts.episodeIndexes.length > 0) {
+    const want = new Set(opts.episodeIndexes.map(Number));
+    rows = episodeRows.filter((ep) => want.has(Number(ep.index)));
+  }
   const max =
-    maxEpisodes && maxEpisodes > 0
-      ? Math.min(maxEpisodes, episodeRows.length)
-      : episodeRows.length;
-  return episodeRows.slice(0, max);
-}
-
-function isDirectMediaUrl(url: string): boolean {
-  return /\.(m3u8|mp4|webm|mkv)(\?|$)/i.test(url);
+    opts?.maxEpisodes && opts.maxEpisodes > 0
+      ? Math.min(opts.maxEpisodes, rows.length)
+      : rows.length;
+  return rows.slice(0, max);
 }
 
 /** Map yt-dlp / AI probe result → main-form fields and/or online package. */
@@ -89,7 +103,10 @@ export function dramaInfoFromYtdlpProbe(
 ): DramaInfoFillPayload {
   const includeMeta = extras?.includeMeta !== false;
   const includeOnline = extras?.includeOnline !== false;
-  const selected = selectProbeEpisodes(probe, extras?.maxEpisodes);
+  const selected = selectProbeEpisodes(probe, {
+    maxEpisodes: extras?.maxEpisodes,
+    episodeIndexes: extras?.episodeIndexes,
+  });
   const fromAi = probe.source === "ai";
 
   const payload: DramaInfoFillPayload = {};
@@ -117,24 +134,37 @@ export function dramaInfoFromYtdlpProbe(
   }
 
   if (includeOnline) {
-    // AI extract URLs are often episode pages / CDN links — prefer link ingest when caller omits form.
+    // Never put episode *page* URLs into sourceUrl — only playable media.
     payload.online = {
       pageUrl: (extras?.pageUrl || "").trim(),
       ingestForm: extras?.ingestForm || "link",
-      formatPreference: extras?.formatPreference || "best_hls",
-      maxEpisodes: extras?.maxEpisodes,
+      formatPreference: extras?.formatPreference || "best",
+      maxEpisodes: extras?.episodeIndexes?.length
+        ? extras.episodeIndexes.length
+        : extras?.maxEpisodes,
+      cookiesFile: extras?.cookiesFile?.trim() || undefined,
+      authBearer: extras?.authBearer?.trim() || undefined,
       episodes: selected.map((ep, i) => {
-        const webpageUrl = (ep.webpageUrl || "").trim() || undefined;
-        const sourceUrl = (ep.sourceUrl || "").trim() || undefined;
-        const resolvedSource =
-          sourceUrl ||
-          (webpageUrl && fromAi ? webpageUrl : undefined) ||
-          (webpageUrl && isDirectMediaUrl(webpageUrl) ? webpageUrl : undefined);
+        const webpageRaw = (ep.webpageUrl || "").trim() || undefined;
+        const sourceRaw = (ep.sourceUrl || "").trim() || undefined;
+        const playableSource = isPlayableMediaUrl(sourceRaw)
+          ? sourceRaw
+          : isPlayableMediaUrl(webpageRaw)
+            ? webpageRaw
+            : undefined;
+        // Page URL stays on webpageUrl for resolve/transfer; never promote to sourceUrl.
+        const webpageUrl =
+          webpageRaw && !isPlayableMediaUrl(webpageRaw)
+            ? webpageRaw
+            : sourceRaw && !isPlayableMediaUrl(sourceRaw)
+              ? sourceRaw
+              : webpageRaw;
+        const indexNum = Number(ep.index);
         return {
-          episodeNumber: i + 1,
+          episodeNumber: Number.isFinite(indexNum) && indexNum > 0 ? indexNum : i + 1,
           title: (ep.title || "").trim() || undefined,
           webpageUrl,
-          sourceUrl: resolvedSource,
+          sourceUrl: playableSource,
           durationSec: typeof ep.durationSec === "number" ? ep.durationSec : undefined,
         };
       }),

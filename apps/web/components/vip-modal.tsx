@@ -13,10 +13,9 @@ import {
 import { buttonVariants } from "@/components/ui/button";
 import { cn, formatUsd } from "@/lib/utils";
 import { track } from "@/lib/track";
+import { useDialogFocus } from "@/hooks/use-dialog-focus";
 
 const PAY_CURRENCY = "USD";
-const DEFAULT_BENEFITS = ["Unlimited Viewing", "1080p High Quality"];
-
 type PayMethod = "STRIPE" | "SIMULATE";
 
 function benefitIcon(text: string) {
@@ -39,6 +38,11 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [planLoadError, setPlanLoadError] = useState(false);
+  const [planReloadKey, setPlanReloadKey] = useState(0);
+  const dialogRef = useDialogFocus<HTMLDivElement>(open, () => {
+    if (!busy) onClose();
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -50,6 +54,7 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
   useEffect(() => {
     if (!open) return;
     setLoading(true);
+    setPlanLoadError(false);
     getVipPlans(PAY_CURRENCY)
       .then((list) => {
         setPlans(list);
@@ -58,8 +63,12 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
           return list[0]?.id ?? null;
         });
       })
+      .catch(() => {
+        setPlans([]);
+        setPlanLoadError(true);
+      })
       .finally(() => setLoading(false));
-  }, [open]);
+  }, [open, planReloadKey]);
 
   if (!open) return null;
 
@@ -113,8 +122,15 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
 
   return (
     <div className="fixed inset-0 z-[80] flex items-end justify-center p-0 sm:items-center sm:p-4">
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => !busy && onClose()} />
-      <div className="relative w-full max-w-md overflow-hidden rounded-t-2xl bg-surface shadow-3 sm:max-w-2xl sm:rounded-2xl max-h-[92vh] overflow-y-auto">
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => !busy && onClose()} aria-hidden />
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="vip-dialog-title"
+        tabIndex={-1}
+        className="relative max-h-[92vh] w-full max-w-md overflow-y-auto rounded-t-2xl bg-surface shadow-3 sm:max-w-2xl sm:rounded-2xl"
+      >
         <div
           className="relative px-6 pb-4 pt-6"
           style={{
@@ -124,7 +140,8 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
         >
           <button
             onClick={() => !busy && onClose()}
-            className="absolute right-4 top-4 text-ink-muted transition-colors hover:text-ink"
+            type="button"
+            className="absolute right-3 top-3 grid h-11 w-11 place-items-center rounded-full text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
             aria-label={t("common.close")}
           >
             <X className="h-5 w-5" />
@@ -135,7 +152,7 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
             </span>
             <div>
               <p className="text-overline uppercase tracking-widest text-brand">{t("vip.title")}</p>
-              <h2 className="text-h3 font-bold text-ink">{t("vip.subtitle")}</h2>
+              <h2 id="vip-dialog-title" className="text-h3 font-bold text-ink">{t("vip.subtitle")}</h2>
             </div>
           </div>
 
@@ -164,6 +181,17 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
               <label className="text-caption uppercase text-ink-subtle">{t("vip.plans")}</label>
               {loading ? (
                 <p className="mt-3 text-body-sm text-ink-muted">{t("common.loading")}</p>
+              ) : planLoadError ? (
+                <div className="mt-3 rounded-xl bg-surface-2 p-4 text-center" role="alert">
+                  <p className="text-body-sm text-ink-muted">{t("errors.loadFailed")}</p>
+                  <button
+                    type="button"
+                    onClick={() => setPlanReloadKey((key) => key + 1)}
+                    className="mt-3 min-h-11 rounded-full bg-brand px-5 py-2 text-body-sm font-semibold text-white"
+                  >
+                    {t("common.retry")}
+                  </button>
+                </div>
               ) : plans.length === 0 ? (
                 <p className="mt-3 text-body-sm text-ink-muted">{t("vip.emptyPlans")}</p>
               ) : (
@@ -175,7 +203,7 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
                     const benefits =
                       Array.isArray(p.benefits) && p.benefits.length > 0
                         ? p.benefits
-                        : DEFAULT_BENEFITS;
+                        : [t("vip.benefitWatch"), t("vip.benefitNoCredits")];
                     return (
                       <button
                         key={p.id}

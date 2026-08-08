@@ -18,6 +18,7 @@ import {
   adminRejectDrama,
   adminReorderEpisodes,
   adminRetryTranscode,
+  adminEpisodeFirstFrame,
   adminSubmitDramaReview,
   adminTranslateTitles,
   adminUpdateDrama,
@@ -51,7 +52,12 @@ import {
   UnlockKeyhole,
   Video,
 } from "lucide-react";
-import { ConfirmModal } from "@/components/glass-modal";
+import { ConfirmModal, GlassModal } from "@/components/glass-modal";
+import {
+  WatermarkPositionEditor,
+  DEFAULT_PLACEMENT,
+  type WatermarkPlacement,
+} from "@/components/watermark-position-editor";
 import {
   DramaStoragePanel,
   EpisodeVideoUploadButton,
@@ -93,6 +99,7 @@ type Drama = {
   id: string | number;
   titleZh?: string;
   titleEn?: string;
+  titleFr?: string;
   slug?: string;
   status?: string;
   coverUrl?: string;
@@ -158,6 +165,7 @@ function episodeAddOptions(sourceType?: string, status?: string): {
 type BasicDraft = {
   titleZh: string;
   titleEn: string;
+  titleFr: string;
   categorySlug: string;
   coverUrl: string;
   descriptionZh: string;
@@ -170,6 +178,7 @@ type BasicDraft = {
 const emptyDraft: BasicDraft = {
   titleZh: "",
   titleEn: "",
+  titleFr: "",
   categorySlug: "",
   coverUrl: "",
   descriptionZh: "",
@@ -184,6 +193,7 @@ function draftFromDrama(drama: Drama): BasicDraft {
   return {
     titleZh: drama.titleZh || "",
     titleEn: drama.titleEn || "",
+    titleFr: drama.titleFr || "",
     categorySlug: drama.category?.slug || "",
     coverUrl: drama.coverUrl || "",
     descriptionZh: drama.descriptionZh || "",
@@ -273,6 +283,15 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
   const [offlineOpen, setOfflineOpen] = useState(false);
   const [onlineOpen, setOnlineOpen] = useState(false);
   const [deleteEpisodeId, setDeleteEpisodeId] = useState<string | null>(null);
+  const [watermarkRetryId, setWatermarkRetryId] = useState<string | null>(null);
+  const [watermarkFrame, setWatermarkFrame] = useState<{
+    url: string;
+    width: number;
+    height: number;
+  } | null>(null);
+  const [watermarkPlacement, setWatermarkPlacement] =
+    useState<WatermarkPlacement>(DEFAULT_PLACEMENT);
+  const [watermarkFrameBusy, setWatermarkFrameBusy] = useState(false);
   const [purgeEpisodeId, setPurgeEpisodeId] = useState<string | null>(null);
   const [showAddEpisode, setShowAddEpisode] = useState(false);
   const [addEpisodeMethod, setAddEpisodeMethod] = useState<AddEpisodeMethod>("upload");
@@ -340,29 +359,26 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
   const act = useCallback((action: () => Promise<unknown>) => actionMut.mutate(action), [actionMut]);
 
   async function completeTitleTranslation() {
-    const zh = draft.titleZh.trim();
     const en = draft.titleEn.trim();
-    if (!zh && !en) {
+    if (!en) {
       setError(t("translateTitlesNeedOne"));
-      return;
-    }
-    if (zh && en) {
-      setError(t("translateTitlesNothing"));
       return;
     }
     setTranslateBusy(true);
     setError(null);
     try {
-      const res = await adminTranslateTitles({ titleZh: zh, titleEn: en });
-      if (!res.filled.length) {
-        setError(t("translateTitlesNothing"));
-        return;
-      }
+      const res = await adminTranslateTitles({ titleEn: en });
+      const nextZh = String(res.titleZh || "").trim();
+      const nextFr = String(res.titleFr || "").trim();
       setDraft((v) => ({
         ...v,
-        titleZh: res.filled.includes("titleZh") ? res.titleZh : v.titleZh,
-        titleEn: res.filled.includes("titleEn") ? res.titleEn : v.titleEn,
+        titleEn: String(res.titleEn || v.titleEn).trim(),
+        titleZh: nextZh || v.titleZh,
+        titleFr: nextFr || v.titleFr,
       }));
+      if (!nextFr) {
+        setError(t("translateTitlesFailed") + " (Français)");
+      }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : t("translateTitlesFailed"));
     } finally {
@@ -383,7 +399,7 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
   }, [addEpisodeConfig.defaultMethod, id]);
 
   const saveBasicInfo = async (): Promise<{ ok: boolean; error?: string }> => {
-    if (!draft.titleZh.trim() && !draft.titleEn.trim()) {
+    if (!draft.titleEn.trim()) {
       setError(t("dramaTitleRequired"));
       return { ok: false, error: t("dramaTitleRequired") };
     }
@@ -403,6 +419,7 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
           ...rest,
           titleZh: draft.titleZh.trim(),
           titleEn: draft.titleEn.trim(),
+          titleFr: draft.titleFr.trim() || null,
           sourceTags: composeDramaSourceTags(tags, contentType, completion),
         }),
       );
@@ -518,7 +535,30 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
           <Button size="sm" variant="ghost" className="!h-8 !w-8 !p-0" title={t("moveUp")} disabled={actionMut.isPending} onClick={() => moveEpisode(String(episode.id), -1)}><ArrowUp className="h-4 w-4" /></Button>
           <Button size="sm" variant="ghost" className="!h-8 !w-8 !p-0" title={t("moveDown")} disabled={actionMut.isPending} onClick={() => moveEpisode(String(episode.id), 1)}><ArrowDown className="h-4 w-4" /></Button>
           {["FAILED", "PENDING", "PROCESSING"].includes(episode.transcodeStatus || "") ? (
-            <Button size="sm" variant="ghost" className="!h-8 !w-8 !p-0" title={t("retryTranscode")} onClick={() => act(() => adminRetryTranscode(String(episode.id)))}><RotateCcw className="h-4 w-4" /></Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="!h-8 !w-8 !p-0"
+              title={t("retryTranscode")}
+              onClick={() => {
+                setWatermarkRetryId(String(episode.id));
+                setWatermarkPlacement(DEFAULT_PLACEMENT);
+                setWatermarkFrame(null);
+                setWatermarkFrameBusy(true);
+                void adminEpisodeFirstFrame(String(episode.id))
+                  .then((frame) => {
+                    setWatermarkFrame({
+                      url: frame.url,
+                      width: frame.width,
+                      height: frame.height,
+                    });
+                  })
+                  .catch((e: Error) => setError(e.message))
+                  .finally(() => setWatermarkFrameBusy(false));
+              }}
+            >
+              <RotateCcw className="h-4 w-4" />
+            </Button>
           ) : null}
           <Button size="sm" variant="ghost" className="!h-8 !w-8 !p-0 !text-danger" title={t("delete")} onClick={() => setDeleteEpisodeId(String(episode.id))}><Trash2 className="h-4 w-4" /></Button>
         </div>
@@ -589,7 +629,7 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
         <div className="content-cover">
           <DramaCoverThumb
             url={drama.coverUrl}
-            title={drama.titleZh || drama.titleEn}
+            title={drama.titleEn || drama.titleZh || drama.titleFr}
             className="!h-full !w-full !rounded-none !ring-0"
           />
         </div>
@@ -599,7 +639,7 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
             {drama.isOfficial ? <span className="content-flag"><Check className="h-3 w-3" />{t("official")}</span> : null}
             {drama.isFeatured ? <span className="content-flag content-flag--brand"><Sparkles className="h-3 w-3" />{t("featuredFlag")}</span> : null}
           </div>
-          <h1 className="mt-2 truncate text-[22px] font-bold tracking-tight text-ink">{drama.titleZh || drama.titleEn || "—"}</h1>
+          <h1 className="mt-2 truncate text-[22px] font-bold tracking-tight text-ink">{drama.titleEn || drama.titleZh || drama.titleFr || "—"}</h1>
           <p className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-ink-subtle"><span>{drama.slug}</span><span>·</span><span>{drama.creator?.displayName || "—"}</span><span>·</span><span>{drama.category?.nameZh || drama.category?.nameEn || "—"}</span></p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
@@ -736,9 +776,31 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
               </Button>
             </div>
             <div className="grid gap-4 md:grid-cols-2">
-              <FieldLabel label={t("titleZhLabel")} required><Input value={draft.titleZh} onChange={(e) => setDraft((v) => ({ ...v, titleZh: e.target.value }))} /></FieldLabel>
-              <FieldLabel label={t("titleEnLabel")}><Input value={draft.titleEn} onChange={(e) => setDraft((v) => ({ ...v, titleEn: e.target.value }))} /></FieldLabel>
+              <FieldLabel label={t("contentTitleLocaleEn")} required>
+                <Input
+                  maxLength={40}
+                  value={draft.titleEn}
+                  onChange={(e) => setDraft((v) => ({ ...v, titleEn: e.target.value }))}
+                />
+              </FieldLabel>
+              <FieldLabel label={t("contentTitleLocaleZh")}>
+                <Input
+                  maxLength={40}
+                  value={draft.titleZh}
+                  placeholder={draft.titleEn.trim() || t("localeTitleFallbackPlaceholder")}
+                  onChange={(e) => setDraft((v) => ({ ...v, titleZh: e.target.value }))}
+                />
+              </FieldLabel>
+              <FieldLabel label={t("contentTitleLocaleFr")}>
+                <Input
+                  maxLength={40}
+                  value={draft.titleFr}
+                  placeholder={draft.titleEn.trim() || t("localeTitleFallbackPlaceholder")}
+                  onChange={(e) => setDraft((v) => ({ ...v, titleFr: e.target.value }))}
+                />
+              </FieldLabel>
             </div>
+            <p className="text-caption text-ink-subtle">{t("localeTitleFallbackHint")}</p>
             <FieldLabel label={t("category")} required><Select value={draft.categorySlug} onChange={(e) => setDraft((v) => ({ ...v, categorySlug: e.target.value }))}><option value="">{t("selectCategory")}</option>{(categoriesQ.data ?? []).map((category) => <option key={category.slug} value={category.slug}>{category.nameZh || category.nameEn || category.slug}</option>)}</Select></FieldLabel>
             <FieldLabel
               label={
@@ -1080,6 +1142,62 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
         </div> : null}
       </div>
 
+      <GlassModal
+        open={!!watermarkRetryId}
+        onClose={() => {
+          setWatermarkRetryId(null);
+          setWatermarkFrame(null);
+        }}
+        title={t("retryTranscode")}
+        size="lg"
+      >
+        <div className="space-y-4">
+          {watermarkFrameBusy ? (
+            <p className="text-caption text-ink-muted">{t("watermarkLoadingFrame")}</p>
+          ) : null}
+          <WatermarkPositionEditor
+            frameUrl={watermarkFrame?.url || null}
+            frameWidth={watermarkFrame?.width}
+            frameHeight={watermarkFrame?.height}
+            value={watermarkPlacement}
+            busy={actionMut.isPending || watermarkFrameBusy}
+            onChange={setWatermarkPlacement}
+          />
+          <div className="flex justify-end gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={actionMut.isPending}
+              onClick={() => {
+                setWatermarkRetryId(null);
+                setWatermarkFrame(null);
+              }}
+            >
+              {t("cancel")}
+            </Button>
+            <Button
+              size="sm"
+              disabled={actionMut.isPending || !watermarkRetryId}
+              onClick={() => {
+                if (!watermarkRetryId) return;
+                const epId = watermarkRetryId;
+                act(() =>
+                  adminRetryTranscode(epId, {
+                    watermarkEnabled: watermarkPlacement.enabled,
+                    watermarkX: watermarkPlacement.x,
+                    watermarkY: watermarkPlacement.y,
+                    watermarkScale: watermarkPlacement.scale,
+                  }),
+                );
+                setWatermarkRetryId(null);
+                setWatermarkFrame(null);
+              }}
+            >
+              {t("retryTranscode")}
+            </Button>
+          </div>
+        </div>
+      </GlassModal>
       <ConfirmModal
         open={offlineOpen}
         onClose={() => setOfflineOpen(false)}

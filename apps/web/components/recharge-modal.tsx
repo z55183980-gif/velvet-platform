@@ -13,6 +13,7 @@ import {
 import { buttonVariants } from "@/components/ui/button";
 import { cn, formatAmount, formatUsd } from "@/lib/utils";
 import { track } from "@/lib/track";
+import { useDialogFocus } from "@/hooks/use-dialog-focus";
 
 const PAY_CURRENCY = "USD";
 
@@ -37,6 +38,12 @@ export function RechargeModal({ open, onClose }: { open: boolean; onClose: () =>
   const [done, setDone] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [payHint, setPayHint] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [packageLoadError, setPackageLoadError] = useState(false);
+  const [packageReloadKey, setPackageReloadKey] = useState(0);
+  const dialogRef = useDialogFocus<HTMLDivElement>(open, () => {
+    if (!busy) onClose();
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -48,14 +55,22 @@ export function RechargeModal({ open, onClose }: { open: boolean; onClose: () =>
 
   useEffect(() => {
     if (!open) return;
-    getTopupPackages(PAY_CURRENCY).then((list) => {
-      setPackages(list);
-      setPackageId((prev) => {
-        if (prev && list.find((p) => p.id === prev)) return prev;
-        return list[0]?.id ?? null;
-      });
-    });
-  }, [open]);
+    setLoading(true);
+    setPackageLoadError(false);
+    getTopupPackages(PAY_CURRENCY)
+      .then((list) => {
+        setPackages(list);
+        setPackageId((prev) => {
+          if (prev && list.find((p) => p.id === prev)) return prev;
+          return list[0]?.id ?? null;
+        });
+      })
+      .catch(() => {
+        setPackages([]);
+        setPackageLoadError(true);
+      })
+      .finally(() => setLoading(false));
+  }, [open, packageReloadKey]);
 
   if (!open) return null;
 
@@ -119,8 +134,15 @@ export function RechargeModal({ open, onClose }: { open: boolean; onClose: () =>
 
   return (
     <div className="fixed inset-0 z-[80] flex items-end justify-center p-0 sm:items-center sm:p-4">
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative w-full max-w-md overflow-hidden rounded-t-2xl bg-surface shadow-3 sm:rounded-2xl max-h-[92vh] overflow-y-auto">
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => !busy && onClose()} aria-hidden />
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="recharge-dialog-title"
+        tabIndex={-1}
+        className="relative max-h-[92vh] w-full max-w-md overflow-y-auto rounded-t-2xl bg-surface shadow-3 sm:rounded-2xl"
+      >
         <div
           className="relative px-6 pb-4 pt-6"
           style={{
@@ -129,14 +151,15 @@ export function RechargeModal({ open, onClose }: { open: boolean; onClose: () =>
           }}
         >
           <button
-            onClick={onClose}
-            className="absolute right-4 top-4 text-ink-muted transition-colors hover:text-ink"
+            type="button"
+            onClick={() => !busy && onClose()}
+            className="absolute right-3 top-3 grid h-11 w-11 place-items-center rounded-full text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
             aria-label={t("common.close")}
           >
             <X className="h-5 w-5" />
           </button>
           <p className="text-overline uppercase text-brand">{t("recharge.title")}</p>
-          <h2 className="mt-1 text-h3 font-bold text-ink">{t("recharge.subtitle")}</h2>
+          <h2 id="recharge-dialog-title" className="mt-1 text-h3 font-bold text-ink">{t("recharge.subtitle")}</h2>
         </div>
 
         {done ? (
@@ -150,7 +173,20 @@ export function RechargeModal({ open, onClose }: { open: boolean; onClose: () =>
           <div className="space-y-6 px-6 pb-6">
             <div>
               <label className="text-caption uppercase text-ink-subtle">{t("recharge.package")}</label>
-              {packages.length === 0 ? (
+              {loading ? (
+                <p className="mt-3 text-body-sm text-ink-muted">{t("common.loading")}</p>
+              ) : packageLoadError ? (
+                <div className="mt-3 rounded-xl bg-surface-2 p-4 text-center" role="alert">
+                  <p className="text-body-sm text-ink-muted">{t("errors.loadFailed")}</p>
+                  <button
+                    type="button"
+                    onClick={() => setPackageReloadKey((key) => key + 1)}
+                    className="mt-3 min-h-11 rounded-full bg-brand px-5 py-2 text-body-sm font-semibold text-white"
+                  >
+                    {t("common.retry")}
+                  </button>
+                </div>
+              ) : packages.length === 0 ? (
                 <p className="mt-3 text-body-sm text-ink-muted">{t("recharge.emptyPackages")}</p>
               ) : (
                 <div className="mt-3 grid grid-cols-2 gap-3">

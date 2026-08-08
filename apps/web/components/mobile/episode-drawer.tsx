@@ -7,6 +7,7 @@ import { useTheme } from "@/components/theme-provider";
 import type { Episode } from "@/lib/mock-data";
 import { buildEpisodeSlots, filterSlotsByRange } from "@/lib/episode-slots";
 import { cn, mediaUrl } from "@/lib/utils";
+import { SafeImage } from "@/components/safe-image";
 
 const SEG_SIZE = 30;
 const ACCENT = "#ff7e0d";
@@ -80,10 +81,13 @@ export function EpisodeDrawer({
           dark ? "bg-black/55" : "bg-black/45",
           open ? "opacity-100" : "opacity-0",
         )}
-        aria-label="close"
+        aria-label={t("common.close")}
         onClick={onClose}
       />
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="episode-drawer-title"
         className={cn(
           "absolute inset-x-0 bottom-0 flex max-h-[72dvh] flex-col rounded-t-[18px] shadow-xl transition-transform duration-300",
           dark ? "bg-[#262626] text-white" : "bg-white text-[#1a1a1a]",
@@ -107,12 +111,17 @@ export function EpisodeDrawer({
             )}
           >
             {cover ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={cover} alt="" className="h-full w-full object-cover" />
+              <SafeImage
+                src={cover}
+                alt={title}
+                className="h-full w-full object-cover"
+                fallbackLabel={t("common.imageUnavailable")}
+              />
             ) : null}
           </div>
           <div className="min-w-0 flex-1">
             <p
+              id="episode-drawer-title"
               className={cn(
                 "flex items-center gap-0.5 truncate text-[16px] font-semibold",
                 dark ? "text-white" : "text-[#1a1a1a]",
@@ -146,7 +155,7 @@ export function EpisodeDrawer({
                 type="button"
                 onClick={() => setTab(id)}
                 className={cn(
-                  "pb-2 text-[17px] transition-colors",
+                  "min-h-11 pb-2 pt-2 text-[17px] transition-colors",
                   active
                     ? cn("font-bold", dark ? "text-white" : "text-[#1a1a1a]")
                     : cn("font-medium", dark ? "text-white/40" : "text-[#999]"),
@@ -183,7 +192,7 @@ export function EpisodeDrawer({
                       type="button"
                       onClick={() => setSegIndex(i)}
                       className={cn(
-                        "shrink-0 text-[14px]",
+                        "min-h-11 shrink-0 px-1 text-[14px]",
                         i === segIndex
                           ? cn("font-semibold", dark ? "text-white" : "text-[#1a1a1a]")
                           : cn("font-normal", dark ? "text-white/40" : "text-[#999]"),

@@ -273,8 +273,29 @@ export async function adminReorderEpisodes(dramaId: string, ids: string[]) {
   });
 }
 
-export async function adminRetryTranscode(id: string) {
-  return adminRequest(`/admin/episodes/${id}/transcode-retry`, { method: "POST", body: "{}" });
+export async function adminRetryTranscode(
+  id: string,
+  body?: {
+    watermarkEnabled?: boolean;
+    watermarkX?: number;
+    watermarkY?: number;
+    watermarkScale?: number;
+    preferR2?: boolean;
+  },
+) {
+  return adminRequest(`/admin/episodes/${id}/transcode-retry`, {
+    method: "POST",
+    body: JSON.stringify(body || {}),
+  });
+}
+
+export async function adminEpisodeFirstFrame(id: string) {
+  return adminRequest<{
+    relativePath: string;
+    url: string;
+    width: number;
+    height: number;
+  }>(`/admin/episodes/${id}/first-frame`, { method: "POST", body: "{}" });
 }
 
 export async function adminStorageStatus() {
@@ -495,9 +516,26 @@ export async function adminTranscodeJob(jobId: string) {
 }
 
 /** Upload video to an existing episode → transcode → R2 when enabled. */
-export async function adminUploadEpisodeVideo(episodeId: string, file: File) {
+export async function adminUploadEpisodeVideo(
+  episodeId: string,
+  file: File,
+  watermark?: {
+    watermarkEnabled?: boolean;
+    watermarkX?: number;
+    watermarkY?: number;
+    watermarkScale?: number;
+  },
+) {
   const form = new FormData();
   form.append("file", file, file.name);
+  if (watermark?.watermarkEnabled != null) {
+    form.append("watermarkEnabled", watermark.watermarkEnabled ? "true" : "false");
+  }
+  if (watermark?.watermarkX != null) form.append("watermarkX", String(watermark.watermarkX));
+  if (watermark?.watermarkY != null) form.append("watermarkY", String(watermark.watermarkY));
+  if (watermark?.watermarkScale != null) {
+    form.append("watermarkScale", String(watermark.watermarkScale));
+  }
   return adminRequest<{
     jobId: string;
     transcodeStatus: string;
@@ -510,7 +548,14 @@ export async function adminUploadEpisodeVideo(episodeId: string, file: File) {
 /** Confirm browser R2 put onto an existing episode (replace media). */
 export async function adminAttachEpisodeFromR2(
   episodeId: string,
-  body: { key: string; filename?: string },
+  body: {
+    key: string;
+    filename?: string;
+    watermarkEnabled?: boolean;
+    watermarkX?: number;
+    watermarkY?: number;
+    watermarkScale?: number;
+  },
 ) {
   return adminRequest<{
     jobId: string;
@@ -531,8 +576,20 @@ export async function adminAttachEpisodeFromR2(
 export async function adminUploadEpisodeVideoSmart(
   episodeId: string,
   file: File,
-  opts?: { preferDirect?: boolean },
+  opts?: {
+    preferDirect?: boolean;
+    watermarkEnabled?: boolean;
+    watermarkX?: number;
+    watermarkY?: number;
+    watermarkScale?: number;
+  },
 ) {
+  const watermark = {
+    watermarkEnabled: opts?.watermarkEnabled,
+    watermarkX: opts?.watermarkX,
+    watermarkY: opts?.watermarkY,
+    watermarkScale: opts?.watermarkScale,
+  };
   if (opts?.preferDirect !== false) {
     try {
       const contentType = file.type || guessVideoContentType(file.name);
@@ -541,12 +598,13 @@ export async function adminUploadEpisodeVideoSmart(
       return await adminAttachEpisodeFromR2(episodeId, {
         key: signed.key,
         filename: file.name,
+        ...watermark,
       });
     } catch (e) {
       if (opts?.preferDirect === true) throw e;
     }
   }
-  return adminUploadEpisodeVideo(episodeId, file);
+  return adminUploadEpisodeVideo(episodeId, file, watermark);
 }
 
 /** Create episode + upload video in one request. */
@@ -1415,8 +1473,9 @@ export async function adminLocalImport(
 }
 
 export async function adminCreateOnlineDrama(body: {
-  titleZh: string;
-  titleEn?: string;
+  titleEn: string;
+  titleZh?: string;
+  titleFr?: string;
   slug?: string;
   descriptionZh?: string;
   descriptionEn?: string;
@@ -1450,8 +1509,9 @@ export async function adminCreateOnlineDrama(body: {
 
 /** Create empty LOCAL drama shell for subsequent R2/video uploads. */
 export async function adminCreateUploadDrama(body: {
-  titleZh: string;
-  titleEn?: string;
+  titleEn: string;
+  titleZh?: string;
+  titleFr?: string;
   slug?: string;
   descriptionZh?: string;
   descriptionEn?: string;
@@ -1482,8 +1542,9 @@ export async function adminCreateUploadDrama(body: {
 export async function adminCreateUploadDramaWithFiles(
   files: File[],
   meta: {
-    titleZh: string;
-    titleEn?: string;
+    titleEn: string;
+    titleZh?: string;
+    titleFr?: string;
     slug?: string;
     descriptionZh?: string;
     categorySlug: string;
@@ -1497,8 +1558,9 @@ export async function adminCreateUploadDramaWithFiles(
 ) {
   if (!files.length) throw new Error("未选择视频文件");
   const form = new FormData();
-  form.append("titleZh", meta.titleZh);
-  if (meta.titleEn) form.append("titleEn", meta.titleEn);
+  form.append("titleEn", meta.titleEn);
+  if (meta.titleZh) form.append("titleZh", meta.titleZh);
+  if (meta.titleFr) form.append("titleFr", meta.titleFr);
   if (meta.slug) form.append("slug", meta.slug);
   if (meta.descriptionZh) form.append("descriptionZh", meta.descriptionZh);
   form.append("categorySlug", meta.categorySlug);
@@ -1523,15 +1585,17 @@ export async function adminCreateUploadDramaWithFiles(
   }>("/admin/dramas/upload-with-files", { method: "POST", body: form });
 }
 
-/** Fill empty titleZh/titleEn via OpenAI-compatible translation (does not overwrite filled side). */
+/** Translate titles from English via LLM; overwrites zh/fr in one response. */
 export async function adminTranslateTitles(body: {
   titleZh?: string;
   titleEn?: string;
+  titleFr?: string;
 }) {
   return adminRequest<{
     titleZh: string;
     titleEn: string;
-    filled: Array<"titleZh" | "titleEn">;
+    titleFr: string;
+    filled: Array<"titleZh" | "titleEn" | "titleFr">;
     model: string;
   }>("/admin/translate/titles", {
     method: "POST",
@@ -1775,8 +1839,20 @@ export async function adminYtdlpTransfer(body: {
   target: "local" | "r2";
   titleZh?: string;
   titleEn?: string;
+  coverUrl?: string;
+  descriptionZh?: string;
   maxEpisodes?: number;
   formatPreference?: "best_hls" | "best_mp4" | "best";
+  cookiesFile?: string;
+  authBearer?: string;
+  episodes?: Array<{
+    episodeNumber?: number;
+    title?: string;
+    webpageUrl?: string;
+    sourceUrl?: string;
+    playlistIndex?: number;
+    durationSec?: number;
+  }>;
 }) {
   return adminRequest<{
     jobId: string;

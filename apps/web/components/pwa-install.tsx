@@ -55,13 +55,26 @@ export function PwaInstallRoot() {
     if (standalone) return;
     if (hasSeenPwaPrompt()) return;
     const p = getPwaPlatform();
-    // First-visit auto prompt: mobile only (iOS / Android).
     if (p !== "ios" && p !== "android") return;
+    const visitKey = "velvet_pwa_visits";
+    const sessionKey = "velvet_pwa_visit_counted";
+    let visits = 1;
+    try {
+      visits = Number(window.localStorage.getItem(visitKey) || "0");
+      if (!window.sessionStorage.getItem(sessionKey)) {
+        visits += 1;
+        window.localStorage.setItem(visitKey, String(visits));
+        window.sessionStorage.setItem(sessionKey, "1");
+      }
+    } catch {
+      return;
+    }
+    if (visits < 2) return;
     const timer = window.setTimeout(() => {
-      if (isPwaStandalone() || hasSeenPwaPrompt()) return;
+      if (document.visibilityState !== "visible" || isPwaStandalone() || hasSeenPwaPrompt()) return;
       setPlatform(p);
       setOpen(true);
-    }, 1800);
+    }, 45_000);
     return () => window.clearTimeout(timer);
   }, [standalone]);
 
@@ -98,16 +111,21 @@ export function PwaInstallRoot() {
         aria-label={t("pwa.close")}
         onClick={() => close(true)}
       />
-      <div className="absolute inset-x-0 bottom-0 max-h-[88dvh] overflow-y-auto rounded-t-3xl border border-white/10 bg-base/70 pb-[calc(1rem+var(--mobile-tab-safe-bottom))] shadow-2xl backdrop-blur-xl">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="pwa-dialog-title"
+        className="absolute inset-x-0 bottom-0 max-h-[88dvh] overflow-y-auto rounded-t-3xl border border-white/10 bg-base/70 pb-[calc(1rem+var(--mobile-tab-safe-bottom))] shadow-2xl backdrop-blur-xl"
+      >
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-white/10 bg-base/50 px-4 py-3 backdrop-blur-md">
           <div className="flex items-center gap-2">
             <Smartphone className="h-4 w-4 text-brand" />
-            <h2 className="text-body font-semibold text-ink">{t("pwa.title")}</h2>
+            <h2 id="pwa-dialog-title" className="text-body font-semibold text-ink">{t("pwa.title")}</h2>
           </div>
           <button
             type="button"
             onClick={() => close(true)}
-            className="grid h-9 w-9 place-items-center rounded-full text-ink-muted hover:bg-white/10"
+            className="grid h-11 w-11 place-items-center rounded-full text-ink-muted hover:bg-white/10"
             aria-label={t("pwa.close")}
           >
             <X className="h-5 w-5" />

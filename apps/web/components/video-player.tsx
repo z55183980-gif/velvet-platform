@@ -22,6 +22,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useLocale } from "@/lib/i18n";
 import { buttonVariants } from "./ui/button";
+import { SafeImage } from "@/components/safe-image";
 
 const ACCENT = "#ff7e0d";
 const RATES = [0.75, 1, 1.25, 1.5, 2] as const;
@@ -279,8 +280,7 @@ export function VideoPlayer({
     overlay = (
       <Overlay dim>
         {poster && isImg(poster) ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={poster} alt="" className="absolute inset-0 h-full w-full object-cover opacity-40" />
+          <SafeImage src={poster} alt="" className="absolute inset-0 h-full w-full object-cover opacity-40" />
         ) : null}
         <div className="absolute inset-0 bg-gradient-to-t from-black via-black/70 to-black/40" />
         <div className="relative flex flex-col items-center gap-5 px-6 text-center">

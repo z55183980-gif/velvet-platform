@@ -212,7 +212,7 @@ export function ContentSearchBar({
         </div>
 
         <div
-          className="inline-flex h-10 max-w-full items-center overflow-x-auto rounded-xl border border-white/70 bg-white/55 p-0.5 shadow-[inset_0_1px_2px_rgba(15,20,25,0.04)] backdrop-blur-md"
+          className="inline-flex h-9 max-w-full items-center overflow-x-auto rounded-xl border border-white/70 bg-white/55 p-0.5 shadow-[inset_0_1px_2px_rgba(15,20,25,0.04)] backdrop-blur-md"
           role="group"
           aria-label={t("sortBy")}
         >
@@ -229,7 +229,7 @@ export function ContentSearchBar({
               <button
                 key={key}
                 type="button"
-                className={`h-9 shrink-0 rounded-md px-2.5 text-body-sm font-medium transition sm:px-3 ${
+                className={`h-8 shrink-0 rounded-md px-2.5 text-body-sm font-medium transition sm:px-3 ${
                   active
                     ? "bg-brand text-white shadow-brand"
                     : "text-ink-muted hover:bg-white/55 hover:text-ink"

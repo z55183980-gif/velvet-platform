@@ -84,7 +84,7 @@ export function extractEpisodeLinksFromHtml(
 
   const map = new Map<number, string>();
   const re =
-    /(?:https?:\/\/[^"'\\\s<>]+)?(\/episodes\/episode-(\d+)-[^"'\\\s<>]+)/gi;
+    /(?:https?:\/\/[^"'\\\s<>]+)?((?:\/[a-z]{2})?\/episodes\/episode-(\d+)-[^"'\\\s<>]+)/gi;
   let m: RegExpExecArray | null;
   while ((m = re.exec(html))) {
     const n = Number(m[2]);
@@ -94,7 +94,8 @@ export function extractEpisodeLinksFromHtml(
   }
 
   // Also absolute episode URLs without leading path capture edge cases
-  const abs = /https?:\/\/[^"'\\\s<>]+\/episodes\/episode-(\d+)-[^"'\\\s<>]+/gi;
+  const abs =
+    /https?:\/\/[^"'\\\s<>]+\/(?:[a-z]{2}\/)?episodes\/episode-(\d+)-[^"'\\\s<>]+/gi;
   while ((m = abs.exec(html))) {
     const n = Number(m[1]);
     if (!Number.isFinite(n) || n < 1) continue;

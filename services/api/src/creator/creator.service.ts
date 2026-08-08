@@ -231,6 +231,7 @@ export class CreatorService {
     const data: any = {};
     if (dto.titleEn != null) data.titleEn = String(dto.titleEn).trim();
     if (dto.titleZh != null) data.titleZh = String(dto.titleZh).trim();
+    if (dto.titleFr != null) data.titleFr = String(dto.titleFr).trim() || null;
     if (dto.descriptionEn != null) data.descriptionEn = dto.descriptionEn;
     if (dto.descriptionZh != null) data.descriptionZh = dto.descriptionZh;
     if (dto.coverUrl != null) data.coverUrl = dto.coverUrl;
@@ -397,6 +398,7 @@ export class CreatorService {
           slug: `d-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
           titleEn: String(dto.titleEn).trim(),
           titleZh: dto.titleZh,
+          titleFr: dto.titleFr != null ? String(dto.titleFr).trim() || null : null,
           descriptionEn: dto.descriptionEn,
           descriptionZh: dto.descriptionZh,
           categorySlug: dto.categorySlug,

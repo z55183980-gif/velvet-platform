@@ -9,12 +9,14 @@ const HTML_TEXT_MAX = 80_000;
 export type TitleCompleteInput = {
   titleZh?: string;
   titleEn?: string;
+  titleFr?: string;
 };
 
 export type TitleCompleteResult = {
   titleZh: string;
   titleEn: string;
-  filled: Array<'titleZh' | 'titleEn'>;
+  titleFr: string;
+  filled: Array<'titleZh' | 'titleEn' | 'titleFr'>;
   model: string;
 };
 
@@ -60,9 +62,19 @@ const EXTRACT_SCHEMA = {
   required: ['titleZh', 'titleEn', 'coverUrl', 'descriptionZh', 'episodes', 'notes'],
 } as const;
 
+const TITLE_TRANSLATE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    titleZh: { type: 'string' },
+    titleFr: { type: 'string' },
+  },
+  required: ['titleZh', 'titleFr'],
+} as const;
+
 /**
  * Thin OpenAI-compatible chat client for admin helpers
- * (title translation + Path B page extract).
+ * (title translation EN→ZH/FR + Path B page extract).
  * Env: OPENAI_API_KEY, OPENAI_BASE_URL (optional), OPENAI_MODEL (optional).
  */
 @Injectable()
@@ -94,42 +106,134 @@ export class OpenaiService {
     return raw.endsWith('/chat/completions') ? raw : `${raw}/chat/completions`;
   }
 
+  /**
+   * Translate English title into Simplified Chinese + French.
+   * Uses dedicated plain-text calls (more reliable than one JSON blob across gateways).
+   */
   async completeTitles(input: TitleCompleteInput): Promise<TitleCompleteResult> {
     if (!this.isConfigured()) {
       throw new BizException(
         BizCode.BAD_REQUEST,
-        '未配置 OPENAI_API_KEY，无法翻译补全',
+        '未配置 OPENAI_API_KEY，无法翻译标题',
       );
     }
 
-    const titleZh = String(input.titleZh || '').trim().slice(0, TITLE_MAX);
     const titleEn = String(input.titleEn || '').trim().slice(0, TITLE_MAX);
-    if (!titleZh && !titleEn) {
-      throw new BizException(BizCode.BAD_REQUEST, '请至少填写中文或英文标题之一');
+    if (!titleEn) {
+      throw new BizException(BizCode.BAD_REQUEST, '请先填写英文标题');
     }
 
-    const needZh = !titleZh && !!titleEn;
-    const needEn = !titleEn && !!titleZh;
-    if (!needZh && !needEn) {
-      return {
-        titleZh,
+    const model = this.model();
+    let titleZh = '';
+    let titleFr = '';
+
+    try {
+      const parsed = await this.chatJson({
+        model,
+        system: [
+          'You translate short drama / movie titles.',
+          'Given an English title, return BOTH Simplified Chinese and French.',
+          'Respond with JSON only: {"titleZh":"...","titleFr":"..."}.',
+          `Each value under ${TITLE_MAX} characters, non-empty.`,
+          'titleFr MUST be French wording — never leave it identical to the English title when a natural French title exists.',
+        ].join(' '),
+        user: `English title:\n${titleEn}`,
+        useSchema: true,
+        schemaName: 'title_translate',
+        schema: TITLE_TRANSLATE_SCHEMA,
+      });
+      titleZh = this.pickTranslatedTitle(parsed, 'zh');
+      titleFr = this.pickTranslatedTitle(parsed, 'fr');
+    } catch (e) {
+      this.logger.warn(
+        `title translate JSON failed, plain fallback: ${e instanceof Error ? e.message : e}`,
+      );
+    }
+
+    if (!titleZh) {
+      titleZh = await this.translatePlain(titleEn, 'Simplified Chinese');
+    }
+    if (!titleFr || this.sameTitle(titleFr, titleEn)) {
+      titleFr = await this.translatePlain(
         titleEn,
-        filled: [],
-        model: this.model(),
-      };
+        'French',
+        'Output MUST be a French title. Do not repeat the English text unchanged.',
+      );
     }
 
-    const sourceLang = needZh ? 'en' : 'zh';
-    const targetLang = needZh ? 'zh' : 'en';
-    const source = needZh ? titleEn : titleZh;
-    const translated = await this.translateTitle(source, sourceLang, targetLang);
+    titleZh = this.normalizeTitle(titleZh);
+    titleFr = this.normalizeTitle(titleFr);
+
+    if (!titleZh || !titleFr) {
+      this.logger.warn(
+        `title translate incomplete zh=${JSON.stringify(titleZh)} fr=${JSON.stringify(titleFr)}`,
+      );
+      throw new BizException(BizCode.BAD_REQUEST, '翻译结果不完整（中文或法语为空）');
+    }
 
     return {
-      titleZh: needZh ? translated : titleZh,
-      titleEn: needEn ? translated : titleEn,
-      filled: needZh ? ['titleZh'] : ['titleEn'],
-      model: this.model(),
+      titleZh,
+      titleEn,
+      titleFr,
+      filled: ['titleZh', 'titleFr'],
+      model,
     };
+  }
+
+  private pickTranslatedTitle(parsed: any, lang: 'zh' | 'fr'): string {
+    if (!parsed || typeof parsed !== 'object') return '';
+    const keys =
+      lang === 'zh'
+        ? ['titleZh', 'zh', 'chinese', 'title_zh', 'zhTitle']
+        : ['titleFr', 'fr', 'french', 'title_fr', 'frTitle', 'titreFr', 'titre'];
+    for (const key of keys) {
+      const v = this.normalizeTitle(parsed[key]);
+      if (v) return v;
+    }
+    return '';
+  }
+
+  private sameTitle(a: string, b: string): boolean {
+    return a.trim().toLowerCase() === b.trim().toLowerCase();
+  }
+
+  private async translatePlain(
+    text: string,
+    targetLanguage: string,
+    extraRule?: string,
+  ): Promise<string> {
+    const system = [
+      'You translate short drama / movie titles for a multilingual catalog.',
+      `Translate the user title into ${targetLanguage}.`,
+      'Return ONLY the translated title — no quotes, no labels, no explanation.',
+      `Keep it under ${TITLE_MAX} characters.`,
+      'Preserve proper nouns when commonly known; otherwise natural localization.',
+      extraRule || '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+
+    const data = await this.chatRaw({
+      model: this.model(),
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: text },
+      ],
+      temperature: 0.2,
+    });
+
+    const out = this.normalizeTitle(data?.choices?.[0]?.message?.content);
+    if (!out) {
+      throw new BizException(BizCode.BAD_REQUEST, `${targetLanguage} 翻译结果为空`);
+    }
+    return out;
+  }
+
+  private normalizeTitle(raw: unknown): string {
+    return String(raw ?? '')
+      .trim()
+      .replace(/^["'「『]+|["'」』]+$/g, '')
+      .slice(0, TITLE_MAX);
   }
 
   /** Path B: extract bilingual meta + episode URLs from page text. */
@@ -168,6 +272,8 @@ export class OpenaiService {
         system,
         user,
         useSchema: true,
+        schemaName: 'drama_extract',
+        schema: EXTRACT_SCHEMA,
       });
     } catch (e) {
       this.logger.warn(
@@ -209,45 +315,13 @@ export class OpenaiService {
     };
   }
 
-  private async translateTitle(
-    text: string,
-    from: 'zh' | 'en',
-    to: 'zh' | 'en',
-  ): Promise<string> {
-    const targetLabel = to === 'zh' ? 'Simplified Chinese' : 'English';
-    const sourceLabel = from === 'zh' ? 'Chinese' : 'English';
-    const system = [
-      'You translate short drama / movie titles for a bilingual catalog.',
-      `Translate from ${sourceLabel} to ${targetLabel}.`,
-      `Return ONLY the translated title, no quotes or explanation.`,
-      `Keep it under ${TITLE_MAX} characters.`,
-      'Preserve proper nouns when commonly known; otherwise natural localization.',
-    ].join(' ');
-
-    const data = await this.chatRaw({
-      model: this.model(),
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: text },
-      ],
-      temperature: 0.2,
-    });
-
-    const out = String(data?.choices?.[0]?.message?.content || '')
-      .trim()
-      .replace(/^["'「『]+|["'」』]+$/g, '')
-      .slice(0, TITLE_MAX);
-    if (!out) {
-      throw new BizException(BizCode.BAD_REQUEST, '翻译结果为空');
-    }
-    return out;
-  }
-
   private async chatJson(opts: {
     model: string;
     system: string;
     user: string;
     useSchema: boolean;
+    schemaName?: string;
+    schema?: Record<string, unknown>;
   }): Promise<any> {
     const body: Record<string, unknown> = {
       model: opts.model,
@@ -257,13 +331,13 @@ export class OpenaiService {
         { role: 'user', content: opts.user },
       ],
     };
-    if (opts.useSchema) {
+    if (opts.useSchema && opts.schema && opts.schemaName) {
       body.response_format = {
         type: 'json_schema',
         json_schema: {
-          name: 'drama_extract',
+          name: opts.schemaName,
           strict: true,
-          schema: EXTRACT_SCHEMA,
+          schema: opts.schema,
         },
       };
     } else {

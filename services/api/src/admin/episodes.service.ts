@@ -289,7 +289,18 @@ export class AdminEpisodesService {
     return { ok: true, purge };
   }
 
-  async uploadVideo(id: string, file: Express.Multer.File, actorId?: bigint) {
+  async uploadVideo(
+    id: string,
+    file: Express.Multer.File,
+    actorId?: bigint,
+    opts?: {
+      preferR2?: boolean;
+      watermarkEnabled?: boolean;
+      watermarkX?: number;
+      watermarkY?: number;
+      watermarkScale?: number;
+    },
+  ) {
     const ep = await this.prisma.episode.findUnique({
       where: { id: BigInt(id) },
       include: { drama: { select: { sourceType: true } } },
@@ -313,13 +324,18 @@ export class AdminEpisodesService {
         transcodeStatus: 'PENDING',
       },
     });
-    const job = await this.upload.enqueueTranscode(saved.relativePath, String(ep.id));
+    const job = await this.upload.enqueueTranscode(saved.relativePath, String(ep.id), opts);
     await this.audit.write({
       actorId,
       action: 'episode.upload',
       targetType: 'episode',
       targetId: id,
-      payload: { relativePath: saved.relativePath, jobId: job.id, size: saved.size },
+      payload: {
+        relativePath: saved.relativePath,
+        jobId: job.id,
+        size: saved.size,
+        watermarkEnabled: !!opts?.watermarkEnabled,
+      },
     });
     return {
       episode: this.serialize({
@@ -426,6 +442,13 @@ export class AdminEpisodesService {
     key: string,
     originalFilename?: string,
     actorId?: bigint,
+    opts?: {
+      preferR2?: boolean;
+      watermarkEnabled?: boolean;
+      watermarkX?: number;
+      watermarkY?: number;
+      watermarkScale?: number;
+    },
   ) {
     const ep = await this.prisma.episode.findUnique({
       where: { id: BigInt(episodeId) },
@@ -448,13 +471,19 @@ export class AdminEpisodesService {
         transcodeStatus: 'PENDING',
       },
     });
-    const job = await this.upload.enqueueTranscode(saved.relativePath, String(ep.id));
+    const job = await this.upload.enqueueTranscode(saved.relativePath, String(ep.id), opts);
     await this.audit.write({
       actorId,
       action: 'episode.upload.r2Direct',
       targetType: 'episode',
       targetId: episodeId,
-      payload: { key, relativePath: saved.relativePath, jobId: job.id, size: saved.size },
+      payload: {
+        key,
+        relativePath: saved.relativePath,
+        jobId: job.id,
+        size: saved.size,
+        watermarkEnabled: !!opts?.watermarkEnabled,
+      },
     });
     return {
       episode: this.serialize({
@@ -626,7 +655,17 @@ export class AdminEpisodesService {
     return { ok: true, count: ids.length };
   }
 
-  async retryTranscode(id: string, actorId?: bigint) {
+  async retryTranscode(
+    id: string,
+    actorId?: bigint,
+    opts?: {
+      preferR2?: boolean;
+      watermarkEnabled?: boolean;
+      watermarkX?: number;
+      watermarkY?: number;
+      watermarkScale?: number;
+    },
+  ) {
     const ep = await this.prisma.episode.findUnique({ where: { id: BigInt(id) } });
     if (!ep) throw new BizException(BizCode.NOT_FOUND, 'episode.notFound');
     const inputRel = ep.originalUrl || ep.hlsUrl;
@@ -641,20 +680,34 @@ export class AdminEpisodesService {
       where: { id: ep.id },
       data: { transcodeStatus: 'PENDING' },
     });
-    const job = await this.upload.enqueueTranscode(inputRel, String(ep.id));
+    const job = await this.upload.enqueueTranscode(inputRel, String(ep.id), opts);
     await this.audit.write({
       actorId,
       action: 'episode.transcode.retry',
       targetType: 'episode',
       targetId: id,
-      payload: { from: ep.transcodeStatus, to: 'PENDING', jobId: job.id },
+      payload: {
+        from: ep.transcodeStatus,
+        to: 'PENDING',
+        jobId: job.id,
+        watermarkEnabled: !!opts?.watermarkEnabled,
+      },
     });
     return {
       id: ep.id.toString(),
       transcodeStatus: 'PENDING' as const,
       jobId: job.id,
-      ffmpegReady: !!(await this.upload.detectFfmpeg()),
     };
+  }
+
+  async firstFrame(id: string) {
+    const ep = await this.prisma.episode.findUnique({ where: { id: BigInt(id) } });
+    if (!ep) throw new BizException(BizCode.NOT_FOUND, 'episode.notFound');
+    const inputRel = ep.originalUrl || ep.hlsUrl;
+    if (!inputRel || /^https?:\/\//i.test(inputRel)) {
+      throw new BizException(BizCode.BAD_REQUEST, '无可抽取首帧的本地源文件');
+    }
+    return this.upload.extractFirstFrame(inputRel);
   }
 
   private assertHostedUploadAllowed(sourceType: string) {

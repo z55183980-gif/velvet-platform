@@ -10,7 +10,6 @@ import {
   adminStorageStatus,
   adminTranslateTitles,
   adminUploadImage,
-  adminYtdlpImport,
   adminYtdlpTransfer,
 } from "@velvet/api-client";
 import { Button, Input, Select, cn } from "@velvet/ui";
@@ -27,6 +26,7 @@ import {
   Upload,
   Save,
   Archive,
+  Sparkles,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { DramaCoverField } from "@/components/drama-cover-field";
@@ -51,6 +51,7 @@ import type {
   OnlineSourcePackage,
 } from "@/lib/drama-info-fill";
 import { useI18n } from "@/lib/i18n";
+import { isPlayableMediaUrl } from "@/lib/playable-url";
 import { useUploadQueue } from "@/lib/upload-queue";
 import { VIDEO_ACCEPT, isVideoFile } from "@/lib/video-formats";
 
@@ -59,6 +60,7 @@ type DraftRecord = {
   id: string;
   titleZh: string;
   titleEn?: string;
+  titleFr?: string;
   categorySlug: string;
   tags: string[];
   descriptionZh: string;
@@ -76,13 +78,9 @@ type DraftRecord = {
   previewSeconds?: number;
 };
 
+/** Prefer English for draft list labels (viewer primary title). */
 function draftDisplayTitle(draft: DraftRecord) {
-  return draft.titleZh || draft.titleEn || "—";
-}
-
-/** Empty locale titles resolve to the English title at submit time (API expects zh/en). */
-function resolveLocaleTitle(localeTitle: string, englishTitle: string) {
-  return localeTitle.trim() || englishTitle.trim();
+  return draft.titleEn || draft.titleZh || draft.titleFr || "—";
 }
 const LOCAL_DRAFTS_KEY = "velvet-admin-drama-drafts";
 type ProgressStatus = "pending" | "uploading" | "done" | "error";
@@ -166,6 +164,8 @@ type OnlineIngestMeta = {
   ingestForm: OnlineSourcePackage["ingestForm"];
   formatPreference?: OnlineSourcePackage["formatPreference"];
   maxEpisodes?: number;
+  cookiesFile?: string;
+  authBearer?: string;
 };
 
 function fmtSize(n: number) {
@@ -320,6 +320,7 @@ export const LocalUploadWizard = forwardRef<
 
   const [titleZh, setTitleZh] = useState("");
   const [titleEn, setTitleEn] = useState("");
+  const [titleFr, setTitleFr] = useState("");
   const [titleTouched, setTitleTouched] = useState(false);
   const [translateBusy, setTranslateBusy] = useState(false);
   const [categorySlug, setCategorySlug] = useState("");
@@ -366,6 +367,7 @@ export const LocalUploadWizard = forwardRef<
         const hasMeta =
           payload.titleEn !== undefined ||
           payload.titleZh !== undefined ||
+          payload.titleFr !== undefined ||
           payload.coverUrl !== undefined ||
           payload.descriptionZh !== undefined ||
           payload.categorySlug !== undefined ||
@@ -380,6 +382,11 @@ export const LocalUploadWizard = forwardRef<
         if (payload.titleZh !== undefined) {
           setTitleZh((prev) =>
             !overwrite && prev.trim() ? prev : payload.titleZh!.slice(0, 40),
+          );
+        }
+        if (payload.titleFr !== undefined) {
+          setTitleFr((prev) =>
+            !overwrite && prev.trim() ? prev : payload.titleFr!.slice(0, 40),
           );
         }
         if (payload.coverUrl !== undefined) {
@@ -433,13 +440,19 @@ export const LocalUploadWizard = forwardRef<
             ingestForm: payload.online.ingestForm,
             formatPreference: payload.online.formatPreference,
             maxEpisodes: payload.online.maxEpisodes,
+            cookiesFile: payload.online.cookiesFile,
+            authBearer: payload.online.authBearer,
           });
           if (incoming.length) {
             setEpisodes((prev) => {
-              const nextLen = prev.length + incoming.length;
-              if (!freeRangeEnd) setFreeRangeEnd(String(nextLen));
-              return [...prev, ...incoming];
+              // Online apply replaces prior link rows so only the latest selection is staged.
+              const keptFiles = prev.filter((ep) => ep.kind === "file");
+              const next = [...keptFiles, ...incoming];
+              if (!freeRangeEnd) setFreeRangeEnd(String(next.length));
+              return next;
             });
+          } else {
+            setEpisodes((prev) => prev.filter((ep) => ep.kind === "file"));
           }
         }
         setError(null);
@@ -506,11 +519,13 @@ export const LocalUploadWizard = forwardRef<
   function saveLocalDraft() {
     const en = titleEn.trim();
     const zh = titleZh.trim();
+    const fr = titleFr.trim();
     const id = editingDraftId || `${Date.now()}`;
     const record: DraftRecord = {
       id,
       titleZh: zh || en || "未命名剧集",
       titleEn: en || undefined,
+      titleFr: fr || undefined,
       categorySlug,
       tags,
       descriptionZh,
@@ -536,6 +551,7 @@ export const LocalUploadWizard = forwardRef<
   function restoreDraft(record: DraftRecord) {
     setTitleZh(record.titleZh === "未命名剧集" ? "" : record.titleZh);
     setTitleEn(record.titleEn || "");
+    setTitleFr(record.titleFr || "");
     setTitleTouched(Boolean(record.titleEn?.trim() || (record.titleZh && record.titleZh !== "未命名剧集")));
     setCategorySlug(record.categorySlug || "");
     setTags(record.tags || []);
@@ -577,28 +593,23 @@ export const LocalUploadWizard = forwardRef<
   }
 
   async function completeTitleTranslation() {
-    const zh = titleZh.trim();
     const en = titleEn.trim();
-    if (!zh && !en) {
+    if (!en) {
       setError(t("translateTitlesNeedOne"));
-      return;
-    }
-    if (zh && en) {
-      setError(t("translateTitlesNothing"));
       return;
     }
     setTranslateBusy(true);
     setError(null);
     try {
-      const res = await adminTranslateTitles({ titleZh: zh, titleEn: en });
-      if (!res.filled.length) {
-        setError(t("translateTitlesNothing"));
-        return;
-      }
-      if (res.filled.includes("titleZh")) setTitleZh(res.titleZh);
-      if (res.filled.includes("titleEn")) {
-        setTitleEn(res.titleEn);
-        setTitleTouched(true);
+      const res = await adminTranslateTitles({ titleEn: en });
+      const nextZh = String(res.titleZh || "").trim();
+      const nextFr = String(res.titleFr || "").trim();
+      setTitleEn(String(res.titleEn || en).trim());
+      if (nextZh) setTitleZh(nextZh);
+      if (nextFr) setTitleFr(nextFr);
+      setTitleTouched(true);
+      if (!nextFr) {
+        setError(t("translateTitlesFailed") + " (Français)");
       }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : t("translateTitlesFailed"));
@@ -619,11 +630,34 @@ export const LocalUploadWizard = forwardRef<
     const fileEps = episodes.filter((ep) => ep.kind === "file");
     const linkEps = episodes.filter((ep) => ep.kind === "link");
     if (onlineIngest?.ingestForm === "r2" && !fileEps.length) {
-      if (!onlineIngest.pageUrl.trim()) return t("ytdlpNeedUrl");
+      const pageUrl = onlineIngest.pageUrl.trim();
+      const hasDownloadable = linkEps.some(
+        (ep) =>
+          isPlayableMediaUrl(ep.sourceUrl?.trim()) ||
+          !!(ep.webpageUrl || ep.sourceUrl)?.trim(),
+      );
+      if (!pageUrl && !hasDownloadable) return t("ytdlpNeedUrl");
+      const missing = linkEps.filter((ep) => {
+        const src = ep.sourceUrl?.trim();
+        const page = ep.webpageUrl?.trim();
+        return !src && !page;
+      });
+      if (linkEps.length && missing.length) {
+        return t("onlineNeedDownloadEpisodes", {
+          n: String(missing.length),
+          total: String(linkEps.length),
+        });
+      }
     } else if (!fileEps.length && linkEps.length) {
-      const hasPlayable = linkEps.some((ep) => ep.sourceUrl?.trim());
-      const pageUrl = onlineIngest?.pageUrl?.trim();
-      if (!hasPlayable && !pageUrl) return t("onlineNeedEpisodes");
+      const unplayable = linkEps.filter(
+        (ep) => !isPlayableMediaUrl(ep.sourceUrl?.trim()),
+      );
+      if (unplayable.length) {
+        return t("onlineNeedPlayableEpisodes", {
+          n: String(unplayable.length),
+          total: String(linkEps.length),
+        });
+      }
     }
     if (fileEps.some((episode) => !episode.isFree) && priceCredits <= 0) {
       return t("policyPriceInvalid");
@@ -1229,7 +1263,7 @@ export const LocalUploadWizard = forwardRef<
       if (!linkEps.length) throw new Error(t("onlineNeedEpisodes"));
 
       const englishTitle = titleEn.trim();
-      const titleZhResolved = resolveLocaleTitle(titleZh, englishTitle);
+      const titleZhResolved = titleZh.trim() || undefined;
       const max =
         onlineIngest?.maxEpisodes && onlineIngest.maxEpisodes > 0
           ? onlineIngest.maxEpisodes
@@ -1237,18 +1271,32 @@ export const LocalUploadWizard = forwardRef<
       const pageUrl = onlineIngest?.pageUrl?.trim() || "";
 
       if (onlineIngest?.ingestForm === "r2") {
-        if (!pageUrl) throw new Error(t("ytdlpNeedUrl"));
+        const transferEps = linkEps
+          .map((ep, i) => ({
+            episodeNumber: i + 1,
+            title: ep.title,
+            webpageUrl: ep.webpageUrl?.trim() || undefined,
+            sourceUrl: ep.sourceUrl?.trim() || undefined,
+            durationSec: ep.durationSec,
+          }))
+          .filter((ep) => ep.webpageUrl || ep.sourceUrl);
+        if (!pageUrl && !transferEps.length) throw new Error(t("ytdlpNeedUrl"));
         return adminYtdlpTransfer({
-          url: pageUrl,
+          url: pageUrl || transferEps[0].webpageUrl || transferEps[0].sourceUrl || "",
           categorySlug,
           target: "r2",
           titleZh: titleZhResolved,
           titleEn: englishTitle,
+          coverUrl: coverUrl.trim() || undefined,
+          descriptionZh: descriptionZh.trim() || undefined,
           maxEpisodes: max,
           formatPreference:
             onlineIngest.formatPreference === "best_hls"
               ? "best"
               : onlineIngest.formatPreference || "best",
+          cookiesFile: onlineIngest.cookiesFile,
+          authBearer: onlineIngest.authBearer,
+          ...(transferEps.length ? { episodes: transferEps } : {}),
         }).then((data) => ({
           kind: "transfer" as const,
           id: data.id,
@@ -1256,28 +1304,25 @@ export const LocalUploadWizard = forwardRef<
         }));
       }
 
-      if (pageUrl && !linkEps.every((ep) => ep.sourceUrl?.trim())) {
-        return adminYtdlpImport({
-          url: pageUrl,
-          categorySlug,
-          titleZh: titleZhResolved,
-          titleEn: englishTitle,
-          maxEpisodes: max,
-          formatPreference: onlineIngest?.formatPreference || "best_hls",
-        }).then((data) => ({
-          kind: "import" as const,
-          id: data.id,
-          n: data.resolvedEpisodes,
-        }));
+      // Staged link episodes must all be playable — do not fall back to
+      // import/re-probe which ignores AI selection and resolved media URLs.
+      const missingPlayable = linkEps.filter(
+        (ep) => !isPlayableMediaUrl(ep.sourceUrl?.trim()),
+      );
+      if (missingPlayable.length) {
+        throw new Error(
+          t("onlineNeedPlayableEpisodes", {
+            n: String(missingPlayable.length),
+            total: String(linkEps.length),
+          }),
+        );
       }
 
-      const playable = linkEps
-        .map((ep, i) => ({
-          episodeNumber: i + 1,
-          title: ep.title,
-          sourceUrl: (ep.sourceUrl || "").trim(),
-        }))
-        .filter((ep) => ep.sourceUrl);
+      const playable = linkEps.map((ep, i) => ({
+        episodeNumber: i + 1,
+        title: ep.title,
+        sourceUrl: (ep.sourceUrl || "").trim(),
+      }));
       if (!playable.length) throw new Error(t("onlineNeedEpisodes"));
 
       const preparedFree = (() => {
@@ -1293,13 +1338,14 @@ export const LocalUploadWizard = forwardRef<
       return adminCreateOnlineDrama({
         titleZh: titleZhResolved,
         titleEn: englishTitle,
+        titleFr: titleFr.trim() || undefined,
         categorySlug,
         coverUrl: coverUrl.trim() || undefined,
         descriptionZh: descriptionZh.trim() || undefined,
         freeEpisodeCount: preparedFree,
         lockMode: preparedFree >= playable.length ? "ALL_FREE" : "VIP_ALL",
         status: "DRAFT",
-        relaxedPlayUrl: true,
+        relaxedPlayUrl: false,
         episodes: playable.map((ep, i) => {
           const n = i + 1;
           const start = Number(freeRangeStart) || 1;
@@ -1373,11 +1419,12 @@ export const LocalUploadWizard = forwardRef<
       const sourceTags = composeDramaSourceTags(tags, contentType, completion);
 
       const englishTitle = titleEn.trim();
-      const titleZhResolved = resolveLocaleTitle(titleZh, englishTitle);
-      const titleDisplay = titleZhResolved || englishTitle || "—";
+      const titleZhResolved = titleZh.trim() || undefined;
+      const titleDisplay = englishTitle || titleZhResolved || "—";
       const createDrama = {
         titleZh: titleZhResolved,
         titleEn: englishTitle,
+        titleFr: titleFr.trim() || undefined,
         categorySlug,
         coverUrl: coverUrl.trim() || undefined,
         descriptionZh: descriptionZh.trim() || undefined,
@@ -1453,8 +1500,45 @@ export const LocalUploadWizard = forwardRef<
           disabled={busy}
           onClick={onRequestOnline}
         >
+          <Sparkles className="upload-source-online__icon" aria-hidden />
           {t("contentOnlineRef")}
         </button>
+      ) : null}
+    </div>
+  );
+
+  const storageStatusPills = (
+    <div
+      className="flex max-w-full flex-wrap items-center gap-1.5"
+      aria-label={t("localWizardStorageTitle")}
+      title={t("localWizardStorageHint")}
+    >
+      <span className={cn("upload-status-pill", destPillTone)} title={destPillTitle}>
+        {storageChecking || probeChecking || r2Enabled ? (
+          <Cloud className="h-3.5 w-3.5" aria-hidden />
+        ) : (
+          <HardDrive className="h-3.5 w-3.5" aria-hidden />
+        )}
+        {destPillLabel}
+      </span>
+      <span className={cn("upload-status-pill", ffmpegPillTone)} title={ffmpegPillTitle}>
+        {ffmpegPillLabel}
+      </span>
+      {probeOk && probeLatencyMs != null ? (
+        <span
+          className={cn("upload-status-pill", latencyPillTone)}
+          title={t("uploadR2LatencyHint", {
+            ms: probeLatencyMs,
+            media: mediaBucketName,
+            upload: uploadBucketName,
+          })}
+        >
+          {t("uploadR2BucketsLatency", {
+            media: mediaBucketName,
+            upload: uploadBucketName,
+            ms: probeLatencyMs,
+          })}
+        </span>
       ) : null}
     </div>
   );
@@ -1462,9 +1546,11 @@ export const LocalUploadWizard = forwardRef<
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-body-sm text-ink-muted">
-          {showDrafts ? t("draftBoxHint") : t("localWizardHint")}
-        </p>
+        {showDrafts ? (
+          <p className="text-body-sm text-ink-muted">{t("draftBoxHint")}</p>
+        ) : (
+          storageStatusPills
+        )}
         <Button size="sm" variant="secondary" onClick={() => setShowDrafts((value) => !value)}>
           {showDrafts ? (
             t("draftBackToWizard")
@@ -1551,256 +1637,6 @@ export const LocalUploadWizard = forwardRef<
           {success}
         </div>
       ) : null}
-
-      <section id="local-drama-info" className="upload-panel upload-panel--info">
-            <div className="upload-panel__head">
-              <div>
-                <h2>{t("uploadSectionInfo")}</h2>
-                <p>{t("uploadSectionInfoHint")}</p>
-              </div>
-              <div
-                className="flex max-w-full flex-wrap items-center justify-end gap-1.5"
-                aria-label={t("localWizardStorageTitle")}
-                title={t("localWizardStorageHint")}
-              >
-                <span className={cn("upload-status-pill", destPillTone)} title={destPillTitle}>
-                  {storageChecking || probeChecking || r2Enabled ? (
-                    <Cloud className="h-3.5 w-3.5" aria-hidden />
-                  ) : (
-                    <HardDrive className="h-3.5 w-3.5" aria-hidden />
-                  )}
-                  {destPillLabel}
-                </span>
-                <span className={cn("upload-status-pill", ffmpegPillTone)} title={ffmpegPillTitle}>
-                  {ffmpegPillLabel}
-                </span>
-                {probeOk && probeLatencyMs != null ? (
-                  <span
-                    className={cn("upload-status-pill", latencyPillTone)}
-                    title={t("uploadR2LatencyHint", {
-                      ms: probeLatencyMs,
-                      media: mediaBucketName,
-                      upload: uploadBucketName,
-                    })}
-                  >
-                    {t("uploadR2BucketsLatency", {
-                      media: mediaBucketName,
-                      upload: uploadBucketName,
-                      ms: probeLatencyMs,
-                    })}
-                  </span>
-                ) : null}
-              </div>
-            </div>
-            <div className="upload-info-layout">
-              <div className="upload-info-layout__fields">
-                <div className="upload-field upload-field--title-stack">
-                  <div className="upload-locale-titles">
-                    <div className="upload-locale-titles__head">
-                      <strong>{t("localeTitlesLabel")}</strong>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <small>{t("localeTitleFallbackHint")}</small>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="secondary"
-                          disabled={busy || translateBusy}
-                          onClick={() => void completeTitleTranslation()}
-                        >
-                          {translateBusy ? t("translateTitlesBusy") : t("translateTitles")}
-                        </Button>
-                      </div>
-                    </div>
-                    <label className="upload-locale-titles__row">
-                      <span className="upload-locale-titles__lang">
-                        {t("contentTitleLocaleEn")} <b className="text-danger">*</b>
-                      </span>
-                      <div className="upload-locale-titles__input">
-                        <Input
-                          required
-                          maxLength={40}
-                          value={titleEn}
-                          disabled={busy}
-                          aria-required
-                          aria-invalid={titleTouched && !titleEn.trim()}
-                          aria-label={t("contentTitleLocaleEn")}
-                          onBlur={() => setTitleTouched(true)}
-                          onChange={(e) => setTitleEn(e.target.value)}
-                        />
-                        <em className="upload-locale-titles__count">{titleEn.length}/40</em>
-                      </div>
-                    </label>
-                    {titleTouched && !titleEn.trim() ? (
-                      <small className="upload-locale-titles__error text-danger">
-                        {t("requiredField")}
-                      </small>
-                    ) : null}
-                    <label className="upload-locale-titles__row">
-                      <span className="upload-locale-titles__lang">{t("contentTitleLocaleZh")}</span>
-                      <div className="upload-locale-titles__input">
-                        <Input
-                          maxLength={40}
-                          value={titleZh}
-                          disabled={busy}
-                          placeholder={titleEn.trim() || t("localeTitleFallbackPlaceholder")}
-                          onChange={(e) => setTitleZh(e.target.value)}
-                          aria-label={t("contentTitleLocaleZh")}
-                        />
-                        <em className="upload-locale-titles__count">{titleZh.length}/40</em>
-                      </div>
-                    </label>
-                  </div>
-                </div>
-
-                <div className="upload-info-row upload-info-row--meta">
-                  <div className="upload-field upload-field--tags">
-                    <span>
-                      {t("dramaTags")}
-                      <em className="float-right not-italic text-ink-subtle">{tags.length}/{MAX_DRAMA_TAGS}</em>
-                    </span>
-                    <div className="flex flex-wrap gap-1.5 rounded-md border border-line bg-surface px-2 py-1.5">
-                      {tags.length
-                        ? tags.map((tag) => (
-                            <button
-                              type="button"
-                              key={tag}
-                              className="rounded-full bg-brand/10 px-2 py-0.5 text-xs text-brand"
-                              onClick={() => setTags((items) => items.filter((item) => item !== tag))}
-                            >
-                              {tag} ×
-                            </button>
-                          ))
-                        : null}
-                      <input
-                        className="min-w-24 flex-1 bg-transparent text-sm outline-none"
-                        value={tagInput}
-                        maxLength={12}
-                        placeholder={t("dramaTagsPlaceholder")}
-                        onChange={(e) => setTagInput(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === ",") {
-                            e.preventDefault();
-                            const tag = tagInput.trim();
-                            if (tag && !tags.includes(tag) && tags.length < MAX_DRAMA_TAGS) {
-                              setTags((items) => [...items, tag]);
-                            }
-                            setTagInput("");
-                          }
-                        }}
-                      />
-                    </div>
-                  </div>
-                  <label className="upload-field upload-field--compact upload-field--category">
-                    <span>
-                      {t("onlineCategory")} <b className="text-danger">*</b>
-                    </span>
-                    <Select
-                      required
-                      value={categorySlug}
-                      disabled={busy}
-                      aria-required="true"
-                      onChange={(e) => setCategorySlug(e.target.value)}
-                    >
-                      <option value="">{t("selectCategory")}</option>
-                      {(categoriesQ.data ?? []).map((c) => (
-                        <option key={c.slug} value={c.slug}>
-                          {c.nameZh || c.nameEn || c.slug}
-                        </option>
-                      ))}
-                    </Select>
-                  </label>
-                  <label className="upload-field upload-field--episodes">
-                    <span>{t("totalEpisodes")}</span>
-                    <Input
-                      type="number"
-                      min={0}
-                      step={1}
-                      inputMode="numeric"
-                      disabled={busy}
-                      value={totalEpisodes}
-                      aria-label={t("totalEpisodes")}
-                      onChange={(e) => {
-                        const raw = e.target.value;
-                        if (raw === "") {
-                          setTotalEpisodesDirty(false);
-                          setTotalEpisodes(episodes.length);
-                          return;
-                        }
-                        // Reject non-integers explicitly (e.g. 12.5) instead of silently floor-ing.
-                        const asNumber = Number(raw);
-                        if (!Number.isFinite(asNumber) || !Number.isInteger(asNumber)) return;
-                        const next = Math.max(0, asNumber);
-                        setTotalEpisodesDirty(true);
-                        setTotalEpisodes(next);
-                      }}
-                    />
-                  </label>
-                  <div className="upload-field upload-field--compact upload-field--content-type">
-                    <span>
-                      {t("contentType")} <b className="text-danger">*</b>
-                    </span>
-                    <UploadMetaChips
-                      value={contentType}
-                      disabled={busy}
-                      ariaLabel={t("contentType")}
-                      onChange={(value) => setContentType(normalizeContentType(value))}
-                      options={[
-                        { value: "漫剧", label: t("contentTypeComic") },
-                        { value: "真人短剧", label: t("contentTypeLive") },
-                        { value: "AI短剧", label: t("contentTypeAi") },
-                      ]}
-                    />
-                  </div>
-                  <div className="upload-field upload-field--compact upload-field--completion">
-                    <span>
-                      {t("completionStatus")} <b className="text-danger">*</b>
-                    </span>
-                    <UploadMetaChips
-                      value={completion}
-                      disabled={busy}
-                      ariaLabel={t("completionStatus")}
-                      onChange={(value) => setCompletion(value)}
-                      options={[
-                        { value: "连载中", label: t("completionOngoing") },
-                        { value: "已完结", label: t("completionFinished") },
-                      ]}
-                    />
-                  </div>
-                </div>
-
-                <label className="upload-field">
-                  <span>
-                    {t("onlineDescZh")}
-                    <em className="float-right not-italic text-ink-subtle">
-                      {descriptionZh.length}/300
-                    </em>
-                  </span>
-                  <textarea
-                    className="content-textarea upload-info-desc"
-                    rows={3}
-                    maxLength={300}
-                    value={descriptionZh}
-                    disabled={busy}
-                    onChange={(e) => setDescriptionZh(e.target.value)}
-                  />
-                </label>
-              </div>
-
-              <div className="upload-info-layout__cover">
-                <div className="upload-field">
-                  <span>{t("uploadSectionCover")}</span>
-                  <DramaCoverField
-                    url={coverUrl || undefined}
-                    disabled={busy}
-                    videoFile={episodes[0]?.file}
-                    showAdvancedUrl
-                    onChange={(url) => setCoverUrl(url)}
-                    onError={setError}
-                  />
-                </div>
-              </div>
-            </div>
-          </section>
 
       <section className="upload-panel space-y-4">
         <div className="upload-panel__head">
@@ -2101,6 +1937,237 @@ export const LocalUploadWizard = forwardRef<
             )}
           </div>
       </section>
+
+      <section id="local-drama-info" className="upload-panel upload-panel--info">
+            <div className="upload-panel__head">
+              <div>
+                <h2>{t("uploadSectionInfo")}</h2>
+                <p>{t("uploadSectionInfoHint")}</p>
+              </div>
+            </div>
+            <div className="upload-info-layout">
+              <div className="upload-info-layout__fields">
+                <div className="upload-field upload-field--title-stack">
+                  <div className="upload-locale-titles">
+                    <div className="upload-locale-titles__head">
+                      <strong>{t("localeTitlesLabel")}</strong>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <small>{t("localeTitleFallbackHint")}</small>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          disabled={busy || translateBusy}
+                          onClick={() => void completeTitleTranslation()}
+                        >
+                          {translateBusy ? t("translateTitlesBusy") : t("translateTitles")}
+                        </Button>
+                      </div>
+                    </div>
+                    <label className="upload-locale-titles__row">
+                      <span className="upload-locale-titles__lang">
+                        {t("contentTitleLocaleEn")} <b className="text-danger">*</b>
+                      </span>
+                      <div className="upload-locale-titles__input">
+                        <Input
+                          required
+                          maxLength={40}
+                          value={titleEn}
+                          disabled={busy}
+                          aria-required
+                          aria-invalid={titleTouched && !titleEn.trim()}
+                          aria-label={t("contentTitleLocaleEn")}
+                          onBlur={() => setTitleTouched(true)}
+                          onChange={(e) => setTitleEn(e.target.value)}
+                        />
+                        <em className="upload-locale-titles__count">{titleEn.length}/40</em>
+                      </div>
+                    </label>
+                    {titleTouched && !titleEn.trim() ? (
+                      <small className="upload-locale-titles__error text-danger">
+                        {t("requiredField")}
+                      </small>
+                    ) : null}
+                    <label className="upload-locale-titles__row">
+                      <span className="upload-locale-titles__lang">{t("contentTitleLocaleZh")}</span>
+                      <div className="upload-locale-titles__input">
+                        <Input
+                          maxLength={40}
+                          value={titleZh}
+                          disabled={busy}
+                          placeholder={titleEn.trim() || t("localeTitleFallbackPlaceholder")}
+                          onChange={(e) => setTitleZh(e.target.value)}
+                          aria-label={t("contentTitleLocaleZh")}
+                        />
+                        <em className="upload-locale-titles__count">{titleZh.length}/40</em>
+                      </div>
+                    </label>
+                    <label className="upload-locale-titles__row">
+                      <span className="upload-locale-titles__lang">{t("contentTitleLocaleFr")}</span>
+                      <div className="upload-locale-titles__input">
+                        <Input
+                          maxLength={40}
+                          value={titleFr}
+                          disabled={busy}
+                          placeholder={titleEn.trim() || t("localeTitleFallbackPlaceholder")}
+                          onChange={(e) => setTitleFr(e.target.value)}
+                          aria-label={t("contentTitleLocaleFr")}
+                        />
+                        <em className="upload-locale-titles__count">{titleFr.length}/40</em>
+                      </div>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="upload-info-row upload-info-row--meta">
+                  <div className="upload-field upload-field--tags">
+                    <span>
+                      {t("dramaTags")}
+                      <em className="float-right not-italic text-ink-subtle">{tags.length}/{MAX_DRAMA_TAGS}</em>
+                    </span>
+                    <div className="flex flex-wrap gap-1.5 rounded-md border border-line bg-surface px-2 py-1.5">
+                      {tags.length
+                        ? tags.map((tag) => (
+                            <button
+                              type="button"
+                              key={tag}
+                              className="rounded-full bg-brand/10 px-2 py-0.5 text-xs text-brand"
+                              onClick={() => setTags((items) => items.filter((item) => item !== tag))}
+                            >
+                              {tag} ×
+                            </button>
+                          ))
+                        : null}
+                      <input
+                        className="min-w-24 flex-1 bg-transparent text-sm outline-none"
+                        value={tagInput}
+                        maxLength={12}
+                        placeholder={t("dramaTagsPlaceholder")}
+                        onChange={(e) => setTagInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === ",") {
+                            e.preventDefault();
+                            const tag = tagInput.trim();
+                            if (tag && !tags.includes(tag) && tags.length < MAX_DRAMA_TAGS) {
+                              setTags((items) => [...items, tag]);
+                            }
+                            setTagInput("");
+                          }
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <label className="upload-field upload-field--compact upload-field--category">
+                    <span>
+                      {t("onlineCategory")} <b className="text-danger">*</b>
+                    </span>
+                    <Select
+                      required
+                      value={categorySlug}
+                      disabled={busy}
+                      aria-required="true"
+                      onChange={(e) => setCategorySlug(e.target.value)}
+                    >
+                      <option value="">{t("selectCategory")}</option>
+                      {(categoriesQ.data ?? []).map((c) => (
+                        <option key={c.slug} value={c.slug}>
+                          {c.nameZh || c.nameEn || c.slug}
+                        </option>
+                      ))}
+                    </Select>
+                  </label>
+                  <label className="upload-field upload-field--episodes">
+                    <span>{t("totalEpisodes")}</span>
+                    <Input
+                      type="number"
+                      min={0}
+                      step={1}
+                      inputMode="numeric"
+                      disabled={busy}
+                      value={totalEpisodes}
+                      aria-label={t("totalEpisodes")}
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        if (raw === "") {
+                          setTotalEpisodesDirty(false);
+                          setTotalEpisodes(episodes.length);
+                          return;
+                        }
+                        // Reject non-integers explicitly (e.g. 12.5) instead of silently floor-ing.
+                        const asNumber = Number(raw);
+                        if (!Number.isFinite(asNumber) || !Number.isInteger(asNumber)) return;
+                        const next = Math.max(0, asNumber);
+                        setTotalEpisodesDirty(true);
+                        setTotalEpisodes(next);
+                      }}
+                    />
+                  </label>
+                  <div className="upload-field upload-field--compact upload-field--content-type">
+                    <span>
+                      {t("contentType")} <b className="text-danger">*</b>
+                    </span>
+                    <UploadMetaChips
+                      value={contentType}
+                      disabled={busy}
+                      ariaLabel={t("contentType")}
+                      onChange={(value) => setContentType(normalizeContentType(value))}
+                      options={[
+                        { value: "漫剧", label: t("contentTypeComic") },
+                        { value: "真人短剧", label: t("contentTypeLive") },
+                        { value: "AI短剧", label: t("contentTypeAi") },
+                      ]}
+                    />
+                  </div>
+                  <div className="upload-field upload-field--compact upload-field--completion">
+                    <span>
+                      {t("completionStatus")} <b className="text-danger">*</b>
+                    </span>
+                    <UploadMetaChips
+                      value={completion}
+                      disabled={busy}
+                      ariaLabel={t("completionStatus")}
+                      onChange={(value) => setCompletion(value)}
+                      options={[
+                        { value: "连载中", label: t("completionOngoing") },
+                        { value: "已完结", label: t("completionFinished") },
+                      ]}
+                    />
+                  </div>
+                </div>
+
+                <label className="upload-field">
+                  <span>
+                    {t("onlineDescZh")}
+                    <em className="float-right not-italic text-ink-subtle">
+                      {descriptionZh.length}/300
+                    </em>
+                  </span>
+                  <textarea
+                    className="content-textarea upload-info-desc"
+                    rows={3}
+                    maxLength={300}
+                    value={descriptionZh}
+                    disabled={busy}
+                    onChange={(e) => setDescriptionZh(e.target.value)}
+                  />
+                </label>
+              </div>
+
+              <div className="upload-info-layout__cover">
+                <div className="upload-field">
+                  <span>{t("uploadSectionCover")}</span>
+                  <DramaCoverField
+                    url={coverUrl || undefined}
+                    disabled={busy}
+                    videoFile={episodes[0]?.file}
+                    showAdvancedUrl
+                    onChange={(url) => setCoverUrl(url)}
+                    onError={setError}
+                  />
+                </div>
+              </div>
+            </div>
+          </section>
 
       <section className="upload-panel space-y-3">
             <div className="upload-panel__head">

@@ -6,7 +6,7 @@ import {
   LocalUploadWizard,
   type LocalUploadWizardHandle,
 } from "@/components/local-upload-wizard";
-import { YtdlpImportPanel } from "@/components/ytdlp-import-panel";
+import { YtdlpImportPanel, type OnlineIngestTab } from "@/components/ytdlp-import-panel";
 import type { DramaInfoFillPayload } from "@/lib/drama-info-fill";
 import { useI18n } from "@/lib/i18n";
 import { useUnsavedNavigationGuard } from "@/lib/use-unsaved-navigation-guard";
@@ -51,6 +51,7 @@ export function ContentAddPanel({
   const wizardRef = useRef<LocalUploadWizardHandle>(null);
   const [tab, setTab] = useState<ContentAddTab>(controlledTab ?? "owned");
   const [onlineKey, setOnlineKey] = useState(0);
+  const [onlineIngestTab, setOnlineIngestTab] = useState<OnlineIngestTab>("parse");
   const [dirty, setDirty] = useState(false);
   const dirtyRef = useRef(false);
 
@@ -78,6 +79,7 @@ export function ContentAddPanel({
 
   function openOnline() {
     if (tab === "online") return;
+    setOnlineIngestTab("parse");
     applySelection({ tab: "online" });
   }
 
@@ -88,6 +90,7 @@ export function ContentAddPanel({
       dirtyRef.current = false;
       setDirty(false);
       setOnlineKey((k) => k + 1);
+      setOnlineIngestTab("parse");
       applySelection({ tab: "owned" });
     };
 
@@ -105,6 +108,7 @@ export function ContentAddPanel({
     dirtyRef.current = false;
     setDirty(false);
     setOnlineKey((k) => k + 1);
+    setOnlineIngestTab("parse");
     applySelection({ tab: "owned" });
   }
 
@@ -115,15 +119,36 @@ export function ContentAddPanel({
       <GlassModal
         open={onlineOpen}
         onClose={closeOnline}
-        title={t("contentOnlineRef")}
+        title={
+          <div className="seg-tabs" role="tablist" aria-label={t("contentOnlineRef")}>
+            {(
+              [
+                ["parse", t("onlineIngestTabParse")],
+                ["manual", t("onlineIngestTabManual")],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                aria-selected={onlineIngestTab === key}
+                className="seg-tabs__item"
+                onClick={() => setOnlineIngestTab(key)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        }
         size="2xl"
       >
         <div className="space-y-3">
-          <p className="text-body-sm text-ink-muted">{t("contentAddOnlineRefHint")}</p>
           {onlineOpen ? (
             <YtdlpImportPanel
               key={onlineKey}
               embedded
+              ingestTab={onlineIngestTab}
+              onIngestTabChange={setOnlineIngestTab}
               onDirtyChange={markDirty}
               onFillDramaInfo={fillDramaInfo}
             />

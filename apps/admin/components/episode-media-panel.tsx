@@ -13,6 +13,12 @@ import { Badge, Button, cn } from "@velvet/ui";
 import { Cloud, HardDrive, LoaderCircle, RefreshCw, Trash2, Upload } from "lucide-react";
 import { useI18n } from "@/lib/i18n";
 import { VIDEO_ACCEPT } from "@/lib/video-formats";
+import { GlassModal } from "@/components/glass-modal";
+import {
+  WatermarkPositionEditor,
+  DEFAULT_PLACEMENT,
+  type WatermarkPlacement,
+} from "@/components/watermark-position-editor";
 
 function fmtBytes(n: number) {
   if (!Number.isFinite(n) || n <= 0) return "0 B";
@@ -28,6 +34,50 @@ function mediaKind(url?: string | null): "cdn" | "local" | "external" | "empty" 
   if (/cdn\.velvetmovie\.space|\.r2\.dev|r2\.cloudflarestorage/i.test(u)) return "cdn";
   if (/^https?:\/\//i.test(u)) return "external";
   return "local";
+}
+
+async function firstFrameFromFile(file: File): Promise<{
+  url: string;
+  width: number;
+  height: number;
+}> {
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const video = document.createElement("video");
+    video.preload = "auto";
+    video.muted = true;
+    video.playsInline = true;
+    video.src = objectUrl;
+    await new Promise<void>((resolve, reject) => {
+      video.onloadeddata = () => resolve();
+      video.onerror = () => reject(new Error("failed to load video for first frame"));
+    });
+    try {
+      video.currentTime = Math.min(0.05, (video.duration || 1) * 0.01);
+      await new Promise<void>((resolve) => {
+        const done = () => resolve();
+        video.onseeked = done;
+        window.setTimeout(done, 800);
+      });
+    } catch {
+      /* use frame 0 */
+    }
+    const width = video.videoWidth || 1280;
+    const height = video.videoHeight || 720;
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("canvas unavailable");
+    ctx.drawImage(video, 0, 0, width, height);
+    return {
+      url: canvas.toDataURL("image/jpeg", 0.86),
+      width,
+      height,
+    };
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
 export function EpisodeVideoUploadButton({
@@ -46,6 +96,10 @@ export function EpisodeVideoUploadButton({
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [jobId, setJobId] = useState<string | null>(null);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [frame, setFrame] = useState<{ url: string; width: number; height: number } | null>(null);
+  const [frameBusy, setFrameBusy] = useState(false);
+  const [placement, setPlacement] = useState<WatermarkPlacement>(DEFAULT_PLACEMENT);
   const { t } = useI18n();
   const storageQ = useQuery({
     queryKey: ["admin", "storage-status"],
@@ -84,6 +138,40 @@ export function EpisodeVideoUploadButton({
     };
   }, [jobId, onDone, onError, t]);
 
+  function closeWatermarkModal() {
+    setPendingFile(null);
+    setFrame(null);
+    setPlacement(DEFAULT_PLACEMENT);
+    setFrameBusy(false);
+  }
+
+  async function confirmUpload() {
+    if (!pendingFile || busy) return;
+    const file = pendingFile;
+    const wm = { ...placement };
+    closeWatermarkModal();
+    setBusy(true);
+    try {
+      const res = await adminUploadEpisodeVideoSmart(episodeId, file, {
+        preferDirect,
+        watermarkEnabled: wm.enabled,
+        watermarkX: wm.x,
+        watermarkY: wm.y,
+        watermarkScale: wm.scale,
+      });
+      if (res.jobId) {
+        setJobId(res.jobId);
+        await onDone();
+      } else {
+        setBusy(false);
+        await onDone();
+      }
+    } catch (err) {
+      setBusy(false);
+      onError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   return (
     <>
       <Button
@@ -106,26 +194,42 @@ export function EpisodeVideoUploadButton({
           const file = e.target.files?.[0];
           e.target.value = "";
           if (!file) return;
-          setBusy(true);
-          void (async () => {
-            try {
-              const res = await adminUploadEpisodeVideoSmart(episodeId, file, {
-                preferDirect,
-              });
-              if (res.jobId) {
-                setJobId(res.jobId);
-                await onDone();
-              } else {
-                setBusy(false);
-                await onDone();
-              }
-            } catch (err) {
-              setBusy(false);
-              onError(err instanceof Error ? err.message : String(err));
-            }
-          })();
+          setPendingFile(file);
+          setPlacement(DEFAULT_PLACEMENT);
+          setFrame(null);
+          setFrameBusy(true);
+          void firstFrameFromFile(file)
+            .then(setFrame)
+            .catch(() => setFrame(null))
+            .finally(() => setFrameBusy(false));
         }}
       />
+      <GlassModal open={!!pendingFile} onClose={closeWatermarkModal} title={label} size="lg">
+        <div className="space-y-4">
+          {pendingFile ? (
+            <p className="truncate text-caption text-ink-muted">{pendingFile.name}</p>
+          ) : null}
+          {frameBusy ? (
+            <p className="text-caption text-ink-muted">{t("watermarkLoadingFrame")}</p>
+          ) : null}
+          <WatermarkPositionEditor
+            frameUrl={frame?.url || null}
+            frameWidth={frame?.width}
+            frameHeight={frame?.height}
+            value={placement}
+            busy={frameBusy}
+            onChange={setPlacement}
+          />
+          <div className="flex justify-end gap-2">
+            <Button size="sm" variant="ghost" onClick={closeWatermarkModal}>
+              {t("cancel")}
+            </Button>
+            <Button size="sm" disabled={!pendingFile} onClick={() => void confirmUpload()}>
+              {t("uploadVideo")}
+            </Button>
+          </div>
+        </div>
+      </GlassModal>
     </>
   );
 }

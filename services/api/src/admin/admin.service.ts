@@ -56,8 +56,9 @@ export interface OnlineEpisodeInput {
 }
 
 export interface CreateOnlineDramaInput {
-  titleZh: string;
-  titleEn?: string;
+  titleEn: string;
+  titleZh?: string;
+  titleFr?: string;
   slug?: string;
   descriptionZh?: string;
   descriptionEn?: string;
@@ -76,8 +77,9 @@ export interface CreateOnlineDramaInput {
 }
 
 export interface CreateLocalUploadDramaInput {
-  titleZh: string;
-  titleEn?: string;
+  titleEn: string;
+  titleZh?: string;
+  titleFr?: string;
   slug?: string;
   descriptionZh?: string;
   descriptionEn?: string;
@@ -1230,6 +1232,7 @@ export class AdminService {
     const data: any = {};
     if (dto.titleEn != null) data.titleEn = dto.titleEn;
     if (dto.titleZh != null) data.titleZh = dto.titleZh;
+    if (dto.titleFr != null) data.titleFr = String(dto.titleFr).trim() || null;
     if (dto.descriptionEn != null) data.descriptionEn = dto.descriptionEn;
     if (dto.descriptionZh != null) data.descriptionZh = dto.descriptionZh;
     if (dto.categorySlug != null) data.categorySlug = dto.categorySlug;
@@ -1353,9 +1356,9 @@ export class AdminService {
    * 管理员创建在线剧集：填写外链/平台跳转链，转换为可播放地址后入库。
    */
   async createOnlineDrama(dto: CreateOnlineDramaInput, actorId?: bigint) {
-    const titleZh = String(dto.titleZh || '').trim();
-    if (!titleZh) {
-      throw new BizException(BizCode.BAD_REQUEST, '中文标题必填');
+    const titleEn = String(dto.titleEn || '').trim();
+    if (!titleEn) {
+      throw new BizException(BizCode.BAD_REQUEST, '英文标题必填');
     }
     const categorySlug = String(dto.categorySlug || '').trim();
     if (!categorySlug) {
@@ -1369,9 +1372,10 @@ export class AdminService {
       throw new BizException(BizCode.BAD_REQUEST, '至少填写一集播放链接');
     }
 
-    const titleEn = String(dto.titleEn || titleZh).trim();
-    let slug = String(dto.slug || slugifyTitle(titleZh)).trim();
-    if (!slug) slug = slugifyTitle(titleZh);
+    const titleZh = String(dto.titleZh || '').trim() || null;
+    const titleFr = String(dto.titleFr || '').trim() || null;
+    let slug = String(dto.slug || slugifyTitle(titleEn)).trim();
+    if (!slug) slug = slugifyTitle(titleEn);
     // Explicit slug from operator still conflicts; auto-derived slugs get a unique suffix.
     if (dto.slug?.trim()) {
       const existing = await this.prisma.drama.findUnique({ where: { slug } });
@@ -1478,6 +1482,7 @@ export class AdminService {
           slug,
           titleEn,
           titleZh,
+          titleFr,
           descriptionEn: dto.descriptionEn?.trim() || null,
           descriptionZh: dto.descriptionZh?.trim() || null,
           categorySlug,
@@ -1559,9 +1564,9 @@ export class AdminService {
    * 转码完成后按 STORAGE_BACKEND=r2 推送到 velvet-media。
    */
   async createLocalUploadDrama(dto: CreateLocalUploadDramaInput, actorId?: bigint) {
-    const titleZh = String(dto.titleZh || '').trim();
-    if (!titleZh) {
-      throw new BizException(BizCode.BAD_REQUEST, '中文标题必填');
+    const titleEn = String(dto.titleEn || '').trim();
+    if (!titleEn) {
+      throw new BizException(BizCode.BAD_REQUEST, '英文标题必填');
     }
     const categorySlug = String(dto.categorySlug || '').trim();
     if (!categorySlug) {
@@ -1572,9 +1577,10 @@ export class AdminService {
       throw new BizException(BizCode.BAD_REQUEST, `分类不存在: ${categorySlug}`);
     }
 
-    const titleEn = String(dto.titleEn || titleZh).trim();
-    let slug = String(dto.slug || slugifyTitle(titleZh)).trim();
-    if (!slug) slug = slugifyTitle(titleZh);
+    const titleZh = String(dto.titleZh || '').trim() || null;
+    const titleFr = String(dto.titleFr || '').trim() || null;
+    let slug = String(dto.slug || slugifyTitle(titleEn)).trim();
+    if (!slug) slug = slugifyTitle(titleEn);
     if (dto.slug?.trim()) {
       const existing = await this.prisma.drama.findUnique({ where: { slug } });
       if (existing) {
@@ -1634,6 +1640,7 @@ export class AdminService {
         slug,
         titleEn,
         titleZh,
+        titleFr,
         descriptionEn: dto.descriptionEn?.trim() || null,
         descriptionZh: dto.descriptionZh?.trim() || null,
         categorySlug,

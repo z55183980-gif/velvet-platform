@@ -47,6 +47,8 @@ type Drama = {
   status?: string;
   creator?: { id?: string | number; displayName?: string };
   viewCount?: number | string;
+  likeCount?: number | string;
+  favoriteCount?: number | string;
   unlockCount?: number | string;
   isOfficial?: boolean;
   isFeatured?: boolean;
@@ -753,7 +755,7 @@ function AdminContentInner() {
         header: t("colCover"),
         className: "w-14 min-w-14",
         cell: (row) => (
-          <DramaCoverThumb url={row.coverUrl} title={row.titleZh || row.titleEn} />
+          <DramaCoverThumb url={row.coverUrl} title={row.titleEn || row.titleZh} />
         ),
       },
       {
@@ -767,9 +769,11 @@ function AdminContentInner() {
               className="max-w-[18rem] truncate text-left font-medium text-brand hover:underline"
               onClick={() => openModal("detail", String(row.id))}
             >
-              {row.titleZh || row.titleEn || "—"}
+              {row.titleEn || row.titleZh || "—"}
             </button>
-            <div className="truncate text-caption text-ink-muted">{row.slug}</div>
+            <div className="truncate text-caption text-ink-muted">
+              {row.titleEn && row.titleZh ? row.titleZh : row.slug || "—"}
+            </div>
           </div>
         ),
       },
@@ -777,21 +781,27 @@ function AdminContentInner() {
         key: "eps",
         header: t("episodeCount"),
         cell: (row) => String(row._count?.episodes ?? "—"),
-        className: "tabular-nums text-right",
+        className: "content-metric-col tabular-nums text-right",
       },
       {
         key: "creator",
         header: t("colCreator"),
-        className: "hidden xl:table-cell",
+        className: "hidden xl:table-cell max-w-[7.5rem] whitespace-nowrap",
         cell: (row) => {
           const name = row.creator?.displayName;
-          return name ? name : <span className="text-ink-subtle">—</span>;
+          return name ? (
+            <span className="block max-w-[7.5rem] truncate" title={name}>
+              {name}
+            </span>
+          ) : (
+            <span className="text-ink-subtle">—</span>
+          );
         },
       },
       {
         key: "published",
         header: t("publishedAt"),
-        className: "hidden 2xl:table-cell whitespace-nowrap",
+        className: "hidden 2xl:table-cell content-metric-col",
         cell: (row) =>
           row.publishedAt ? (
             fmtOpsDateTime(row.publishedAt)
@@ -800,9 +810,27 @@ function AdminContentInner() {
           ),
       },
       {
+        key: "likes",
+        header: t("colLikes"),
+        className: "content-metric-col tabular-nums text-right",
+        cell: (row) => {
+          const n = toMetric(row.likeCount);
+          return <span className={n === 0 ? "text-ink-subtle" : undefined}>{fmtNum(n)}</span>;
+        },
+      },
+      {
+        key: "favorites",
+        header: t("colFavorites"),
+        className: "content-metric-col tabular-nums text-right",
+        cell: (row) => {
+          const n = toMetric(row.favoriteCount);
+          return <span className={n === 0 ? "text-ink-subtle" : undefined}>{fmtNum(n)}</span>;
+        },
+      },
+      {
         key: "views",
         header: t("colViews"),
-        className: "tabular-nums text-right",
+        className: "content-metric-col tabular-nums text-right",
         cell: (row) => {
           const n = toMetric(row.viewCount);
           return <span className={n === 0 ? "text-ink-subtle" : undefined}>{fmtNum(n)}</span>;
@@ -811,7 +839,7 @@ function AdminContentInner() {
       {
         key: "unlocks",
         header: t("colUnlocks"),
-        className: "tabular-nums text-right",
+        className: "content-metric-col tabular-nums text-right",
         cell: (row) => {
           const n = toMetric(row.unlockCount);
           return <span className={n === 0 ? "text-ink-subtle" : undefined}>{fmtNum(n)}</span>;
@@ -820,7 +848,7 @@ function AdminContentInner() {
       {
         key: "unlockRate",
         header: t("colUnlockRate"),
-        className: "hidden 2xl:table-cell tabular-nums text-right",
+        className: "hidden 2xl:table-cell content-metric-col tabular-nums text-right",
         cell: (row) => {
           const rate = unlockRate(row.viewCount, row.unlockCount);
           return <span className={rate === "—" ? "text-ink-subtle" : undefined}>{rate}</span>;
@@ -862,7 +890,7 @@ function AdminContentInner() {
             </span>
           </span>
         ),
-        className: "content-status-col whitespace-nowrap text-center",
+        className: "content-status-col content-metric-col text-center",
         cell: (row) => (
           <span className={dramaStatusPillClass(row.status)}>
             {statusLabel(t, row.status)}
@@ -872,7 +900,7 @@ function AdminContentInner() {
       {
         key: "online",
         header: t("colOnline"),
-        className: "w-16 min-w-16",
+        className: "w-14 min-w-14 max-w-14",
         cell: (row) => {
           const live = row.status === "LIVE";
           const canToggleLifecycle =

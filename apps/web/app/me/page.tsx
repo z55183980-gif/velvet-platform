@@ -38,6 +38,7 @@ import {
 } from "@/lib/api";
 import { cn, formatAmount, mediaUrl } from "@/lib/utils";
 import { pickTitleText } from "@/lib/languages";
+import { SafeImage } from "@/components/safe-image";
 
 type DesktopTab = "favorites" | "history" | "likes" | "orders";
 
@@ -323,7 +324,7 @@ export default function AccountPage() {
   }
 
   const titleOf = (d: any) =>
-    pickTitleText(locale, d?.titleEn || "", d?.titleZh || "") || "—";
+    pickTitleText(locale, d?.titleEn || "", d?.titleZh || "", d?.titleFr || "") || "—";
   const avatar = mediaUrl(user.avatarUrl);
 
   return (
@@ -425,8 +426,12 @@ export default function AccountPage() {
             <div className="flex items-start gap-4 md:gap-5">
               <label className="relative grid h-16 w-16 shrink-0 cursor-pointer place-items-center overflow-hidden rounded-full bg-surface-2 ring-2 ring-line md:h-20 md:w-20">
                 {avatar ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={avatar} alt="" className="h-full w-full object-cover" />
+                  <SafeImage
+                    src={avatar}
+                    alt={nickname}
+                    className="h-full w-full object-cover"
+                    fallback={(nickname || "?").slice(0, 1).toUpperCase()}
+                  />
                 ) : (
                   <span className="text-h3 font-semibold text-ink-muted">
                     {(nickname || "?").slice(0, 1).toUpperCase()}
@@ -765,11 +770,11 @@ export default function AccountPage() {
                           <Link href={`/drama/${slug}`} className="block">
                             <div className="relative aspect-[2/3] overflow-hidden rounded-lg bg-surface-2">
                               {d.coverUrl ? (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img
+                                <SafeImage
                                   src={d.coverUrl}
-                                  alt=""
+                                  alt={titleOf(d)}
                                   className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+                                  fallbackLabel={t("common.imageUnavailable")}
                                 />
                               ) : null}
                             </div>
@@ -864,6 +869,7 @@ export default function AccountPage() {
                   {history.length > 0 && (
                     <button
                       onClick={async () => {
+                        if (!window.confirm(t("account.confirmClearHistory"))) return;
                         await clearWatchHistory();
                         void loadKind("history", { force: true });
                       }}
@@ -904,11 +910,11 @@ export default function AccountPage() {
                         >
                           <div className="relative aspect-[2/3] overflow-hidden rounded-lg bg-surface-2">
                             {d?.coverUrl ? (
-                              // eslint-disable-next-line @next/next/no-img-element
-                              <img
+                              <SafeImage
                                 src={d.coverUrl}
-                                alt=""
+                                alt={titleOf(d)}
                                 className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+                                fallbackLabel={t("common.imageUnavailable")}
                               />
                             ) : null}
                           </div>
@@ -955,11 +961,11 @@ export default function AccountPage() {
                           <Link href={`/drama/${slug}`} className="block">
                             <div className="relative aspect-[2/3] overflow-hidden rounded-lg bg-surface-2">
                               {d.coverUrl ? (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img
+                                <SafeImage
                                   src={d.coverUrl}
-                                  alt=""
+                                  alt={titleOf(d)}
                                   className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+                                  fallbackLabel={t("common.imageUnavailable")}
                                 />
                               ) : null}
                             </div>

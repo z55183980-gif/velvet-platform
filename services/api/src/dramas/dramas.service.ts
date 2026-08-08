@@ -90,6 +90,7 @@ export class DramasService {
          AND (
            d."titleEn" ILIKE ${pattern} ESCAPE '\'
            OR d."titleZh" ILIKE ${pattern} ESCAPE '\'
+           OR d."titleFr" ILIKE ${pattern} ESCAPE '\'
            OR EXISTS (
              SELECT 1
                FROM unnest(d.tags) AS t(tag)

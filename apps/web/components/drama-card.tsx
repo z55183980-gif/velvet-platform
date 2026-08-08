@@ -7,6 +7,7 @@ import { Badge } from "./ui/badge";
 import { categoryName, type Drama } from "@/lib/mock-data";
 import { pickTitleText } from "@/lib/languages";
 import { formatCredits, cn } from "@/lib/utils";
+import { SafeImage } from "@/components/safe-image";
 
 function isImg(s: string) {
   return /^https?:\/\//.test(s) || s.startsWith("/");
@@ -26,7 +27,7 @@ export function DramaCard({
   reserveTitleLines?: 1 | 2;
 }) {
   const { locale, t } = useLocale();
-  const title = pickTitleText(locale, drama.titleEn, drama.titleZh);
+  const title = pickTitleText(locale, drama.titleEn, drama.titleZh, drama.titleFr);
   const cat = categoryName(drama.categorySlug, locale);
   const isFree = drama.freeCount > 0;
   const isGrid = variant === "grid";
@@ -41,13 +42,13 @@ export function DramaCard({
         )}
       >
         {isImg(drama.cover[0]) ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
+          <SafeImage
             src={drama.cover[0]}
             alt={title}
             loading="lazy"
             decoding="async"
             className="absolute inset-0 h-full w-full object-cover"
+            fallbackLabel={t("common.imageUnavailable")}
           />
         ) : (
           <div
@@ -76,7 +77,9 @@ export function DramaCard({
             )}
             <div className="absolute bottom-2.5 left-2.5">
               {isFree ? (
-                <Badge variant="free">{t("card.free")}</Badge>
+                <Badge variant="free">
+                  {t("card.firstEpisodesFree", { n: drama.freeCount })}
+                </Badge>
               ) : drama.pricePerEp > 0 ? (
                 <span className="text-caption font-medium text-white/90">
                   {formatCredits(drama.pricePerEp, t("card.credits"))}
@@ -108,7 +111,7 @@ export function DramaCard({
           <p className="mt-1.5 flex flex-wrap gap-1.5 text-[12px] text-ink-subtle">
             <span>{cat}</span>
             {drama.isVip ? <span>· {t("card.vip")}</span> : null}
-            {isFree ? <span>· {t("card.free")}</span> : null}
+            {isFree ? <span>· {t("card.firstEpisodesFree", { n: drama.freeCount })}</span> : null}
           </p>
         ) : !compact ? (
           <p className="mt-1.5 text-caption text-ink-muted">

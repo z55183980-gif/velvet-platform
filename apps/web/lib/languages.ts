@@ -78,7 +78,7 @@ export function getInterfaceLanguageShortLabel(code?: string | null): string {
   );
 }
 
-/** Content fields are en/zh; only zh UI uses Chinese copy — others (en/fr/…) use English. */
+/** Descriptions / categories still en/zh; only zh UI uses Chinese — others use English. */
 export function contentLocale(locale: Locale): "en" | "zh" {
   return locale === "zh" ? "zh" : "en";
 }
@@ -99,15 +99,18 @@ export function pickContentText(
 }
 
 /**
- * Drama / episode titles: prefer the UI locale field, then English as the global fallback.
- * Chinese is only a last resort for legacy rows that lack titleEn.
+ * Drama titles: prefer the UI locale field (zh / en / fr), then English, then others.
  */
 export function pickTitleText(
   locale: Locale,
   enText: string,
   zhText: string,
+  frText = "",
 ): string {
-  const preferred =
-    contentLocale(locale) === "zh" ? zhText : enText;
-  return preferred || enText || zhText;
+  const en = (enText || "").trim();
+  const zh = (zhText || "").trim();
+  const fr = (frText || "").trim();
+  if (locale === "zh") return zh || en || fr;
+  if (locale === "fr") return fr || en || zh;
+  return en || fr || zh;
 }

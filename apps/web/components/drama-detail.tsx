@@ -54,6 +54,9 @@ import {
   lockPortraitOrientation,
   unlockScreenOrientation,
 } from "@/lib/screen-orientation";
+import { SafeImage } from "@/components/safe-image";
+import { DataErrorState } from "@/components/data-error-state";
+import { toPublicDramaTags } from "@/lib/drama-tags";
 
 function isUrl(s: string) {
   return /^https?:\/\//.test(s) || s.startsWith("/");
@@ -162,6 +165,8 @@ export function DramaDetail({
     dramaUnlocked?: boolean;
   } | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
   const [loading, setLoading] = useState(true);
   const [unlockedNos, setUnlockedNos] = useState<Set<number>>(new Set());
   const [unlockOpen, setUnlockOpen] = useState(false);
@@ -238,6 +243,8 @@ export function DramaDetail({
     setDescExpanded(false);
     setRelated([]);
     setNotFound(false);
+    setLoadError(false);
+    setData(null);
     setFavorited(false);
     setFavCount(0);
     setLiked(false);
@@ -254,14 +261,19 @@ export function DramaDetail({
           setSelected(null);
         } else setNotFound(true);
       })
-      .catch(() => {
-        if (!ac.signal.aborted) setNotFound(true);
+      .catch((error: unknown) => {
+        if (ac.signal.aborted) return;
+        const status = typeof error === "object" && error && "status" in error
+          ? Number((error as { status?: number }).status)
+          : 0;
+        if (status === 404) setNotFound(true);
+        else setLoadError(true);
       })
       .finally(() => {
         if (!ac.signal.aborted) setLoading(false);
       });
     return () => ac.abort();
-  }, [id]);
+  }, [id, reloadKey]);
 
   useEffect(() => {
     if (!data || selected) return;
@@ -891,6 +903,13 @@ export function DramaDetail({
       </div>
     );
   }
+  if (loadError) {
+    return (
+      <div className="mx-auto max-w-[1280px] px-4 md:px-6">
+        <DataErrorState onRetry={() => setReloadKey((key) => key + 1)} />
+      </div>
+    );
+  }
   if (notFound || !data) {
     return (
       <div className="mx-auto max-w-[1280px] px-4 py-24 text-center text-h3 text-ink-muted md:px-6">
@@ -900,7 +919,7 @@ export function DramaDetail({
   }
 
   const { drama } = data;
-  const title = pickTitleText(locale, drama.titleEn, drama.titleZh);
+  const title = pickTitleText(locale, drama.titleEn, drama.titleZh, drama.titleFr);
   const desc = pickContentText(locale, drama.descEn, drama.descZh);
   const cat = categoryName(drama.categorySlug, locale);
   const coverIsImg = isUrl(drama.cover[0]);
@@ -1032,7 +1051,7 @@ export function DramaDetail({
   };
 
   const tags = (() => {
-    const fromApi = (drama.tags || []).filter(Boolean).slice(0, 4);
+    const fromApi = toPublicDramaTags(drama.tags).slice(0, 4);
     if (fromApi.length) return fromApi;
     return cat ? [cat] : [];
   })();
@@ -1040,7 +1059,7 @@ export function DramaDetail({
   /* ---- Watching: mobile vertical ---- */
   if (watching && isMobile) {
     const epTitle = selected
-      ? pickTitleText(locale, selected.titleEn, selected.titleZh)
+      ? pickTitleText(locale, selected.titleEn, selected.titleZh, selected.titleFr)
       : "";
     const epLine = selected
       ? `${t("detail.episodeLabel", { n: selected.no })}${epTitle ? ` | ${epTitle}` : ""}`
@@ -1147,8 +1166,8 @@ export function DramaDetail({
               }
               setWatching(false);
             }}
-            className="inline-flex items-center gap-0.5 text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
-            aria-label="back"
+            className="inline-flex min-h-11 items-center gap-0.5 text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
+            aria-label={t("common.back")}
           >
             <ChevronLeft className="h-7 w-7" strokeWidth={2} />
             <span className="text-[15px] font-medium">
@@ -1164,7 +1183,7 @@ export function DramaDetail({
                 setShowQuality(false);
                 setShowRate((v) => !v);
               }}
-              className="inline-flex items-center gap-1 rounded-full px-2.5 py-1.5 text-[13px] text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
+              className="inline-flex min-h-11 items-center gap-1 rounded-full px-2.5 py-2 text-[13px] text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
             >
               <Clock3 className="h-4 w-4" />
               {t("player.speed")}
@@ -1176,7 +1195,7 @@ export function DramaDetail({
                 setShowQuality(false);
                 setShowMore((v) => !v);
               }}
-              className="grid h-9 w-9 place-items-center rounded-full text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
+              className="grid h-11 w-11 place-items-center rounded-full text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
               aria-label={t("player.more")}
             >
               <MoreVertical className="h-5 w-5" />
@@ -1284,8 +1303,8 @@ export function DramaDetail({
               onClick={() => {
                 void exitImmersiveFs();
               }}
-              className="inline-flex min-w-0 max-w-[80%] items-center gap-0.5 text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
-              aria-label="back"
+              className="inline-flex min-h-11 min-w-0 max-w-[80%] items-center gap-0.5 text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
+              aria-label={t("common.back")}
             >
               <ChevronLeft className="h-7 w-7 shrink-0" strokeWidth={2} />
               <span className="truncate text-[15px] font-medium">
@@ -1300,7 +1319,7 @@ export function DramaDetail({
                 setShowQuality(false);
                 setShowMore((v) => !v);
               }}
-              className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-white"
+              className="grid h-11 w-11 shrink-0 place-items-center rounded-full text-white"
               aria-label={t("player.more")}
             >
               <MoreVertical className="h-5 w-5" />
@@ -1409,7 +1428,7 @@ export function DramaDetail({
           <button
             type="button"
             className="absolute inset-0 z-20 cursor-default"
-            aria-label="toggle controls"
+            aria-label={t("player.toggleControls")}
             onClick={() => {
               setLandChromeVisible((visible) => !visible);
               setShowRate(false);
@@ -1745,7 +1764,7 @@ export function DramaDetail({
           <button
             type="button"
             onClick={() => void exitImmersiveFs()}
-            className="absolute bottom-[max(0.75rem,env(safe-area-inset-bottom))] right-3 z-50 grid h-10 w-10 place-items-center rounded-[10px] bg-black/40 text-white backdrop-blur-sm"
+            className="absolute bottom-[max(0.75rem,env(safe-area-inset-bottom))] right-3 z-50 grid h-11 w-11 place-items-center rounded-[10px] bg-black/40 text-white backdrop-blur-sm"
             aria-label={t("player.exitFullscreen")}
           >
             <Minimize2 className="h-5 w-5" strokeWidth={1.75} />
@@ -1775,7 +1794,7 @@ export function DramaDetail({
   /* ---- Watching: desktop theater (ReelShort-style: vertical player + sidebar) ---- */
   if (watching && !isMobile) {
     const epTitleText = selected
-      ? pickTitleText(locale, selected.titleEn, selected.titleZh)
+      ? pickTitleText(locale, selected.titleEn, selected.titleZh, selected.titleFr)
       : "";
     const theaterHeadline = selected
       ? `${t("detail.episodeLabel", { n: selected.no })}${epTitleText && epTitleText !== title ? ` - ${epTitleText}` : ` - ${title}`}`
@@ -1807,7 +1826,8 @@ export function DramaDetail({
           <button
             type="button"
             onClick={exitTheater}
-            className="inline-flex items-center gap-1 rounded-md px-2 py-1.5 text-[14px] text-white/85 transition-colors hover:bg-white/10 hover:text-white"
+            className="inline-flex min-h-11 items-center gap-1 rounded-md px-2 py-2 text-[14px] text-white/85 transition-colors hover:bg-white/10 hover:text-white"
+            aria-label={t("common.back")}
           >
             <ChevronLeft className="h-5 w-5" />
             <span className="max-w-[42vw] truncate">{title}</span>
@@ -1893,6 +1913,7 @@ export function DramaDetail({
                   type="button"
                   className="inline-flex items-center gap-1.5 transition-colors hover:text-white"
                   onClick={() => void toggleLike()}
+                  aria-label={t("feed.like")}
                 >
                   <Heart
                     className={cn(
@@ -1907,6 +1928,7 @@ export function DramaDetail({
                   type="button"
                   className="inline-flex items-center gap-1.5 transition-colors hover:text-white"
                   onClick={() => void toggleFavorite()}
+                  aria-label={favorited ? t("detail.favorited") : t("detail.favorite")}
                 >
                   <Star
                     className={cn(
@@ -1921,7 +1943,7 @@ export function DramaDetail({
                   type="button"
                   className="inline-flex items-center gap-1.5 transition-colors hover:text-white"
                   onClick={() => void shareTheater()}
-                  aria-label="Share"
+                  aria-label={t("player.share")}
                 >
                   <Share2 className="h-4 w-4 text-white/80" strokeWidth={1.75} />
                 </button>
@@ -1995,7 +2017,7 @@ export function DramaDetail({
             type="button"
             onClick={goBackBrowse}
             className="grid h-11 w-11 place-items-center text-white"
-            aria-label="back"
+            aria-label={t("common.back")}
           >
             <ChevronLeft className="h-7 w-7" strokeWidth={2} />
           </button>
@@ -2013,8 +2035,12 @@ export function DramaDetail({
           <div className="flex gap-3.5">
             <div className="relative h-[138px] w-[98px] shrink-0 overflow-hidden rounded-xl bg-white/[0.06]">
               {coverIsImg ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={drama.cover[0]} alt="" className="h-full w-full object-cover" />
+                <SafeImage
+                  src={drama.cover[0]}
+                  alt={title}
+                  className="h-full w-full object-cover"
+                  fallbackLabel={t("common.imageUnavailable")}
+                />
               ) : (
                 <div
                   className="h-full w-full"
@@ -2082,22 +2108,38 @@ export function DramaDetail({
             </section>
           ) : null}
 
+          <section className="mt-8">
+            <EpisodeList
+              episodes={data.episodes}
+              episodesCount={drama.episodesCount}
+              selectedNo={selected?.no}
+              layout="grid"
+              isUnlocked={isUnlocked}
+              onUnlock={openUnlockGate}
+              onSelect={selectEpisode}
+            />
+          </section>
+
           {related.length > 0 ? (
             <section className="mt-8">
               <h2 className="mb-3.5 text-[16px] font-medium text-white">{t("detail.guessYouLike")}</h2>
               <div className="grid grid-cols-2 gap-x-3 gap-y-5">
                 {related.map((d) => {
-                  const rTitle = pickTitleText(locale, d.titleEn, d.titleZh);
+                  const rTitle = pickTitleText(locale, d.titleEn, d.titleZh, d.titleFr);
                   const rCover = isUrl(d.cover[0]);
-                  const rTags = (d.tags || []).filter(Boolean).slice(0, 3);
+                  const rTags = toPublicDramaTags(d.tags).slice(0, 3);
                   const rCat = categoryName(d.categorySlug, locale);
                   const chipTags = rTags.length ? rTags : rCat ? [rCat] : [];
                   return (
                     <Link key={d.id} href={`/drama/${d.id}`} className="min-w-0">
                       <div className="relative aspect-[3/4] overflow-hidden rounded-lg bg-white/[0.06]">
                         {rCover ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={d.cover[0]} alt="" className="h-full w-full object-cover" />
+                          <SafeImage
+                            src={d.cover[0]}
+                            alt={rTitle}
+                            className="h-full w-full object-cover"
+                            fallbackLabel={t("common.imageUnavailable")}
+                          />
                         ) : (
                           <div
                             className="h-full w-full"
@@ -2172,8 +2214,7 @@ export function DramaDetail({
       {/* Desktop backdrop — warm orange glow like hongguo */}
       <div className="pointer-events-none absolute inset-x-0 top-0 hidden h-[min(920px,100%)] overflow-hidden md:block">
         {coverIsImg ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
+          <SafeImage
             src={drama.cover[0]}
             alt=""
             className="absolute left-1/2 top-0 h-full w-[1920px] max-w-none -translate-x-1/2 scale-110 object-cover opacity-40 blur-2xl"
@@ -2202,8 +2243,12 @@ export function DramaDetail({
         <div className="flex w-full gap-4 px-4 pt-[1.7rem] md:gap-9 md:px-0 md:pt-0">
           <div className="relative h-[138px] w-[98px] shrink-0 overflow-hidden rounded-xl bg-white/[0.06] md:h-[238px] md:w-[168px] md:rounded-2xl">
             {coverIsImg ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={drama.cover[0]} alt="" className="h-full w-full object-cover" />
+              <SafeImage
+                src={drama.cover[0]}
+                alt={title}
+                className="h-full w-full object-cover"
+                fallbackLabel={t("common.imageUnavailable")}
+              />
             ) : (
               <div
                 className="h-full w-full"
@@ -2301,11 +2346,11 @@ export function DramaDetail({
               <div className="flex min-w-[72px] flex-col items-center md:items-center">
                 <div className="grid h-14 w-14 place-items-center overflow-hidden rounded-full bg-white/10 text-body-sm font-medium text-white/80">
                   {mediaUrl(drama.creator.avatarUrl) ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
+                    <SafeImage
                       src={mediaUrl(drama.creator.avatarUrl)!}
-                      alt=""
+                      alt={drama.creator.displayName}
                       className="h-full w-full object-cover"
+                      fallback={drama.creator.displayName.slice(0, 1).toUpperCase()}
                     />
                   ) : (
                     drama.creator.displayName.slice(0, 1).toUpperCase()
@@ -2392,8 +2437,7 @@ function WatchEpisodePeek({
   return (
     <div className="relative h-full min-h-0 overflow-hidden bg-black">
       {coverUrl ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={coverUrl} alt="" className="h-full w-full object-cover" draggable={false} />
+        <SafeImage src={coverUrl} alt={title} className="h-full w-full object-cover" draggable={false} />
       ) : (
         <div
           className="h-full w-full"

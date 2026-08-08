@@ -69,8 +69,14 @@ export function Modal({
         onClick={(e) => e.stopPropagation()}
       >
         {title || !hideClose ? (
-          <div className="flex shrink-0 items-start justify-between gap-3 border-b border-line px-5 py-4">
-            {title ? <div className="min-w-0 text-h4 font-semibold text-ink">{title}</div> : <span />}
+          <div className="flex shrink-0 items-center justify-between gap-3 border-b border-line px-5 py-3">
+            {title ? (
+              <div className="min-w-0 flex-1 text-h4 font-semibold text-ink [&_.seg-tabs]:text-body [&_.seg-tabs]:font-normal">
+                {title}
+              </div>
+            ) : (
+              <span />
+            )}
             {!hideClose ? (
               <button
                 type="button"
