@@ -22,16 +22,14 @@ const tabs = [
 /**
  * Fixed tab for home + theater + me.
  *
- * After apple-mobile-web-app-status-bar-style=black-translucent the page canvas
- * includes the home-indicator band and env(safe-area-inset-bottom) becomes
- * non-zero. Theater/me keep that pad so labels clear the indicator. Home feed
- * must NOT solid-pad it — that pad is the visible “extra bottom safe area”
- * over full-bleed video (flushSafeArea).
+ * The outer height is always h-12 + --mobile-tab-safe-bottom so every tab keeps
+ * identical geometry. On the immersive home feed only the safe-area background
+ * is transparent, allowing video to remain full-bleed without shortening the tab.
  */
 export function BottomTabBar({
-  flushSafeArea = false,
+  transparentSafeArea = false,
 }: {
-  flushSafeArea?: boolean;
+  transparentSafeArea?: boolean;
 }) {
   const pathname = usePathname() || "/";
   const { t } = useLocale();
@@ -39,32 +37,38 @@ export function BottomTabBar({
   return (
     <nav
       className={cn(
-        "fixed inset-x-0 bottom-0 z-50 border-t border-line/60 bg-base/90 backdrop-blur-xl",
-        flushSafeArea ? "pb-0" : "pb-[var(--mobile-tab-safe-bottom)]",
+        "fixed inset-x-0 bottom-0 z-50 border-t border-line/60 pb-[var(--mobile-tab-safe-bottom)]",
+        !transparentSafeArea && "bg-base/90 backdrop-blur-xl",
       )}
       aria-label="Primary"
       style={{
-        ["--mobile-tab-chrome-height" as string]: flushSafeArea
-          ? "3rem"
-          : "calc(3rem + var(--mobile-tab-safe-bottom))",
+        ["--mobile-tab-chrome-height" as string]:
+          "calc(3rem + var(--mobile-tab-safe-bottom))",
       }}
     >
-      <div className="mx-auto flex h-12 max-w-lg items-stretch justify-around">
-        {tabs.map((tab) => {
-          const active = tab.match(pathname);
-          return (
-            <Link
-              key={tab.href}
-              href={tab.href}
-              className={cn(
-                "flex flex-1 items-center justify-center text-[15px] transition-colors",
-                active ? "font-semibold text-ink" : "font-normal text-ink-muted",
-              )}
-            >
-              {t(tab.key)}
-            </Link>
-          );
-        })}
+      <div
+        className={cn(
+          "h-12",
+          transparentSafeArea && "bg-base/90 backdrop-blur-xl",
+        )}
+      >
+        <div className="mx-auto flex h-full max-w-lg items-stretch justify-around">
+          {tabs.map((tab) => {
+            const active = tab.match(pathname);
+            return (
+              <Link
+                key={tab.href}
+                href={tab.href}
+                className={cn(
+                  "flex flex-1 items-center justify-center text-[15px] transition-colors",
+                  active ? "font-semibold text-ink" : "font-normal text-ink-muted",
+                )}
+              >
+                {t(tab.key)}
+              </Link>
+            );
+          })}
+        </div>
       </div>
     </nav>
   );

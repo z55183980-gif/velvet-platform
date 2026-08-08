@@ -87,7 +87,7 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
       </main>
       {mobileReady && !isMobile ? <Footer /> : null}
       {mobileReady && isMobile && !onDrama ? (
-        <BottomTabBar flushSafeArea={lockMobileHome} />
+        <BottomTabBar transparentSafeArea={lockMobileHome} />
       ) : null}
       <PwaInstallRoot />
     </div>

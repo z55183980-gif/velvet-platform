@@ -941,8 +941,8 @@ function FeedPage({
         </div>
       ) : null}
 
-      {/* Tab is flush (no safe pad) on home; lift UI by label row only (h-12). */}
-      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 pb-12">
+      {/* Keep feed controls above the same tab geometry used by every mobile page. */}
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30 pb-[var(--mobile-tab-chrome-height)]">
         <div className="relative flex flex-col">
           <div className="pointer-events-auto absolute bottom-full right-2.5 mb-2 flex flex-col items-center gap-5">
             <SideAction

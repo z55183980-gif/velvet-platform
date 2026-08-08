@@ -89,8 +89,8 @@
     /*
       Bottom-tab safe inset. Non-zero only after PWA black-translucent expands
       the canvas into the home-indicator band (with viewport-fit=cover).
-      Theater/me keep padding with this token; home feed flushes (pb-0) so the
-      band is not painted as an empty chrome slab over video.
+      Every tab keeps the same total height. The immersive home tab makes only
+      this safe-area band's background transparent so video remains full-bleed.
     */
     --mobile-tab-safe-bottom: env(safe-area-inset-bottom, 0px);
     --mobile-tab-chrome-height: calc(3rem + var(--mobile-tab-safe-bottom));
