@@ -81,12 +81,14 @@ export const viewport: Viewport = {
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   const jar = await cookies();
+  const requestHeaders = await headers();
   const cookieLocale = jar.get("dv_locale")?.value;
   // Cookie wins; otherwise try Accept-Language. Empty/unsupported AL → English for this render.
   // (Middleware leaves cookie unset when AL is empty so the client can still use navigator.)
   const initialLocale = cookieLocale
     ? normalizeInterfaceLanguage(cookieLocale)
-    : localeFromAcceptLanguage((await headers()).get("accept-language"));
+    : localeFromAcceptLanguage(requestHeaders.get("accept-language"));
+  const nonce = requestHeaders.get("x-nonce") ?? undefined;
 
   return (
     <html
@@ -97,6 +99,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
     >
       <head>
         <script
+          nonce={nonce}
           dangerouslySetInnerHTML={{
             __html: `(function(){try{var t=localStorage.getItem('dv_theme');var r=(t==='light'||t==='dark')?t:'dark';var d=document.documentElement;d.dataset.theme=r;d.classList.add(r);d.classList.remove(r==='light'?'dark':'light');d.style.colorScheme=r;}catch(e){}})();`,
           }}
@@ -124,7 +127,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
             Short dramas. Private thrills.
           </span>
         </div>
-        <script dangerouslySetInnerHTML={{ __html: BRAND_SPLASH_BOOT_SCRIPT }} />
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: BRAND_SPLASH_BOOT_SCRIPT }} />
         <ThemeProvider>
           <LocaleProvider initialLocale={initialLocale}>
             <ToastProvider>

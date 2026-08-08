@@ -1,6 +1,6 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
-import { json, urlencoded } from 'express';
+import { json, urlencoded, type NextFunction, type Request, type Response } from 'express';
 import { AppModule } from './app.module';
 import { BigIntInterceptor } from './common/bigint.interceptor';
 import { AllExceptionsFilter } from './common/all-exceptions.filter';
@@ -9,8 +9,21 @@ import { assertProductionSecrets } from './common/security-config';
 async function bootstrap() {
   assertProductionSecrets();
   const app = await NestFactory.create(AppModule);
+  const expressApp = app.getHttpAdapter().getInstance();
+  expressApp.disable('x-powered-by');
+  expressApp.use((_req: Request, res: Response, next: NextFunction) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader(
+      'Permissions-Policy',
+      'camera=(), microphone=(), geolocation=(), payment=(), usb=()',
+    );
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    next();
+  });
   // Behind Cloudflare / nginx so req.ip uses X-Forwarded-For
-  app.getHttpAdapter().getInstance().set('trust proxy', 1);
+  expressApp.set('trust proxy', 1);
 
   app.setGlobalPrefix('api'); // → /api/auth/*, /api/v1/*
 

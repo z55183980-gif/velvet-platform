@@ -1,0 +1,46 @@
+name: API
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/api/**'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'package.json'
+      - '.github/workflows/api.yml'
+  pull_request:
+    paths:
+      - 'services/api/**'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'package.json'
+      - '.github/workflows/api.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Prisma generate
+        run: pnpm --filter velvet-api prisma:generate
+
+      - name: Typecheck
+        run: pnpm --filter velvet-api typecheck
+
+      - name: Build
+        run: pnpm --filter velvet-api build

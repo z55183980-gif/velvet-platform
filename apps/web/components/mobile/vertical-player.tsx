@@ -211,7 +211,7 @@ export function VerticalPlayer({
   // Parents that own HLS (drama-detail quality UI) pass attachMedia={false}.
   useEffect(() => {
     const v = videoRef.current;
-    if (!attachMedia || !v || !src || locked || loginRequired) return;
+    if (!attachMedia || !active || !v || !src || locked || loginRequired) return;
 
     let cancelled = false;
     let hls: { destroy: () => void } | null = null;
@@ -246,7 +246,18 @@ export function VerticalPlayer({
         const mod = await import("hls.js");
         const Hls = mod.default;
         if (cancelled || !Hls.isSupported()) return;
-        const instance = new Hls({ enableWorker: true });
+        const feedBuffering = chrome === "feed";
+        const instance = new Hls({
+          enableWorker: true,
+          // A vertical feed only needs enough data for an immediate swipe session.
+          // Keeping the default long buffer here downloads megabytes the user may
+          // abandon on the next gesture.
+          maxBufferLength: feedBuffering ? 8 : 30,
+          maxMaxBufferLength: feedBuffering ? 12 : 600,
+          backBufferLength: feedBuffering ? 0 : 30,
+          capLevelToPlayerSize: feedBuffering,
+          startFragPrefetch: false,
+        });
         hls = instance;
         instance.loadSource(src);
         instance.attachMedia(v);
@@ -260,7 +271,7 @@ export function VerticalPlayer({
       hls?.destroy();
       clearSrc();
     };
-  }, [attachMedia, src, locked, loginRequired, videoRef]);
+  }, [attachMedia, active, src, locked, loginRequired, videoRef, chrome]);
 
   useEffect(() => {
     const v = videoRef.current;
@@ -513,9 +524,10 @@ export function VerticalPlayer({
       {!locked && !loginRequired ? (
         <video
           ref={videoRef}
-          src={src && !/\.m3u8(\?|$)/i.test(src) ? src : undefined}
+          src={active && src && !/\.m3u8(\?|$)/i.test(src) ? src : undefined}
           poster={poster && isImg(poster) ? poster : undefined}
           autoPlay={autoPlay && active}
+          preload={active ? "metadata" : "none"}
           playsInline
           muted={muted}
           loop={chrome === "feed"}

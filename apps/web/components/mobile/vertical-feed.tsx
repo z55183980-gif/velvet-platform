@@ -42,10 +42,6 @@ function isUrl(s: string) {
   return /^https?:\/\//.test(s) || s.startsWith("/");
 }
 
-function isHls(url: string) {
-  return /\.m3u8(\?|$)/i.test(url);
-}
-
 function formatCount(n: number, locale: string) {
   const zhStyle = locale === "zh";
   if (zhStyle) {
@@ -77,20 +73,15 @@ type PlayUrlEntry = {
   expiresAtMs: number;
 };
 
-/** Mainstream short-video window: prev 1 + next 2. */
-const PREFETCH_OFFSETS = [-1, 1, 2] as const;
+/** Keep only the immediately adjacent metadata warm. */
+const PREFETCH_OFFSETS = [-1, 1] as const;
 const PLAY_URL_REFRESH_MS = 5 * 60_000;
 const PLAY_URL_CACHE_MAX = 24;
 const DETAIL_CACHE_MAX = 24;
-const MEDIA_WARM_HIGH_SEGMENTS = 3;
-const MEDIA_WARM_LOW_SEGMENTS = 2;
-const MEDIA_WARM_HIGH_BYTES = 512 * 1024;
-const MEDIA_WARM_LOW_BYTES = 256 * 1024;
 
 const detailCache = new Map<string, FeedEntry>();
 const playUrlCache = new Map<string, PlayUrlEntry>();
 const playUrlInflight = new Map<string, Promise<string | null>>();
-const mediaWarmDone = new Set<string>();
 /** Guest / user+VIP / in-session unlocks — detail.episodes[].unlocked is auth-scoped. */
 let detailCacheScope = "guest";
 
@@ -116,25 +107,7 @@ function isPlayableEpisode(ep: Episode | null | undefined): ep is Episode {
   return !!(ep && (ep.isFree || ep.unlocked));
 }
 
-function absoluteUrl(url: string) {
-  if (/^https?:\/\//i.test(url)) return url;
-  if (typeof window === "undefined") return url;
-  try {
-    return new URL(url, window.location.origin).href;
-  } catch {
-    return url;
-  }
-}
-
-function resolveUrl(base: string, ref: string) {
-  try {
-    return new URL(ref, absoluteUrl(base)).href;
-  } catch {
-    return ref;
-  }
-}
-
-function shouldSkipMediaWarm() {
+function shouldSkipNeighborPrefetch() {
   if (typeof navigator === "undefined") return false;
   const conn = (
     navigator as Navigator & {
@@ -224,73 +197,12 @@ async function ensurePlayUrl(episodeId: string, signal?: AbortSignal): Promise<s
   return url;
 }
 
-async function warmMedia(
-  playUrl: string,
-  opts: { signal?: AbortSignal; priority: "high" | "low" },
-): Promise<void> {
-  if (!playUrl || mediaWarmDone.has(playUrl) || shouldSkipMediaWarm()) return;
-  if (opts.signal?.aborted) return;
-  mediaWarmDone.add(playUrl);
-
-  const fetchOpts: RequestInit = {
-    signal: opts.signal,
-    mode: "cors",
-    credentials: "omit",
-    cache: "force-cache",
-  };
-
-  try {
-    if (isHls(playUrl)) {
-      const manifestRes = await fetch(absoluteUrl(playUrl), fetchOpts);
-      if (!manifestRes.ok) throw new Error("manifest");
-      let playlistText = await manifestRes.text();
-      let playlistUrl = absoluteUrl(playUrl);
-      const lines = playlistText
-        .split(/\r?\n/)
-        .map((l) => l.trim())
-        .filter(Boolean);
-      if (lines.some((l) => l.startsWith("#EXT-X-STREAM-INF"))) {
-        const variant = lines.find((l) => l && !l.startsWith("#"));
-        if (!variant) return;
-        playlistUrl = resolveUrl(playUrl, variant);
-        const variantRes = await fetch(playlistUrl, fetchOpts);
-        if (!variantRes.ok) throw new Error("variant");
-        playlistText = await variantRes.text();
-      }
-      const segments = playlistText
-        .split(/\r?\n/)
-        .map((l) => l.trim())
-        .filter((l) => l && !l.startsWith("#"))
-        .slice(0, opts.priority === "high" ? MEDIA_WARM_HIGH_SEGMENTS : MEDIA_WARM_LOW_SEGMENTS);
-      await Promise.all(
-        segments.map((seg) =>
-          fetch(resolveUrl(playlistUrl, seg), fetchOpts).catch(() => null),
-        ),
-      );
-      return;
-    }
-
-    const bytes = opts.priority === "high" ? MEDIA_WARM_HIGH_BYTES : MEDIA_WARM_LOW_BYTES;
-    await fetch(absoluteUrl(playUrl), {
-      ...fetchOpts,
-      headers: { Range: `bytes=0-${bytes - 1}` },
-    });
-  } catch {
-    mediaWarmDone.delete(playUrl);
-  }
-}
-
-async function prefetchNeighbor(
-  dramaId: string,
-  opts: { signal?: AbortSignal; priority: "high" | "low" },
-) {
-  // Detail + play URL keep filling even if the caller aborts; only media bytes cancel.
+async function prefetchNeighborPlayUrl(dramaId: string, signal?: AbortSignal) {
+  if (signal?.aborted || shouldSkipNeighborPrefetch()) return;
   const entry = await ensureDetail(dramaId);
-  if (opts.signal?.aborted || !entry) return;
+  if (signal?.aborted || !entry) return;
   if (!isPlayableEpisode(entry.episode)) return;
-  const url = await ensurePlayUrl(String(entry.episode.id));
-  if (!url || opts.signal?.aborted) return;
-  await warmMedia(url, { signal: opts.signal, priority: opts.priority });
+  await ensurePlayUrl(String(entry.episode.id), signal);
 }
 
 function buildFeedMeta(
@@ -486,7 +398,7 @@ export function VerticalFeed({
   // Pin the document so iOS can't rubber-band the visual viewport (chrome would appear to drag).
   useDocumentScrollLock(true);
 
-  // Prefetch neighbor details / media around the settled index.
+  // Keep adjacent metadata warm, but never pre-download HLS manifests or media segments.
   useEffect(() => {
     syncDetailCacheScope(authScope);
     const drama = dramas[index];
@@ -497,7 +409,7 @@ export function VerticalFeed({
     }
   }, [index, dramas, authScope]);
 
-  // Media warm runs for guests and signed-in users alike (HTTP cache only; no guest quota burn).
+  // Resolve only the next play URL. The inactive player must not attach media until swiped active.
   useEffect(() => {
     syncDetailCacheScope(authScope);
     const ac = new AbortController();
@@ -505,16 +417,7 @@ export function VerticalFeed({
     const run = async () => {
       if (typeof document !== "undefined" && document.hidden) return;
       const next = dramas[index + 1];
-      if (next) {
-        await prefetchNeighbor(next.id, { signal: ac.signal, priority: "high" });
-      }
-      if (ac.signal.aborted) return;
-      for (const offset of [-1, 2] as const) {
-        const neighbor = dramas[index + offset];
-        if (!neighbor) continue;
-        await prefetchNeighbor(neighbor.id, { signal: ac.signal, priority: "low" });
-        if (ac.signal.aborted) return;
-      }
+      if (next) await prefetchNeighborPlayUrl(next.id, ac.signal);
     };
 
     void run();

@@ -29,6 +29,45 @@ import {
  */
 const ADMIN_PREFIXES = ["/admin", "/ops", "/console"];
 
+function createNonce(): string {
+  return btoa(crypto.randomUUID()).replace(/=+$/g, "");
+}
+
+function buildContentSecurityPolicy(nonce: string): string {
+  const scriptSrc = [
+    "'self'",
+    `'nonce-${nonce}'`,
+    "https://static.cloudflareinsights.com",
+    "https://challenges.cloudflare.com",
+  ];
+  if (process.env.NODE_ENV !== "production") scriptSrc.push("'unsafe-eval'");
+
+  return [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    `script-src ${scriptSrc.join(" ")}`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https:",
+    "media-src 'self' blob: https:",
+    "font-src 'self' data:",
+    "connect-src 'self' https: wss:",
+    "worker-src 'self' blob:",
+    "manifest-src 'self'",
+    "frame-src 'self' https://accounts.google.com https://checkout.stripe.com https://challenges.cloudflare.com",
+    "form-action 'self' https://checkout.stripe.com",
+    process.env.NODE_ENV === "production" ? "upgrade-insecure-requests" : "",
+  ]
+    .filter(Boolean)
+    .join("; ");
+}
+
+function withContentSecurityPolicy(res: NextResponse, policy: string): NextResponse {
+  res.headers.set("Content-Security-Policy", policy);
+  return res;
+}
+
 function localeCookie(res: NextResponse, locale: string) {
   res.cookies.set("dv_locale", locale, {
     path: "/",
@@ -95,30 +134,42 @@ function withDefaultLocaleCookie(req: NextRequest, res: NextResponse) {
 
 export async function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
+  const nonce = createNonce();
+  const contentSecurityPolicy = buildContentSecurityPolicy(nonce);
+  const requestHeaders = new Headers(req.headers);
+  // Next.js reads the request CSP to nonce its framework/bootstrap scripts.
+  requestHeaders.set("x-nonce", nonce);
+  requestHeaders.set("Content-Security-Policy", contentSecurityPolicy);
 
   const redirected = hostRedirects(req, pathname);
-  if (redirected) return redirected;
+  if (redirected) {
+    return withContentSecurityPolicy(redirected, contentSecurityPolicy);
+  }
 
   // Hard-404 missing / offline dramas (App Router page notFound() alone stays HTTP 200 under streaming).
   // On exists/unavailable, mark the request so the page skips a duplicate upstream probe.
-  let requestHeaders: Headers | undefined;
   const dramaMatch = pathname.match(/^\/drama\/([^/]+)(?:\/play)?\/?$/);
   if (dramaMatch) {
     const presence = await checkLiveDrama(dramaMatch[1]);
     if (presence === "missing") {
       const url = req.nextUrl.clone();
       url.pathname = "/__drama_missing__";
-      return withDefaultLocaleCookie(req, NextResponse.rewrite(url));
+      const rewritten = NextResponse.rewrite(url, {
+        request: { headers: requestHeaders },
+      });
+      return withContentSecurityPolicy(
+        withDefaultLocaleCookie(req, rewritten),
+        contentSecurityPolicy,
+      );
     }
-    requestHeaders = new Headers(req.headers);
     requestHeaders.set(LIVE_DRAMA_CHECKED_HEADER, "1");
   }
 
-  const passThrough = requestHeaders
-    ? { request: { headers: requestHeaders } }
-    : undefined;
-
-  return withDefaultLocaleCookie(req, NextResponse.next(passThrough));
+  const response = NextResponse.next({ request: { headers: requestHeaders } });
+  return withContentSecurityPolicy(
+    withDefaultLocaleCookie(req, response),
+    contentSecurityPolicy,
+  );
 }
 
 export const config = {

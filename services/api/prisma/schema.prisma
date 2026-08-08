@@ -691,8 +691,8 @@ model VipPlan {
   active        Boolean   @default(true)
   /// 角标，如「54% OFF」「Popular」（选填）
   badge         String?
-  /// 订阅说明文案（必填）：如 Auto-renew / 首周优惠说明
-  descEn        String    @default("Auto-renew. Cancel anytime.")
+  /// 套餐说明文案（必填）：须与 Stripe Checkout mode=payment 一致，标明一次性、不自动续费
+  descEn        String    @default("One-time purchase. No auto-renewal.")
   descZh        String?
   descFr        String?
   /// 权益列表（必填）：JSON string[]，如 ["Unlimited Viewing","1080p High Quality"]

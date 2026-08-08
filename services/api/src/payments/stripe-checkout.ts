@@ -91,6 +91,7 @@ export async function isStripeCheckoutReady(prisma: PrismaService): Promise<bool
 /**
  * Create a one-time Stripe Checkout Session (same Stripe account as zai via STRIPE_SECRET_KEY).
  * Uses mode=payment + price_data so Velvet packages/VIP plans need no stripe_price_id.
+ * VIP is NOT a Stripe Subscription: storefront copy must say one-time / no auto-renewal.
  */
 export async function createStripeCheckoutSession(
   prisma: PrismaService,

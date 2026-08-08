@@ -64,6 +64,14 @@ function HomeInner() {
   const hasContentRef = useRef(false);
 
   useEffect(() => {
+    // The unfiltered mobile route owns its feed request. Avoid downloading the
+    // desktop banners/featured/grid payload before the breakpoint is known.
+    if (!mobileReady || (isMobile && !filtered)) {
+      setInitialLoading(false);
+      setRefreshing(false);
+      return;
+    }
+
     const key = homeKey(category, q, sort);
     const cached = cacheRef.current.get(key);
     const ac = new AbortController();
@@ -161,7 +169,7 @@ function HomeInner() {
     return () => ac.abort();
     // locale/t only affect labels — remapped in separate effect
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [category, q, sort, filtered]);
+  }, [category, q, sort, filtered, mobileReady, isMobile]);
 
   // Remap hero titles when locale changes without refetching
   useEffect(() => {

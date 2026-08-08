@@ -6,7 +6,7 @@ import { AuditService } from '../common/audit.service';
 import type { ApiLocale } from '../common/i18n/locale';
 
 const DEFAULT_BENEFITS = ['Unlimited Viewing', '1080p High Quality'];
-const DEFAULT_DESC_EN = 'Auto-renew. Cancel anytime.';
+const DEFAULT_DESC_EN = 'One-time purchase. No auto-renewal.';
 const PAY_CURRENCY = 'USD';
 
 export type VipPlanInput = {

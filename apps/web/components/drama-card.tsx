@@ -45,6 +45,8 @@ export function DramaCard({
           <img
             src={drama.cover[0]}
             alt={title}
+            loading="lazy"
+            decoding="async"
             className="absolute inset-0 h-full w-full object-cover"
           />
         ) : (

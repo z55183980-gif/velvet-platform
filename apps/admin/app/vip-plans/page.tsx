@@ -43,7 +43,7 @@ const emptyForm: VipPlanInput = {
   originalPrice: undefined,
   sortOrder: 0,
   badge: "",
-  descEn: "Auto-renew. Cancel anytime.",
+  descEn: "One-time purchase. No auto-renewal.",
   descZh: "",
   descFr: "",
   benefits: ["Unlimited Viewing", "1080p High Quality"],
@@ -180,7 +180,7 @@ export default function AdminVipPlansPage() {
           : undefined,
       sortOrder: Number(plan.sortOrder) || 0,
       badge: plan.badge || "",
-      descEn: plan.descEn || plan.desc || "Auto-renew. Cancel anytime.",
+      descEn: plan.descEn || plan.desc || "One-time purchase. No auto-renewal.",
       descZh: plan.descZh || "",
       descFr: plan.descFr || "",
       benefits:

@@ -3,6 +3,21 @@ import { resolveApiProxyTarget } from "./lib/api-proxy-target.mjs";
 /** @type {import('next').NextConfig} */
 const staticExport = process.env.STATIC_EXPORT === "1";
 
+const securityHeaders = [
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "X-Frame-Options", value: "DENY" },
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  {
+    key: "Permissions-Policy",
+    value: "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+  },
+  { key: "Cross-Origin-Opener-Policy", value: "same-origin-allow-popups" },
+  {
+    key: "Strict-Transport-Security",
+    value: "max-age=31536000; includeSubDomains",
+  },
+];
+
 /** LAN / Tailscale 访问 dev 时放行（否则 /_next/* 被拦，手机端页面空白或路由异常） */
 function devOriginsFromEnv() {
   const raw = process.env.ALLOWED_DEV_ORIGINS || process.env.CORS_ALLOWED_ORIGINS || "";
@@ -32,6 +47,7 @@ function devOriginsFromEnv() {
 }
 
 const nextConfig = {
+  poweredByHeader: false,
   // Next 16：非 localhost 访问需要显式允许，否则 HMR/部分资源跨域被拒
   allowedDevOrigins: devOriginsFromEnv(),
   ...(staticExport
@@ -46,6 +62,10 @@ const nextConfig = {
       }),
   async headers() {
     return [
+      {
+        source: "/:path*",
+        headers: securityHeaders,
+      },
       {
         source: "/sw.js",
         headers: [
