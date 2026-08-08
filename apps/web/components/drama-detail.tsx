@@ -332,6 +332,21 @@ export function DramaDetail({
     }
   }, [watching]);
 
+  /** Kill iOS Safari / theme grey peeking below the fixed watch shell. */
+  useEffect(() => {
+    if (!watching || !isMobile) return;
+    const html = document.documentElement;
+    const body = document.body;
+    const prevHtml = html.style.backgroundColor;
+    const prevBody = body.style.backgroundColor;
+    html.style.backgroundColor = "#000";
+    body.style.backgroundColor = "#000";
+    return () => {
+      html.style.backgroundColor = prevHtml;
+      body.style.backgroundColor = prevBody;
+    };
+  }, [watching, isMobile]);
+
   useEffect(() => {
     if (!watching) return;
     if (resumeHint && resumeHint.progressSec > 5 && selected?.no === resumeHint.epNo) {
@@ -1714,24 +1729,17 @@ export function DramaDetail({
                 </div>
               ) : null}
 
-              {/* 竖屏底栏（按红果 472×1024 截图像素对齐）:
-                  progress → ≈10–18px 黑隙 → 灰胶囊(高≈42, 边距≈18, 灰#19191b, ^ 在胶囊内)
-                  → ≈24px 间距 → 白色全屏图标（无灰底）→ 底部仅 safe-area 黑区 */}
-              <div className="relative z-10 w-full bg-[#000000]">
-                <div className="relative z-20">
-                  <WatchSeekBar
-                    videoRef={videoRef}
-                    absolute={false}
-                    className="!px-0"
-                    mediaKey={playUrl}
-                    disabled={!playUrl || needsLogin || locked}
-                    onSeekingChange={onSeekingChange}
-                  />
-                </div>
-                <div
-                  className="flex items-center gap-6 px-[18px] pt-2.5"
-                  style={{ paddingBottom: "max(10px, env(safe-area-inset-bottom, 0px))" }}
-                >
+              {/* 竖屏底栏：进度在视频上；黑区只包芯片这一条，去掉芯片下方多余灰垫 */}
+              <div className="relative z-10 w-full">
+                <WatchSeekBar
+                  videoRef={videoRef}
+                  absolute={false}
+                  className="!px-0"
+                  mediaKey={playUrl}
+                  disabled={!playUrl || needsLogin || locked}
+                  onSeekingChange={onSeekingChange}
+                />
+                <div className="flex items-center gap-6 bg-[#000000] px-[18px] pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] pt-2.5">
                   <button
                     type="button"
                     onClick={() => setDrawerOpen(true)}
