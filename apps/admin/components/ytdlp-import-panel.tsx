@@ -6,6 +6,7 @@ import {
   adminStorageStatus,
   adminYtdlpAiExtract,
   adminYtdlpDownloadEpisode,
+  adminYtdlpProbe,
   adminYtdlpResolve,
   adminYtdlpStatus,
   adminYtdlpUploadCookies,
@@ -22,14 +23,14 @@ import {
 import { useI18n } from "@/lib/i18n";
 import { isPlayableMediaUrl } from "@/lib/playable-url";
 
-type ProbeResult = Awaited<ReturnType<typeof adminYtdlpAiExtract>>;
+type AiProbeResult = Awaited<ReturnType<typeof adminYtdlpAiExtract>>;
+type YtProbeResult = Awaited<ReturnType<typeof adminYtdlpProbe>>;
+type ProbeResult = AiProbeResult | YtProbeResult;
 type FormatPreference = "best_hls" | "best_mp4" | "best";
 type IngestTab = "parse" | "manual";
 export type OnlineIngestTab = IngestTab;
 
-function isAiProbe(
-  p: ProbeResult | null,
-): p is Awaited<ReturnType<typeof adminYtdlpAiExtract>> {
+function isAiProbe(p: ProbeResult | null): p is AiProbeResult {
   return !!p && "source" in p && p.source === "ai";
 }
 
