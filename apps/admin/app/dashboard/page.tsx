@@ -623,7 +623,7 @@ export default function AdminDashboardPage() {
       setDraftTo(appliedCustom.to);
       setRangeError(null);
     }
-  }, [appliedCustom?.from, appliedCustom?.to]);
+  }, [appliedCustom]);
 
   const rankTab = parseRank(search.get("rank"));
   const todayKey = dayKeyLocal(new Date());

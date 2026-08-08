@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
+import { Throttle } from '@nestjs/throttler';
 import { AuthGuard } from '../auth/auth.guard';
 import { CurrentUser, AuthUser } from '../common/current-user.decorator';
 import { ok } from '../common/response';
@@ -17,6 +18,12 @@ import { UploadService } from './upload.service';
 import { CreatorService } from '../creator/creator.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { BizException, BizCode } from '../common/biz.exception';
+import {
+  cleanupMultipartFiles,
+  videoDiskStorage,
+  videoFileFilter,
+  VIDEO_UPLOAD_MAX_BYTES,
+} from './multer-options';
 
 @Controller('v1/creator')
 @UseGuards(AuthGuard)
@@ -29,10 +36,12 @@ export class UploadController {
 
   /** multipart 视频上传 → storage/uploads，可选立即入队转码 */
   @Post('upload')
+  @Throttle({ global: { limit: 6, ttl: 10 * 60_000 } })
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: memoryStorage(),
-      limits: { fileSize: 512 * 1024 * 1024 }, // 512MB
+      storage: videoDiskStorage,
+      fileFilter: videoFileFilter,
+      limits: { fileSize: VIDEO_UPLOAD_MAX_BYTES },
     }),
   )
   async uploadVideo(
@@ -40,43 +49,49 @@ export class UploadController {
     @CurrentUser() user: AuthUser,
     @Body() body: { episodeId?: string; transcode?: string },
   ) {
-    await this.creator.ensureCreator(user.userId);
-    const saved = this.upload.saveUpload(file);
-
-    let job: Awaited<ReturnType<UploadService['enqueueTranscode']>> | null = null;
-    if (body?.episodeId) {
-      const ep = await this.prisma.episode.findUnique({
-        where: { id: BigInt(body.episodeId) },
-        include: { drama: true },
-      });
-      if (!ep) throw new BizException(BizCode.NOT_FOUND, 'episode.notFound');
+    try {
       const creator = await this.creator.ensureCreator(user.userId);
-      if (ep.drama.creatorId !== creator.id) {
-        throw new BizException(BizCode.FORBIDDEN, 'common.forbidden');
+      let episode: any = null;
+      if (body?.episodeId) {
+        episode = await this.prisma.episode.findUnique({
+          where: { id: BigInt(body.episodeId) },
+          include: { drama: true },
+        });
+        if (!episode) throw new BizException(BizCode.NOT_FOUND, 'episode.notFound');
+        if (episode.drama.creatorId !== creator.id) {
+          throw new BizException(BizCode.FORBIDDEN, 'common.forbidden');
+        }
+        if (episode.drama.status !== 'DRAFT' && episode.drama.status !== 'REJECTED') {
+          throw new BizException(BizCode.CONFLICT, '审核中或已上线的作品不能替换片源');
+        }
       }
-      if (ep.drama.status !== 'DRAFT' && ep.drama.status !== 'REJECTED') {
-        throw new BizException(BizCode.CONFLICT, '审核中或已上线的作品不能替换片源');
-      }
-      await this.prisma.episode.update({
-        where: { id: ep.id },
-        data: {
-          originalUrl: saved.relativePath,
-          hlsUrl: saved.relativePath,
-          uploadStatus: 'COMPLETED',
-          transcodeStatus: 'PENDING',
-        },
-      });
-      job = await this.upload.enqueueTranscode(saved.relativePath, String(ep.id));
-    } else if (body?.transcode === '1' || body?.transcode === 'true') {
-      job = await this.upload.enqueueTranscode(saved.relativePath);
-    }
 
-    return ok({
-      ...saved,
-      jobId: job?.id ?? null,
-      transcodeStatus: job?.status ?? null,
-      ffmpegReady: !!(await this.upload.detectFfmpeg()),
-    });
+      const saved = this.upload.saveUpload(file);
+      let job: Awaited<ReturnType<UploadService['enqueueTranscode']>> | null = null;
+      if (episode) {
+        await this.prisma.episode.update({
+          where: { id: episode.id },
+          data: {
+            originalUrl: saved.relativePath,
+            hlsUrl: saved.relativePath,
+            uploadStatus: 'COMPLETED',
+            transcodeStatus: 'PENDING',
+          },
+        });
+        job = await this.upload.enqueueTranscode(saved.relativePath, String(episode.id));
+      } else if (body?.transcode === '1' || body?.transcode === 'true') {
+        job = await this.upload.enqueueTranscode(saved.relativePath);
+      }
+
+      return ok({
+        ...saved,
+        jobId: job?.id ?? null,
+        transcodeStatus: job?.status ?? null,
+        ffmpegReady: !!(await this.upload.detectFfmpeg()),
+      });
+    } finally {
+      cleanupMultipartFiles(file);
+    }
   }
 
   @Post('transcode')

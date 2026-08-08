@@ -16,16 +16,8 @@ export class ContentReadinessService {
     if (!drama.episodes.length) {
       throw new BizException(BizCode.BAD_REQUEST, '作品至少需要一集才能提交审核');
     }
-    if (drama.sourceType === 'ONLINE') {
-      if (drama.licenseType === 'UNKNOWN' || !drama.rightsVerifiedAt) {
-        throw new BizException(
-          BizCode.BAD_REQUEST,
-          '在线公开资源必须填写许可证/授权类型并完成人工权利核验',
-        );
-      }
-      if (drama.takedownAt) {
-        throw new BizException(BizCode.CONFLICT, '该内容已进入下架/投诉处理状态');
-      }
+    if (drama.sourceType === 'ONLINE' && drama.takedownAt) {
+      throw new BizException(BizCode.CONFLICT, '该内容已进入下架/投诉处理状态');
     }
 
     for (let i = 0; i < drama.episodes.length; i++) {

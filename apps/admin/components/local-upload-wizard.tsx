@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useImperativeHandle, useMemo, useRef, useState, forwardRef, type DragEvent } from "react";
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, forwardRef, type DragEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   adminCreateOnlineDrama,
@@ -8,6 +8,7 @@ import {
   adminListSettings,
   adminStorageProbe,
   adminStorageStatus,
+  adminTranslateTitles,
   adminUploadImage,
   adminYtdlpImport,
   adminYtdlpTransfer,
@@ -320,6 +321,7 @@ export const LocalUploadWizard = forwardRef<
   const [titleZh, setTitleZh] = useState("");
   const [titleEn, setTitleEn] = useState("");
   const [titleTouched, setTitleTouched] = useState(false);
+  const [translateBusy, setTranslateBusy] = useState(false);
   const [categorySlug, setCategorySlug] = useState("");
   const [coverUrl, setCoverUrl] = useState("");
   const [descriptionZh, setDescriptionZh] = useState("");
@@ -450,7 +452,7 @@ export const LocalUploadWizard = forwardRef<
         );
       },
     }),
-    [t],
+    [t, freeRangeEnd],
   );
 
   useEffect(() => {
@@ -574,7 +576,38 @@ export const LocalUploadWizard = forwardRef<
     if (editingDraftId === id) setEditingDraftId(null);
   }
 
-  function validateInfo() {
+  async function completeTitleTranslation() {
+    const zh = titleZh.trim();
+    const en = titleEn.trim();
+    if (!zh && !en) {
+      setError(t("translateTitlesNeedOne"));
+      return;
+    }
+    if (zh && en) {
+      setError(t("translateTitlesNothing"));
+      return;
+    }
+    setTranslateBusy(true);
+    setError(null);
+    try {
+      const res = await adminTranslateTitles({ titleZh: zh, titleEn: en });
+      if (!res.filled.length) {
+        setError(t("translateTitlesNothing"));
+        return;
+      }
+      if (res.filled.includes("titleZh")) setTitleZh(res.titleZh);
+      if (res.filled.includes("titleEn")) {
+        setTitleEn(res.titleEn);
+        setTitleTouched(true);
+      }
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : t("translateTitlesFailed"));
+    } finally {
+      setTranslateBusy(false);
+    }
+  }
+
+  const validateInfo = useCallback(() => {
     const en = titleEn.trim();
     if (!en) return t("uploadBlockTitleEn");
     if (en.length > 40) return t("dramaTitleTooLong");
@@ -603,7 +636,19 @@ export const LocalUploadWizard = forwardRef<
       }
     }
     return null;
-  }
+  }, [
+    categorySlug,
+    descriptionZh,
+    episodes,
+    onlineIngest,
+    priceCredits,
+    t,
+    tags,
+    titleEn,
+    titleZh,
+    totalEpisodes,
+    totalEpisodesDirty,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -839,14 +884,9 @@ export const LocalUploadWizard = forwardRef<
     storageErrorMessage,
     ffmpegReady,
     onlineIngest,
-    titleZh,
-    titleEn,
-    categorySlug,
-    descriptionZh,
-    tags,
     episodes,
-    priceCredits,
     t,
+    validateInfo,
   ]);
 
   function episodeIsFreeForUpload(_episodeNumber: number, indexInBatch: number) {
@@ -1465,6 +1505,8 @@ export const LocalUploadWizard = forwardRef<
                   >
                     <div className="h-14 w-11 shrink-0 overflow-hidden rounded bg-surface">
                       {draft.coverUrl ? (
+                        // Stored draft/blob previews intentionally bypass Next image optimization.
+                        // eslint-disable-next-line @next/next/no-img-element
                         <img src={draft.coverUrl} alt="" className="h-full w-full object-cover" />
                       ) : (
                         <Film className="m-3 h-5 w-5 text-ink-subtle" />
@@ -1556,7 +1598,18 @@ export const LocalUploadWizard = forwardRef<
                   <div className="upload-locale-titles">
                     <div className="upload-locale-titles__head">
                       <strong>{t("localeTitlesLabel")}</strong>
-                      <small>{t("localeTitleFallbackHint")}</small>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <small>{t("localeTitleFallbackHint")}</small>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          disabled={busy || translateBusy}
+                          onClick={() => void completeTitleTranslation()}
+                        >
+                          {translateBusy ? t("translateTitlesBusy") : t("translateTitles")}
+                        </Button>
+                      </div>
                     </div>
                     <label className="upload-locale-titles__row">
                       <span className="upload-locale-titles__lang">

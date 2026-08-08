@@ -159,6 +159,10 @@ export async function adminUpdateDrama(id: string, body: Record<string, unknown>
   return adminRequest(`/admin/dramas/${id}/update`, { method: "POST", body: JSON.stringify(body) });
 }
 
+export async function adminSubmitDramaReview(id: string) {
+  return adminRequest(`/admin/dramas/${id}/submit-review`, { method: "POST", body: "{}" });
+}
+
 export async function adminApproveDrama(id: string) {
   return adminRequest(`/admin/dramas/${id}/approve`, { method: "POST", body: "{}" });
 }
@@ -701,7 +705,13 @@ export async function adminCreateEpisodeWithUploadSmart(
 
 export async function adminAppendPublicEpisodes(
   dramaId: string,
-  body: { url: string; maxEpisodes?: number; formatPreference?: 'best_hls' | 'best_mp4' | 'best' },
+  body: {
+    url: string;
+    maxEpisodes?: number;
+    formatPreference?: "best_hls" | "best_mp4" | "best";
+    cookiesFile?: string;
+    authBearer?: string;
+  },
 ) {
   return adminRequest<{
     added: Array<{ id: string; episodeNumber: number; title?: string }>;
@@ -1513,6 +1523,22 @@ export async function adminCreateUploadDramaWithFiles(
   }>("/admin/dramas/upload-with-files", { method: "POST", body: form });
 }
 
+/** Fill empty titleZh/titleEn via OpenAI-compatible translation (does not overwrite filled side). */
+export async function adminTranslateTitles(body: {
+  titleZh?: string;
+  titleEn?: string;
+}) {
+  return adminRequest<{
+    titleZh: string;
+    titleEn: string;
+    filled: Array<"titleZh" | "titleEn">;
+    model: string;
+  }>("/admin/translate/titles", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export async function adminYtdlpStatus() {
   return adminRequest<{
     configured: boolean;
@@ -1524,10 +1550,20 @@ export async function adminYtdlpStatus() {
     provider: string;
     requiresApiKey: boolean;
     lastError: string | null;
+    auth?: {
+      globalCookiesConfigured: boolean;
+      cookiesDir: string;
+      hostCookieFiles: string[];
+      bearerConfigured: boolean;
+      extraHeaders: number;
+    };
   }>("/admin/ytdlp/status");
 }
 
-export async function adminYtdlpProbe(url: string) {
+export async function adminYtdlpProbe(
+  url: string,
+  auth?: { cookiesFile?: string; authBearer?: string },
+) {
   return adminRequest<{
     extractor: string;
     id: string;
@@ -1547,7 +1583,11 @@ export async function adminYtdlpProbe(url: string) {
     }>;
   }>("/admin/ytdlp/probe", {
     method: "POST",
-    body: JSON.stringify({ url }),
+    body: JSON.stringify({
+      url,
+      cookiesFile: auth?.cookiesFile,
+      authBearer: auth?.authBearer,
+    }),
   });
 }
 
@@ -1558,6 +1598,8 @@ export async function adminYtdlpImport(body: {
   titleEn?: string;
   maxEpisodes?: number;
   formatPreference?: "best_hls" | "best_mp4" | "best";
+  cookiesFile?: string;
+  authBearer?: string;
 }) {
   return adminRequest<{
     id: string;
@@ -1579,6 +1621,8 @@ export async function adminYtdlpResolve(body: {
   url: string;
   formatPreference?: "best_hls" | "best_mp4" | "best";
   playlistIndex?: number;
+  cookiesFile?: string;
+  authBearer?: string;
 }) {
   return adminRequest<{
     playUrl: string;
@@ -1595,6 +1639,8 @@ export async function adminYtdlpDownloadEpisode(body: {
   formatPreference?: "best_hls" | "best_mp4" | "best";
   playlistIndex?: number;
   filenameHint?: string;
+  cookiesFile?: string;
+  authBearer?: string;
 }) {
   const hint = (body.filenameHint || "episode").trim() || "episode";
   const filename = /\.[a-z0-9]{2,5}$/i.test(hint) ? hint : `${hint}.mp4`;
@@ -1605,8 +1651,20 @@ export async function adminYtdlpDownloadEpisode(body: {
       formatPreference: body.formatPreference || "best_mp4",
       playlistIndex: body.playlistIndex,
       filenameHint: filename,
+      cookiesFile: body.cookiesFile,
+      authBearer: body.authBearer,
     }),
   });
+}
+
+export async function adminYtdlpUploadCookies(file: File, hostname: string) {
+  const form = new FormData();
+  form.append("file", file, file.name || `${hostname}.txt`);
+  form.append("hostname", hostname);
+  return adminRequest<{ filename: string; absPath: string; bytes: number }>(
+    "/admin/ytdlp/cookies",
+    { method: "POST", body: form },
+  );
 }
 
 export type YtdlpTransferJob = {

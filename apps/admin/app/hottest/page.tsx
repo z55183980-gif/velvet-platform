@@ -220,7 +220,7 @@ export default function AdminHottestPage() {
         },
       },
     ],
-    [t, actionMut.isPending, selectedIds, dirty],
+    [t, actionMut, selectedIds, dirty],
   );
 
   const removeRow = removeId ? ordered.find((r) => dramaId(r) === removeId) : undefined;

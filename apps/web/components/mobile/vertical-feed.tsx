@@ -834,9 +834,7 @@ function FeedPage({
       });
     return () => ac.abort();
   }, [
-    episode?.id,
-    episode?.isFree,
-    episode?.unlocked,
+    episode,
     authReady,
     guestReady,
     user,

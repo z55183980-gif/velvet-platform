@@ -6,6 +6,7 @@ import { BizException, BizCode } from './biz.exception';
 const CAPTCHA_CHARS = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
 const CAPTCHA_TTL_MS = 300_000;
 const CAPTCHA_LENGTH = 4;
+const CAPTCHA_MAX_ENTRIES = 10_000;
 
 export type CaptchaKind = 'admin' | 'web';
 
@@ -39,6 +40,7 @@ export class CaptchaService {
     const captchaId = `cap-${kind}-${crypto.randomUUID().replace(/-/g, '')}`;
     const now = Date.now();
     this.prune(now);
+    this.enforceCapacity();
     this.entries.set(captchaId, {
       hash: this.hashCode(code),
       expiresAt: now + CAPTCHA_TTL_MS,
@@ -80,6 +82,17 @@ export class CaptchaService {
   private prune(now: number) {
     for (const [key, value] of this.entries) {
       if (value.expiresAt <= now) this.entries.delete(key);
+    }
+  }
+
+  private enforceCapacity() {
+    if (this.entries.size < CAPTCHA_MAX_ENTRIES) return;
+    const removeCount = Math.max(1, Math.ceil(CAPTCHA_MAX_ENTRIES / 10));
+    let removed = 0;
+    for (const key of this.entries.keys()) {
+      this.entries.delete(key);
+      removed++;
+      if (removed >= removeCount) break;
     }
   }
 

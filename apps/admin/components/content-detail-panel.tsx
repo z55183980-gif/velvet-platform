@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useState, type ReactNode } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -18,6 +18,8 @@ import {
   adminRejectDrama,
   adminReorderEpisodes,
   adminRetryTranscode,
+  adminSubmitDramaReview,
+  adminTranslateTitles,
   adminUpdateDrama,
   adminUpdateEpisode,
   adminPurgeEpisodeMedia,
@@ -108,11 +110,6 @@ type Drama = {
   likeCount?: number;
   publishedAt?: string | null;
   sourceType?: string;
-  licenseType?: string;
-  sourcePublisher?: string;
-  attributionText?: string;
-  rightsProofUrl?: string;
-  rightsVerifiedAt?: string | null;
   tags?: string[];
   creator?: { displayName?: string };
   category?: { slug?: string; nameZh?: string; nameEn?: string };
@@ -165,11 +162,6 @@ type BasicDraft = {
   coverUrl: string;
   descriptionZh: string;
   descriptionEn: string;
-  licenseType: string;
-  sourcePublisher: string;
-  attributionText: string;
-  rightsProofUrl: string;
-  rightsVerified: boolean;
   tags: string[];
   contentType: DramaContentType;
   completion: DramaCompletion;
@@ -182,11 +174,6 @@ const emptyDraft: BasicDraft = {
   coverUrl: "",
   descriptionZh: "",
   descriptionEn: "",
-  licenseType: "UNKNOWN",
-  sourcePublisher: "",
-  attributionText: "",
-  rightsProofUrl: "",
-  rightsVerified: false,
   tags: [],
   contentType: DEFAULT_CONTENT_TYPE,
   completion: DEFAULT_COMPLETION,
@@ -201,11 +188,6 @@ function draftFromDrama(drama: Drama): BasicDraft {
     coverUrl: drama.coverUrl || "",
     descriptionZh: drama.descriptionZh || "",
     descriptionEn: drama.descriptionEn || "",
-    licenseType: drama.licenseType || "UNKNOWN",
-    sourcePublisher: drama.sourcePublisher || "",
-    attributionText: drama.attributionText || "",
-    rightsProofUrl: drama.rightsProofUrl || "",
-    rightsVerified: !!drama.rightsVerifiedAt,
     tags: meta.displayTags,
     contentType: meta.contentType,
     completion: meta.completion,
@@ -286,6 +268,7 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
   const [savedDraft, setSavedDraft] = useState<BasicDraft>(emptyDraft);
   const [tagInput, setTagInput] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [translateBusy, setTranslateBusy] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [offlineOpen, setOfflineOpen] = useState(false);
   const [onlineOpen, setOnlineOpen] = useState(false);
@@ -354,9 +337,41 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
     },
     onError: (e: Error) => setError(e.message),
   });
-  const act = (action: () => Promise<unknown>) => actionMut.mutate(action);
+  const act = useCallback((action: () => Promise<unknown>) => actionMut.mutate(action), [actionMut]);
+
+  async function completeTitleTranslation() {
+    const zh = draft.titleZh.trim();
+    const en = draft.titleEn.trim();
+    if (!zh && !en) {
+      setError(t("translateTitlesNeedOne"));
+      return;
+    }
+    if (zh && en) {
+      setError(t("translateTitlesNothing"));
+      return;
+    }
+    setTranslateBusy(true);
+    setError(null);
+    try {
+      const res = await adminTranslateTitles({ titleZh: zh, titleEn: en });
+      if (!res.filled.length) {
+        setError(t("translateTitlesNothing"));
+        return;
+      }
+      setDraft((v) => ({
+        ...v,
+        titleZh: res.filled.includes("titleZh") ? res.titleZh : v.titleZh,
+        titleEn: res.filled.includes("titleEn") ? res.titleEn : v.titleEn,
+      }));
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : t("translateTitlesFailed"));
+    } finally {
+      setTranslateBusy(false);
+    }
+  }
+
   const drama = detailQ.data;
-  const episodes = drama?.episodes ?? [];
+  const episodes = useMemo(() => drama?.episodes ?? [], [drama?.episodes]);
   const addEpisodeConfig = useMemo(
     () => episodeAddOptions(drama?.sourceType, drama?.status),
     [drama?.sourceType, drama?.status],
@@ -400,14 +415,14 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
 
   useImperativeHandle(ref, () => ({ save: saveBasicInfo }));
 
-  const moveEpisode = (episodeId: string, dir: -1 | 1) => {
+  const moveEpisode = useCallback((episodeId: string, dir: -1 | 1) => {
     const list = [...episodes];
     const idx = list.findIndex((e) => String(e.id) === episodeId);
     const next = idx + dir;
     if (idx < 0 || next < 0 || next >= list.length) return;
     [list[idx], list[next]] = [list[next], list[idx]];
     act(() => adminReorderEpisodes(id, list.map((e) => String(e.id))));
-  };
+  }, [act, episodes, id]);
 
   const globalMode = useMemo(() => {
     const raw = settingsQ.data?.find((s) => s.key === "episodeLockMode")?.value;
@@ -509,7 +524,7 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
         </div>
       ),
     },
-  ], [t, actionMut.isPending, selectedEps, episodes, id, qc, drama?.sourceType]);
+  ], [t, actionMut.isPending, selectedEps, id, qc, drama?.sourceType, act, moveEpisode]);
 
   const handleDeleteDrama = () =>
     actionMut.mutate(async () => {
@@ -542,10 +557,25 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
       },
     });
 
+  const handleSubmitReview = () =>
+    actionMut.mutate(() => adminSubmitDramaReview(id), {
+      onSuccess: async () => {
+        setError(null);
+        await qc.invalidateQueries({ queryKey: ["admin", "drama", id] });
+        await qc.invalidateQueries({ queryKey: ["admin", "dramas"] });
+      },
+    });
+
   if (detailQ.isLoading) return <div className="content-detail-loading"><LoaderCircle className="h-5 w-5 animate-spin text-brand" /><span>{t("loading")}</span></div>;
   if (!drama) return <p className="text-ink-muted">{t("empty")}</p>;
 
   const statusTone = drama.status === "LIVE" ? "success" : drama.status === "PENDING_REVIEW" ? "warning" : drama.status === "REJECTED" ? "danger" : "default";
+  const isOnlineSource = drama.sourceType === "ONLINE";
+  const canSubmitReview =
+    isOnlineSource && (drama.status === "DRAFT" || drama.status === "REJECTED");
+  const canDirectOnline =
+    drama.status === "OFFLINE" ||
+    (!isOnlineSource && (drama.status === "DRAFT" || drama.status === "REJECTED"));
   const tabs: { key: DetailTab; label: string; icon: ReactNode; count?: number }[] = [
     { key: "overview", label: t("tabOverview"), icon: <LayoutDashboard /> },
     { key: "info", label: t("tabDramaInfo"), icon: <Clapperboard /> },
@@ -608,7 +638,13 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
               {t("forceOffline")}
             </Button>
           ) : null}
-          {drama.status === "OFFLINE" || drama.status === "REJECTED" || drama.status === "DRAFT" ? (
+          {canSubmitReview ? (
+            <Button size="sm" disabled={actionMut.isPending} onClick={handleSubmitReview}>
+              <FileVideo className="h-4 w-4" />
+              {t("submitReview")}
+            </Button>
+          ) : null}
+          {canDirectOnline ? (
             <Button size="sm" disabled={actionMut.isPending} onClick={() => setOnlineOpen(true)}>
               <UnlockKeyhole className="h-4 w-4" />
               {t("restoreOnline")}
@@ -684,7 +720,21 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
 
         {tab === "info" ? <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_19rem]">
           <section className="content-section-card space-y-5">
-            <div className="content-section-heading"><div><h2>{t("editBasicInfo")}</h2><p>{t("editBasicInfoHint")}</p></div></div>
+            <div className="content-section-heading">
+              <div>
+                <h2>{t("editBasicInfo")}</h2>
+                <p>{t("editBasicInfoHint")}</p>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                disabled={actionMut.isPending || translateBusy}
+                onClick={() => void completeTitleTranslation()}
+              >
+                {translateBusy ? t("translateTitlesBusy") : t("translateTitles")}
+              </Button>
+            </div>
             <div className="grid gap-4 md:grid-cols-2">
               <FieldLabel label={t("titleZhLabel")} required><Input value={draft.titleZh} onChange={(e) => setDraft((v) => ({ ...v, titleZh: e.target.value }))} /></FieldLabel>
               <FieldLabel label={t("titleEnLabel")}><Input value={draft.titleEn} onChange={(e) => setDraft((v) => ({ ...v, titleEn: e.target.value }))} /></FieldLabel>
@@ -763,22 +813,6 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
                 onError={setError}
               />
             </FieldLabel>
-            {drama.sourceType === "ONLINE" ? (
-              <section className="rounded-xl border border-line bg-surface-2/40 p-4 space-y-4">
-                <div><h3 className="text-sm font-semibold text-ink">{t("sourceComplianceTitle")}</h3><p className="mt-1 text-xs text-ink-subtle">{t("sourceComplianceHint")}</p></div>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <FieldLabel label={t("licenseType")} required>
-                    <Select value={draft.licenseType} onChange={(e) => setDraft((v) => ({ ...v, licenseType: e.target.value }))}>
-                      {['UNKNOWN', 'PUBLIC_DOMAIN', 'CC0', 'CC_BY', 'CC_BY_SA', 'AUTHORIZED', 'OWNED'].map((value) => <option key={value} value={value}>{value}</option>)}
-                    </Select>
-                  </FieldLabel>
-                  <FieldLabel label={t("sourcePublisher")}><Input value={draft.sourcePublisher} onChange={(e) => setDraft((v) => ({ ...v, sourcePublisher: e.target.value }))} /></FieldLabel>
-                </div>
-                <FieldLabel label={t("attributionText")}><Input value={draft.attributionText} onChange={(e) => setDraft((v) => ({ ...v, attributionText: e.target.value }))} /></FieldLabel>
-                <FieldLabel label={t("rightsProofUrl")}><Input placeholder="https://…" value={draft.rightsProofUrl} onChange={(e) => setDraft((v) => ({ ...v, rightsProofUrl: e.target.value }))} /></FieldLabel>
-                <label className="flex items-center gap-2 text-sm text-ink-muted"><input className="content-checkbox" type="checkbox" checked={draft.rightsVerified} onChange={(e) => setDraft((v) => ({ ...v, rightsVerified: e.target.checked }))} />{t("rightsVerified")}</label>
-              </section>
-            ) : null}
             <div className="grid gap-4 md:grid-cols-2">
               <FieldLabel label={t("descriptionZhLabel")}><textarea className="content-textarea" rows={7} value={draft.descriptionZh} onChange={(e) => setDraft((v) => ({ ...v, descriptionZh: e.target.value }))} /></FieldLabel>
               <FieldLabel label={t("descriptionEnLabel")}><textarea className="content-textarea" rows={7} value={draft.descriptionEn} onChange={(e) => setDraft((v) => ({ ...v, descriptionEn: e.target.value }))} /></FieldLabel>

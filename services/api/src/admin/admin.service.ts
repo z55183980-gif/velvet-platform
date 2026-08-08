@@ -20,6 +20,7 @@ import { AuditService } from '../common/audit.service';
 import { UploadService } from '../upload/upload.service';
 import { ContentReadinessService } from '../common/content-readiness.service';
 import { PlatformSettingsService } from '../common/platform-settings.service';
+import { LockAccessService } from '../common/lock-access.service';
 import { mergeDramaSourceTags } from '../dramas/drama-tags';
 
 export interface LocalImportOptions {
@@ -108,6 +109,7 @@ export class AdminService {
     private readonly upload: UploadService,
     private readonly readiness: ContentReadinessService,
     private readonly platformSettings: PlatformSettingsService,
+    private readonly lockAccess: LockAccessService,
   ) {
     this.pitRateEnvFallback = Number(config.get('PIT_RATE') || 0.05);
     this.defaultImportRoot =
@@ -122,6 +124,28 @@ export class AdminService {
       orderBy: { createdAt: 'desc' },
       include: { creator: { select: { displayName: true } } },
     });
+  }
+
+  /** Admin: DRAFT/REJECTED → PENDING_REVIEW (media readiness only; no license form). */
+  async submitDramaReview(id: string, actorId?: bigint | null) {
+    const existing = await this.prisma.drama.findUnique({ where: { id: BigInt(id) } });
+    if (!existing) throw new BizException(BizCode.NOT_FOUND, 'drama.notFound');
+    if (existing.status !== 'DRAFT' && existing.status !== 'REJECTED') {
+      throw new BizException(BizCode.CONFLICT, 'request.alreadyProcessed');
+    }
+    await this.readiness.assertDramaReady(existing.id);
+    const drama = await this.prisma.drama.update({
+      where: { id: BigInt(id) },
+      data: { status: 'PENDING_REVIEW' },
+    });
+    await this.audit.write({
+      actorId,
+      action: 'drama.submitReview',
+      targetType: 'drama',
+      targetId: drama.id,
+      payload: { from: existing.status, to: drama.status },
+    });
+    return { id: drama.id.toString(), status: drama.status };
   }
 
   async approveDrama(id: string, actorId?: bigint | null) {
@@ -481,7 +505,14 @@ export class AdminService {
         throw new BizException(BizCode.BAD_REQUEST, `非法相对路径: ${rel}`);
       }
       fs.mkdirSync(destDir, { recursive: true });
-      fs.writeFileSync(dest, files[i].buffer);
+      const stagedPath = files[i].path ? path.resolve(files[i].path) : '';
+      if (stagedPath) {
+        fs.renameSync(stagedPath, dest);
+      } else if (files[i].buffer) {
+        fs.writeFileSync(dest, files[i].buffer);
+      } else {
+        throw new BizException(BizCode.BAD_REQUEST, `上传文件内容为空: ${rel}`);
+      }
     }
 
     const result = await this.importLocal({
@@ -975,10 +1006,26 @@ export class AdminService {
     }
     const drama = await this.prisma.drama.findUnique({
       where: { id: BigInt(id) },
-      select: { id: true },
+      select: { id: true, status: true },
     });
     if (!drama) throw new BizException(BizCode.NOT_FOUND, 'Drama không tồn tại');
+    if (drama.status !== 'LIVE') {
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.bannerDramaNotLive');
+    }
     return drama.id;
+  }
+
+
+  private clampBannerFocus(raw: unknown, fallback: number) {
+    const n = Math.round(Number(raw));
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(100, Math.max(0, n));
+  }
+
+  private clampBannerZoom(raw: unknown, fallback = 100) {
+    const n = Math.round(Number(raw));
+    if (!Number.isFinite(n)) return fallback;
+    return Math.min(200, Math.max(50, n));
   }
 
   async listBanners(all = false) {
@@ -1002,6 +1049,9 @@ export class AdminService {
       startAt: string;
       endAt: string;
       sortOrder?: number;
+      focusX?: number;
+      focusY?: number;
+      focusZoom?: number;
       isActive?: boolean;
     },
     actorId?: bigint,
@@ -1016,6 +1066,9 @@ export class AdminService {
     }
     const linkUrl = this.normalizeBannerLinkUrl(dto.linkUrl);
     const dramaId = await this.resolveBannerDramaId(dto.dramaId);
+    if (!dramaId) {
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.bannerDramaRequired');
+    }
     const banner = await this.prisma.banner.create({
       data: {
         titleEn: dto.titleEn,
@@ -1026,6 +1079,9 @@ export class AdminService {
         startAt,
         endAt,
         sortOrder: dto.sortOrder ?? 0,
+        focusX: this.clampBannerFocus(dto.focusX, 50),
+        focusY: this.clampBannerFocus(dto.focusY, 22),
+        focusZoom: this.clampBannerZoom(dto.focusZoom, 100),
         isActive: dto.isActive ?? true,
       },
     });
@@ -1045,10 +1101,18 @@ export class AdminService {
     if (dto.titleZh != null) data.titleZh = dto.titleZh;
     if (dto.imageUrl != null) data.imageUrl = dto.imageUrl;
     if ("linkUrl" in dto) data.linkUrl = this.normalizeBannerLinkUrl(dto.linkUrl);
-    if ("dramaId" in dto) data.dramaId = await this.resolveBannerDramaId(dto.dramaId);
+    if ("dramaId" in dto) {
+      data.dramaId = await this.resolveBannerDramaId(dto.dramaId);
+      if (!data.dramaId) {
+        throw new BizException(BizCode.BAD_REQUEST, 'validation.bannerDramaRequired');
+      }
+    }
     if (dto.startAt != null) data.startAt = new Date(dto.startAt);
     if (dto.endAt != null) data.endAt = new Date(dto.endAt);
     if (dto.sortOrder != null) data.sortOrder = Number(dto.sortOrder);
+    if (dto.focusX != null) data.focusX = this.clampBannerFocus(dto.focusX, 50);
+    if (dto.focusY != null) data.focusY = this.clampBannerFocus(dto.focusY, 22);
+    if (dto.focusZoom != null) data.focusZoom = this.clampBannerZoom(dto.focusZoom, 100);
     if (dto.isActive != null) data.isActive = !!dto.isActive;
     if (data.startAt && Number.isNaN(data.startAt.getTime())) {
       throw new BizException(BizCode.BAD_REQUEST, 'startAt không hợp lệ');
@@ -1222,6 +1286,9 @@ export class AdminService {
       where: { id: BigInt(id) },
       data,
     });
+    if (data.lockMode !== undefined || data.freeEpisodeCount != null) {
+      await this.lockAccess.syncEpisodeAccessFlags(BigInt(id));
+    }
     await this.audit.write({
       actorId,
       action: 'drama.update',
@@ -1255,7 +1322,19 @@ export class AdminService {
     if (!reason || !String(reason).trim()) {
       throw new BizException(BizCode.BAD_REQUEST, 'common.reasonRequired');
     }
-    await this.readiness.assertDramaReady(BigInt(id));
+    const existing = await this.prisma.drama.findUnique({ where: { id: BigInt(id) } });
+    if (!existing) throw new BizException(BizCode.NOT_FOUND, 'drama.notFound');
+    // ONLINE drafts must go through 提交审核 → 审核通过 (not direct shelf).
+    if (
+      existing.sourceType === 'ONLINE' &&
+      (existing.status === 'DRAFT' || existing.status === 'REJECTED')
+    ) {
+      throw new BizException(
+        BizCode.BAD_REQUEST,
+        '在线资源请先提交审核，经人工审核通过后再上架',
+      );
+    }
+    await this.readiness.assertDramaReady(existing.id);
     const drama = await this.prisma.drama.update({
       where: { id: BigInt(id) },
       data: { status: 'LIVE', publishedAt: new Date() },
@@ -1265,7 +1344,7 @@ export class AdminService {
       action: 'drama.online',
       targetType: 'drama',
       targetId: id,
-      payload: { reason: String(reason).trim() },
+      payload: { reason: String(reason).trim(), from: existing.status },
     });
     return { id: drama.id.toString(), status: drama.status };
   }
@@ -1387,8 +1466,8 @@ export class AdminService {
       });
     }
 
-    const freeEpisodeCount = Math.max(0, Math.floor(Number(dto.freeEpisodeCount ?? converted.length)));
-    const lockMode = dto.lockMode || 'ALL_FREE';
+    const freeEpisodeCount = Math.max(0, Math.floor(Number(dto.freeEpisodeCount ?? 3)));
+    const lockMode = dto.lockMode || 'FREE_FIRST_N';
     // 外部资源必须先完成来源和权利审核，禁止创建时直接上线。
     const status = 'DRAFT' as const;
 
@@ -1420,7 +1499,9 @@ export class AdminService {
       });
 
       for (const ep of converted) {
-        const isFree = lockMode === 'ALL_FREE' || ep.isFree || ep.episodeNumber <= freeEpisodeCount;
+        const isFree =
+          lockMode === 'ALL_FREE' ||
+          (lockMode !== 'VIP_ALL' && ep.episodeNumber <= freeEpisodeCount);
         await tx.episode.create({
           data: {
             dramaId: created.id,
@@ -1539,7 +1620,7 @@ export class AdminService {
 
     const freeEpisodeCount = Math.max(0, Math.floor(Number(dto.freeEpisodeCount ?? 3)));
     const lockMode = dto.lockMode || 'FREE_FIRST_N';
-    // 创建时一律草稿；转码完成后再经 assertDramaReady 恢复上架，禁止绕过就绪门禁。
+    // 创建时一律草稿；上架走就绪校验。ONLINE 另需提交审核 → 人工审核通过。
     const status = 'DRAFT' as const;
     const announcedTotal = Math.max(0, Math.floor(Number(dto.totalEpisodes ?? 0)));
     const sourceType = dto.sourceType === 'LOCAL' ? 'LOCAL' : 'R2';

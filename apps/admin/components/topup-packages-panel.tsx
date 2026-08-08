@@ -109,7 +109,7 @@ export function TopupPackagesPanel() {
     },
   });
 
-  const rows = listQ.data ?? [];
+  const rows = useMemo(() => listQ.data ?? [], [listQ.data]);
   const filtered = useMemo(() => {
     const needle = search.trim().toLowerCase();
     return rows

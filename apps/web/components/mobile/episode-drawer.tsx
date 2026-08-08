@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { AudioLines, ChevronRight, Lock, Star } from "lucide-react";
+import { AudioLines, ChevronRight, Crown, Star } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { useTheme } from "@/components/theme-provider";
 import type { Episode } from "@/lib/mock-data";
@@ -238,12 +238,21 @@ export function EpisodeDrawer({
                         title={canPlay ? undefined : t("vip.open")}
                       >
                         {!canPlay && (
-                          <Lock
+                          <span
                             className={cn(
-                              "absolute left-1 top-1 h-3 w-3",
-                              dark ? "text-white/35" : "text-[#bbb]",
+                              "absolute left-0 top-0 flex h-4 w-5 items-center justify-center rounded-br-lg rounded-tl-lg",
+                              dark ? "bg-gold/15" : "bg-gold/12",
                             )}
-                          />
+                            aria-hidden
+                          >
+                            <Crown
+                              className={cn(
+                                "h-2.5 w-2.5",
+                                dark ? "text-gold" : "text-[#c9a227]",
+                              )}
+                              strokeWidth={2.25}
+                            />
+                          </span>
                         )}
                         {active && (
                           <AudioLines

@@ -94,7 +94,7 @@ export class ReconcileService {
     for (const order of orders) {
       if (!order.creatorId || !order.paidAt) continue;
       try {
-        await this.prisma.$transaction(async (tx) => {
+        const didSettle = await this.prisma.$transaction(async (tx) => {
           const claimed = await tx.order.updateMany({
             where: {
               id: order.id,
@@ -103,7 +103,7 @@ export class ReconcileService {
             },
             data: { earningSettled: true },
           });
-          if (claimed.count !== 1) return;
+          if (claimed.count !== 1) return false;
 
           await tx.creatorEarning.update({
             where: { creatorId: order.creatorId! },
@@ -112,19 +112,11 @@ export class ReconcileService {
               availableVnd: { increment: order.creatorIncomeVnd },
             },
           });
-          settled++;
+          return true;
         });
+        if (didSettle) settled++;
       } catch (e: any) {
         this.logger.warn(`[settle-t7] order ${order.orderNo} failed: ${e?.message || e}`);
-        // Best-effort rollback of claim if balance move failed
-        try {
-          await this.prisma.order.updateMany({
-            where: { id: order.id, earningSettled: true, paymentStatus: 'PAID' },
-            data: { earningSettled: false },
-          });
-        } catch {
-          /* ignore */
-        }
       }
     }
     return settled;

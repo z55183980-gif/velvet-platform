@@ -797,6 +797,12 @@ model Banner {
   imageUrl  String
   linkUrl   String?
   dramaId   BigInt?
+  /// PC Hero object-position X percent (0–100)
+  focusX    Int      @default(50) @map("focus_x")
+  /// PC Hero object-position Y percent (0–100)
+  focusY    Int      @default(22) @map("focus_y")
+  /// PC Hero crop zoom percent (50–200)
+  focusZoom Int      @default(100) @map("focus_zoom")
   startAt   DateTime
   endAt     DateTime
   sortOrder Int      @default(0)

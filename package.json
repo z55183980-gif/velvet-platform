@@ -9,7 +9,8 @@
     "dev:api": "turbo run start:dev --filter=velvet-api",
     "build": "turbo run build",
     "lint": "turbo run lint",
-    "typecheck": "turbo run typecheck --filter=velvet-web",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
     "prisma:generate": "pnpm --filter velvet-api prisma:generate"
   },
   "devDependencies": {

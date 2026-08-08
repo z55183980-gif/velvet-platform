@@ -51,7 +51,6 @@ export function track(event: string, props?: TrackProps) {
   PENDING.push(entry);
   if (PENDING.length > 80) PENDING.splice(0, PENDING.length - 80);
   if (process.env.NODE_ENV === "development") {
-    // eslint-disable-next-line no-console
     console.debug("[track]", event, props || {});
   }
   scheduleFlush();

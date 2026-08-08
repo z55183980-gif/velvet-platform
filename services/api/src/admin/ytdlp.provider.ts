@@ -19,6 +19,16 @@ const execFileAsync = promisify(execFile);
 
 export type YtdlpFormatPreference = 'best_hls' | 'best_mp4' | 'best';
 
+/** Optional per-call auth; secrets must stay server-side. */
+export type YtdlpAuthOverride = {
+  /** Absolute path under cookies dir, or basename like `reelshort.com.txt` */
+  cookiesFile?: string;
+  /** Sent as Authorization: Bearer … */
+  bearerToken?: string;
+  /** Extra yt-dlp --add-header lines, e.g. ["Cookie: a=b", "X-Api-Key: k"] */
+  headers?: string[];
+};
+
 export type YtdlpProbeEpisode = {
   index: number;
   id: string;
@@ -187,6 +197,18 @@ export class YtdlpProvider implements OnModuleInit {
 
   async status() {
     const bin = await this.ensureReady();
+    const cookiesDir = this.cookiesDir();
+    let hostCookieFiles: string[] = [];
+    try {
+      if (fs.existsSync(cookiesDir)) {
+        hostCookieFiles = fs
+          .readdirSync(cookiesDir)
+          .filter((f) => f.endsWith('.txt') && !f.startsWith('.'));
+      }
+    } catch {
+      hostCookieFiles = [];
+    }
+    const globalCookies = this.globalCookiesFile();
     return {
       configured: !!bin,
       enabled: this.enabled(),
@@ -197,12 +219,20 @@ export class YtdlpProvider implements OnModuleInit {
       provider: 'yt-dlp',
       requiresApiKey: false,
       lastError: bin ? null : this.lastError,
+      auth: {
+        globalCookiesConfigured: !!globalCookies,
+        cookiesDir,
+        hostCookieFiles,
+        bearerConfigured: !!this.globalBearer(),
+        extraHeaders: this.globalHeaders().length,
+      },
     };
   }
 
-  async probe(url: string): Promise<YtdlpProbeResult> {
+  async probe(url: string, auth?: YtdlpAuthOverride): Promise<YtdlpProbeResult> {
     const pageUrl = await this.requireHttpUrl(url);
     const raw = await this.runJson([
+      ...this.authArgs(pageUrl, auth),
       '--dump-single-json',
       '--flat-playlist',
       '--no-download',
@@ -273,10 +303,18 @@ export class YtdlpProvider implements OnModuleInit {
     url: string,
     preference: YtdlpFormatPreference = 'best_hls',
     playlistIndex?: number,
+    auth?: YtdlpAuthOverride,
   ): Promise<string> {
     const pageUrl = await this.requireHttpUrl(url);
     const format = this.formatSelector(preference);
-    const args = ['-g', '-f', format, '--no-download', '--no-warnings'];
+    const args = [
+      ...this.authArgs(pageUrl, auth),
+      '-g',
+      '-f',
+      format,
+      '--no-download',
+      '--no-warnings',
+    ];
     if (playlistIndex && playlistIndex > 0) {
       args.push('--playlist-items', String(playlistIndex));
     } else {
@@ -309,6 +347,7 @@ export class YtdlpProvider implements OnModuleInit {
     outputDir: string,
     preference: YtdlpFormatPreference = 'best',
     playlistIndex?: number,
+    auth?: YtdlpAuthOverride,
   ): Promise<{ absPath: string; filename: string; size: number }> {
     const pageUrl = await this.requireHttpUrl(url);
     fs.mkdirSync(outputDir, { recursive: true });
@@ -316,6 +355,7 @@ export class YtdlpProvider implements OnModuleInit {
     const template = path.join(outputDir, `${stem}.%(ext)s`);
     const format = this.downloadFormatSelector(preference);
     const args = [
+      ...this.authArgs(pageUrl, auth),
       '-f',
       format,
       '-o',
@@ -379,6 +419,139 @@ export class YtdlpProvider implements OnModuleInit {
       .replace(/[^\w.-]+/g, '_')
       .slice(0, 80);
     return `ytdlp:${safeExt}:${safeId}`;
+  }
+
+  private cookiesDir() {
+    const configured = this.config.get<string>('YTDLP_COOKIES_DIR')?.trim();
+    const dir = configured
+      ? path.resolve(configured)
+      : path.join(this.storageRoot(), 'secrets', 'cookies');
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch {
+      /* ignore */
+    }
+    return dir;
+  }
+
+  private globalCookiesFile(): string | null {
+    const p = this.config.get<string>('YTDLP_COOKIES_FILE')?.trim();
+    if (!p) return null;
+    const abs = path.resolve(p);
+    return fs.existsSync(abs) && fs.statSync(abs).isFile() ? abs : null;
+  }
+
+  private globalBearer(): string | null {
+    const t = this.config.get<string>('YTDLP_AUTH_BEARER')?.trim();
+    return t || null;
+  }
+
+  private globalHeaders(): string[] {
+    const raw = this.config.get<string>('YTDLP_ADD_HEADERS')?.trim();
+    if (!raw) return [];
+    return raw
+      .split(/\r?\n|\|\|/)
+      .map((l) => l.trim())
+      .filter((l) => l.includes(':'));
+  }
+
+  /** Resolve Netscape cookies file for a page URL (override → host file → global). */
+  resolveCookiesFile(pageUrl: string, override?: YtdlpAuthOverride): string | null {
+    if (override?.cookiesFile?.trim()) {
+      return this.sanitizeCookiesPath(override.cookiesFile.trim());
+    }
+    try {
+      const host = new URL(pageUrl).hostname.toLowerCase();
+      const bare = host.replace(/^www\./, '');
+      const dir = this.cookiesDir();
+      for (const name of [`${host}.txt`, `${bare}.txt`]) {
+        const candidate = path.join(dir, name);
+        if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+      }
+    } catch {
+      /* ignore */
+    }
+    return this.globalCookiesFile();
+  }
+
+  private sanitizeCookiesPath(input: string): string {
+    const dir = path.resolve(this.cookiesDir());
+    const abs = path.isAbsolute(input)
+      ? path.resolve(input)
+      : path.resolve(dir, input);
+    const rel = path.relative(dir, abs);
+    if (rel.startsWith('..') || path.isAbsolute(rel)) {
+      throw new BizException(
+        BizCode.BAD_REQUEST,
+        `cookies 文件必须位于 ${dir} 目录内`,
+      );
+    }
+    if (!fs.existsSync(abs) || !fs.statSync(abs).isFile()) {
+      throw new BizException(BizCode.BAD_REQUEST, `cookies 文件不存在: ${path.basename(abs)}`);
+    }
+    return abs;
+  }
+
+  /** yt-dlp auth flags inserted before the URL argument. */
+  authArgs(pageUrl: string, override?: YtdlpAuthOverride): string[] {
+    const args: string[] = [];
+    const cookies = this.resolveCookiesFile(pageUrl, override);
+    if (cookies) {
+      args.push('--cookies', cookies);
+    }
+    const headers = [...this.globalHeaders(), ...(override?.headers || [])];
+    const bearer = override?.bearerToken?.trim() || this.globalBearer();
+    if (bearer) {
+      headers.push(`Authorization: Bearer ${bearer}`);
+    }
+    const seen = new Set<string>();
+    for (const h of headers) {
+      const line = String(h || '').trim();
+      if (!line.includes(':')) continue;
+      const key = line.slice(0, line.indexOf(':')).trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      args.push('--add-header', line);
+    }
+    return args;
+  }
+
+  /**
+   * Save a Netscape cookies.txt under cookies dir as `{hostname}.txt`.
+   * Hostname may be full host or bare domain (www. stripped for filename preference).
+   */
+  saveHostCookiesFile(opts: {
+    hostname: string;
+    content: Buffer | string;
+  }): { filename: string; absPath: string; bytes: number } {
+    const host = String(opts.hostname || '')
+      .trim()
+      .toLowerCase()
+      .replace(/^https?:\/\//, '')
+      .split('/')[0]
+      .replace(/:\d+$/, '');
+    if (!host || !/^[a-z0-9.-]+$/i.test(host)) {
+      throw new BizException(BizCode.BAD_REQUEST, '请填写合法域名，如 reelshort.com');
+    }
+    const bare = host.replace(/^www\./, '');
+    const filename = `${bare}.txt`;
+    const dir = this.cookiesDir();
+    const absPath = path.join(dir, filename);
+    const buf = Buffer.isBuffer(opts.content)
+      ? opts.content
+      : Buffer.from(String(opts.content), 'utf8');
+    if (buf.length < 8 || buf.length > 2 * 1024 * 1024) {
+      throw new BizException(BizCode.BAD_REQUEST, 'cookies 文件大小无效（8B–2MB）');
+    }
+    const text = buf.toString('utf8');
+    if (!/# Netscape|HTTP Cookie File|\t/i.test(text)) {
+      throw new BizException(
+        BizCode.BAD_REQUEST,
+        '请上传 Netscape 格式 cookies.txt（浏览器扩展导出）',
+      );
+    }
+    fs.writeFileSync(absPath, buf);
+    return { filename, absPath, bytes: buf.length };
   }
 
   private formatSelector(preference: YtdlpFormatPreference) {

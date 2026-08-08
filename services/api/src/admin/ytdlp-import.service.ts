@@ -11,7 +11,9 @@ import { UploadService } from '../upload/upload.service';
 import { AdminService } from './admin.service';
 import { AdminEpisodesService } from './episodes.service';
 import { inferExternalUrlExpiry } from './online-drama.util';
+import { LockAccessService } from '../common/lock-access.service';
 import {
+  YtdlpAuthOverride,
   YtdlpFormatPreference,
   YtdlpProvider,
 } from './ytdlp.provider';
@@ -25,6 +27,8 @@ export type YtdlpImportOptions = {
   status?: 'DRAFT';
   maxEpisodes?: number;
   formatPreference?: YtdlpFormatPreference;
+  cookiesFile?: string;
+  authBearer?: string;
 };
 
 export type YtdlpTransferOptions = YtdlpImportOptions & {
@@ -121,6 +125,7 @@ export class YtdlpImportService implements OnModuleInit {
     private readonly upload: UploadService,
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly lockAccess: LockAccessService,
   ) {}
 
   async onModuleInit() {
@@ -134,21 +139,37 @@ export class YtdlpImportService implements OnModuleInit {
     return this.provider.status();
   }
 
-  probe(url: string) {
-    return this.provider.probe(url);
+  saveCookies(hostname: string, content: Buffer | string) {
+    return this.provider.saveHostCookiesFile({ hostname, content });
+  }
+
+  probe(url: string, auth?: YtdlpAuthOverride) {
+    return this.provider.probe(url, auth);
   }
 
   resolve(
     url: string,
     formatPreference?: YtdlpFormatPreference,
     playlistIndex?: number,
+    auth?: YtdlpAuthOverride,
   ) {
     return this.provider
-      .resolvePlayUrl(url, formatPreference || 'best_hls', playlistIndex)
+      .resolvePlayUrl(url, formatPreference || 'best_hls', playlistIndex, auth)
       .then((playUrl) => ({
         playUrl,
         originalUrl: url,
       }));
+  }
+
+  private authFromOpts(opts?: {
+    cookiesFile?: string;
+    authBearer?: string;
+  }): YtdlpAuthOverride | undefined {
+    if (!opts?.cookiesFile?.trim() && !opts?.authBearer?.trim()) return undefined;
+    return {
+      cookiesFile: opts.cookiesFile?.trim() || undefined,
+      bearerToken: opts.authBearer?.trim() || undefined,
+    };
   }
 
   /**
@@ -160,6 +181,8 @@ export class YtdlpImportService implements OnModuleInit {
     formatPreference?: YtdlpFormatPreference;
     playlistIndex?: number;
     filenameHint?: string;
+    cookiesFile?: string;
+    authBearer?: string;
   }): Promise<{ absPath: string; filename: string; size: number; mime: string }> {
     const pageUrl = String(opts.url || '').trim();
     if (!pageUrl) throw new BizException(BizCode.BAD_REQUEST, '请填写公开视频页链接');
@@ -178,6 +201,7 @@ export class YtdlpImportService implements OnModuleInit {
       tmpDir,
       pref,
       opts.playlistIndex,
+      this.authFromOpts(opts),
     );
 
     const ext = path.extname(downloaded.absPath) || '.mp4';
@@ -222,7 +246,8 @@ export class YtdlpImportService implements OnModuleInit {
     const categorySlug = String(opts.categorySlug || '').trim();
     if (!categorySlug) throw new BizException(BizCode.BAD_REQUEST, '请选择分类');
 
-    const probe = await this.provider.probe(pageUrl);
+    const auth = this.authFromOpts(opts);
+    const probe = await this.provider.probe(pageUrl, auth);
     const externalRef = this.provider.externalRefFor(
       probe.webpageUrl,
       probe.extractor,
@@ -269,17 +294,19 @@ export class YtdlpImportService implements OnModuleInit {
           ep.webpageUrl,
           preference,
           ep.playlistIndex,
+          auth,
         );
         // Consecutive 1..n so partial resolve failures do not leave publish gaps.
+        const episodeNumber = episodes.length + 1;
         episodes.push({
-          episodeNumber: episodes.length + 1,
-          title: ep.title || `第 ${episodes.length + 1} 集`,
+          episodeNumber,
+          title: ep.title || `第 ${episodeNumber} 集`,
           sourceUrl: playUrl,
           sourcePageUrl: ep.webpageUrl,
           sourceProvider: probe.extractor,
           externalVideoId: ep.id,
           playlistIndex: ep.playlistIndex,
-          isFree: true,
+          isFree: episodeNumber <= 3,
         });
       } catch (e: any) {
         this.logger.warn(`resolve ep ${ep.index} failed: ${e?.message || e}`);
@@ -307,8 +334,8 @@ export class YtdlpImportService implements OnModuleInit {
         descriptionEn: probe.description || undefined,
         categorySlug,
         coverUrl: probe.coverUrl,
-        lockMode: 'ALL_FREE',
-        freeEpisodeCount: episodes.length,
+        lockMode: 'FREE_FIRST_N',
+        freeEpisodeCount: 3,
         // 拉取的第三方内容必须先完成来源/可播审核，不允许直接上线。
         status: 'DRAFT',
         externalRef,
@@ -332,7 +359,10 @@ export class YtdlpImportService implements OnModuleInit {
   /** 将公开页面/播放列表解析后追加到已有草稿作品，并按外部视频 ID 去重。 */
   async appendToDrama(
     dramaId: string,
-    opts: Pick<YtdlpImportOptions, 'url' | 'maxEpisodes' | 'formatPreference'>,
+    opts: Pick<
+      YtdlpImportOptions,
+      'url' | 'maxEpisodes' | 'formatPreference' | 'cookiesFile' | 'authBearer'
+    >,
     actorId?: bigint,
   ) {
     const drama = await this.prisma.drama.findUnique({ where: { id: BigInt(dramaId) } });
@@ -346,7 +376,8 @@ export class YtdlpImportService implements OnModuleInit {
     if (drama.status !== 'DRAFT' && drama.status !== 'REJECTED' && drama.status !== 'OFFLINE') {
       throw new BizException(BizCode.CONFLICT, '审核中或已上线作品不能追加公开资源');
     }
-    const probe = await this.provider.probe(opts.url);
+    const auth = this.authFromOpts(opts);
+    const probe = await this.provider.probe(opts.url, auth);
     const limit = opts.maxEpisodes && opts.maxEpisodes > 0
       ? Math.min(Math.floor(opts.maxEpisodes), probe.episodes.length)
       : probe.episodes.length;
@@ -359,6 +390,12 @@ export class YtdlpImportService implements OnModuleInit {
     const added: Array<{ id: string; episodeNumber: number; title?: string }> = [];
     const skipped: Array<{ externalVideoId: string; reason: string }> = [];
     const errors: Array<{ externalVideoId: string; error: string }> = [];
+    const policy = await this.lockAccess.resolveForDrama(drama);
+    const maxAgg = await this.prisma.episode.aggregate({
+      where: { dramaId: drama.id },
+      _max: { episodeNumber: true },
+    });
+    let nextNumber = (maxAgg._max.episodeNumber ?? 0) + 1;
 
     for (const source of selected) {
       if (seen.has(source.id)) {
@@ -370,17 +407,25 @@ export class YtdlpImportService implements OnModuleInit {
           source.webpageUrl,
           opts.formatPreference || 'best_hls',
           source.playlistIndex,
+          auth,
+        );
+        const isFree = this.lockAccess.isFree(
+          { isFree: false, episodeNumber: nextNumber },
+          policy,
         );
         const created = await this.episodes.create(
           dramaId,
           {
             title: source.title,
-            isFree: true,
+            episodeNumber: nextNumber,
+            isFree,
+            priceCredits: isFree ? 0 : 10,
             hlsUrl: playUrl,
             originalUrl: playUrl,
           },
           actorId,
         );
+        nextNumber += 1;
         await this.prisma.episode.update({
           where: { id: BigInt(created.id) },
           data: {
@@ -431,7 +476,8 @@ export class YtdlpImportService implements OnModuleInit {
       );
     }
 
-    const probe = await this.provider.probe(pageUrl);
+    const auth = this.authFromOpts(opts);
+    const probe = await this.provider.probe(pageUrl, auth);
     const externalRef = this.provider.externalRefFor(
       probe.webpageUrl,
       probe.extractor,

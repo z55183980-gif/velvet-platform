@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   adminForceLogout,
@@ -305,7 +305,7 @@ function UserEditModal({
   useEffect(() => {
     if (!user) return;
     setTargetStatus(asUserStatus(user.status));
-  }, [user?.id, user?.status]);
+  }, [user]);
 
   const actionMut = useMutation({
     mutationFn: async ({ run, ok }: { run: () => Promise<unknown>; ok: string }) => {
@@ -782,11 +782,11 @@ export default function AdminUsersPage() {
   });
 
   const totalPages = Math.max(1, Math.ceil((data?.total ?? 0) / pageSize));
-  const goToPage = (nextPage: number) => {
+  const goToPage = useCallback((nextPage: number) => {
     const next = Math.min(totalPages, Math.max(1, Math.floor(nextPage)));
     setPage(next);
     setApplied((prev) => ({ ...prev, page: next }));
-  };
+  }, [totalPages]);
   const applyFiltersNow = () => {
     const trimmed = q.trim();
     setPage(1);
@@ -806,7 +806,7 @@ export default function AdminUsersPage() {
   useEffect(() => {
     if (isFetching || !data || page <= totalPages) return;
     goToPage(totalPages);
-  }, [data, isFetching, page, totalPages]);
+  }, [data, goToPage, isFetching, page, totalPages]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);

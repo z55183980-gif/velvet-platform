@@ -393,11 +393,14 @@ export function VerticalPlayer({
     [onSeekingChange],
   );
 
-  const seekToRatio = (ratio: number) => {
-    const v = videoRef.current;
-    if (!v || !duration) return;
-    v.currentTime = Math.max(0, Math.min(duration, ratio * duration));
-  };
+  const seekToRatio = useCallback(
+    (ratio: number) => {
+      const v = videoRef.current;
+      if (!v || !duration) return;
+      v.currentTime = Math.max(0, Math.min(duration, ratio * duration));
+    },
+    [duration, videoRef],
+  );
 
   const ratioFromEvent = (clientX: number) => {
     const el = seekRef.current;
@@ -418,7 +421,7 @@ export function VerticalPlayer({
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
     };
-  }, [dragging, duration, setSeeking]);
+  }, [dragging, seekToRatio, setSeeking]);
 
   // Always clear parent gesture lock on unmount / callback swap.
   useEffect(() => {

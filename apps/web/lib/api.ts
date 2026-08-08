@@ -379,6 +379,8 @@ export type HomeBanner = {
   imageUrl: string;
   linkUrl?: string | null;
   dramaId?: string | null;
+  focusX?: number;
+  focusY?: number;
   sortOrder?: number;
 };
 
@@ -396,6 +398,8 @@ export async function loadBanners(opts?: { signal?: AbortSignal }): Promise<Home
           imageUrl: b.imageUrl || "",
           linkUrl: b.linkUrl || null,
           dramaId: b.dramaId != null ? String(b.dramaId) : null,
+          focusX: b.focusX != null ? Number(b.focusX) : undefined,
+          focusY: b.focusY != null ? Number(b.focusY) : undefined,
           sortOrder: b.sortOrder ?? 0,
         }));
       } catch (err) {

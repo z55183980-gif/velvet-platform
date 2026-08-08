@@ -7,6 +7,7 @@ import { ConfigService } from '@nestjs/config';
 import { rewriteSignedPlaylist, verifyMediaSig } from '../common/media-sign.util';
 import { requireSecret } from '../common/security-config';
 import { SKIP_ALL_THROTTLES } from '../common/throttler-config';
+import { parseSingleByteRange } from '../common/http-range.util';
 
 const MIME: Record<string, string> = {
   '.mp4': 'video/mp4',
@@ -150,13 +151,16 @@ export class MediaController {
     const range = req.headers.range as string | undefined;
     res.setHeader('Accept-Ranges', 'bytes');
 
-    if (range) {
-      const m = /bytes=(\d*)-(\d*)/.exec(range);
-      let start = m && m[1] ? parseInt(m[1], 10) : 0;
-      let end = m && m[2] ? parseInt(m[2], 10) : stat.size - 1;
-      if (isNaN(start) || isNaN(end) || start > end || end >= stat.size) {
-        end = stat.size - 1;
-      }
+    const parsedRange = parseSingleByteRange(range, stat.size);
+    if (parsedRange.kind === 'invalid') {
+      res.status(416);
+      res.setHeader('Content-Range', `bytes */${stat.size}`);
+      res.setHeader('Content-Length', '0');
+      res.end();
+      return;
+    }
+    if (parsedRange.kind === 'range') {
+      const { start, end } = parsedRange;
       res.status(206);
       res.setHeader('Content-Range', `bytes ${start}-${end}/${stat.size}`);
       res.setHeader('Content-Length', end - start + 1);

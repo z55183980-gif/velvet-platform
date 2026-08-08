@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { BizException, BizCode } from '../common/biz.exception';
 import { AuditService } from '../common/audit.service';
+import { LockAccessService } from '../common/lock-access.service';
 import { toBigInt } from '../common/money.util';
 
 @Injectable()
@@ -9,6 +10,7 @@ export class AdminOpsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly lockAccess: LockAccessService,
   ) {}
 
   async summary(from?: string, to?: string) {
@@ -187,6 +189,17 @@ export class AdminOpsService {
         episodesUpdated = r.count;
       }
     });
+
+    if (dto.lockMode !== undefined || dto.freeEpisodeCount != null) {
+      let synced = 0;
+      for (const id of ids) {
+        synced += await this.lockAccess.syncEpisodeAccessFlags(id, {
+          paidCredits: dto.priceCredits != null ? toBigInt(dto.priceCredits) : undefined,
+          paidVnd: dto.priceCredits != null ? toBigInt(dto.priceCredits) : undefined,
+        });
+      }
+      episodesUpdated = Math.max(episodesUpdated, synced);
+    }
 
     await this.audit.write({
       actorId,

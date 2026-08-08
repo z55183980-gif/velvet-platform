@@ -6,6 +6,7 @@ import { ChevronDown, Play } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { categoryName, type Drama } from "@/lib/mock-data";
 import { pickContentText, pickTitleText, type Locale } from "@/lib/languages";
+import { heroObjectPosition } from "@/lib/hero-crop";
 import { cn } from "@/lib/utils";
 
 function isImg(s: string) {
@@ -13,6 +14,9 @@ function isImg(s: string) {
 }
 
 const AUTO_MS = 5500;
+
+/** banner = landscape promo art; poster = vertical drama coverUrl */
+export type HeroCoverKind = "banner" | "poster";
 
 export type HeroSlide = {
   id: string;
@@ -23,6 +27,10 @@ export type HeroSlide = {
   cover: [string, string];
   href: string;
   tags?: string[];
+  coverKind?: HeroCoverKind;
+  /** PC Hero object-position percent within fixed crop frame */
+  focusX?: number;
+  focusY?: number;
 };
 
 function dramaTags(drama: Drama, locale: Locale, t: (k: string) => string): string[] {
@@ -48,6 +56,7 @@ export function dramaToHeroSlide(
     cover: drama.cover,
     href: `/drama/${drama.id}`,
     tags: dramaTags(drama, locale, t),
+    coverKind: "poster",
   };
 }
 
@@ -96,6 +105,7 @@ export function Hero({ slides }: { slides: HeroSlide[] }) {
   const desc = pickContentText(locale, current.descEn || "", current.descZh || "");
   const tags = current.tags ?? [];
   const cover = current.cover[0];
+  const objectPos = heroObjectPosition(current.focusX, current.focusY);
 
   const onTouchStart = (e: React.TouchEvent) => {
     touchX.current = e.touches[0]?.clientX ?? null;
@@ -116,14 +126,48 @@ export function Hero({ slides }: { slides: HeroSlide[] }) {
       onTouchStart={onTouchStart}
       onTouchEnd={onTouchEnd}
     >
-      <div className="absolute inset-0" key={fadeKey}>
+      <div className="absolute inset-0 bg-black" key={fadeKey}>
         {isImg(cover) ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={cover}
-            alt=""
-            className="h-full w-full object-cover object-[center_20%] opacity-0 [animation:hero-fade_0.55s_var(--ease-out)_forwards,hero-ken_16s_ease-out_forwards]"
-          />
+          <>
+            {/* Mobile: full-bleed cover */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={cover}
+              alt=""
+              className="h-full w-full object-cover opacity-0 md:hidden [animation:hero-fade_0.55s_var(--ease-out)_forwards,hero-ken_16s_ease-out_forwards]"
+              style={{ objectPosition: objectPos }}
+            />
+            {/* Desktop ambient — same soft wash for any source ratio */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={cover}
+              alt=""
+              aria-hidden
+              className="pointer-events-none absolute inset-0 hidden scale-110 object-cover opacity-[0.18] blur-3xl md:block [mask-image:linear-gradient(90deg,transparent_0%,transparent_35%,#000_62%)] [-webkit-mask-image:linear-gradient(90deg,transparent_0%,transparent_35%,#000_62%)]"
+              style={{ objectPosition: objectPos }}
+            />
+            <div
+              aria-hidden
+              className="pointer-events-none absolute right-[12%] top-[16%] hidden h-[58%] w-[46%] rounded-full md:block"
+              style={{
+                background:
+                  "radial-gradient(circle, transparent 42%, rgba(212,160,70,0.22) 52%, rgba(212,160,70,0.08) 62%, transparent 72%)",
+                filter: "blur(2px)",
+              }}
+            />
+            {/* Desktop: fixed-ratio soft window; position from banner focusX/Y */}
+            <div
+              className="absolute bottom-[4%] right-0 top-[2%] hidden w-[min(74%,1200px)] overflow-hidden opacity-0 md:block [animation:hero-fade_0.55s_var(--ease-out)_forwards] [mask-image:radial-gradient(ellipse_68%_78%_at_58%_40%,#000_22%,transparent_72%)] [-webkit-mask-image:radial-gradient(ellipse_68%_78%_at_58%_40%,#000_22%,transparent_72%)]"
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={cover}
+                alt=""
+                className="h-full w-full object-cover [animation:hero-ken_16s_ease-out_forwards]"
+                style={{ objectPosition: objectPos }}
+              />
+            </div>
+          </>
         ) : (
           <div
             className="h-full w-full animate-[hero-fade_0.55s_var(--ease-out)_both]"
@@ -132,19 +176,12 @@ export function Hero({ slides }: { slides: HeroSlide[] }) {
             }}
           />
         )}
+        {/* Left text lane + bottom/top vignette */}
         <div
           className="absolute inset-0"
           style={{
             background:
-              "linear-gradient(90deg, rgba(0,0,0,0.88) 0%, rgba(0,0,0,0.55) 38%, rgba(0,0,0,0.2) 62%, transparent 82%), linear-gradient(0deg, #000 0%, rgba(0,0,0,0.55) 18%, transparent 48%), linear-gradient(180deg, rgba(0,0,0,0.45) 0%, transparent 18%)",
-          }}
-        />
-        <div
-          className="pointer-events-none absolute right-[8%] top-[18%] h-[55%] w-[42%] rounded-full opacity-40 blur-3xl"
-          style={{
-            background: isImg(cover)
-              ? "radial-gradient(circle, rgba(255,180,60,0.35), transparent 70%)"
-              : `radial-gradient(circle, ${current.cover[1]}66, transparent 70%)`,
+              "linear-gradient(90deg, #000 0%, #000 22%, rgba(0,0,0,0.72) 36%, rgba(0,0,0,0.28) 52%, rgba(0,0,0,0.06) 68%, transparent 82%), linear-gradient(0deg, #000 0%, rgba(0,0,0,0.7) 12%, transparent 38%), linear-gradient(180deg, rgba(0,0,0,0.55) 0%, transparent 16%)",
           }}
         />
       </div>

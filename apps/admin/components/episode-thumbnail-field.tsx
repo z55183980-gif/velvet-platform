@@ -82,6 +82,8 @@ export function EpisodeThumbnailField({
         {busy ? (
           <LoaderCircle className="h-4 w-4 animate-spin text-brand" />
         ) : url ? (
+          // Signed API/blob previews intentionally bypass Next image optimization.
+          // eslint-disable-next-line @next/next/no-img-element
           <img src={url} alt="" />
         ) : (
           <ImageIcon className="h-4 w-4 text-ink-subtle" />

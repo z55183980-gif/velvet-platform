@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import {
   adminStorageStatus,
@@ -8,6 +8,7 @@ import {
   adminYtdlpProbe,
   adminYtdlpResolve,
   adminYtdlpStatus,
+  adminYtdlpUploadCookies,
 } from "@velvet/api-client";
 import { Button, Input, Select } from "@velvet/ui";
 import { StreamPreview } from "@/components/stream-preview";
@@ -23,6 +24,14 @@ type ProbeResult = Awaited<ReturnType<typeof adminYtdlpProbe>>;
 type FormatPreference = "best_hls" | "best_mp4" | "best";
 type IngestTab = "parse" | "manual";
 
+function guessHostnameFromUrl(raw: string): string {
+  try {
+    return new URL(raw.trim()).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+}
+
 /**
  * 在线资源准备：公开页解析或手动粘贴直链。
  * 不在弹窗内创建剧集；把信息与片源配置回填主窗口，由主窗口统一提交。
@@ -37,6 +46,7 @@ export function YtdlpImportPanel({
   onFillDramaInfo?: (payload: DramaInfoFillPayload) => void;
 } = {}) {
   const { t } = useI18n();
+  const qc = useQueryClient();
   const [ingestTab, setIngestTab] = useState<IngestTab>("parse");
   const [ingestForm, setIngestForm] = useState<OnlineIngestForm>("r2");
   const [manualDirty, setManualDirty] = useState(false);
@@ -46,6 +56,11 @@ export function YtdlpImportPanel({
   const [formatPreference, setFormatPreference] = useState<FormatPreference>("best_hls");
   const [error, setError] = useState<string | null>(null);
   const [engineOpen, setEngineOpen] = useState(false);
+  const [authOpen, setAuthOpen] = useState(false);
+  const [cookiesFile, setCookiesFile] = useState("");
+  const [authBearer, setAuthBearer] = useState("");
+  const [cookieHost, setCookieHost] = useState("");
+  const [cookieUploadBusy, setCookieUploadBusy] = useState(false);
   const [previewEpIndex, setPreviewEpIndex] = useState<number | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [filled, setFilled] = useState(false);
@@ -139,6 +154,13 @@ export function YtdlpImportPanel({
     clearDirtyForNav();
   }
 
+  function authPayload() {
+    const file = cookiesFile.trim() || undefined;
+    const bearer = authBearer.trim() || undefined;
+    if (!file && !bearer) return undefined;
+    return { cookiesFile: file, authBearer: bearer };
+  }
+
   async function downloadEpisode(ep: ProbeResult["episodes"][number]) {
     setError(null);
     setDownloadingEpIndex(ep.index);
@@ -150,6 +172,7 @@ export function YtdlpImportPanel({
           formatPreference === "best_hls" ? "best_mp4" : formatPreference,
         playlistIndex: ep.playlistIndex,
         filenameHint: `${String(ep.index).padStart(2, "0")}-${title}`,
+        ...authPayload(),
       });
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : String(e));
@@ -162,7 +185,7 @@ export function YtdlpImportPanel({
     mutationFn: () => {
       const u = url.trim();
       if (!u) throw new Error(t("ytdlpNeedUrl"));
-      return adminYtdlpProbe(u);
+      return adminYtdlpProbe(u, authPayload());
     },
     onSuccess: (data) => {
       setError(null);
@@ -186,6 +209,7 @@ export function YtdlpImportPanel({
         url: ep.webpageUrl,
         formatPreference,
         playlistIndex: ep.playlistIndex,
+        ...authPayload(),
       }),
     onSuccess: (data, ep) => {
       setError(null);
@@ -195,11 +219,47 @@ export function YtdlpImportPanel({
     onError: (e: Error) => setError(e.message),
   });
 
+  async function onCookieFilePicked(file: File | null) {
+    if (!file) return;
+    const host =
+      cookieHost.trim() ||
+      guessHostnameFromUrl(url) ||
+      file.name.replace(/\.txt$/i, "").trim();
+    if (!host) {
+      setError(t("ytdlpAuthNeedHostname"));
+      return;
+    }
+    setCookieUploadBusy(true);
+    setError(null);
+    try {
+      const saved = await adminYtdlpUploadCookies(file, host);
+      setCookiesFile(saved.filename);
+      setCookieHost(host.replace(/^www\./, ""));
+      setAuthOpen(true);
+      await qc.invalidateQueries({ queryKey: ["admin", "ytdlp", "status"] });
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCookieUploadBusy(false);
+    }
+  }
+
   const configured = !!statusQ.data?.configured;
+  const authInfo = statusQ.data?.auth;
+  const hostCookieFiles = authInfo?.hostCookieFiles ?? [];
+  const authReady =
+    !!cookiesFile.trim() ||
+    !!authBearer.trim() ||
+    !!authInfo?.globalCookiesConfigured ||
+    !!authInfo?.bearerConfigured ||
+    hostCookieFiles.length > 0;
   const r2Ready = !!storageQ.data?.r2Configured;
   const ffmpegReady = storageQ.data?.ffmpegReady !== false;
   const busy =
-    probeMut.isPending || resolveMut.isPending || downloadingEpIndex != null;
+    probeMut.isPending ||
+    resolveMut.isPending ||
+    downloadingEpIndex != null ||
+    cookieUploadBusy;
   const activePreviewSrc = previewUrl;
   const showEmpty = !probe && !error && !probeMut.isPending;
 
@@ -287,6 +347,119 @@ export function YtdlpImportPanel({
                 {t("ytdlpNoApiKey")}
               </p>
             ) : null}
+
+            <div className="rounded-lg border border-line/70 bg-surface-2/40 px-3 py-2.5 space-y-2">
+              <button
+                type="button"
+                className="flex w-full items-center justify-between gap-2 text-left"
+                onClick={() => setAuthOpen((v) => !v)}
+                aria-expanded={authOpen}
+              >
+                <span className="inline-flex items-center gap-2 text-body-sm font-medium text-ink">
+                  {t("ytdlpAuthTitle")}
+                  <span
+                    className="inline-block h-1.5 w-1.5 rounded-full"
+                    style={{
+                      background: authReady
+                        ? "var(--color-success)"
+                        : "var(--color-ink-subtle)",
+                    }}
+                    aria-hidden
+                  />
+                  <span className="text-caption font-normal text-ink-muted">
+                    {authReady ? t("ytdlpAuthReady") : t("ytdlpAuthOptional")}
+                  </span>
+                </span>
+                <span className="text-ink-subtle" aria-hidden>
+                  {authOpen ? "▾" : "▸"}
+                </span>
+              </button>
+              {!authOpen ? (
+                <p className="text-caption text-ink-muted">{t("ytdlpAuthHint")}</p>
+              ) : (
+                <div className="space-y-3 border-t border-line/50 pt-2.5">
+                  <p className="text-caption text-ink-muted">{t("ytdlpAuthHint")}</p>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <label className="space-y-1 text-caption text-ink-muted">
+                      <span>{t("ytdlpAuthCookiesSelect")}</span>
+                      <Select
+                        value={cookiesFile}
+                        disabled={!configured || busy}
+                        onChange={(e) => setCookiesFile(e.target.value)}
+                      >
+                        <option value="">{t("ytdlpAuthCookiesAuto")}</option>
+                        {hostCookieFiles.map((f) => (
+                          <option key={f} value={f}>
+                            {f}
+                          </option>
+                        ))}
+                        {cookiesFile && !hostCookieFiles.includes(cookiesFile) ? (
+                          <option value={cookiesFile}>{cookiesFile}</option>
+                        ) : null}
+                      </Select>
+                    </label>
+                    <label className="space-y-1 text-caption text-ink-muted">
+                      <span>{t("ytdlpAuthBearer")}</span>
+                      <Input
+                        type="password"
+                        autoComplete="off"
+                        placeholder="Bearer token"
+                        value={authBearer}
+                        disabled={!configured || busy}
+                        onChange={(e) => setAuthBearer(e.target.value)}
+                      />
+                    </label>
+                  </div>
+                  <div className="flex flex-wrap items-end gap-2">
+                    <label className="min-w-[10rem] flex-1 space-y-1 text-caption text-ink-muted">
+                      <span>{t("ytdlpAuthHostname")}</span>
+                      <Input
+                        placeholder="reelshort.com"
+                        value={cookieHost}
+                        disabled={!configured || busy}
+                        onChange={(e) => setCookieHost(e.target.value)}
+                        onFocus={() => {
+                          if (!cookieHost.trim() && url.trim()) {
+                            setCookieHost(guessHostnameFromUrl(url));
+                          }
+                        }}
+                      />
+                    </label>
+                    <label className="inline-flex cursor-pointer items-center">
+                      <input
+                        type="file"
+                        accept=".txt,text/plain"
+                        className="hidden"
+                        disabled={!configured || busy}
+                        onChange={(e) => {
+                          const f = e.target.files?.[0] || null;
+                          void onCookieFilePicked(f);
+                          e.target.value = "";
+                        }}
+                      />
+                      <span className="inline-flex h-9 items-center rounded-md border border-line bg-white px-3 text-body-sm text-ink hover:bg-surface-2">
+                        {cookieUploadBusy
+                          ? t("ytdlpAuthUploading")
+                          : t("ytdlpAuthUpload")}
+                      </span>
+                    </label>
+                  </div>
+                  {authInfo ? (
+                    <p className="break-all text-caption text-ink-subtle">
+                      {t("ytdlpAuthStatusLine", {
+                        cookies: authInfo.globalCookiesConfigured
+                          ? t("ytdlpAuthYes")
+                          : t("ytdlpAuthNo"),
+                        bearer: authInfo.bearerConfigured
+                          ? t("ytdlpAuthYes")
+                          : t("ytdlpAuthNo"),
+                        files: String(hostCookieFiles.length),
+                      })}
+                    </p>
+                  ) : null}
+                </div>
+              )}
+            </div>
 
             <div className="flex flex-wrap items-end gap-2">
               <Input

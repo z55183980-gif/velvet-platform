@@ -34,6 +34,13 @@ import { memoryStorage } from 'multer';
 import { BizCode, BizException } from '../common/biz.exception';
 import { ok } from '../common/response';
 import { UploadService } from '../upload/upload.service';
+import {
+  cleanupMultipartFiles,
+  multipartDiskStorage,
+  videoDiskStorage,
+  videoFileFilter,
+  VIDEO_UPLOAD_MAX_BYTES,
+} from '../upload/multer-options';
 import { AdminRoleGuard, AdminRoles } from './admin-role.guard';
 import { AdminGuard } from './admin.guard';
 import { AdminService } from './admin.service';
@@ -41,9 +48,15 @@ import { ContentService } from './content.service';
 import { AdminEpisodesService } from './episodes.service';
 import { AdminOpsService } from './ops.service';
 import { YtdlpImportService } from './ytdlp-import.service';
+import { OpenaiService } from '../common/openai.service';
 
 function getActor(req: any): bigint | undefined {
   return req?.adminId as bigint | undefined;
+}
+
+class TranslateTitlesDto {
+  @IsOptional() @IsString() titleZh?: string;
+  @IsOptional() @IsString() titleEn?: string;
 }
 
 class ReasonDto {
@@ -95,6 +108,9 @@ class BannerDto {
   @IsNotEmpty() @IsString() startAt!: string;
   @IsNotEmpty() @IsString() endAt!: string;
   @IsOptional() @Type(() => Number) @IsNumber() sortOrder?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() focusX?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() focusY?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() focusZoom?: number;
   @IsOptional()
   @Transform(({ value }) => value === true || value === 'true' || value === 1)
   @IsBoolean()
@@ -283,18 +299,25 @@ class CreateLocalUploadDramaDto {
   @IsOptional() @Type(() => Number) @IsNumber() @Min(1) totalEpisodes?: number;
 }
 
-class YtdlpProbeDto {
+class YtdlpAuthFields {
+  /** Basename or path under STORAGE_ROOT/secrets/cookies (e.g. reelshort.com.txt) */
+  @IsOptional() @IsString() cookiesFile?: string;
+  /** Optional Bearer token → Authorization header */
+  @IsOptional() @IsString() authBearer?: string;
+}
+
+class YtdlpProbeDto extends YtdlpAuthFields {
   @IsNotEmpty() @IsString() url!: string;
 }
 
-class YtdlpResolveDto {
+class YtdlpResolveDto extends YtdlpAuthFields {
   @IsNotEmpty() @IsString() url!: string;
   @IsOptional() @IsIn(['best_hls', 'best_mp4', 'best'])
   formatPreference?: 'best_hls' | 'best_mp4' | 'best';
   @IsOptional() @Type(() => Number) @IsNumber() @Min(1) playlistIndex?: number;
 }
 
-class YtdlpBrowserDownloadDto {
+class YtdlpBrowserDownloadDto extends YtdlpAuthFields {
   @IsNotEmpty() @IsString() url!: string;
   @IsOptional() @IsIn(['best_hls', 'best_mp4', 'best'])
   formatPreference?: 'best_hls' | 'best_mp4' | 'best';
@@ -303,7 +326,7 @@ class YtdlpBrowserDownloadDto {
   @IsOptional() @IsString() filenameHint?: string;
 }
 
-class YtdlpImportDto {
+class YtdlpImportDto extends YtdlpAuthFields {
   @IsNotEmpty() @IsString() url!: string;
   @IsNotEmpty() @IsString() categorySlug!: string;
   @IsOptional() @IsString() titleZh?: string;
@@ -313,7 +336,7 @@ class YtdlpImportDto {
   formatPreference?: 'best_hls' | 'best_mp4' | 'best';
 }
 
-class YtdlpTransferDto {
+class YtdlpTransferDto extends YtdlpAuthFields {
   @IsNotEmpty() @IsString() url!: string;
   @IsNotEmpty() @IsString() categorySlug!: string;
   @IsNotEmpty() @IsIn(['local', 'r2'])
@@ -325,7 +348,7 @@ class YtdlpTransferDto {
   formatPreference?: 'best_hls' | 'best_mp4' | 'best';
 }
 
-class YtdlpAppendDto {
+class YtdlpAppendDto extends YtdlpAuthFields {
   @IsNotEmpty() @IsString() url!: string;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(1) maxEpisodes?: number;
   @IsOptional() @IsIn(['best_hls', 'best_mp4', 'best'])
@@ -342,7 +365,15 @@ export class ContentController {
     private readonly ops: AdminOpsService,
     private readonly ytdlp: YtdlpImportService,
     private readonly upload: UploadService,
+    private readonly openai: OpenaiService,
   ) {}
+
+  /** 用 OpenAI 补全缺失的中/英标题（只填空侧，不覆盖已有）。 */
+  @Post('translate/titles')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async translateTitles(@Body() dto: TranslateTitlesDto) {
+    return ok(await this.openai.completeTitles(dto));
+  }
 
   /** 管理端封面/缩略图上传 → 实例 STORAGE_ROOT/covers，返回 /api/v1/media/... */
   @Post('upload/image')
@@ -457,8 +488,9 @@ export class ContentController {
   @AdminRoles('SUPER_ADMIN', 'OPS')
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: memoryStorage(),
-      limits: { fileSize: 512 * 1024 * 1024 },
+      storage: videoDiskStorage,
+      fileFilter: videoFileFilter,
+      limits: { fileSize: VIDEO_UPLOAD_MAX_BYTES },
     }),
   )
   async uploadEpisodeVideo(
@@ -466,7 +498,11 @@ export class ContentController {
     @UploadedFile() file: Express.Multer.File,
     @Req() req: any,
   ) {
-    return ok(await this.episodes.uploadVideo(id, file, getActor(req)));
+    try {
+      return ok(await this.episodes.uploadVideo(id, file, getActor(req)));
+    } finally {
+      cleanupMultipartFiles(file);
+    }
   }
 
   /** 新建分集并上传视频（可无播放 URL） */
@@ -474,8 +510,9 @@ export class ContentController {
   @AdminRoles('SUPER_ADMIN', 'OPS')
   @UseInterceptors(
     FileInterceptor('file', {
-      storage: memoryStorage(),
-      limits: { fileSize: 512 * 1024 * 1024 },
+      storage: videoDiskStorage,
+      fileFilter: videoFileFilter,
+      limits: { fileSize: VIDEO_UPLOAD_MAX_BYTES },
     }),
   )
   async createEpisodeWithUpload(
@@ -492,21 +529,25 @@ export class ContentController {
     },
     @Req() req: any,
   ) {
-    return ok(
-      await this.episodes.createWithUpload(
-        id,
-        file,
-        {
-          title: body?.title,
-          episodeNumber: body?.episodeNumber != null ? Number(body.episodeNumber) : undefined,
-          isFree: body?.isFree === true || body?.isFree === 'true' || body?.isFree === '1',
-          previewSeconds: body?.previewSeconds != null ? Number(body.previewSeconds) : undefined,
-          priceCredits: body?.priceCredits != null ? Number(body.priceCredits) : undefined,
-          thumbnailUrl: body?.thumbnailUrl,
-        },
-        getActor(req),
-      ),
-    );
+    try {
+      return ok(
+        await this.episodes.createWithUpload(
+          id,
+          file,
+          {
+            title: body?.title,
+            episodeNumber: body?.episodeNumber != null ? Number(body.episodeNumber) : undefined,
+            isFree: body?.isFree === true || body?.isFree === 'true' || body?.isFree === '1',
+            previewSeconds: body?.previewSeconds != null ? Number(body.previewSeconds) : undefined,
+            priceCredits: body?.priceCredits != null ? Number(body.priceCredits) : undefined,
+            thumbnailUrl: body?.thumbnailUrl,
+          },
+          getActor(req),
+        ),
+      );
+    } finally {
+      cleanupMultipartFiles(file);
+    }
   }
 
   @Post('episodes/:id/media/purge')
@@ -605,8 +646,9 @@ export class ContentController {
   @AdminRoles('SUPER_ADMIN', 'OPS')
   @UseInterceptors(
     FilesInterceptor('files', 30, {
-      storage: memoryStorage(),
-      limits: { fileSize: 512 * 1024 * 1024, files: 30 },
+      storage: videoDiskStorage,
+      fileFilter: videoFileFilter,
+      limits: { fileSize: VIDEO_UPLOAD_MAX_BYTES, files: 30 },
     }),
   )
   async createUploadDramaWithFiles(
@@ -627,64 +669,68 @@ export class ContentController {
     },
     @Req() req: any,
   ) {
-    if (!files?.length) {
-      throw new BizException(BizCode.BAD_REQUEST, '请至少上传一个视频文件');
-    }
-    const drama = await this.admin.createLocalUploadDrama(
-      {
-        titleZh: body.titleZh || '',
-        titleEn: body.titleEn,
-        slug: body.slug,
-        descriptionZh: body.descriptionZh,
-        categorySlug: body.categorySlug || '',
-        coverUrl: body.coverUrl,
-        freeEpisodeCount:
-          body.freeEpisodeCount != null ? Number(body.freeEpisodeCount) : undefined,
-        lockMode: body.lockMode as any,
-        // 与 createLocalUploadDrama 一致：创建强制草稿
-        status: 'DRAFT',
-      },
-      getActor(req),
-    );
-    const sorted = [...files].sort((a, b) =>
-      String(a.originalname).localeCompare(String(b.originalname), undefined, {
-        numeric: true,
-        sensitivity: 'base',
-      }),
-    );
-    const isFree = body.isFree === true || body.isFree === 'true' || body.isFree === '1';
-    const priceCredits =
-      body.priceCredits != null && body.priceCredits !== ''
-        ? Number(body.priceCredits)
-        : isFree
-          ? 0
-          : 10;
-    const jobs: Array<{ episodeId: string; jobId: string; filename: string }> = [];
-    for (let i = 0; i < sorted.length; i++) {
-      const file = sorted[i];
-      const uploaded = await this.episodes.createWithUpload(
-        drama.id,
-        file,
+    try {
+      if (!files?.length) {
+        throw new BizException(BizCode.BAD_REQUEST, '请至少上传一个视频文件');
+      }
+      const drama = await this.admin.createLocalUploadDrama(
         {
-          title: file.originalname.replace(/\.[^.]+$/, '') || `第${i + 1}集`,
-          episodeNumber: i + 1,
-          isFree,
-          priceCredits,
+          titleZh: body.titleZh || '',
+          titleEn: body.titleEn,
+          slug: body.slug,
+          descriptionZh: body.descriptionZh,
+          categorySlug: body.categorySlug || '',
+          coverUrl: body.coverUrl,
+          freeEpisodeCount:
+            body.freeEpisodeCount != null ? Number(body.freeEpisodeCount) : undefined,
+          lockMode: body.lockMode as any,
+          // 与 createLocalUploadDrama 一致：创建强制草稿
+          status: 'DRAFT',
         },
         getActor(req),
       );
-      jobs.push({
-        episodeId: uploaded.episode.id,
-        jobId: uploaded.jobId,
-        filename: file.originalname,
+      const sorted = [...files].sort((a, b) =>
+        String(a.originalname).localeCompare(String(b.originalname), undefined, {
+          numeric: true,
+          sensitivity: 'base',
+        }),
+      );
+      const isFree = body.isFree === true || body.isFree === 'true' || body.isFree === '1';
+      const priceCredits =
+        body.priceCredits != null && body.priceCredits !== ''
+          ? Number(body.priceCredits)
+          : isFree
+            ? 0
+            : 10;
+      const jobs: Array<{ episodeId: string; jobId: string; filename: string }> = [];
+      for (let i = 0; i < sorted.length; i++) {
+        const file = sorted[i];
+        const uploaded = await this.episodes.createWithUpload(
+          drama.id,
+          file,
+          {
+            title: file.originalname.replace(/\.[^.]+$/, '') || `第${i + 1}集`,
+            episodeNumber: i + 1,
+            isFree,
+            priceCredits,
+          },
+          getActor(req),
+        );
+        jobs.push({
+          episodeId: uploaded.episode.id,
+          jobId: uploaded.jobId,
+          filename: file.originalname,
+        });
+      }
+      return ok({
+        ...drama,
+        totalEpisodes: jobs.length,
+        jobs,
+        ffmpegReady: !!(await this.upload.detectFfmpeg()),
       });
+    } finally {
+      cleanupMultipartFiles(files);
     }
-    return ok({
-      ...drama,
-      totalEpisodes: jobs.length,
-      jobs,
-      ffmpegReady: !!(await this.upload.detectFfmpeg()),
-    });
   }
 
   /** 公开链接解析（本地 yt-dlp，无需 API Key） */
@@ -697,13 +743,23 @@ export class ContentController {
   @Post('ytdlp/probe')
   @AdminRoles('SUPER_ADMIN', 'OPS')
   async ytdlpProbe(@Body() dto: YtdlpProbeDto) {
-    return ok(await this.ytdlp.probe(dto.url));
+    return ok(
+      await this.ytdlp.probe(dto.url, {
+        cookiesFile: dto.cookiesFile,
+        bearerToken: dto.authBearer,
+      }),
+    );
   }
 
   @Post('ytdlp/resolve')
   @AdminRoles('SUPER_ADMIN', 'OPS')
   async ytdlpResolve(@Body() dto: YtdlpResolveDto) {
-    return ok(await this.ytdlp.resolve(dto.url, dto.formatPreference, dto.playlistIndex));
+    return ok(
+      await this.ytdlp.resolve(dto.url, dto.formatPreference, dto.playlistIndex, {
+        cookiesFile: dto.cookiesFile,
+        bearerToken: dto.authBearer,
+      }),
+    );
   }
 
   /**
@@ -721,6 +777,8 @@ export class ContentController {
       formatPreference: dto.formatPreference,
       playlistIndex: dto.playlistIndex,
       filenameHint: dto.filenameHint,
+      cookiesFile: dto.cookiesFile,
+      authBearer: dto.authBearer,
     });
 
     const asciiName = file.filename.replace(/[^\x20-\x7E]/g, '_');
@@ -747,6 +805,30 @@ export class ContentController {
       else res.destroy();
     });
     stream.pipe(res);
+  }
+
+  /** Upload Netscape cookies.txt for a source hostname (saved as {host}.txt). */
+  @Post('ytdlp/cookies')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      storage: memoryStorage(),
+      limits: { fileSize: 2 * 1024 * 1024 },
+    }),
+  )
+  async ytdlpUploadCookies(
+    @UploadedFile() file: Express.Multer.File,
+    @Body() body: { hostname?: string },
+  ) {
+    if (!file?.buffer?.length) {
+      throw new BizException(BizCode.BAD_REQUEST, '请上传 cookies.txt 文件');
+    }
+    const hostname =
+      String(body?.hostname || '').trim() ||
+      String(file.originalname || '')
+        .replace(/\.txt$/i, '')
+        .trim();
+    return ok(await this.ytdlp.saveCookies(hostname, file.buffer));
   }
 
   @Post('ytdlp/import')
@@ -806,6 +888,12 @@ export class ContentController {
   @Get('dramas/:id')
   async getDrama(@Param('id') id: string) {
     return ok(await this.content.detail(id));
+  }
+
+  @Post('dramas/:id/submit-review')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async submitDramaReview(@Param('id') id: string, @Req() req: any) {
+    return ok(await this.admin.submitDramaReview(id, getActor(req)));
   }
 
   @Post('dramas/:id/approve')
@@ -930,8 +1018,8 @@ export class ContentController {
 
   @Post('import/upload')
   @UseInterceptors(FilesInterceptor('files', 200, {
-    storage: memoryStorage(),
-    limits: { fileSize: 512 * 1024 * 1024, files: 200 },
+    storage: multipartDiskStorage,
+    limits: { fileSize: VIDEO_UPLOAD_MAX_BYTES, files: 200 },
   }))
   async importUpload(
     @UploadedFiles() files: Express.Multer.File[],
@@ -942,24 +1030,28 @@ export class ContentController {
       targetDramaId?: string;
     },
   ) {
-    const raw = body?.relativePaths;
-    const relativePaths = Array.isArray(raw)
-      ? raw.map(String)
-      : raw != null && raw !== ''
-        ? [String(raw)]
-        : [];
-    const dryRun = body?.dryRun === true || body?.dryRun === 'true' || body?.dryRun === '1';
-    if (!files?.length) {
-      throw new BizException(BizCode.BAD_REQUEST, '请选择要导入的文件夹');
+    try {
+      const raw = body?.relativePaths;
+      const relativePaths = Array.isArray(raw)
+        ? raw.map(String)
+        : raw != null && raw !== ''
+          ? [String(raw)]
+          : [];
+      const dryRun = body?.dryRun === true || body?.dryRun === 'true' || body?.dryRun === '1';
+      if (!files?.length) {
+        throw new BizException(BizCode.BAD_REQUEST, '请选择要导入的文件夹');
+      }
+      return ok(
+        await this.admin.importUploadedFiles(
+          files,
+          relativePaths,
+          dryRun,
+          body?.targetDramaId?.trim() || undefined,
+        ),
+      );
+    } finally {
+      cleanupMultipartFiles(files);
     }
-    return ok(
-      await this.admin.importUploadedFiles(
-        files,
-        relativePaths,
-        dryRun,
-        body?.targetDramaId?.trim() || undefined,
-      ),
-    );
   }
 
   @Get('banners')

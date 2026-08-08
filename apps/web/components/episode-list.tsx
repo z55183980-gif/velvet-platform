@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Lock, Crown, Play } from "lucide-react";
+import { Crown, Play } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import type { Episode } from "@/lib/mock-data";
 import { buildEpisodeSlots, filterSlotsByRange } from "@/lib/episode-slots";
@@ -15,11 +15,12 @@ function VipLockBadge({ className }: { className?: string }) {
   return (
     <span
       className={cn(
-        "absolute left-0 top-0 flex h-4 w-5 items-center justify-center rounded-br-lg rounded-tl-lg bg-white/[0.07]",
+        "absolute left-0 top-0 flex h-4 w-5 items-center justify-center rounded-br-lg rounded-tl-lg bg-gold/15",
         className,
       )}
+      aria-hidden
     >
-      <Lock className="h-2.5 w-2.5 text-white/70" />
+      <Crown className="h-2.5 w-2.5 text-gold" strokeWidth={2.25} />
     </span>
   );
 }

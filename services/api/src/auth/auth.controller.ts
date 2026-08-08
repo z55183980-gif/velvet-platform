@@ -174,7 +174,7 @@ export class AuthController {
   }
 
   /** Web 登录/注册图形验证码（对齐管理端 SVG captcha） */
-  @SkipThrottle(SKIP_ALL_THROTTLES)
+  @Throttle({ global: { limit: 10, ttl: 60_000 } })
   @Get('captcha')
   captchaChallenge() {
     return ok(this.captcha.issue('web'));

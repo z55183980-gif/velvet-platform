@@ -5,6 +5,7 @@ import { LockAccessService } from './lock-access.service';
 import { ContentReadinessService } from './content-readiness.service';
 import { PlatformSettingsService } from './platform-settings.service';
 import { ServerMetricsService } from './server-metrics.service';
+import { OpenaiService } from './openai.service';
 
 /**
  * 跨模块共享的服务（审计、结构化日志、限流等）
@@ -19,6 +20,7 @@ import { ServerMetricsService } from './server-metrics.service';
     ContentReadinessService,
     PlatformSettingsService,
     ServerMetricsService,
+    OpenaiService,
   ],
   exports: [
     AuditService,
@@ -27,6 +29,7 @@ import { ServerMetricsService } from './server-metrics.service';
     ContentReadinessService,
     PlatformSettingsService,
     ServerMetricsService,
+    OpenaiService,
   ],
 })
 export class CommonModule {}

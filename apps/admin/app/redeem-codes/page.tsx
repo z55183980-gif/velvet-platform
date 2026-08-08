@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Copy, Download, Plus, RefreshCw, Ticket } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -222,11 +222,11 @@ export default function AdminRedeemCodesPage() {
     setError(null);
   }
 
-  function rewardLabel(type?: string, vipDays?: number | null, creditsAmount?: string | number | null) {
+  const rewardLabel = useCallback((type?: string, vipDays?: number | null, creditsAmount?: string | number | null) => {
     if (type === "VIP") return `VIP ${t("daysUnit", { n: Number(vipDays) || 0 })}`;
     if (type === "CREDITS") return t("creditsUnit", { n: Number(creditsAmount) || 0 });
     return type || "—";
-  }
+  }, [t]);
 
   function userLabel(user?: { email?: string | null; nickname?: string | null; username?: string | null; id?: string } | null) {
     return user?.nickname || user?.username || user?.email || user?.id || "—";
@@ -323,7 +323,7 @@ export default function AdminRedeemCodesPage() {
         ),
       },
     ],
-    [t, dateLocale],
+    [t, dateLocale, rewardLabel],
   );
 
   const codeColumns: Column<CodeRow>[] = useMemo(
@@ -384,7 +384,7 @@ export default function AdminRedeemCodesPage() {
         className: "text-caption",
       },
     ],
-    [t, dateLocale, selected],
+    [t, dateLocale, selected, rewardLabel],
   );
 
   const redemptionColumns: Column<RedemptionRow>[] = useMemo(
@@ -414,7 +414,7 @@ export default function AdminRedeemCodesPage() {
         className: "text-caption",
       },
     ],
-    [t, dateLocale],
+    [t, dateLocale, rewardLabel],
   );
 
   const batchOptions = batchOptionsQ.data?.rows ?? [];

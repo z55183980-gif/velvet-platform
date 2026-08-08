@@ -729,26 +729,60 @@ export class WalletService {
       }
 
       if (order.orderType === 'EPISODE_UNLOCK' && order.creatorId) {
+        const currentOrder = await tx.order.findUnique({
+          where: { id: order.id },
+          select: { earningSettled: true },
+        });
         const income = order.creatorIncomeVnd;
         if (income > 0n) {
-          if (order.earningSettled) {
-            await tx.creatorEarning.updateMany({
-              where: { creatorId: order.creatorId, availableVnd: { gte: income } },
-              data: { availableVnd: { decrement: income } },
-            });
-          } else {
-            await tx.creatorEarning.updateMany({
-              where: { creatorId: order.creatorId, pendingVnd: { gte: income } },
-              data: { pendingVnd: { decrement: income } },
-            });
+          const reversed = currentOrder?.earningSettled
+            ? await tx.creatorEarning.updateMany({
+                where: {
+                  creatorId: order.creatorId,
+                  availableVnd: { gte: income },
+                  totalEarnedVnd: { gte: income },
+                },
+                data: {
+                  availableVnd: { decrement: income },
+                  totalEarnedVnd: { decrement: income },
+                },
+              })
+            : await tx.creatorEarning.updateMany({
+                where: {
+                  creatorId: order.creatorId,
+                  pendingVnd: { gte: income },
+                  totalEarnedVnd: { gte: income },
+                },
+                data: {
+                  pendingVnd: { decrement: income },
+                  totalEarnedVnd: { decrement: income },
+                },
+              });
+          if (reversed.count !== 1) {
+            throw new BizException(
+              BizCode.CONFLICT,
+              'creator.earningInsufficientForRefund',
+            );
           }
         }
-        await tx.userUnlock.deleteMany({ where: { userId, episodeId: order.episodeId! } });
-        if (order.episodeId) {
-          await tx.episode.update({ where: { id: order.episodeId }, data: { unlockCount: { decrement: 1 } } });
-        }
-        if (order.dramaId) {
-          await tx.drama.update({ where: { id: order.dramaId }, data: { unlockCount: { decrement: 1 } } });
+        const removedUnlock = await tx.userUnlock.deleteMany({
+          where: { userId, episodeId: order.episodeId! },
+        });
+        if (removedUnlock.count === 1) {
+          if (order.episodeId) {
+            await tx.episode.update({
+              where: { id: order.episodeId },
+              data: { unlockCount: { decrement: 1 } },
+            });
+          }
+          if (order.dramaId) {
+            await tx.drama.update({
+              where: { id: order.dramaId },
+              data: { unlockCount: { decrement: 1 } },
+            });
+          }
+        } else {
+          throw new BizException(BizCode.CONFLICT, 'wallet.unlockRecordMissing');
         }
       }
       return { refunded: true, alreadyRefunded: false, orderNo };

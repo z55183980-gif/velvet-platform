@@ -4,7 +4,7 @@ import type { NextRequest } from "next/server";
 /** Legacy /admin|/ops|/console bookmarks → root routes */
 const LEGACY = ["/admin", "/ops", "/console"];
 
-export function middleware(req: NextRequest) {
+export function proxy(req: NextRequest) {
   const { pathname, search } = req.nextUrl;
   for (const p of LEGACY) {
     if (pathname === p) {

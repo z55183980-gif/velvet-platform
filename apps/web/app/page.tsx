@@ -23,6 +23,9 @@ function bannerToSlide(banner: HomeBanner): HeroSlide {
     cover: [cover, cover],
     href,
     tags: [],
+    coverKind: "banner",
+    focusX: banner.focusX,
+    focusY: banner.focusY,
   };
 }
 

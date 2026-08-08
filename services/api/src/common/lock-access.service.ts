@@ -10,16 +10,17 @@ export function isLockAccessMode(v: unknown): v is LockAccessMode {
   return typeof v === 'string' && (LOCK_ACCESS_MODES as string[]).includes(v);
 }
 
-/** Pure free-check under an already-resolved policy. */
+/** Pure free-check under an already-resolved policy.
+ * Drama lockMode is authoritative; episode.isFree is denormalized cache for admin UI. */
 export function isEpisodeFreeByPolicy(opts: {
   episodeIsFree: boolean;
   episodeNumber: number;
   mode: LockAccessMode;
   freeEpisodeCount: number;
 }): boolean {
-  if (opts.episodeIsFree) return true;
   if (opts.mode === 'ALL_FREE') return true;
   if (opts.mode === 'VIP_ALL') return false;
+  // FREE_FIRST_N — do not let stale episode.isFree unlock paid episodes
   return opts.episodeNumber <= Math.max(0, Math.floor(opts.freeEpisodeCount || 0));
 }
 
@@ -70,5 +71,75 @@ export class LockAccessService {
       mode: policy.mode,
       freeEpisodeCount: policy.freeCount,
     });
+  }
+
+  /**
+   * Sync denormalized episode.isFree / prices from drama lock policy.
+   * Call whenever lockMode or freeEpisodeCount changes.
+   */
+  async syncEpisodeAccessFlags(
+    dramaId: bigint,
+    opts?: { paidCredits?: bigint; paidVnd?: bigint },
+  ): Promise<number> {
+    const drama = await this.prisma.drama.findUnique({
+      where: { id: dramaId },
+      select: { lockMode: true, freeEpisodeCount: true },
+    });
+    if (!drama) return 0;
+    const policy = await this.resolveForDrama(drama);
+    const episodes = await this.prisma.episode.findMany({
+      where: { dramaId },
+      select: {
+        id: true,
+        episodeNumber: true,
+        isFree: true,
+        priceCredits: true,
+        priceVnd: true,
+      },
+      orderBy: { episodeNumber: 'asc' },
+    });
+    if (!episodes.length) return 0;
+
+    let paidCredits = opts?.paidCredits;
+    let paidVnd = opts?.paidVnd;
+    if (paidCredits == null || paidVnd == null) {
+      const paidSample = episodes.find((e) => !e.isFree && e.priceCredits > 0n);
+      paidCredits = paidCredits ?? (paidSample?.priceCredits && paidSample.priceCredits > 0n
+        ? paidSample.priceCredits
+        : 10n);
+      paidVnd = paidVnd ?? (paidSample?.priceVnd && paidSample.priceVnd > 0n
+        ? paidSample.priceVnd
+        : paidCredits);
+    }
+
+    let updated = 0;
+    for (const ep of episodes) {
+      const shouldFree = isEpisodeFreeByPolicy({
+        episodeIsFree: false,
+        episodeNumber: ep.episodeNumber,
+        mode: policy.mode,
+        freeEpisodeCount: policy.freeCount,
+      });
+      const nextCredits = shouldFree ? 0n : paidCredits;
+      const nextVnd = shouldFree ? 0n : paidVnd;
+      if (
+        ep.isFree === shouldFree &&
+        ep.priceCredits === nextCredits &&
+        ep.priceVnd === nextVnd
+      ) {
+        continue;
+      }
+      await this.prisma.episode.update({
+        where: { id: ep.id },
+        data: {
+          isFree: shouldFree,
+          priceCredits: nextCredits,
+          priceVnd: nextVnd,
+          ...(shouldFree ? { previewSeconds: 0 } : {}),
+        },
+      });
+      updated += 1;
+    }
+    return updated;
   }
 }

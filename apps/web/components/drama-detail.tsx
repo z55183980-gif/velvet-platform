@@ -379,7 +379,7 @@ export function DramaDetail({
     return () => {
       alive = false;
     };
-  }, [user, data?.drama.numericId, data?.drama.id]);
+  }, [user, data, unlockedNos]);
 
   useEffect(() => {
     if (!authReady) return;
@@ -409,8 +409,16 @@ export function DramaDetail({
     };
   }, [authReady, user, data?.drama.numericId]);
 
-  const isUnlocked = (ep: Episode) =>
-    ep.isFree || !!ep.unlocked || unlockedNos.has(ep.no) || !!data?.vipActive || !!data?.dramaUnlocked || !!user?.isVip;
+  const isUnlocked = useCallback(
+    (ep: Episode) =>
+      ep.isFree ||
+      !!ep.unlocked ||
+      unlockedNos.has(ep.no) ||
+      !!data?.vipActive ||
+      !!data?.dramaUnlocked ||
+      !!user?.isVip,
+    [data?.dramaUnlocked, data?.vipActive, unlockedNos, user?.isVip],
+  );
   const selectedTrialAvailable = !!(selected && !isUnlocked(selected) && (selected.previewSeconds || 0) > 0);
   const playerReady = !!(selected && (isUnlocked(selected) || selectedTrialAvailable));
   const lockActionLabel =
@@ -472,7 +480,7 @@ export function DramaDetail({
     };
     video.addEventListener("timeupdate", onTimeUpdate);
     return () => video.removeEventListener("timeupdate", onTimeUpdate);
-  }, [playUrl, previewLimit, selected, unlockedNos, data?.vipActive, data?.dramaUnlocked, user?.isVip]);
+  }, [playUrl, previewLimit, selected, isUnlocked]);
 
   useEffect(() => {
     if (!data?.drama.categorySlug) return;

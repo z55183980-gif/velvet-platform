@@ -157,7 +157,19 @@ export class UploadService implements OnModuleInit {
     const id = crypto.randomUUID().replace(/-/g, '').slice(0, 16);
     const filename = `${Date.now()}-${id}${ext}`;
     const abs = path.join(this.getUploadDir(), filename);
-    fs.writeFileSync(abs, file.buffer);
+    if (file.path) {
+      const staged = path.resolve(file.path);
+      const stagingRoot = path.resolve(this.getStorageRoot(), '.multipart');
+      if (staged !== stagingRoot && !staged.startsWith(stagingRoot + path.sep)) {
+        throw new BizException(BizCode.FORBIDDEN, 'invalid multipart staging path');
+      }
+      fs.renameSync(staged, abs);
+    } else if (file.buffer) {
+      // Small/internal callers may still provide an in-memory Multer file.
+      fs.writeFileSync(abs, file.buffer);
+    } else {
+      throw new BizException(BizCode.BAD_REQUEST, '上传文件内容为空');
+    }
     const relativePath = `uploads/${filename}`;
     return {
       relativePath,

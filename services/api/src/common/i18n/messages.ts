@@ -108,6 +108,9 @@ const en = {
   'validation.originalPricePositive': 'originalPrice must be > 0',
   'validation.endAfterStart': 'endAt must be after startAt',
   'validation.dramaIdInvalid': 'Invalid dramaId',
+  'validation.bannerDramaRequired': 'Banner must link to a live drama',
+  'validation.bannerDramaNotLive': 'Only live (published) dramas can be used for banners',
+  'validation.bannerDramaId': 'Invalid banner dramaId',
   'vipPlan.hasOrders': 'This VIP plan has related orders and cannot be deleted. Take it offline instead.',
   'topupPackage.hasOrders':
     'This credit pack has related orders and cannot be deleted. Take it offline instead.',
@@ -215,6 +218,9 @@ const zh: Record<MessageKey, string> = {
   'validation.originalPricePositive': '划线原价必须 > 0',
   'validation.endAfterStart': 'endAt 必须晚于 startAt',
   'validation.dramaIdInvalid': 'dramaId 无效',
+  'validation.bannerDramaRequired': '轮播必须关联已上架短剧',
+  'validation.bannerDramaNotLive': '仅已上架短剧可用于首页轮播',
+  'validation.bannerDramaId': '轮播短剧 ID 无效',
   'vipPlan.hasOrders': '该 VIP 套餐已有关联订单，无法删除，请改为下架。',
   'topupPackage.hasOrders': '该积分充值套餐已有关联订单，无法删除，请改为下架。',
 };
@@ -319,6 +325,9 @@ const vi: Record<MessageKey, string> = {
   'validation.originalPricePositive': 'originalPrice phải > 0',
   'validation.endAfterStart': 'endAt phải sau startAt',
   'validation.dramaIdInvalid': 'dramaId không hợp lệ',
+  'validation.bannerDramaRequired': 'Banner phải gắn với drama đã phát hành',
+  'validation.bannerDramaNotLive': 'Chỉ drama LIVE mới dùng cho banner',
+  'validation.bannerDramaId': 'banner dramaId không hợp lệ',
   'vipPlan.hasOrders': 'Gói VIP đã có đơn hàng liên quan, không thể xóa. Hãy hạ gói thay vì xóa.',
   'topupPackage.hasOrders':
     'Gói nạp đã có đơn hàng liên quan, không thể xóa. Hãy hạ gói thay vì xóa.',
@@ -424,6 +433,9 @@ const fr: Record<MessageKey, string> = {
   'validation.originalPricePositive': 'originalPrice doit être > 0',
   'validation.endAfterStart': 'endAt doit être après startAt',
   'validation.dramaIdInvalid': 'dramaId invalide',
+  'validation.bannerDramaRequired': 'Le banner doit être lié à un drama publié',
+  'validation.bannerDramaNotLive': 'Seuls les dramas publiés (LIVE) peuvent être utilisés',
+  'validation.bannerDramaId': 'dramaId de banner invalide',
   'vipPlan.hasOrders':
     'Ce forfait VIP a des commandes associées et ne peut pas être supprimé. Désactivez-le plutôt.',
   'topupPackage.hasOrders':
@@ -530,6 +542,9 @@ const ru: Record<MessageKey, string> = {
   'validation.originalPricePositive': 'originalPrice должен быть > 0',
   'validation.endAfterStart': 'endAt должен быть позже startAt',
   'validation.dramaIdInvalid': 'Некорректный dramaId',
+  'validation.bannerDramaRequired': 'Баннер должен ссылаться на опубликованную драму',
+  'validation.bannerDramaNotLive': 'Для баннера можно использовать только LIVE-драмы',
+  'validation.bannerDramaId': 'Некорректный dramaId баннера',
   'vipPlan.hasOrders':
     'У этого VIP-плана есть связанные заказы, удаление невозможно. Снимите его с публикации.',
   'topupPackage.hasOrders':

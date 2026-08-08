@@ -201,11 +201,14 @@ export function VideoPlayer({
     setMuted(next === 0);
   };
 
-  const seekToRatio = (ratio: number) => {
-    const v = videoRef.current;
-    if (!v || !duration) return;
-    v.currentTime = Math.max(0, Math.min(duration, ratio * duration));
-  };
+  const seekToRatio = useCallback(
+    (ratio: number) => {
+      const v = videoRef.current;
+      if (!v || !duration) return;
+      v.currentTime = Math.max(0, Math.min(duration, ratio * duration));
+    },
+    [duration, videoRef],
+  );
 
   const ratioFromEvent = (clientX: number) => {
     const el = seekRef.current;
@@ -224,7 +227,7 @@ export function VideoPlayer({
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
     };
-  }, [dragging, duration]);
+  }, [dragging, seekToRatio]);
 
   const toggleFs = async () => {
     const el = shellRef.current;
