@@ -19,19 +19,30 @@ const tabs = [
   },
 ] as const;
 
-export function BottomTabBar() {
+/**
+ * Fixed bottom height = h-12 (3rem) + --mobile-tab-safe-bottom.
+ * Home (inline) and theater (fixed) share the same token so chrome height matches;
+ * video stage size is independent (flex-1 sibling above inline tab).
+ */
+export function BottomTabBar({ inline = false }: { inline?: boolean }) {
   const pathname = usePathname() || "/";
   const { t } = useLocale();
 
   return (
     <nav
       className={cn(
-        // --mobile-tab-safe-bottom: env(safe-area) (+standalone air in globals.css).
-        // Always fixed so home feed and theater share one bottom chrome height.
-        "fixed inset-x-0 bottom-0 z-50 border-t border-line/60 bg-base/90 pb-[var(--mobile-tab-safe-bottom)] backdrop-blur-xl",
-        // Home feed: parent .feed-immersive forces dark tokens for this chrome too.
+        "z-50 border-t border-line/60 pb-[var(--mobile-tab-safe-bottom)]",
+        inline
+          ? // Home feed: solid dark chrome via .feed-immersive; sits under video stage.
+            "relative shrink-0 bg-base"
+          : "fixed inset-x-0 bottom-0 bg-base/90 backdrop-blur-xl",
       )}
       aria-label="Primary"
+      style={{
+        // Explicit total chrome height contract for layout math elsewhere.
+        ["--mobile-tab-chrome-height" as string]:
+          "calc(3rem + var(--mobile-tab-safe-bottom))",
+      }}
     >
       <div className="mx-auto flex h-12 max-w-lg items-stretch justify-around">
         {tabs.map((tab) => {

@@ -1726,13 +1726,13 @@ export function DramaDetail({
                 </div>
               ) : null}
 
-              {/* 整组贴底：标题/进度/选集同一列，压缩内间距，无 safe-area 垫高 */}
+              {/* 整组贴底：进度左右留边，不贴屏幕边 */}
               <div className="relative z-10 w-full bg-[#000000]">
                 <WatchSeekBar
                   videoRef={videoRef}
                   absolute={false}
                   compact
-                  className="!px-0"
+                  className="!px-3.5"
                   mediaKey={playUrl}
                   disabled={!playUrl || needsLogin || locked}
                   onSeekingChange={onSeekingChange}

@@ -51,8 +51,8 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
   return (
     <div
       className={cn(
-        // Mobile home feed: pin chrome edge-to-edge. Prefer inset-0 over h-dvh so
-        // PWA translucent / home-indicator math matches theater's fixed tab bar.
+        // Home feed: video stage + bottom tab as siblings (heights decoupled).
+        // Prefer inset-0 stretch over h-dvh so PWA translucent sizing is stable.
         lockMobileHome &&
           isMobile &&
           "feed-immersive fixed inset-0 flex flex-col overflow-hidden overscroll-none",
@@ -66,18 +66,13 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
       ) : null}
       <main
         className={cn(
-          // Contain accidental horizontal overflow (chips/grid) without locking vertical scroll.
           "overflow-x-clip",
-          // black-translucent PWA: pad Me/Theater under the status bar. Feed + /drama
-          // watch shells are edge-to-edge and own their safe-area chrome.
           !lockMobileHome &&
             isMobile &&
             !onDrama &&
             "pt-[env(safe-area-inset-top,0px)]",
-          // Theater/me: reserve fixed tab height under scroll content.
-          // Home feed must NOT get this pb — it shrinks the video stage (h-full)
-          // and makes the bottom look taller than theater. Feed overlays the tab
-          // instead (see VerticalFeed bottom chrome pad).
+          // Theater/me scroll clear of the fixed tab. Home feed uses an inline tab
+          // sibling instead — do not pad main or the video stage shrinks.
           !lockMobileHome &&
             !onDrama &&
             isMobile &&
@@ -91,7 +86,9 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
         {children}
       </main>
       {mobileReady && !isMobile ? <Footer /> : null}
-      {mobileReady && isMobile && !onDrama ? <BottomTabBar /> : null}
+      {mobileReady && isMobile && !onDrama ? (
+        <BottomTabBar inline={lockMobileHome} />
+      ) : null}
       <PwaInstallRoot />
     </div>
   );

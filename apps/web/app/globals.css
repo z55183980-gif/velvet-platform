@@ -88,20 +88,17 @@
 
     /*
       Mobile bottom-tab clearance above the home indicator / gesture bar.
-      - In-browser: typically 0 (browser chrome already owns that edge).
-      - Standalone / PWA: env() is non-zero once viewport-fit=cover is set.
-      Keep tab bar + app-shell main padding on the same token so heights match
-      for both fixed and inline (feed-lock) tab modes.
+      Total chrome height = 3rem (h-12) + --mobile-tab-safe-bottom.
+      Home (inline tab) and theater (fixed tab) share this token so heights match;
+      feed video size is flex-1 above the inline tab and is not driven by tab pad.
     */
     --mobile-tab-safe-bottom: env(safe-area-inset-bottom, 0px);
+    --mobile-tab-chrome-height: calc(3rem + var(--mobile-tab-safe-bottom));
   }
 
   /*
     Installed to home screen: no browser toolbar — page sits on the device
-    safe area. Add a hair of extra air so labels don't hug the home indicator,
-    with a small floor if a WebView reports 0 incorrectly.
-    With apple-mobile-web-app-status-bar-style=black-translucent, portrait watch
-    draws under the status bar; chrome still respects env(safe-area-inset-top).
+    safe area. Same token for home + theater (keep heights locked together).
   */
   @media (display-mode: standalone),
     (display-mode: fullscreen),
