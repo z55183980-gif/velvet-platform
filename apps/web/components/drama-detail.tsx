@@ -1729,7 +1729,8 @@ export function DramaDetail({
                 </div>
               ) : null}
 
-              {/* 竖屏底栏：进度在视频上；黑区只包芯片这一条，去掉芯片下方多余灰垫 */}
+              {/* 竖屏底栏：PWA black-translucent 下勿再用 safe-area-inset-bottom 垫高，
+                  否则会出现原版没有的底部安全区空条；home indicator 直接叠在黑底上。 */}
               <div className="relative z-10 w-full">
                 <WatchSeekBar
                   videoRef={videoRef}
@@ -1739,7 +1740,7 @@ export function DramaDetail({
                   disabled={!playUrl || needsLogin || locked}
                   onSeekingChange={onSeekingChange}
                 />
-                <div className="flex items-center gap-6 bg-[#000000] px-[18px] pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] pt-2.5">
+                <div className="flex items-center gap-6 bg-[#000000] px-[18px] pb-2.5 pt-2.5">
                   <button
                     type="button"
                     onClick={() => setDrawerOpen(true)}
