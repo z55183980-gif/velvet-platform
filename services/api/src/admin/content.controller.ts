@@ -322,6 +322,26 @@ class YtdlpResolveDto extends YtdlpAuthFields {
   @IsOptional() @Type(() => Number) @IsNumber() @Min(1) playlistIndex?: number;
 }
 
+class YtdlpResolveBatchItemDto {
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) index?: number;
+  @IsNotEmpty() @IsString() url!: string;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) playlistIndex?: number;
+}
+
+class YtdlpResolveBatchDto extends YtdlpAuthFields {
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => YtdlpResolveBatchItemDto)
+  episodes!: YtdlpResolveBatchItemDto[];
+
+  @IsOptional() @IsIn(['best_hls', 'best_mp4', 'best'])
+  formatPreference?: 'best_hls' | 'best_mp4' | 'best';
+
+  /** Max items to resolve (default: all, hard-capped server-side). */
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) maxEpisodes?: number;
+}
+
 class YtdlpBrowserDownloadDto extends YtdlpAuthFields {
   @IsNotEmpty() @IsString() url!: string;
   @IsOptional() @IsIn(['best_hls', 'best_mp4', 'best'])
@@ -777,6 +797,21 @@ export class ContentController {
       await this.ytdlp.resolve(dto.url, dto.formatPreference, dto.playlistIndex, {
         cookiesFile: dto.cookiesFile,
         bearerToken: dto.authBearer,
+      }),
+    );
+  }
+
+  /** After AI extract: batch yt-dlp resolve episode page URLs → playable media URLs. */
+  @Post('ytdlp/resolve-batch')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async ytdlpResolveBatch(@Body() dto: YtdlpResolveBatchDto) {
+    return ok(
+      await this.ytdlp.resolveBatch({
+        episodes: dto.episodes,
+        formatPreference: dto.formatPreference,
+        maxEpisodes: dto.maxEpisodes,
+        cookiesFile: dto.cookiesFile,
+        authBearer: dto.authBearer,
       }),
     );
   }

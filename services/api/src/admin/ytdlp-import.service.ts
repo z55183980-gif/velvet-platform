@@ -385,6 +385,102 @@ export class YtdlpImportService implements OnModuleInit {
       }));
   }
 
+  /**
+   * Batch-resolve episode page URLs via yt-dlp (used after AI extract).
+   * Limited concurrency; skips URLs that already look like direct media.
+   */
+  async resolveBatch(opts: {
+    episodes: Array<{ index?: number; url: string; playlistIndex?: number }>;
+    formatPreference?: YtdlpFormatPreference;
+    maxEpisodes?: number;
+    cookiesFile?: string;
+    authBearer?: string;
+  }) {
+    const auth = this.authFromOpts(opts);
+    const pref = opts.formatPreference || 'best_hls';
+    const hardCap = 40;
+    const max =
+      opts.maxEpisodes && opts.maxEpisodes > 0
+        ? Math.min(Math.floor(opts.maxEpisodes), hardCap)
+        : hardCap;
+
+    const items = (opts.episodes || [])
+      .map((ep, i) => ({
+        index: Number(ep.index) > 0 ? Number(ep.index) : i + 1,
+        url: String(ep.url || '').trim(),
+        playlistIndex:
+          ep.playlistIndex && ep.playlistIndex > 0 ? ep.playlistIndex : undefined,
+      }))
+      .filter((ep) => /^https?:\/\//i.test(ep.url))
+      .slice(0, max);
+
+    if (!items.length) {
+      throw new BizException(BizCode.BAD_REQUEST, '没有可解析的分集链接');
+    }
+
+    const resolved: Array<{
+      index: number;
+      webpageUrl: string;
+      playUrl: string;
+      alreadyDirect?: boolean;
+    }> = [];
+    const failed: Array<{ index: number; webpageUrl: string; error: string }> = [];
+
+    const concurrency = 2;
+    let cursor = 0;
+    const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+      while (cursor < items.length) {
+        const i = cursor++;
+        const ep = items[i];
+        if (/\.(m3u8|mp4|webm|mkv)(\?|$)/i.test(ep.url)) {
+          resolved.push({
+            index: ep.index,
+            webpageUrl: ep.url,
+            playUrl: ep.url,
+            alreadyDirect: true,
+          });
+          continue;
+        }
+        try {
+          const playUrl = await this.provider.resolvePlayUrl(
+            ep.url,
+            pref,
+            ep.playlistIndex,
+            auth,
+          );
+          resolved.push({
+            index: ep.index,
+            webpageUrl: ep.url,
+            playUrl,
+          });
+        } catch (e: unknown) {
+          failed.push({
+            index: ep.index,
+            webpageUrl: ep.url,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
+    });
+    await Promise.all(workers);
+
+    resolved.sort((a, b) => a.index - b.index);
+    failed.sort((a, b) => a.index - b.index);
+
+    this.logger.log(
+      `resolveBatch ok=${resolved.length} fail=${failed.length} of ${items.length}`,
+    );
+
+    return {
+      total: items.length,
+      resolvedCount: resolved.length,
+      failedCount: failed.length,
+      formatPreference: pref,
+      resolved,
+      failed,
+    };
+  }
+
   private authFromOpts(opts?: {
     cookiesFile?: string;
     authBearer?: string;

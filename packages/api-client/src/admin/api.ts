@@ -1606,6 +1606,32 @@ export async function adminYtdlpAiExtract(
   });
 }
 
+/** Batch yt-dlp resolve after AI extract (episode pages → playable URLs). */
+export async function adminYtdlpResolveBatch(body: {
+  episodes: Array<{ index?: number; url: string; playlistIndex?: number }>;
+  formatPreference?: "best_hls" | "best_mp4" | "best";
+  maxEpisodes?: number;
+  cookiesFile?: string;
+  authBearer?: string;
+}) {
+  return adminRequest<{
+    total: number;
+    resolvedCount: number;
+    failedCount: number;
+    formatPreference: string;
+    resolved: Array<{
+      index: number;
+      webpageUrl: string;
+      playUrl: string;
+      alreadyDirect?: boolean;
+    }>;
+    failed: Array<{ index: number; webpageUrl: string; error: string }>;
+  }>("/admin/ytdlp/resolve-batch", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export async function adminYtdlpProbe(
   url: string,
   auth?: { cookiesFile?: string; authBearer?: string },

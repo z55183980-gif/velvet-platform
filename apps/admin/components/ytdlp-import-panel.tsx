@@ -8,6 +8,7 @@ import {
   adminYtdlpDownloadEpisode,
   adminYtdlpProbe,
   adminYtdlpResolve,
+  adminYtdlpResolveBatch,
   adminYtdlpStatus,
   adminYtdlpUploadCookies,
 } from "@velvet/api-client";
@@ -82,6 +83,8 @@ export function YtdlpImportPanel({
   const [applied, setApplied] = useState(false);
   const [overwriteMeta, setOverwriteMeta] = useState(false);
   const [downloadingEpIndex, setDownloadingEpIndex] = useState<number | null>(null);
+  const [playResolved, setPlayResolved] = useState(false);
+  const [resolveProgress, setResolveProgress] = useState<string | null>(null);
 
   const statusQ = useQuery({
     queryKey: ["admin", "ytdlp", "status"],
@@ -116,6 +119,8 @@ export function YtdlpImportPanel({
     setError(null);
     setFilled(false);
     setApplied(false);
+    setPlayResolved(false);
+    setResolveProgress(null);
   }
 
   function probeMaxEpisodes() {
@@ -208,12 +213,15 @@ export function YtdlpImportPanel({
       setPreviewUrl(null);
       setFilled(false);
       setApplied(false);
+      setPlayResolved(false);
+      setResolveProgress(null);
       setProbe(data);
     },
     onError: (e: Error) => {
       setProbe(null);
       setFilled(false);
       setApplied(false);
+      setPlayResolved(false);
       setError(e.message);
     },
   });
@@ -222,9 +230,6 @@ export function YtdlpImportPanel({
     mutationFn: () => {
       const u = url.trim();
       if (!u) throw new Error(t("ytdlpNeedUrl"));
-      if (!statusQ.data?.openaiConfigured) {
-        throw new Error(t("ytdlpAiExtractNeedOpenai"));
-      }
       return adminYtdlpAiExtract(u, {
         maxEpisodes: probeMaxEpisodes(),
         ...authPayload(),
@@ -236,12 +241,76 @@ export function YtdlpImportPanel({
       setPreviewUrl(null);
       setFilled(false);
       setApplied(false);
+      setPlayResolved(false);
+      setResolveProgress(null);
       setIngestForm("link");
       setProbe(data);
     },
     onError: (e: Error) => {
       setFilled(false);
       setApplied(false);
+      setError(e.message);
+    },
+  });
+
+  const resolveBatchMut = useMutation({
+    mutationFn: async () => {
+      if (!probe?.episodes?.length) throw new Error(t("ytdlpNeedProbe"));
+      if (!configured) throw new Error(t("ytdlpNotConfigured"));
+      const max = probeMaxEpisodes() ?? 15;
+      setResolveProgress(t("ytdlpResolveBatchProgress", { done: 0, total: Math.min(max, probe.episodes.length) }));
+      const episodes = probe.episodes.slice(0, max).map((ep) => ({
+        index: ep.index,
+        url: episodeSourceUrl(ep) || ep.webpageUrl,
+        playlistIndex: ep.playlistIndex,
+      }));
+      return adminYtdlpResolveBatch({
+        episodes,
+        formatPreference,
+        maxEpisodes: max,
+        ...authPayload(),
+      });
+    },
+    onSuccess: (data) => {
+      setProbe((prev) => {
+        if (!prev) return prev;
+        const byIndex = new Map(data.resolved.map((r) => [r.index, r.playUrl]));
+        return {
+          ...prev,
+          extractor: `${prev.extractor}+ytdlp`,
+          episodes: prev.episodes.map((ep) => {
+            const playUrl = byIndex.get(ep.index);
+            if (!playUrl) return ep;
+            return {
+              ...ep,
+              sourceUrl: playUrl,
+              candidateCount: Math.max(ep.candidateCount || 0, 1),
+            };
+          }),
+        } as ProbeResult;
+      });
+      setPlayResolved(data.resolvedCount > 0);
+      setIngestForm("link");
+      setFilled(false);
+      setApplied(false);
+      setResolveProgress(null);
+      if (data.failedCount > 0) {
+        setError(
+          t("ytdlpResolveBatchPartial", {
+            ok: data.resolvedCount,
+            fail: data.failedCount,
+            detail: data.failed
+              .slice(0, 3)
+              .map((f) => `#${f.index}: ${f.error}`)
+              .join("; "),
+          }),
+        );
+      } else {
+        setError(null);
+      }
+    },
+    onError: (e: Error) => {
+      setResolveProgress(null);
       setError(e.message);
     },
   });
@@ -293,7 +362,6 @@ export function YtdlpImportPanel({
   }
 
   const configured = !!statusQ.data?.configured;
-  const openaiReady = !!statusQ.data?.openaiConfigured;
   const authInfo = statusQ.data?.auth;
   const hostCookieFiles = authInfo?.hostCookieFiles ?? [];
   const authReady =
@@ -307,6 +375,7 @@ export function YtdlpImportPanel({
   const busy =
     probeMut.isPending ||
     aiExtractMut.isPending ||
+    resolveBatchMut.isPending ||
     resolveMut.isPending ||
     downloadingEpIndex != null ||
     cookieUploadBusy;
@@ -524,6 +593,8 @@ export function YtdlpImportPanel({
                   setPreviewUrl(null);
                   setFilled(false);
                   setApplied(false);
+                  setPlayResolved(false);
+                  setResolveProgress(null);
                 }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && configured && url.trim()) {
@@ -556,12 +627,8 @@ export function YtdlpImportPanel({
                     ? "border-success/40 bg-success-soft text-success hover:bg-success/15"
                     : undefined
                 }
-                disabled={!url.trim() || busy || !openaiReady}
-                title={
-                  !openaiReady
-                    ? t("ytdlpAiExtractNeedOpenai")
-                    : t("ytdlpAiExtractHint")
-                }
+                disabled={!url.trim() || busy}
+                title={t("ytdlpAiExtractHint")}
                 onClick={() => aiExtractMut.mutate()}
               >
                 {aiExtractMut.isPending
@@ -679,6 +746,43 @@ export function YtdlpImportPanel({
               ))}
             </ul>
           </div>
+
+          {isAiProbe(probe) ? (
+            <div className="rounded-lg border border-brand/30 bg-brand/5 px-3 py-2.5 space-y-2">
+              <p className="text-body-sm font-medium text-ink">{t("ytdlpResolveBatchTitle")}</p>
+              <p className="text-caption text-ink-muted">{t("ytdlpResolveBatchHint")}</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  size="sm"
+                  variant={playResolved ? "secondary" : "primary"}
+                  className={
+                    playResolved
+                      ? "border-success/40 bg-success-soft text-success hover:bg-success/15"
+                      : undefined
+                  }
+                  disabled={busy || !configured}
+                  onClick={() => resolveBatchMut.mutate()}
+                >
+                  {resolveBatchMut.isPending
+                    ? t("ytdlpResolveBatchBusy")
+                    : playResolved
+                      ? t("ytdlpResolveBatchDone")
+                      : t("ytdlpResolveBatch")}
+                </Button>
+                {resolveProgress ? (
+                  <span className="text-caption text-ink-muted">{resolveProgress}</span>
+                ) : playResolved ? (
+                  <span className="text-caption text-success">{t("ytdlpResolveBatchReady")}</span>
+                ) : (
+                  <span className="text-caption text-ink-subtle">
+                    {t("ytdlpResolveBatchCapHint", {
+                      n: String(probeMaxEpisodes() ?? 15),
+                    })}
+                  </span>
+                )}
+              </div>
+            </div>
+          ) : null}
 
           {activePreviewSrc ? (
             <div className="space-y-2">
