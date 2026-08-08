@@ -51,11 +51,11 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
   return (
     <div
       className={cn(
-        // Only while mobile VerticalFeed is mounted: pin entire chrome; main is the video stage.
-        // feed-immersive locks dark palette so light theme cannot bleach the home feed.
+        // Mobile home feed: pin chrome edge-to-edge. Prefer inset-0 over h-dvh so
+        // PWA translucent / home-indicator math matches theater's fixed tab bar.
         lockMobileHome &&
           isMobile &&
-          "feed-immersive fixed inset-0 flex h-dvh flex-col overflow-hidden overscroll-none",
+          "feed-immersive fixed inset-0 flex flex-col overflow-hidden overscroll-none",
       )}
     >
       <MaintenanceBanner />
@@ -74,19 +74,20 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
             isMobile &&
             !onDrama &&
             "pt-[env(safe-area-inset-top,0px)]",
-          // Reserve fixed tab height (h-12) + same safe-bottom token as BottomTabBar.
-          // Feed-lock zeroes this: tab is inline in the flex column instead.
+          // Same bottom reserve for home feed + theater/me: matches fixed BottomTabBar
+          // height (h-12 + --mobile-tab-safe-bottom). Do not use inline tab on home —
+          // that layout diverged from theater under black-translucent PWA.
           !onDrama && isMobile && "pb-[calc(3rem+var(--mobile-tab-safe-bottom))]",
           onDrama && isMobile && "bg-base",
           lockMobileHome &&
             isMobile &&
-            "min-h-0 flex-1 overflow-hidden overscroll-none pb-0",
+            "min-h-0 flex-1 overflow-hidden overscroll-none",
         )}
       >
         {children}
       </main>
       {mobileReady && !isMobile ? <Footer /> : null}
-      {mobileReady && isMobile && !onDrama ? <BottomTabBar inline={lockMobileHome} /> : null}
+      {mobileReady && isMobile && !onDrama ? <BottomTabBar /> : null}
       <PwaInstallRoot />
     </div>
   );

@@ -1670,44 +1670,13 @@ export function DramaDetail({
         {/* Hongguo bottom chrome — 图一常态 / 图二竖屏全屏清屏 */}
         {showWatchBottomChrome ? (
           <div className="absolute inset-x-0 bottom-0 z-40">
-            {showWatchMetaChrome ? (
-              <div className="absolute bottom-full right-2.5 mb-3 flex flex-col items-center gap-5">
-                <WatchSideAction
-                  label={favorited ? t("detail.favorited") : t("detail.favorite")}
-                  count={formatCount(favCount, locale)}
-                  onClick={() => void toggleFavorite()}
-                >
-                  <Star
-                    className={cn(
-                      "h-[30px] w-[30px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]",
-                      favorited ? "fill-[#ffb000] text-[#ffb000]" : "text-white",
-                    )}
-                    strokeWidth={1.75}
-                  />
-                </WatchSideAction>
-                <WatchSideAction
-                  label={t("feed.like")}
-                  count={formatCount(likeCount, locale)}
-                  onClick={() => void toggleLike()}
-                >
-                  <Heart
-                    className={cn(
-                      "h-[30px] w-[30px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]",
-                      liked ? "fill-[#ff4d6d] text-[#ff4d6d]" : "text-white",
-                    )}
-                    strokeWidth={1.75}
-                  />
-                </WatchSideAction>
-              </div>
-            ) : null}
-
             <div className="flex flex-col">
               {showWatchMetaChrome ? (
-                <div className="pointer-events-none px-3.5 pb-1.5">
-                  <div className="pointer-events-auto max-w-[calc(100%-4.75rem)]">
+                <div className="relative px-3.5 pb-1.5">
+                  <div className="pointer-events-none max-w-[calc(100%-4.75rem)]">
                     <button
                       type="button"
-                      className="inline-flex max-w-full items-center gap-0.5 text-[15px] font-semibold leading-snug text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.65)]"
+                      className="pointer-events-auto inline-flex max-w-full items-center gap-0.5 text-[15px] font-semibold leading-snug text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.65)]"
                       onClick={() => setDrawerOpen(true)}
                     >
                       <span className="truncate">{title}</span>
@@ -1715,7 +1684,7 @@ export function DramaDetail({
                     </button>
                     <button
                       type="button"
-                      className="mt-1 flex w-full items-start text-left text-[12px] leading-[17px] text-white/88 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
+                      className="pointer-events-auto mt-1 flex w-full items-start text-left text-[12px] leading-[17px] text-white/88 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
                       onClick={() => setEpLineExpanded((v) => !v)}
                     >
                       <span className="min-w-0 flex-1">
@@ -1726,11 +1695,38 @@ export function DramaDetail({
                       </span>
                     </button>
                   </div>
+                  <div className="absolute bottom-0 right-2.5 flex flex-col items-center gap-5">
+                    <WatchSideAction
+                      label={favorited ? t("detail.favorited") : t("detail.favorite")}
+                      count={formatCount(favCount, locale)}
+                      onClick={() => void toggleFavorite()}
+                    >
+                      <Star
+                        className={cn(
+                          "h-[30px] w-[30px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]",
+                          favorited ? "fill-[#ffb000] text-[#ffb000]" : "text-white",
+                        )}
+                        strokeWidth={1.75}
+                      />
+                    </WatchSideAction>
+                    <WatchSideAction
+                      label={t("feed.like")}
+                      count={formatCount(likeCount, locale)}
+                      onClick={() => void toggleLike()}
+                    >
+                      <Heart
+                        className={cn(
+                          "h-[30px] w-[30px] drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]",
+                          liked ? "fill-[#ff4d6d] text-[#ff4d6d]" : "text-white",
+                        )}
+                        strokeWidth={1.75}
+                      />
+                    </WatchSideAction>
+                  </div>
                 </div>
               ) : null}
 
-              {/* 竖屏底栏：PWA black-translucent 下勿再用 safe-area-inset-bottom 垫高，
-                  否则会出现原版没有的底部安全区空条；home indicator 直接叠在黑底上。 */}
+              {/* 竖屏底栏：整体贴底；PWA 不垫 safe-area（避免多出安全区空条）。 */}
               <div className="relative z-10 w-full">
                 <WatchSeekBar
                   videoRef={videoRef}
@@ -1740,7 +1736,7 @@ export function DramaDetail({
                   disabled={!playUrl || needsLogin || locked}
                   onSeekingChange={onSeekingChange}
                 />
-                <div className="flex items-center gap-6 bg-[#000000] px-[18px] pb-2.5 pt-2.5">
+                <div className="flex items-center gap-6 bg-[#000000] px-[18px] pb-0 pt-2.5">
                   <button
                     type="button"
                     onClick={() => setDrawerOpen(true)}
