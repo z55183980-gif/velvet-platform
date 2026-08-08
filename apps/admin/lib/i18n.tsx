@@ -1308,6 +1308,15 @@ const zh = {
   ytdlpUrlPlaceholder: "https://… 公开视频或播放列表链接",
   ytdlpProbe: "解析预览",
   ytdlpProbeDone: "已解析",
+  ytdlpAiExtract: "AI 抽取分集",
+  ytdlpAiExtractBusy: "AI 抽取中…",
+  ytdlpAiExtractDone: "已 AI 抽取",
+  ytdlpAiExtractHint:
+    "抓取页面并用大模型抽取分集链接（适合 yt-dlp 只有 1 集时）。结果建议用「外链」入库。",
+  ytdlpAiExtractNeedOpenai: "未配置 OPENAI_API_KEY，无法 AI 抽取",
+  ytdlpAiNotes: "备注",
+  ytdlpAiPreferLinkHint:
+    "AI 抽取的是分集链接列表；选「存 R2」仍会按整页走 yt-dlp，可能仍只有 1 集。建议改用「外链」。",
   ytdlpClearUrl: "清除",
   ytdlpNeedUrl: "请填写公开视频页链接",
   ytdlpNeedProbe: "请先解析预览",
@@ -2704,6 +2713,15 @@ const en: Record<LabelKey, string> = {
   ytdlpUrlPlaceholder: "https://… public video or playlist URL",
   ytdlpProbe: "Preview",
   ytdlpProbeDone: "Parsed",
+  ytdlpAiExtract: "AI extract episodes",
+  ytdlpAiExtractBusy: "AI extracting…",
+  ytdlpAiExtractDone: "AI extracted",
+  ytdlpAiExtractHint:
+    "Fetch the page and use the LLM to extract episode links (useful when yt-dlp returns only 1). Prefer External link ingest.",
+  ytdlpAiExtractNeedOpenai: "OPENAI_API_KEY is not configured",
+  ytdlpAiNotes: "Notes",
+  ytdlpAiPreferLinkHint:
+    "AI returned an episode link list; R2 still transfers via yt-dlp on the page URL and may stay at 1 episode. Prefer External link.",
   ytdlpClearUrl: "Clear",
   ytdlpNeedUrl: "Enter a public video URL",
   ytdlpNeedProbe: "Preview the URL first",

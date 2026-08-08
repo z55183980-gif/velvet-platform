@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { PrismaService } from '../prisma/prisma.service';
 import { BizCode, BizException } from '../common/biz.exception';
+import { OpenaiService } from '../common/openai.service';
 import { signMediaPath } from '../common/media-sign.util';
 import { requireSecret } from '../common/security-config';
 import { UploadService } from '../upload/upload.service';
@@ -16,6 +17,7 @@ import {
   YtdlpAuthOverride,
   YtdlpFormatPreference,
   YtdlpProvider,
+  type YtdlpProbeResult,
 } from './ytdlp.provider';
 
 export type YtdlpImportOptions = {
@@ -126,6 +128,7 @@ export class YtdlpImportService implements OnModuleInit {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly lockAccess: LockAccessService,
+    private readonly openai: OpenaiService,
   ) {}
 
   async onModuleInit() {
@@ -135,8 +138,13 @@ export class YtdlpImportService implements OnModuleInit {
     }, 1500);
   }
 
-  status() {
-    return this.provider.status();
+  async status() {
+    const base = await this.provider.status();
+    return {
+      ...base,
+      openaiConfigured: this.openai.isConfigured(),
+      openaiModel: this.openai.isConfigured() ? this.openai.modelName() : null,
+    };
   }
 
   saveCookies(hostname: string, content: Buffer | string) {
@@ -145,6 +153,128 @@ export class YtdlpImportService implements OnModuleInit {
 
   probe(url: string, auth?: YtdlpAuthOverride) {
     return this.provider.probe(url, auth);
+  }
+
+  /**
+   * Path B: fetch public page HTML → OpenAI extract episode list.
+   * Returns a probe-shaped payload the admin panel can reuse for fill/apply.
+   */
+  async aiExtract(opts: {
+    url: string;
+    maxEpisodes?: number;
+    cookiesFile?: string;
+    authBearer?: string;
+  }) {
+    const pageUrl = await this.provider.assertSafePageUrl(opts.url);
+    const auth = this.authFromOpts(opts);
+    const headers = this.provider.buildPageFetchHeaders(pageUrl, auth);
+
+    let pageRes: Response;
+    try {
+      pageRes = await fetch(pageUrl, {
+        method: 'GET',
+        headers,
+        redirect: 'follow',
+      });
+    } catch (e: unknown) {
+      throw new BizException(
+        BizCode.BAD_REQUEST,
+        `抓取页面失败: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
+    if (!pageRes.ok) {
+      throw new BizException(
+        BizCode.BAD_REQUEST,
+        `抓取页面失败: HTTP ${pageRes.status}`,
+      );
+    }
+
+    const rawHtml = await pageRes.text();
+    const pageText = this.stripHtml(rawHtml);
+    if (pageText.length < 40) {
+      throw new BizException(
+        BizCode.BAD_REQUEST,
+        '页面文本过少，可能需登录态（请上传 cookies）或换剧集主页链接',
+      );
+    }
+
+    const extracted = await this.openai.extractDramaPage({
+      pageUrl,
+      pageText,
+    });
+
+    let episodes = extracted.episodes;
+    const max =
+      opts.maxEpisodes && opts.maxEpisodes > 0 ? Math.floor(opts.maxEpisodes) : undefined;
+    if (max) episodes = episodes.slice(0, max);
+
+    if (!episodes.length) {
+      throw new BizException(
+        BizCode.BAD_REQUEST,
+        extracted.notes
+          ? `AI 未抽到可用分集链接：${extracted.notes}`
+          : 'AI 未抽到可用分集链接，请换剧集主页或配置源站登录态后重试',
+      );
+    }
+
+    const title =
+      extracted.titleEn ||
+      extracted.titleZh ||
+      `AI extract ${pageUrl.slice(0, 40)}`;
+
+    const probe: YtdlpProbeResult & {
+      source: 'ai';
+      titleZh?: string;
+      titleEn?: string;
+      notes?: string;
+      model?: string;
+      htmlChars: number;
+      textChars: number;
+      episodes: Array<
+        YtdlpProbeResult['episodes'][number] & { sourceUrl?: string }
+      >;
+    } = {
+      extractor: 'openai',
+      id: `ai:${Buffer.from(pageUrl).toString('base64url').slice(0, 24)}`,
+      title,
+      coverUrl: /^https?:\/\//i.test(extracted.coverUrl)
+        ? extracted.coverUrl
+        : undefined,
+      description: extracted.descriptionZh || undefined,
+      webpageUrl: pageUrl,
+      kind: episodes.length > 1 ? 'playlist' : 'single',
+      source: 'ai',
+      titleZh: extracted.titleZh || undefined,
+      titleEn: extracted.titleEn || undefined,
+      notes: extracted.notes || undefined,
+      model: extracted.model,
+      htmlChars: rawHtml.length,
+      textChars: pageText.length,
+      episodes: episodes.map((ep) => {
+        const mediaLike = /\.(m3u8|mp4|webm|mkv)(\?|$)/i.test(ep.sourceUrl);
+        return {
+          index: ep.episodeNumber,
+          id: `ai-ep-${ep.episodeNumber}`,
+          title: ep.title,
+          webpageUrl: mediaLike ? pageUrl : ep.sourceUrl,
+          sourceUrl: ep.sourceUrl,
+          candidateCount: 1,
+        };
+      }),
+    };
+
+    return probe;
+  }
+
+  private stripHtml(html: string): string {
+    return html
+      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+      .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
+      .replace(/<!--[\s\S]*?-->/g, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
   }
 
   resolve(

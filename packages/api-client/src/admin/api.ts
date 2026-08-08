@@ -1550,6 +1550,8 @@ export async function adminYtdlpStatus() {
     provider: string;
     requiresApiKey: boolean;
     lastError: string | null;
+    openaiConfigured?: boolean;
+    openaiModel?: string | null;
     auth?: {
       globalCookiesConfigured: boolean;
       cookiesDir: string;
@@ -1558,6 +1560,50 @@ export async function adminYtdlpStatus() {
       extraHeaders: number;
     };
   }>("/admin/ytdlp/status");
+}
+
+export async function adminYtdlpAiExtract(
+  url: string,
+  opts?: {
+    maxEpisodes?: number;
+    cookiesFile?: string;
+    authBearer?: string;
+  },
+) {
+  return adminRequest<{
+    extractor: string;
+    id: string;
+    title: string;
+    coverUrl?: string;
+    description?: string;
+    webpageUrl: string;
+    kind: "single" | "playlist";
+    source: "ai";
+    titleZh?: string;
+    titleEn?: string;
+    notes?: string;
+    model?: string;
+    htmlChars: number;
+    textChars: number;
+    episodes: Array<{
+      index: number;
+      id: string;
+      title: string;
+      durationSec?: number;
+      webpageUrl: string;
+      sourceUrl?: string;
+      playlistIndex?: number;
+      candidateCount: number;
+    }>;
+  }>("/admin/ytdlp/ai-extract", {
+    method: "POST",
+    body: JSON.stringify({
+      url,
+      maxEpisodes: opts?.maxEpisodes,
+      cookiesFile: opts?.cookiesFile,
+      authBearer: opts?.authBearer,
+    }),
+  });
 }
 
 export async function adminYtdlpProbe(

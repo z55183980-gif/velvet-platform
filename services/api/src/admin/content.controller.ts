@@ -310,6 +310,11 @@ class YtdlpProbeDto extends YtdlpAuthFields {
   @IsNotEmpty() @IsString() url!: string;
 }
 
+class YtdlpAiExtractDto extends YtdlpAuthFields {
+  @IsNotEmpty() @IsString() url!: string;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) maxEpisodes?: number;
+}
+
 class YtdlpResolveDto extends YtdlpAuthFields {
   @IsNotEmpty() @IsString() url!: string;
   @IsOptional() @IsIn(['best_hls', 'best_mp4', 'best'])
@@ -747,6 +752,20 @@ export class ContentController {
       await this.ytdlp.probe(dto.url, {
         cookiesFile: dto.cookiesFile,
         bearerToken: dto.authBearer,
+      }),
+    );
+  }
+
+  /** Path B: HTML + OpenAI 抽取分集（复用公开页解析面板）。 */
+  @Post('ytdlp/ai-extract')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async ytdlpAiExtract(@Body() dto: YtdlpAiExtractDto) {
+    return ok(
+      await this.ytdlp.aiExtract({
+        url: dto.url,
+        maxEpisodes: dto.maxEpisodes,
+        cookiesFile: dto.cookiesFile,
+        authBearer: dto.authBearer,
       }),
     );
   }

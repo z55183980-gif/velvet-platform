@@ -8,7 +8,7 @@ export type OnlineEpisodeFill = {
   title?: string;
   /** Probe item page / playlist URL (parse flow). */
   webpageUrl?: string;
-  /** Direct playable URL when already known (manual paste). */
+  /** Direct playable URL when already known (manual paste / AI extract). */
   sourceUrl?: string;
   durationSec?: number;
 };
@@ -43,13 +43,17 @@ type ProbeEpisodeLike = {
   index?: number;
   title?: string | null;
   webpageUrl?: string | null;
+  sourceUrl?: string | null;
   durationSec?: number | null;
 };
 
 type ProbeLike = {
   title?: string | null;
+  titleZh?: string | null;
+  titleEn?: string | null;
   coverUrl?: string | null;
   description?: string | null;
+  source?: "ai" | "ytdlp" | string | null;
   episodes?: ProbeEpisodeLike[] | null;
 };
 
@@ -74,7 +78,11 @@ function selectProbeEpisodes(probe: ProbeLike, maxEpisodes?: number) {
   return episodeRows.slice(0, max);
 }
 
-/** Map yt-dlp probe result → main-form fields (title/cover/desc/episode count) and/or online package. */
+function isDirectMediaUrl(url: string): boolean {
+  return /\.(m3u8|mp4|webm|mkv)(\?|$)/i.test(url);
+}
+
+/** Map yt-dlp / AI probe result → main-form fields and/or online package. */
 export function dramaInfoFromYtdlpProbe(
   probe: ProbeLike,
   extras?: ProbeExtras,
@@ -82,18 +90,26 @@ export function dramaInfoFromYtdlpProbe(
   const includeMeta = extras?.includeMeta !== false;
   const includeOnline = extras?.includeOnline !== false;
   const selected = selectProbeEpisodes(probe, extras?.maxEpisodes);
+  const fromAi = probe.source === "ai";
 
   const payload: DramaInfoFillPayload = {};
 
   if (includeMeta) {
-    const raw = (probe.title || "").trim();
-    const title = raw.slice(0, 40);
-    const hasCjk = /[\u4e00-\u9fff]/.test(title);
+    const titleZh = (probe.titleZh || "").trim().slice(0, 40);
+    const titleEn = (probe.titleEn || "").trim().slice(0, 40);
+    const raw = (probe.title || "").trim().slice(0, 40);
+    const hasCjk = /[\u4e00-\u9fff]/.test(raw);
     const desc = (probe.description || "").trim().slice(0, 300);
     const cover = (probe.coverUrl || "").trim();
-    // EN is required on the local form; use probe title as interim even for CJK.
-    payload.titleEn = title || undefined;
-    payload.titleZh = hasCjk ? title : undefined;
+
+    if (fromAi) {
+      payload.titleZh = titleZh || (hasCjk ? raw : undefined);
+      payload.titleEn = titleEn || raw || undefined;
+    } else {
+      // EN is required on the local form; use probe title as interim even for CJK.
+      payload.titleEn = titleEn || raw || undefined;
+      payload.titleZh = titleZh || (hasCjk ? raw : undefined);
+    }
     payload.coverUrl = cover || undefined;
     payload.descriptionZh = desc || undefined;
     payload.totalEpisodes = selected.length || undefined;
@@ -101,17 +117,27 @@ export function dramaInfoFromYtdlpProbe(
   }
 
   if (includeOnline) {
+    // AI extract URLs are often episode pages / CDN links — prefer link ingest when caller omits form.
     payload.online = {
       pageUrl: (extras?.pageUrl || "").trim(),
       ingestForm: extras?.ingestForm || "link",
       formatPreference: extras?.formatPreference || "best_hls",
       maxEpisodes: extras?.maxEpisodes,
-      episodes: selected.map((ep, i) => ({
-        episodeNumber: i + 1,
-        title: (ep.title || "").trim() || undefined,
-        webpageUrl: (ep.webpageUrl || "").trim() || undefined,
-        durationSec: typeof ep.durationSec === "number" ? ep.durationSec : undefined,
-      })),
+      episodes: selected.map((ep, i) => {
+        const webpageUrl = (ep.webpageUrl || "").trim() || undefined;
+        const sourceUrl = (ep.sourceUrl || "").trim() || undefined;
+        const resolvedSource =
+          sourceUrl ||
+          (webpageUrl && fromAi ? webpageUrl : undefined) ||
+          (webpageUrl && isDirectMediaUrl(webpageUrl) ? webpageUrl : undefined);
+        return {
+          episodeNumber: i + 1,
+          title: (ep.title || "").trim() || undefined,
+          webpageUrl,
+          sourceUrl: resolvedSource,
+          durationSec: typeof ep.durationSec === "number" ? ep.durationSec : undefined,
+        };
+      }),
     };
   }
 

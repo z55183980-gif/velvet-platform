@@ -229,6 +229,77 @@ export class YtdlpProvider implements OnModuleInit {
     };
   }
 
+  /** SSRF-safe http(s) URL check (shared by probe / AI page fetch). */
+  async assertSafePageUrl(url: string): Promise<string> {
+    return this.requireHttpUrl(url);
+  }
+
+  /**
+   * Browser-like headers for server-side HTML fetch (Bearer + Netscape cookies → Cookie).
+   */
+  buildPageFetchHeaders(pageUrl: string, override?: YtdlpAuthOverride): Record<string, string> {
+    const headers: Record<string, string> = {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+      Accept: 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8',
+    };
+    const bearer = override?.bearerToken?.trim() || this.globalBearer();
+    if (bearer) headers.Authorization = `Bearer ${bearer}`;
+
+    for (const line of [...this.globalHeaders(), ...(override?.headers || [])]) {
+      const idx = line.indexOf(':');
+      if (idx <= 0) continue;
+      const name = line.slice(0, idx).trim();
+      const value = line.slice(idx + 1).trim();
+      if (!name || !value) continue;
+      if (/^cookie$/i.test(name)) {
+        headers.Cookie = headers.Cookie ? `${headers.Cookie}; ${value}` : value;
+      } else if (!/^authorization$/i.test(name) || !headers.Authorization) {
+        headers[name] = value;
+      }
+    }
+
+    const cookiesFile = this.resolveCookiesFile(pageUrl, override);
+    if (cookiesFile) {
+      const fromFile = this.netscapeCookieHeader(cookiesFile, pageUrl);
+      if (fromFile) {
+        headers.Cookie = headers.Cookie ? `${headers.Cookie}; ${fromFile}` : fromFile;
+      }
+    }
+    return headers;
+  }
+
+  private netscapeCookieHeader(cookiesFile: string, pageUrl: string): string | null {
+    let host = '';
+    try {
+      host = new URL(pageUrl).hostname.toLowerCase();
+    } catch {
+      return null;
+    }
+    let text = '';
+    try {
+      text = fs.readFileSync(cookiesFile, 'utf8');
+    } catch {
+      return null;
+    }
+    const pairs: string[] = [];
+    for (const rawLine of text.split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith('#')) continue;
+      const cols = line.split('\t');
+      if (cols.length < 7) continue;
+      const domain = cols[0].replace(/^\./, '').toLowerCase();
+      const name = cols[5];
+      const value = cols[6];
+      if (!name || value == null) continue;
+      if (host === domain || host.endsWith(`.${domain}`)) {
+        pairs.push(`${name}=${value}`);
+      }
+    }
+    return pairs.length ? pairs.join('; ') : null;
+  }
+
   async probe(url: string, auth?: YtdlpAuthOverride): Promise<YtdlpProbeResult> {
     const pageUrl = await this.requireHttpUrl(url);
     const raw = await this.runJson([

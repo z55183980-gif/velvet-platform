@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import {
   adminStorageStatus,
+  adminYtdlpAiExtract,
   adminYtdlpDownloadEpisode,
   adminYtdlpProbe,
   adminYtdlpResolve,
@@ -20,9 +21,23 @@ import {
 } from "@/lib/drama-info-fill";
 import { useI18n } from "@/lib/i18n";
 
-type ProbeResult = Awaited<ReturnType<typeof adminYtdlpProbe>>;
+type ProbeResult =
+  | Awaited<ReturnType<typeof adminYtdlpProbe>>
+  | Awaited<ReturnType<typeof adminYtdlpAiExtract>>;
 type FormatPreference = "best_hls" | "best_mp4" | "best";
 type IngestTab = "parse" | "manual";
+
+function isAiProbe(
+  p: ProbeResult | null,
+): p is Awaited<ReturnType<typeof adminYtdlpAiExtract>> {
+  return !!p && "source" in p && p.source === "ai";
+}
+
+function episodeSourceUrl(ep: ProbeResult["episodes"][number]): string | undefined {
+  return "sourceUrl" in ep && typeof ep.sourceUrl === "string"
+    ? ep.sourceUrl.trim() || undefined
+    : undefined;
+}
 
 function guessHostnameFromUrl(raw: string): string {
   try {
@@ -203,14 +218,47 @@ export function YtdlpImportPanel({
     },
   });
 
+  const aiExtractMut = useMutation({
+    mutationFn: () => {
+      const u = url.trim();
+      if (!u) throw new Error(t("ytdlpNeedUrl"));
+      if (!statusQ.data?.openaiConfigured) {
+        throw new Error(t("ytdlpAiExtractNeedOpenai"));
+      }
+      return adminYtdlpAiExtract(u, {
+        maxEpisodes: probeMaxEpisodes(),
+        ...authPayload(),
+      });
+    },
+    onSuccess: (data) => {
+      setError(null);
+      setPreviewEpIndex(null);
+      setPreviewUrl(null);
+      setFilled(false);
+      setApplied(false);
+      setIngestForm("link");
+      setProbe(data);
+    },
+    onError: (e: Error) => {
+      setFilled(false);
+      setApplied(false);
+      setError(e.message);
+    },
+  });
+
   const resolveMut = useMutation({
-    mutationFn: (ep: ProbeResult["episodes"][number]) =>
-      adminYtdlpResolve({
+    mutationFn: async (ep: ProbeResult["episodes"][number]) => {
+      const direct = episodeSourceUrl(ep);
+      if (direct && /\.(m3u8|mp4|webm|mkv)(\?|$)/i.test(direct)) {
+        return { playUrl: direct, originalUrl: direct };
+      }
+      return adminYtdlpResolve({
         url: ep.webpageUrl,
         formatPreference,
         playlistIndex: ep.playlistIndex,
         ...authPayload(),
-      }),
+      });
+    },
     onSuccess: (data, ep) => {
       setError(null);
       setPreviewEpIndex(ep.index);
@@ -245,6 +293,7 @@ export function YtdlpImportPanel({
   }
 
   const configured = !!statusQ.data?.configured;
+  const openaiReady = !!statusQ.data?.openaiConfigured;
   const authInfo = statusQ.data?.auth;
   const hostCookieFiles = authInfo?.hostCookieFiles ?? [];
   const authReady =
@@ -257,6 +306,7 @@ export function YtdlpImportPanel({
   const ffmpegReady = storageQ.data?.ffmpegReady !== false;
   const busy =
     probeMut.isPending ||
+    aiExtractMut.isPending ||
     resolveMut.isPending ||
     downloadingEpIndex != null ||
     cookieUploadBusy;
@@ -483,20 +533,42 @@ export function YtdlpImportPanel({
               />
               <Button
                 size="sm"
-                variant={probe ? "secondary" : "primary"}
+                variant={probe && !isAiProbe(probe) ? "secondary" : "primary"}
                 className={
-                  probe
+                  probe && !isAiProbe(probe)
                     ? "border-success/40 bg-success-soft text-success hover:bg-success/15"
                     : undefined
                 }
-                disabled={!configured || !url.trim() || probeMut.isPending}
+                disabled={!configured || !url.trim() || busy}
                 onClick={() => probeMut.mutate()}
               >
                 {probeMut.isPending
                   ? t("loading")
-                  : probe
+                  : probe && !isAiProbe(probe)
                     ? t("ytdlpProbeDone")
                     : t("ytdlpProbe")}
+              </Button>
+              <Button
+                size="sm"
+                variant={isAiProbe(probe) ? "secondary" : "ghost"}
+                className={
+                  isAiProbe(probe)
+                    ? "border-success/40 bg-success-soft text-success hover:bg-success/15"
+                    : undefined
+                }
+                disabled={!url.trim() || busy || !openaiReady}
+                title={
+                  !openaiReady
+                    ? t("ytdlpAiExtractNeedOpenai")
+                    : t("ytdlpAiExtractHint")
+                }
+                onClick={() => aiExtractMut.mutate()}
+              >
+                {aiExtractMut.isPending
+                  ? t("ytdlpAiExtractBusy")
+                  : isAiProbe(probe)
+                    ? t("ytdlpAiExtractDone")
+                    : t("ytdlpAiExtract")}
               </Button>
               {url || probe ? (
                 <Button size="sm" variant="ghost" onClick={clearUrlInput}>
@@ -547,9 +619,16 @@ export function YtdlpImportPanel({
             <div className="min-w-0 flex-1">
               <h4 className="font-semibold">{probe.title}</h4>
               <p className="text-caption text-ink-muted">
-                {probe.extractor} · {probe.kind} ·{" "}
-                {t("importEpisodeCount", { n: probe.episodes.length })}
+                {isAiProbe(probe)
+                  ? `${t("ytdlpAiExtract")} · ${probe.model || "openai"}`
+                  : `${probe.extractor} · ${probe.kind}`}{" "}
+                · {t("importEpisodeCount", { n: probe.episodes.length })}
               </p>
+              {isAiProbe(probe) && probe.notes ? (
+                <p className="mt-1 text-caption text-ink-subtle">
+                  {t("ytdlpAiNotes")}: {probe.notes}
+                </p>
+              ) : null}
               {probe.description ? (
                 <p className="mt-1 line-clamp-3 text-body-sm text-ink-muted">{probe.description}</p>
               ) : null}
@@ -698,6 +777,9 @@ export function YtdlpImportPanel({
                   ? t("ytdlpIngestFormR2Hint")
                   : t("ytdlpIngestFormLinkHint")}
               </p>
+              {isAiProbe(probe) && ingestForm === "r2" ? (
+                <p className="text-caption text-amber-700">{t("ytdlpAiPreferLinkHint")}</p>
+              ) : null}
               {ingestForm === "r2" && (!r2Ready || !ffmpegReady) ? (
                 <p className="text-caption text-warning">
                   {!r2Ready ? t("ytdlpNeedR2") : t("ytdlpNeedFfmpeg")}
