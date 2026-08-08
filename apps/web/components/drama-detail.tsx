@@ -1668,12 +1668,12 @@ export function DramaDetail({
         ) : null}
 
         {/*
-          Hongguo bottom chrome.
-          black-translucent expands the canvas into the home-indicator band.
-          Lift the whole chrome above that band so it stays video (not solid black pad).
+          Hongguo bottom chrome — flush to the physical bottom (pb-0).
+          Do NOT set bottom: env(safe-area): that lifts this stack and paints an
+          empty black slab under the episode bar (visible after black-translucent).
         */}
         {showWatchBottomChrome ? (
-          <div className="absolute inset-x-0 bottom-[env(safe-area-inset-bottom,0px)] z-40">
+          <div className="absolute inset-x-0 bottom-0 z-40">
             <div className="flex flex-col">
               {showWatchMetaChrome ? (
                 <div className="relative px-3.5 pb-1">
@@ -1730,7 +1730,6 @@ export function DramaDetail({
                 </div>
               ) : null}
 
-              {/* Black plate only wraps seek+chips — does not paint into home-indicator. */}
               <div className="relative z-10 w-full bg-[#000000]">
                 <WatchSeekBar
                   videoRef={videoRef}
