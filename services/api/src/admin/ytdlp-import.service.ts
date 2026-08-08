@@ -19,6 +19,13 @@ import {
   YtdlpProvider,
   type YtdlpProbeResult,
 } from './ytdlp.provider';
+import {
+  buildExtractContext,
+  expandDramaPageCandidates,
+  extractEpisodeLinksFromHtml,
+  extractMetaFromNextData,
+  type ExtractedPageEpisode,
+} from './online-page-extract.util';
 
 export type YtdlpImportOptions = {
   url: string;
@@ -156,8 +163,8 @@ export class YtdlpImportService implements OnModuleInit {
   }
 
   /**
-   * Path B: fetch public page HTML → OpenAI extract episode list.
-   * Returns a probe-shaped payload the admin panel can reuse for fill/apply.
+   * Path B: fetch public page HTML → deterministic episode href extract (+ OpenAI meta fallback).
+   * ReelShort SPA pages put episode lists in HTML/__NEXT_DATA__; stripped text alone is not enough.
    */
   async aiExtract(opts: {
     url: string;
@@ -167,60 +174,155 @@ export class YtdlpImportService implements OnModuleInit {
   }) {
     const pageUrl = await this.provider.assertSafePageUrl(opts.url);
     const auth = this.authFromOpts(opts);
-    const headers = this.provider.buildPageFetchHeaders(pageUrl, auth);
+    const candidates = expandDramaPageCandidates(pageUrl);
 
-    let pageRes: Response;
-    try {
-      pageRes = await fetch(pageUrl, {
-        method: 'GET',
-        headers,
-        redirect: 'follow',
-      });
-    } catch (e: unknown) {
+    const episodeMap = new Map<number, ExtractedPageEpisode>();
+    let bestMeta: {
+      title?: string;
+      coverUrl?: string;
+      description?: string;
+    } = {};
+    let bestHtml = '';
+    let bestHtmlUrl = pageUrl;
+    let fetchedOk = 0;
+    const fetchErrors: string[] = [];
+
+    for (const candidate of candidates) {
+      const headers = this.provider.buildPageFetchHeaders(candidate, auth);
+      let pageRes: Response;
+      try {
+        pageRes = await fetch(candidate, {
+          method: 'GET',
+          headers,
+          redirect: 'follow',
+        });
+      } catch (e: unknown) {
+        fetchErrors.push(
+          `${candidate}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+        continue;
+      }
+      if (!pageRes.ok) {
+        fetchErrors.push(`${candidate}: HTTP ${pageRes.status}`);
+        continue;
+      }
+      fetchedOk += 1;
+      const rawHtml = await pageRes.text();
+      if (rawHtml.length > bestHtml.length) {
+        bestHtml = rawHtml;
+        bestHtmlUrl = candidate;
+      }
+
+      for (const ep of extractEpisodeLinksFromHtml(rawHtml, candidate)) {
+        if (!episodeMap.has(ep.episodeNumber)) episodeMap.set(ep.episodeNumber, ep);
+      }
+
+      const { meta, episodes: nextEps } = extractMetaFromNextData(rawHtml);
+      if (meta.title && !bestMeta.title) bestMeta.title = meta.title;
+      if (meta.coverUrl && !bestMeta.coverUrl) bestMeta.coverUrl = meta.coverUrl;
+      if (meta.description && !bestMeta.description) {
+        bestMeta.description = meta.description;
+      }
+      for (const ep of nextEps) {
+        // Prefer page hrefs (playable ingest via yt-dlp later); keep media URLs if no href.
+        if (!episodeMap.has(ep.episodeNumber)) episodeMap.set(ep.episodeNumber, ep);
+      }
+    }
+
+    let episodes = [...episodeMap.values()].sort(
+      (a, b) => a.episodeNumber - b.episodeNumber,
+    );
+
+    // LLM fallback / meta enrichment when href extract is thin
+    let notes = '';
+    let model: string | undefined;
+    let titleZh = '';
+    let titleEn = bestMeta.title || '';
+    let descriptionZh = bestMeta.description || '';
+    let coverUrl = bestMeta.coverUrl || '';
+
+    const needLlm =
+      this.openai.isConfigured() &&
+      (episodes.length < 2 || !titleEn || !descriptionZh);
+
+    if (needLlm) {
+      if (!bestHtml) {
+        throw new BizException(
+          BizCode.BAD_REQUEST,
+          fetchErrors[0]
+            ? `抓取页面失败: ${fetchErrors[0]}`
+            : '抓取页面失败',
+        );
+      }
+      const pageText = buildExtractContext(bestHtml, bestHtmlUrl);
+      if (pageText.replace(/\s+/g, ' ').trim().length < 40) {
+        throw new BizException(
+          BizCode.BAD_REQUEST,
+          '页面文本过少，可能需登录态（请上传 cookies）或换剧集主页链接',
+        );
+      }
+      try {
+        const extracted = await this.openai.extractDramaPage({
+          pageUrl: bestHtmlUrl,
+          pageText,
+        });
+        model = extracted.model;
+        notes = extracted.notes || '';
+        if (extracted.titleZh) titleZh = extracted.titleZh;
+        if (extracted.titleEn) titleEn = extracted.titleEn || titleEn;
+        if (extracted.coverUrl && /^https?:\/\//i.test(extracted.coverUrl)) {
+          coverUrl = extracted.coverUrl;
+        }
+        if (extracted.descriptionZh) {
+          descriptionZh = extracted.descriptionZh || descriptionZh;
+        }
+        if (episodes.length < 2 && extracted.episodes.length) {
+          for (const ep of extracted.episodes) {
+            if (!episodeMap.has(ep.episodeNumber)) {
+              episodeMap.set(ep.episodeNumber, ep);
+            }
+          }
+          episodes = [...episodeMap.values()].sort(
+            (a, b) => a.episodeNumber - b.episodeNumber,
+          );
+        }
+      } catch (e: unknown) {
+        // If we already have deterministic episodes, keep going; else rethrow.
+        if (episodes.length === 0) throw e;
+        notes = `AI meta skipped: ${e instanceof Error ? e.message : String(e)}`;
+      }
+    } else if (!bestHtml && episodes.length === 0) {
       throw new BizException(
         BizCode.BAD_REQUEST,
-        `抓取页面失败: ${e instanceof Error ? e.message : String(e)}`,
+        fetchErrors[0]
+          ? `抓取页面失败: ${fetchErrors[0]}`
+          : '抓取页面失败',
       );
-    }
-    if (!pageRes.ok) {
-      throw new BizException(
-        BizCode.BAD_REQUEST,
-        `抓取页面失败: HTTP ${pageRes.status}`,
-      );
+    } else if (episodes.length >= 2) {
+      notes = `Deterministic extract from ${fetchedOk} page(s); skipped LLM.`;
     }
 
-    const rawHtml = await pageRes.text();
-    const pageText = this.stripHtml(rawHtml);
-    if (pageText.length < 40) {
-      throw new BizException(
-        BizCode.BAD_REQUEST,
-        '页面文本过少，可能需登录态（请上传 cookies）或换剧集主页链接',
-      );
-    }
-
-    const extracted = await this.openai.extractDramaPage({
-      pageUrl,
-      pageText,
-    });
-
-    let episodes = extracted.episodes;
     const max =
       opts.maxEpisodes && opts.maxEpisodes > 0 ? Math.floor(opts.maxEpisodes) : undefined;
     if (max) episodes = episodes.slice(0, max);
 
+    // Re-number contiguous after slice
+    episodes = episodes.map((ep, i) => ({
+      ...ep,
+      episodeNumber: i + 1,
+      title: ep.title || `EP${i + 1}`,
+    }));
+
     if (!episodes.length) {
       throw new BizException(
         BizCode.BAD_REQUEST,
-        extracted.notes
-          ? `AI 未抽到可用分集链接：${extracted.notes}`
-          : 'AI 未抽到可用分集链接，请换剧集主页或配置源站登录态后重试',
+        notes
+          ? `未抽到可用分集链接：${notes}`
+          : '未抽到可用分集链接。请改用剧集主页 /movie/... 或 /full-episodes/...，并确认链接可访问（非 404）',
       );
     }
 
-    const title =
-      extracted.titleEn ||
-      extracted.titleZh ||
-      `AI extract ${pageUrl.slice(0, 40)}`;
+    const title = (titleEn || titleZh || bestMeta.title || `AI extract`).trim();
 
     const probe: YtdlpProbeResult & {
       source: 'ai';
@@ -230,51 +332,43 @@ export class YtdlpImportService implements OnModuleInit {
       model?: string;
       htmlChars: number;
       textChars: number;
+      resolvedFrom?: string[];
       episodes: Array<
         YtdlpProbeResult['episodes'][number] & { sourceUrl?: string }
       >;
     } = {
-      extractor: 'openai',
+      extractor: model ? 'openai+html' : 'html',
       id: `ai:${Buffer.from(pageUrl).toString('base64url').slice(0, 24)}`,
       title,
-      coverUrl: /^https?:\/\//i.test(extracted.coverUrl)
-        ? extracted.coverUrl
-        : undefined,
-      description: extracted.descriptionZh || undefined,
-      webpageUrl: pageUrl,
+      coverUrl: /^https?:\/\//i.test(coverUrl) ? coverUrl : undefined,
+      description: descriptionZh || undefined,
+      webpageUrl: bestHtmlUrl || pageUrl,
       kind: episodes.length > 1 ? 'playlist' : 'single',
       source: 'ai',
-      titleZh: extracted.titleZh || undefined,
-      titleEn: extracted.titleEn || undefined,
-      notes: extracted.notes || undefined,
-      model: extracted.model,
-      htmlChars: rawHtml.length,
-      textChars: pageText.length,
+      titleZh: titleZh || undefined,
+      titleEn: titleEn || undefined,
+      notes: notes || undefined,
+      model,
+      htmlChars: bestHtml.length,
+      textChars: bestHtml ? buildExtractContext(bestHtml, bestHtmlUrl).length : 0,
+      resolvedFrom: candidates,
       episodes: episodes.map((ep) => {
         const mediaLike = /\.(m3u8|mp4|webm|mkv)(\?|$)/i.test(ep.sourceUrl);
         return {
           index: ep.episodeNumber,
           id: `ai-ep-${ep.episodeNumber}`,
           title: ep.title,
-          webpageUrl: mediaLike ? pageUrl : ep.sourceUrl,
+          webpageUrl: mediaLike ? bestHtmlUrl || pageUrl : ep.sourceUrl,
           sourceUrl: ep.sourceUrl,
           candidateCount: 1,
         };
       }),
     };
 
+    this.logger.log(
+      `aiExtract ${pageUrl} → ${episodes.length} eps via ${probe.extractor} (fetched=${fetchedOk})`,
+    );
     return probe;
-  }
-
-  private stripHtml(html: string): string {
-    return html
-      .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-      .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-      .replace(/<noscript[\s\S]*?<\/noscript>/gi, ' ')
-      .replace(/<!--[\s\S]*?-->/g, ' ')
-      .replace(/<[^>]+>/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
   }
 
   resolve(

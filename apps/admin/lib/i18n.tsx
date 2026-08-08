@@ -1312,7 +1312,7 @@ const zh = {
   ytdlpAiExtractBusy: "AI 抽取中…",
   ytdlpAiExtractDone: "已 AI 抽取",
   ytdlpAiExtractHint:
-    "抓取页面并用大模型抽取分集链接（适合 yt-dlp 只有 1 集时）。结果建议用「外链」入库。",
+    "优先从页面 HTML 抽取分集链接；单集/trailer 会自动尝试剧集主页。建议用 /movie/ 或 /full-episodes/，结果用「外链」入库。",
   ytdlpAiExtractNeedOpenai: "未配置 OPENAI_API_KEY，无法 AI 抽取",
   ytdlpAiNotes: "备注",
   ytdlpAiPreferLinkHint:
@@ -2717,7 +2717,7 @@ const en: Record<LabelKey, string> = {
   ytdlpAiExtractBusy: "AI extracting…",
   ytdlpAiExtractDone: "AI extracted",
   ytdlpAiExtractHint:
-    "Fetch the page and use the LLM to extract episode links (useful when yt-dlp returns only 1). Prefer External link ingest.",
+    "Prefers deterministic HTML episode links; expands trailer/episode URLs to the series page. Prefer /movie/ or /full-episodes/, then External link ingest.",
   ytdlpAiExtractNeedOpenai: "OPENAI_API_KEY is not configured",
   ytdlpAiNotes: "Notes",
   ytdlpAiPreferLinkHint:
