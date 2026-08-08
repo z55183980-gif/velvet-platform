@@ -1714,9 +1714,11 @@ export function DramaDetail({
                 </div>
               ) : null}
 
-              {/* 竖屏底栏：进度压在视频/黑区交界；黑区高度 = 上垫 10 + 芯片 40 + 下垫 10 + safe */}
-              <div className="relative z-10 w-full">
-                <div className="relative z-20 -mb-px">
+              {/* 竖屏底栏（按红果 472×1024 截图像素对齐）:
+                  progress → ≈10–18px 黑隙 → 灰胶囊(高≈42, 边距≈18, 灰#19191b, ^ 在胶囊内)
+                  → ≈24px 间距 → 白色全屏图标（无灰底）→ 底部仅 safe-area 黑区 */}
+              <div className="relative z-10 w-full bg-[#000000]">
+                <div className="relative z-20">
                   <WatchSeekBar
                     videoRef={videoRef}
                     absolute={false}
@@ -1726,43 +1728,44 @@ export function DramaDetail({
                     onSeekingChange={onSeekingChange}
                   />
                 </div>
-                <div className="bg-[#000000] pb-[max(0px,env(safe-area-inset-bottom))]">
-                  <div className="flex h-[60px] items-center gap-2 px-3">
-                    <button
-                      type="button"
-                      onClick={() => setDrawerOpen(true)}
-                      className="flex h-10 min-w-0 flex-1 items-center justify-between gap-2 rounded-[10px] bg-[#2c2c2e] px-3.5 text-white"
-                    >
-                      <span className="min-w-0 truncate text-left text-[13px] font-medium leading-none">
-                        {t("detail.pickEpisodesBar", { n: drama.episodesCount })}
-                      </span>
-                      <ChevronUp className="h-4 w-4 shrink-0 opacity-90" strokeWidth={2.25} />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (uiImmersive) {
-                          void exitImmersiveFs();
-                        } else if (landscapeMode) {
-                          void enterLandscapeImmersive();
-                        } else {
-                          void enterPortraitFullscreen();
-                        }
-                      }}
-                      className="grid h-10 w-10 shrink-0 place-items-center rounded-[10px] bg-[#2c2c2e] text-white"
-                      aria-label={
-                        uiImmersive
-                          ? t("player.exitFullscreen")
-                          : t("player.fullscreen")
+                <div
+                  className="flex items-center gap-6 px-[18px] pt-2.5"
+                  style={{ paddingBottom: "max(10px, env(safe-area-inset-bottom, 0px))" }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setDrawerOpen(true)}
+                    className="flex h-[42px] min-w-0 flex-1 items-center justify-between gap-2 rounded-[10px] bg-[#19191b] px-3.5 text-white"
+                  >
+                    <span className="min-w-0 truncate text-left text-[13px] font-medium leading-none">
+                      {t("detail.pickEpisodesBar", { n: drama.episodesCount })}
+                    </span>
+                    <ChevronUp className="h-4 w-4 shrink-0 opacity-90" strokeWidth={2.25} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (uiImmersive) {
+                        void exitImmersiveFs();
+                      } else if (landscapeMode) {
+                        void enterLandscapeImmersive();
+                      } else {
+                        void enterPortraitFullscreen();
                       }
-                    >
-                      {uiImmersive ? (
-                        <Minimize2 className="h-[18px] w-[18px]" strokeWidth={1.85} />
-                      ) : (
-                        <Maximize className="h-[18px] w-[18px]" strokeWidth={1.85} />
-                      )}
-                    </button>
-                  </div>
+                    }}
+                    className="grid h-[42px] w-[42px] shrink-0 place-items-center text-white"
+                    aria-label={
+                      uiImmersive
+                        ? t("player.exitFullscreen")
+                        : t("player.fullscreen")
+                    }
+                  >
+                    {uiImmersive ? (
+                      <Minimize2 className="h-5 w-5" strokeWidth={1.85} />
+                    ) : (
+                      <Maximize className="h-5 w-5" strokeWidth={1.85} />
+                    )}
+                  </button>
                 </div>
               </div>
             </div>
