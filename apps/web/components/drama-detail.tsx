@@ -1061,10 +1061,13 @@ export function DramaDetail({
     const epTitle = selected
       ? pickTitleText(locale, selected.titleEn, selected.titleZh, selected.titleFr)
       : "";
+    // Prefer drama synopsis for the meta line (Hongguo); skip bare EP01-style titles.
+    const epBody =
+      epTitle && !/^ep\s*\d+$/i.test(epTitle.trim()) ? epTitle : desc || epTitle || "";
     const epLine = selected
-      ? `${t("detail.episodeLabel", { n: selected.no })}${epTitle ? ` | ${epTitle}` : ""}`
+      ? `${t("detail.episodeLabel", { n: selected.no })}${epBody ? ` | ${epBody}` : ""}`
       : desc;
-    const epPreview = epLine.length > 26 ? `${epLine.slice(0, 26)}...` : epLine;
+    const epPreview = epLine.length > 32 ? `${epLine.slice(0, 32)}...` : epLine;
 
     /** 竖屏沉浸：隐藏浏览器栏，不 lock、不 rotate */
     const enterPortraitFullscreen = async () => {
@@ -1152,9 +1155,9 @@ export function DramaDetail({
             : undefined
         }
       >
-        {/* Top chrome — 竖屏常态；横屏 CSS 沉浸见下方参考图式操作条 */}
+        {/* Top chrome — 竖屏常态（贴近红果）；横屏 CSS 沉浸见下方操作条 */}
         {!landscapeImmersive ? (
-        <div className="absolute left-0 right-0 top-0 z-40 flex items-center justify-between bg-gradient-to-b from-black/65 via-black/25 to-transparent px-2.5 pb-3 pt-[max(0.4rem,env(safe-area-inset-top))]">
+        <div className="absolute left-0 right-0 top-0 z-40 flex items-center justify-between bg-gradient-to-b from-black/55 via-black/20 to-transparent px-3 pb-4 pt-[max(0.35rem,env(safe-area-inset-top))]">
           <button
             type="button"
             onClick={() => {
@@ -1169,13 +1172,13 @@ export function DramaDetail({
             className="inline-flex min-h-11 items-center gap-0.5 text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
             aria-label={t("common.back")}
           >
-            <ChevronLeft className="h-7 w-7" strokeWidth={2} />
-            <span className="text-[15px] font-medium">
+            <ChevronLeft className="h-6 w-6" strokeWidth={2.25} />
+            <span className="text-[15px] font-medium tracking-[0.01em]">
               {selected ? t("detail.episodeLabel", { n: selected.no }) : title}
             </span>
           </button>
 
-          <div className="relative flex items-center gap-0.5">
+          <div className="relative flex items-center gap-0">
             <button
               type="button"
               onClick={() => {
@@ -1183,9 +1186,9 @@ export function DramaDetail({
                 setShowQuality(false);
                 setShowRate((v) => !v);
               }}
-              className="inline-flex min-h-11 items-center gap-1 rounded-full px-2.5 py-2 text-[13px] text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
+              className="inline-flex min-h-11 items-center gap-1 px-2.5 py-2 text-[13px] text-white/95 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
             >
-              <Clock3 className="h-4 w-4" />
+              <Clock3 className="h-4 w-4" strokeWidth={1.9} />
               {t("player.speed")}
             </button>
             <button
@@ -1195,10 +1198,10 @@ export function DramaDetail({
                 setShowQuality(false);
                 setShowMore((v) => !v);
               }}
-              className="grid h-11 w-11 place-items-center rounded-full text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
+              className="grid h-11 w-10 place-items-center text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
               aria-label={t("player.more")}
             >
-              <MoreVertical className="h-5 w-5" />
+              <MoreVertical className="h-5 w-5" strokeWidth={1.9} />
             </button>
 
             {showRate && (
@@ -1653,7 +1656,7 @@ export function DramaDetail({
         {showWatchBottomChrome ? (
           <div className="absolute inset-x-0 bottom-0 z-40">
             {showWatchMetaChrome ? (
-              <div className="absolute bottom-full right-3 mb-2.5 flex flex-col items-center gap-5">
+              <div className="absolute bottom-full right-2.5 mb-3 flex flex-col items-center gap-5">
                 <WatchSideAction
                   label={favorited ? t("detail.favorited") : t("detail.favorite")}
                   count={formatCount(favCount, locale)}
@@ -1685,24 +1688,24 @@ export function DramaDetail({
 
             <div className="flex flex-col">
               {showWatchMetaChrome ? (
-                <div className="pointer-events-none px-3.5 pb-2">
-                  <div className="pointer-events-auto max-w-[calc(100%-4.5rem)]">
+                <div className="pointer-events-none px-3.5 pb-1.5">
+                  <div className="pointer-events-auto max-w-[calc(100%-4.75rem)]">
                     <button
                       type="button"
-                      className="inline-flex max-w-full items-center gap-0.5 text-[16px] font-semibold leading-snug text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.65)]"
+                      className="inline-flex max-w-full items-center gap-0.5 text-[15px] font-semibold leading-snug text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.65)]"
                       onClick={() => setDrawerOpen(true)}
                     >
                       <span className="truncate">{title}</span>
-                      <ChevronRight className="h-5 w-5 shrink-0 opacity-90" strokeWidth={2.25} />
+                      <ChevronRight className="h-[18px] w-[18px] shrink-0 opacity-90" strokeWidth={2.4} />
                     </button>
                     <button
                       type="button"
-                      className="mt-1 flex w-full items-start text-left text-[12px] leading-[18px] text-white/90 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
+                      className="mt-1 flex w-full items-start text-left text-[12px] leading-[17px] text-white/88 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
                       onClick={() => setEpLineExpanded((v) => !v)}
                     >
                       <span className="min-w-0 flex-1">
                         {epLineExpanded ? epLine : epPreview}
-                        {!epLineExpanded && epLine.length > 26 && (
+                        {!epLineExpanded && epLine.length > 32 && (
                           <span className="ml-1 font-medium text-white">{t("detail.expand")}</span>
                         )}
                       </span>
@@ -1711,51 +1714,55 @@ export function DramaDetail({
                 </div>
               ) : null}
 
-              <WatchSeekBar
-                videoRef={videoRef}
-                absolute={false}
-                mediaKey={playUrl}
-                disabled={!playUrl || needsLogin || locked}
-                onSeekingChange={onSeekingChange}
-              />
-
-              {/* 选集底栏：全屏清 meta 后颜色/样式不变 */}
-              <div className="pb-[max(0px,env(safe-area-inset-bottom))]">
-                <div className="flex h-11 items-stretch rounded-t-[12px] bg-[#1a1a1a]/92 text-white backdrop-blur-sm">
-                  <button
-                    type="button"
-                    onClick={() => setDrawerOpen(true)}
-                    className="flex min-w-0 flex-1 items-center gap-2 px-3.5"
-                  >
-                    <span className="min-w-0 flex-1 truncate text-left text-[13px] font-medium">
-                      {t("detail.pickEpisodesBar", { n: drama.episodesCount })}
-                    </span>
-                    <ChevronUp className="h-4 w-4 shrink-0 opacity-85" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (uiImmersive) {
-                        void exitImmersiveFs();
-                      } else if (landscapeMode) {
-                        void enterLandscapeImmersive();
-                      } else {
-                        void enterPortraitFullscreen();
+              {/* 竖屏底栏：进度压在视频/黑区交界；黑区高度 = 上垫 10 + 芯片 40 + 下垫 10 + safe */}
+              <div className="relative z-10 w-full">
+                <div className="relative z-20 -mb-px">
+                  <WatchSeekBar
+                    videoRef={videoRef}
+                    absolute={false}
+                    className="!px-0"
+                    mediaKey={playUrl}
+                    disabled={!playUrl || needsLogin || locked}
+                    onSeekingChange={onSeekingChange}
+                  />
+                </div>
+                <div className="bg-[#000000] pb-[max(0px,env(safe-area-inset-bottom))]">
+                  <div className="flex h-[60px] items-center gap-2 px-3">
+                    <button
+                      type="button"
+                      onClick={() => setDrawerOpen(true)}
+                      className="flex h-10 min-w-0 flex-1 items-center justify-between gap-2 rounded-[10px] bg-[#2c2c2e] px-3.5 text-white"
+                    >
+                      <span className="min-w-0 truncate text-left text-[13px] font-medium leading-none">
+                        {t("detail.pickEpisodesBar", { n: drama.episodesCount })}
+                      </span>
+                      <ChevronUp className="h-4 w-4 shrink-0 opacity-90" strokeWidth={2.25} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (uiImmersive) {
+                          void exitImmersiveFs();
+                        } else if (landscapeMode) {
+                          void enterLandscapeImmersive();
+                        } else {
+                          void enterPortraitFullscreen();
+                        }
+                      }}
+                      className="grid h-10 w-10 shrink-0 place-items-center rounded-[10px] bg-[#2c2c2e] text-white"
+                      aria-label={
+                        uiImmersive
+                          ? t("player.exitFullscreen")
+                          : t("player.fullscreen")
                       }
-                    }}
-                    className="grid w-12 shrink-0 place-items-center"
-                    aria-label={
-                      uiImmersive
-                        ? t("player.exitFullscreen")
-                        : t("player.fullscreen")
-                    }
-                  >
-                    {uiImmersive ? (
-                      <Minimize2 className="h-5 w-5" strokeWidth={1.75} />
-                    ) : (
-                      <Maximize className="h-5 w-5" strokeWidth={1.75} />
-                    )}
-                  </button>
+                    >
+                      {uiImmersive ? (
+                        <Minimize2 className="h-[18px] w-[18px]" strokeWidth={1.85} />
+                      ) : (
+                        <Maximize className="h-[18px] w-[18px]" strokeWidth={1.85} />
+                      )}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

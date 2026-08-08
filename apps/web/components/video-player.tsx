@@ -100,6 +100,8 @@ export function VideoPlayer({
   const [showVol, setShowVol] = useState(false);
   const [dragging, setDragging] = useState(false);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onEndedRef = useRef(onEnded);
+  onEndedRef.current = onEnded;
 
   const bumpChrome = useCallback(() => {
     setShowChrome(true);
@@ -126,6 +128,9 @@ export function VideoPlayer({
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
+    // Parent (or autoPlay) may already have started playback before listeners
+    // attach — sync from the element so the center play overlay does not stick.
+    setPlaying(!v.paused);
     const onPlay = () => setPlaying(true);
     const onPause = () => setPlaying(false);
     const onTime = () => setCurrent(v.currentTime);
@@ -139,7 +144,7 @@ export function VideoPlayer({
         /* ignore */
       }
     };
-    const onEnd = () => onEnded?.();
+    const onEnd = () => onEndedRef.current?.();
     v.addEventListener("play", onPlay);
     v.addEventListener("pause", onPause);
     v.addEventListener("timeupdate", onTime);
@@ -154,7 +159,7 @@ export function VideoPlayer({
       v.removeEventListener("progress", onProg);
       v.removeEventListener("ended", onEnd);
     };
-  }, [src, onEnded, videoRef]);
+  }, [src, videoRef]);
 
   useEffect(() => {
     const v = videoRef.current;

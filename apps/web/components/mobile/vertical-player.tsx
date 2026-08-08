@@ -141,6 +141,8 @@ export function VerticalPlayer({
   const [dragging, setDragging] = useState(false);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const aspectChangeRef = useRef(onVideoAspectChange);
+  const onEndedRef = useRef(onEnded);
+  onEndedRef.current = onEnded;
 
   useEffect(() => {
     aspectChangeRef.current = onVideoAspectChange;
@@ -299,6 +301,8 @@ export function VerticalPlayer({
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
+    // Parent HLS attach / autoPlay may start before listeners bind.
+    setPlaying(!v.paused);
     const onPlay = () => setPlaying(true);
     const onPause = () => setPlaying(false);
     const onTime = () => setCurrent(v.currentTime);
@@ -312,7 +316,7 @@ export function VerticalPlayer({
         /* ignore */
       }
     };
-    const onEnd = () => onEnded?.();
+    const onEnd = () => onEndedRef.current?.();
     v.addEventListener("play", onPlay);
     v.addEventListener("pause", onPause);
     v.addEventListener("timeupdate", onTime);
@@ -327,7 +331,7 @@ export function VerticalPlayer({
       v.removeEventListener("progress", onProg);
       v.removeEventListener("ended", onEnd);
     };
-  }, [src, onEnded, videoRef]);
+  }, [src, videoRef]);
 
   useEffect(() => {
     const v = videoRef.current;

@@ -100,6 +100,8 @@
     Installed to home screen: no browser toolbar — page sits on the device
     safe area. Add a hair of extra air so labels don't hug the home indicator,
     with a small floor if a WebView reports 0 incorrectly.
+    With apple-mobile-web-app-status-bar-style=black-translucent, portrait watch
+    draws under the status bar; chrome still respects env(safe-area-inset-top).
   */
   @media (display-mode: standalone),
     (display-mode: fullscreen),

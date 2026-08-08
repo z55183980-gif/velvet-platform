@@ -68,6 +68,12 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
         className={cn(
           // Contain accidental horizontal overflow (chips/grid) without locking vertical scroll.
           "overflow-x-clip",
+          // black-translucent PWA: pad Me/Theater under the status bar. Feed + /drama
+          // watch shells are edge-to-edge and own their safe-area chrome.
+          !lockMobileHome &&
+            isMobile &&
+            !onDrama &&
+            "pt-[env(safe-area-inset-top,0px)]",
           // Reserve fixed tab height (h-12) + same safe-bottom token as BottomTabBar.
           // Feed-lock zeroes this: tab is inline in the flex column instead.
           !onDrama && isMobile && "pb-[calc(3rem+var(--mobile-tab-safe-bottom))]",

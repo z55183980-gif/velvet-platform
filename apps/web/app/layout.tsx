@@ -53,9 +53,9 @@ export const metadata: Metadata = {
   appleWebApp: {
     capable: true,
     title: "Velvet",
-    // Opaque bar — content starts below status bar; bottom home-indicator
-    // insets still apply once viewportFit is cover.
-    statusBarStyle: "black",
+    // Translucent status bar so portrait watch / feed can draw under the notch;
+    // controls use env(safe-area-inset-*). Non-immersive tabs pad the same inset.
+    statusBarStyle: "black-translucent",
   },
   other: {
     "mobile-web-app-capable": "yes",
