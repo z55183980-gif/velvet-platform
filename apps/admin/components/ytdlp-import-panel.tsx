@@ -1,14 +1,13 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   adminStorageStatus,
   adminYtdlpAiExtract,
   adminYtdlpDownloadEpisode,
   adminYtdlpProbe,
   adminYtdlpResolve,
-  adminYtdlpResolveBatch,
   adminYtdlpStatus,
   adminYtdlpUploadCookies,
 } from "@velvet/api-client";
@@ -38,6 +37,16 @@ function episodeSourceUrl(ep: ProbeResult["episodes"][number]): string | undefin
   return "sourceUrl" in ep && typeof ep.sourceUrl === "string"
     ? ep.sourceUrl.trim() || undefined
     : undefined;
+}
+
+function isPlayableMediaUrl(u: string | undefined): boolean {
+  return !!u && /\.(m3u8|mp4|webm|mkv)(\?|$)/i.test(u);
+}
+
+function probeSelectionKey(p: ProbeResult): string {
+  return `${isAiProbe(p) ? "ai" : "yt"}:${p.webpageUrl ?? ""}:${p.episodes
+    .map((e) => `${e.index}:${e.id}`)
+    .join("|")}`;
 }
 
 function guessHostnameFromUrl(raw: string): string {
@@ -85,6 +94,10 @@ export function YtdlpImportPanel({
   const [downloadingEpIndex, setDownloadingEpIndex] = useState<number | null>(null);
   const [playResolved, setPlayResolved] = useState(false);
   const [resolveProgress, setResolveProgress] = useState<string | null>(null);
+  const [selectedIndexes, setSelectedIndexes] = useState<number[]>([]);
+  const [resolveQueueBusy, setResolveQueueBusy] = useState(false);
+  const resolveAbortRef = useRef(false);
+  const probeSelectKeyRef = useRef("");
 
   const statusQ = useQuery({
     queryKey: ["admin", "ytdlp", "status"],
@@ -121,6 +134,27 @@ export function YtdlpImportPanel({
     setApplied(false);
     setPlayResolved(false);
     setResolveProgress(null);
+    setSelectedIndexes([]);
+    probeSelectKeyRef.current = "";
+    resolveAbortRef.current = true;
+    setResolveQueueBusy(false);
+  }
+
+  function toggleEpisodeSelected(index: number) {
+    setSelectedIndexes((prev) =>
+      prev.includes(index)
+        ? prev.filter((i) => i !== index)
+        : [...prev, index].sort((a, b) => a - b),
+    );
+  }
+
+  function selectAllEpisodes() {
+    if (!probe) return;
+    setSelectedIndexes(probe.episodes.map((ep) => ep.index));
+  }
+
+  function clearEpisodeSelection() {
+    setSelectedIndexes([]);
   }
 
   function probeMaxEpisodes() {
@@ -253,72 +287,10 @@ export function YtdlpImportPanel({
     },
   });
 
-  const resolveBatchMut = useMutation({
-    mutationFn: async () => {
-      if (!probe?.episodes?.length) throw new Error(t("ytdlpNeedProbe"));
-      if (!configured) throw new Error(t("ytdlpNotConfigured"));
-      const max = probeMaxEpisodes() ?? 15;
-      setResolveProgress(t("ytdlpResolveBatchProgress", { done: 0, total: Math.min(max, probe.episodes.length) }));
-      const episodes = probe.episodes.slice(0, max).map((ep) => ({
-        index: ep.index,
-        url: episodeSourceUrl(ep) || ep.webpageUrl,
-        playlistIndex: ep.playlistIndex,
-      }));
-      return adminYtdlpResolveBatch({
-        episodes,
-        formatPreference,
-        maxEpisodes: max,
-        ...authPayload(),
-      });
-    },
-    onSuccess: (data) => {
-      setProbe((prev) => {
-        if (!prev) return prev;
-        const byIndex = new Map(data.resolved.map((r) => [r.index, r.playUrl]));
-        return {
-          ...prev,
-          extractor: `${prev.extractor}+ytdlp`,
-          episodes: prev.episodes.map((ep) => {
-            const playUrl = byIndex.get(ep.index);
-            if (!playUrl) return ep;
-            return {
-              ...ep,
-              sourceUrl: playUrl,
-              candidateCount: Math.max(ep.candidateCount || 0, 1),
-            };
-          }),
-        } as ProbeResult;
-      });
-      setPlayResolved(data.resolvedCount > 0);
-      setIngestForm("link");
-      setFilled(false);
-      setApplied(false);
-      setResolveProgress(null);
-      if (data.failedCount > 0) {
-        setError(
-          t("ytdlpResolveBatchPartial", {
-            ok: data.resolvedCount,
-            fail: data.failedCount,
-            detail: data.failed
-              .slice(0, 3)
-              .map((f) => `#${f.index}: ${f.error}`)
-              .join("; "),
-          }),
-        );
-      } else {
-        setError(null);
-      }
-    },
-    onError: (e: Error) => {
-      setResolveProgress(null);
-      setError(e.message);
-    },
-  });
-
   const resolveMut = useMutation({
     mutationFn: async (ep: ProbeResult["episodes"][number]) => {
       const direct = episodeSourceUrl(ep);
-      if (direct && /\.(m3u8|mp4|webm|mkv)(\?|$)/i.test(direct)) {
+      if (direct && isPlayableMediaUrl(direct)) {
         return { playUrl: direct, originalUrl: direct };
       }
       return adminYtdlpResolve({
@@ -332,9 +304,39 @@ export function YtdlpImportPanel({
       setError(null);
       setPreviewEpIndex(ep.index);
       setPreviewUrl(data.playUrl);
+      if (isPlayableMediaUrl(data.playUrl)) {
+        setProbe((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            episodes: prev.episodes.map((row) =>
+              row.index === ep.index
+                ? {
+                    ...row,
+                    sourceUrl: data.playUrl,
+                    candidateCount: Math.max(row.candidateCount || 0, 1),
+                  }
+                : row,
+            ),
+          } as ProbeResult;
+        });
+        setPlayResolved(true);
+      }
     },
     onError: (e: Error) => setError(e.message),
   });
+
+  useEffect(() => {
+    if (!probe) {
+      setSelectedIndexes([]);
+      probeSelectKeyRef.current = "";
+      return;
+    }
+    const key = probeSelectionKey(probe);
+    if (key === probeSelectKeyRef.current) return;
+    probeSelectKeyRef.current = key;
+    setSelectedIndexes(probe.episodes.map((ep) => ep.index));
+  }, [probe]);
 
   async function onCookieFilePicked(file: File | null) {
     if (!file) return;
@@ -372,15 +374,150 @@ export function YtdlpImportPanel({
     hostCookieFiles.length > 0;
   const r2Ready = !!storageQ.data?.r2Configured;
   const ffmpegReady = storageQ.data?.ffmpegReady !== false;
+
+  async function runResolveQueue() {
+    if (!probe?.episodes?.length) {
+      setError(t("ytdlpNeedProbe"));
+      return;
+    }
+    if (!configured) {
+      setError(t("ytdlpNotConfigured"));
+      return;
+    }
+    const selected = new Set(selectedIndexes);
+    const queue = probe.episodes.filter((ep) => selected.has(ep.index));
+    if (!queue.length) {
+      setError(t("ytdlpResolveSelectNeed"));
+      return;
+    }
+
+    resolveAbortRef.current = false;
+    setResolveQueueBusy(true);
+    setError(null);
+    let ok = 0;
+    let fail = 0;
+    let done = 0;
+    const fails: { index: number; error: string }[] = [];
+
+    for (const ep of queue) {
+      if (resolveAbortRef.current) break;
+      setResolveProgress(
+        t("ytdlpResolveBatchProgress", {
+          done: String(done),
+          total: String(queue.length),
+        }) + ` · #${ep.index}`,
+      );
+
+      const existing = episodeSourceUrl(ep);
+      if (isPlayableMediaUrl(existing)) {
+        ok += 1;
+        done += 1;
+        setResolveProgress(
+          t("ytdlpResolveBatchProgress", {
+            done: String(done),
+            total: String(queue.length),
+          }),
+        );
+        continue;
+      }
+
+      const pageUrl = (ep.webpageUrl || existing || "").trim();
+      if (!pageUrl) {
+        fail += 1;
+        done += 1;
+        fails.push({ index: ep.index, error: "missing url" });
+        continue;
+      }
+
+      try {
+        const data = await adminYtdlpResolve({
+          url: pageUrl,
+          formatPreference,
+          playlistIndex: ep.playlistIndex,
+          ...authPayload(),
+        });
+        setProbe((prev) => {
+          if (!prev) return prev;
+          const extractor = prev.extractor.includes("+ytdlp")
+            ? prev.extractor
+            : `${prev.extractor}+ytdlp`;
+          return {
+            ...prev,
+            extractor,
+            episodes: prev.episodes.map((row) =>
+              row.index === ep.index
+                ? {
+                    ...row,
+                    sourceUrl: data.playUrl,
+                    candidateCount: Math.max(row.candidateCount || 0, 1),
+                  }
+                : row,
+            ),
+          } as ProbeResult;
+        });
+        ok += 1;
+      } catch (e: unknown) {
+        fail += 1;
+        fails.push({
+          index: ep.index,
+          error: e instanceof Error ? e.message : String(e),
+        });
+      }
+      done += 1;
+      setResolveProgress(
+        t("ytdlpResolveBatchProgress", {
+          done: String(done),
+          total: String(queue.length),
+        }),
+      );
+    }
+
+    const cancelled = resolveAbortRef.current && done < queue.length;
+    setResolveQueueBusy(false);
+    setResolveProgress(null);
+    setPlayResolved(ok > 0);
+    setIngestForm("link");
+    setFilled(false);
+    setApplied(false);
+
+    if (cancelled) {
+      setError(
+        t("ytdlpResolveQueueCancelled", {
+          ok: String(ok),
+          fail: String(fail),
+          left: String(queue.length - done),
+        }),
+      );
+    } else if (fail > 0) {
+      setError(
+        t("ytdlpResolveBatchPartial", {
+          ok: String(ok),
+          fail: String(fail),
+          detail: fails
+            .slice(0, 3)
+            .map((f) => `#${f.index}: ${f.error}`)
+            .join("; "),
+        }),
+      );
+    } else {
+      setError(null);
+    }
+  }
+
   const busy =
     probeMut.isPending ||
     aiExtractMut.isPending ||
-    resolveBatchMut.isPending ||
+    resolveQueueBusy ||
     resolveMut.isPending ||
     downloadingEpIndex != null ||
     cookieUploadBusy;
   const activePreviewSrc = previewUrl;
   const showEmpty = !probe && !error && !probeMut.isPending;
+  const selectedCount = selectedIndexes.length;
+  const allSelected = !!probe && selectedCount === probe.episodes.length && probe.episodes.length > 0;
+  const needsPlayResolve =
+    !!probe &&
+    probe.episodes.some((ep) => !isPlayableMediaUrl(episodeSourceUrl(ep)));
 
   const panelClass = embedded
     ? "space-y-3"
@@ -703,51 +840,87 @@ export function YtdlpImportPanel({
           </div>
 
           <div className="space-y-2">
-            <h5 className="text-body-sm font-medium">{t("ytdlpEpisodeList")}</h5>
-            <ul className="max-h-48 space-y-1 overflow-y-auto rounded border border-line/60 p-2">
-              {probe.episodes.map((ep) => (
-                <li
-                  key={`${ep.id}-${ep.index}`}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded px-2 py-1.5 text-body-sm hover:bg-surface-2"
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h5 className="text-body-sm font-medium">{t("ytdlpEpisodeList")}</h5>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-caption text-ink-muted">
+                  {t("ytdlpResolveSelectedCount", {
+                    n: String(selectedCount),
+                    total: String(probe.episodes.length),
+                  })}
+                </span>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={busy || !probe.episodes.length}
+                  onClick={() => (allSelected ? clearEpisodeSelection() : selectAllEpisodes())}
                 >
-                  <span className="min-w-0 truncate">
-                    <span className="text-ink-muted">#{ep.index}</span> {ep.title}
-                    {ep.durationSec ? (
-                      <span className="ml-2 text-caption text-ink-muted">
-                        {Math.floor(ep.durationSec / 60)}:
-                        {String(ep.durationSec % 60).padStart(2, "0")}
+                  {allSelected ? t("ytdlpResolveDeselectAll") : t("ytdlpResolveSelectAll")}
+                </Button>
+              </div>
+            </div>
+            <ul className="max-h-48 space-y-1 overflow-y-auto rounded border border-line/60 p-2">
+              {probe.episodes.map((ep) => {
+                const playable = isPlayableMediaUrl(episodeSourceUrl(ep));
+                const checked = selectedIndexes.includes(ep.index);
+                return (
+                  <li
+                    key={`${ep.id}-${ep.index}`}
+                    className="flex flex-wrap items-center justify-between gap-2 rounded px-2 py-1.5 text-body-sm hover:bg-surface-2"
+                  >
+                    <label className="flex min-w-0 flex-1 cursor-pointer items-center gap-2">
+                      <input
+                        type="checkbox"
+                        className="shrink-0"
+                        checked={checked}
+                        disabled={resolveQueueBusy}
+                        onChange={() => toggleEpisodeSelected(ep.index)}
+                      />
+                      <span className="min-w-0 truncate">
+                        <span className="text-ink-muted">#{ep.index}</span> {ep.title}
+                        {ep.durationSec ? (
+                          <span className="ml-2 text-caption text-ink-muted">
+                            {Math.floor(ep.durationSec / 60)}:
+                            {String(ep.durationSec % 60).padStart(2, "0")}
+                          </span>
+                        ) : null}
+                        {playable ? (
+                          <span className="ml-2 text-caption text-success">
+                            {t("ytdlpResolveEpPlayable")}
+                          </span>
+                        ) : null}
                       </span>
-                    ) : null}
-                  </span>
-                  <div className="flex shrink-0 flex-wrap items-center gap-1.5">
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      disabled={busy}
-                      onClick={() => resolveMut.mutate(ep)}
-                    >
-                      {resolveMut.isPending && previewEpIndex === ep.index
-                        ? t("loading")
-                        : t("ytdlpPreviewEp")}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={busy || !ffmpegReady}
-                      title={!ffmpegReady ? t("ytdlpNeedFfmpeg") : t("ytdlpBrowserDownloadHint")}
-                      onClick={() => void downloadEpisode(ep)}
-                    >
-                      {downloadingEpIndex === ep.index
-                        ? t("ytdlpBrowserDownloading")
-                        : t("ytdlpDownloadLocal")}
-                    </Button>
-                  </div>
-                </li>
-              ))}
+                    </label>
+                    <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={busy}
+                        onClick={() => resolveMut.mutate(ep)}
+                      >
+                        {resolveMut.isPending && previewEpIndex === ep.index
+                          ? t("loading")
+                          : t("ytdlpPreviewEp")}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={busy || !ffmpegReady}
+                        title={!ffmpegReady ? t("ytdlpNeedFfmpeg") : t("ytdlpBrowserDownloadHint")}
+                        onClick={() => void downloadEpisode(ep)}
+                      >
+                        {downloadingEpIndex === ep.index
+                          ? t("ytdlpBrowserDownloading")
+                          : t("ytdlpDownloadLocal")}
+                      </Button>
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           </div>
 
-          {isAiProbe(probe) ? (
+          {needsPlayResolve || isAiProbe(probe) || playResolved ? (
             <div className="rounded-lg border border-brand/30 bg-brand/5 px-3 py-2.5 space-y-2">
               <p className="text-body-sm font-medium text-ink">{t("ytdlpResolveBatchTitle")}</p>
               <p className="text-caption text-ink-muted">{t("ytdlpResolveBatchHint")}</p>
@@ -760,24 +933,33 @@ export function YtdlpImportPanel({
                       ? "border-success/40 bg-success-soft text-success hover:bg-success/15"
                       : undefined
                   }
-                  disabled={busy || !configured}
-                  onClick={() => resolveBatchMut.mutate()}
+                  disabled={busy || !configured || selectedCount === 0}
+                  onClick={() => void runResolveQueue()}
                 >
-                  {resolveBatchMut.isPending
+                  {resolveQueueBusy
                     ? t("ytdlpResolveBatchBusy")
                     : playResolved
                       ? t("ytdlpResolveBatchDone")
-                      : t("ytdlpResolveBatch")}
+                      : t("ytdlpResolveSelected", { n: String(selectedCount) })}
                 </Button>
+                {resolveQueueBusy ? (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      resolveAbortRef.current = true;
+                    }}
+                  >
+                    {t("ytdlpResolveQueueCancel")}
+                  </Button>
+                ) : null}
                 {resolveProgress ? (
                   <span className="text-caption text-ink-muted">{resolveProgress}</span>
-                ) : playResolved ? (
+                ) : playResolved && !needsPlayResolve ? (
                   <span className="text-caption text-success">{t("ytdlpResolveBatchReady")}</span>
                 ) : (
                   <span className="text-caption text-ink-subtle">
-                    {t("ytdlpResolveBatchCapHint", {
-                      n: String(probeMaxEpisodes() ?? 15),
-                    })}
+                    {t("ytdlpResolveQueueHint")}
                   </span>
                 )}
               </div>
