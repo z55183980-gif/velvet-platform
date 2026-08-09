@@ -61,6 +61,7 @@ import {
   DramaStoragePanel,
   EpisodeVideoUploadButton,
   NewEpisodeUploadForm,
+  STORAGE_EPISODE_PAGE_SIZE,
 } from "@/components/episode-media-panel";
 import { EpisodeThumbnailField } from "@/components/episode-thumbnail-field";
 import { DramaCoverField } from "@/components/drama-cover-field";
@@ -301,6 +302,7 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
   const [showAdvancedAdd, setShowAdvancedAdd] = useState(false);
   const [selectedEps, setSelectedEps] = useState<Set<string>>(new Set());
   const [episodePage, setEpisodePage] = useState(1);
+  const [storageTotalsNonce, setStorageTotalsNonce] = useState(0);
   const [batchFree, setBatchFree] = useState<"keep" | "1" | "0">("keep");
   const [batchPrice, setBatchPrice] = useState("");
   const [newEp, setNewEp] = useState({
@@ -449,12 +451,16 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
 
   const drama = detailQ.data;
   const episodes = useMemo(() => drama?.episodes ?? [], [drama?.episodes]);
-  const EPISODE_PAGE_SIZE = 10;
+  const EPISODE_PAGE_SIZE = STORAGE_EPISODE_PAGE_SIZE;
   const episodeTotalPages = Math.max(1, Math.ceil(episodes.length / EPISODE_PAGE_SIZE));
   const pagedEpisodes = useMemo(() => {
     const start = (episodePage - 1) * EPISODE_PAGE_SIZE;
     return episodes.slice(start, start + EPISODE_PAGE_SIZE);
   }, [episodes, episodePage]);
+
+  const bumpStorageTotals = useCallback(() => {
+    setStorageTotalsNonce((n) => n + 1);
+  }, []);
 
   useEffect(() => {
     setEpisodePage((page) => Math.min(Math.max(1, page), episodeTotalPages));
@@ -711,6 +717,7 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
               label={episode.hlsUrl || episode.originalUrl ? t("replaceVideo") : t("uploadVideo")}
               onError={setError}
               onDone={async () => {
+                bumpStorageTotals();
                 await qc.invalidateQueries({ queryKey: ["admin", "drama", id] });
                 await qc.invalidateQueries({ queryKey: ["admin", "drama-storage", id] });
               }}
@@ -1185,6 +1192,7 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
                       setNewEp({ title: "", sourceUrl: "", publicPageUrl: "", thumbnailUrl: "", isFree: false, priceCredits: 10 });
                       setShowAddEpisode(false);
                       setError(null);
+                      bumpStorageTotals();
                       await qc.invalidateQueries({ queryKey: ["admin", "drama", id] });
                       await qc.invalidateQueries({ queryKey: ["admin", "drama-storage", id] });
                     }}
@@ -1366,6 +1374,7 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
           ) : null}
           <DramaStoragePanel
             dramaId={id}
+            totalsNonce={storageTotalsNonce}
             onPurge={async (episodeId) => {
               setPurgeEpisodeId(episodeId);
             }}
@@ -1634,7 +1643,7 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
         busy={actionMut.isPending}
       />
       <ConfirmModal open={deleteOpen} onClose={() => setDeleteOpen(false)} onConfirm={handleDeleteDrama} message={t("confirmDeleteDrama")} busy={actionMut.isPending} />
-      <ConfirmModal open={!!deleteEpisodeId} onClose={() => setDeleteEpisodeId(null)} onConfirm={() => { if (!deleteEpisodeId) return; actionMut.mutate(() => adminDeleteEpisode(deleteEpisodeId), { onSuccess: async () => { setDeleteEpisodeId(null); await qc.invalidateQueries({ queryKey: ["admin", "drama", id] }); await qc.invalidateQueries({ queryKey: ["admin", "drama-storage", id] }); } }); }} message={t("confirmDeleteEpisode")} busy={actionMut.isPending} />
+      <ConfirmModal open={!!deleteEpisodeId} onClose={() => setDeleteEpisodeId(null)} onConfirm={() => { if (!deleteEpisodeId) return; actionMut.mutate(() => adminDeleteEpisode(deleteEpisodeId), { onSuccess: async () => { setDeleteEpisodeId(null); bumpStorageTotals(); await qc.invalidateQueries({ queryKey: ["admin", "drama", id] }); await qc.invalidateQueries({ queryKey: ["admin", "drama-storage", id] }); } }); }} message={t("confirmDeleteEpisode")} busy={actionMut.isPending} />
       <ConfirmModal
         open={!!purgeEpisodeId}
         onClose={() => setPurgeEpisodeId(null)}
@@ -1643,6 +1652,7 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
           actionMut.mutate(() => adminPurgeEpisodeMedia(purgeEpisodeId), {
             onSuccess: async () => {
               setPurgeEpisodeId(null);
+              bumpStorageTotals();
               await qc.invalidateQueries({ queryKey: ["admin", "drama", id] });
               await qc.invalidateQueries({ queryKey: ["admin", "drama-storage", id] });
             },

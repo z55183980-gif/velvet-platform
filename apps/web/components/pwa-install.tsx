@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Download, Share, Smartphone, X } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
+import { useDialogFocus } from "@/hooks/use-dialog-focus";
 import {
   getPwaPlatform,
   hasSeenPwaPrompt,
@@ -26,6 +27,9 @@ export function PwaInstallRoot() {
   const [standalone, setStandalone] = useState(true);
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
   const [installing, setInstalling] = useState(false);
+  const dialogRef = useDialogFocus<HTMLDivElement>(open && !standalone, () => {
+    if (!installing) close(true);
+  });
 
   useEffect(() => {
     void registerPwaServiceWorker();
@@ -105,16 +109,20 @@ export function PwaInstallRoot() {
 
   return (
     <div className="fixed inset-0 z-[80] md:hidden">
-      <button
-        type="button"
+      <div
         className="absolute inset-0 bg-black/40"
-        aria-label={t("pwa.close")}
-        onClick={() => close(true)}
+        aria-hidden="true"
+        onClick={() => {
+          if (!installing) close(true);
+        }}
       />
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="pwa-dialog-title"
+        aria-describedby="pwa-dialog-description"
+        tabIndex={-1}
         className="absolute inset-x-0 bottom-0 max-h-[88dvh] overflow-y-auto rounded-t-3xl border border-white/10 bg-base/70 pb-[calc(1rem+var(--mobile-tab-safe-bottom))] shadow-2xl backdrop-blur-xl"
       >
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-white/10 bg-base/50 px-4 py-3 backdrop-blur-md">
@@ -125,6 +133,8 @@ export function PwaInstallRoot() {
           <button
             type="button"
             onClick={() => close(true)}
+            disabled={installing}
+            data-dialog-initial-focus
             className="grid h-11 w-11 place-items-center rounded-full text-ink-muted hover:bg-white/10"
             aria-label={t("pwa.close")}
           >
@@ -133,7 +143,9 @@ export function PwaInstallRoot() {
         </div>
 
         <div className="space-y-4 p-4">
-          <p className="text-body-sm text-ink-muted">{t("pwa.subtitle")}</p>
+          <p id="pwa-dialog-description" className="text-body-sm text-ink-muted">
+            {t("pwa.subtitle")}
+          </p>
 
           {isAndroid && (
             <div className="space-y-3 rounded-2xl border border-white/10 bg-white/5 p-4 backdrop-blur-sm">
@@ -203,8 +215,9 @@ export function PwaInstallRoot() {
           <button
             type="button"
             onClick={() => close(true)}
+            disabled={installing}
             className={cn(
-              "w-full rounded-full px-4 py-3 text-body-sm font-medium",
+              "min-h-11 w-full rounded-full px-4 py-3 text-body-sm font-medium disabled:opacity-60",
               "bg-white/10 text-ink hover:bg-white/15",
             )}
           >

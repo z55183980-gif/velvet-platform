@@ -133,7 +133,7 @@ export function Navbar() {
                 ? "text-white/70 hover:bg-white/10 hover:text-white"
                 : "text-ink-muted hover:bg-surface-2 hover:text-ink",
             )}
-            aria-label="theme"
+            aria-label={t("common.theme")}
             title={themeMounted ? theme : undefined}
             suppressHydrationWarning
           >

@@ -501,7 +501,15 @@ export async function adminOpsMonitorOverview(hours = 24) {
   return adminRequest<AdminOpsMonitorOverview>(`/admin/ops-monitor?hours=${hours}`);
 }
 
-export async function adminDramaStorage(dramaId: string) {
+export async function adminDramaStorage(
+  dramaId: string,
+  opts?: { page?: number; pageSize?: number; includeTotals?: boolean },
+) {
+  const qs = new URLSearchParams();
+  if (opts?.page != null) qs.set("page", String(opts.page));
+  if (opts?.pageSize != null) qs.set("pageSize", String(opts.pageSize));
+  if (opts?.includeTotals != null) qs.set("includeTotals", opts.includeTotals ? "1" : "0");
+  const suffix = qs.toString() ? `?${qs}` : "";
   return adminRequest<{
     storageBackend: string;
     r2Enabled: boolean;
@@ -509,6 +517,10 @@ export async function adminDramaStorage(dramaId: string) {
     mediaBucket: string;
     cdnBase: string;
     ffmpegReady: boolean;
+    total: number;
+    page: number;
+    pageSize: number;
+    totals?: { objectCount: number; totalBytes: number };
     episodes: Array<{
       id: string;
       episodeNumber: number;
@@ -522,7 +534,7 @@ export async function adminDramaStorage(dramaId: string) {
       totalBytes: number;
       objects: Array<{ key: string; size: number; lastModified?: string }>;
     }>;
-  }>(`/admin/dramas/${dramaId}/storage`);
+  }>(`/admin/dramas/${dramaId}/storage${suffix}`);
 }
 
 export async function adminTranscodeJob(jobId: string) {

@@ -8,6 +8,7 @@ import type { Episode } from "@/lib/mock-data";
 import { buildEpisodeSlots, filterSlotsByRange } from "@/lib/episode-slots";
 import { cn, mediaUrl } from "@/lib/utils";
 import { SafeImage } from "@/components/safe-image";
+import { useDialogFocus } from "@/hooks/use-dialog-focus";
 
 const SEG_SIZE = 30;
 const ACCENT = "#ff7e0d";
@@ -45,6 +46,7 @@ export function EpisodeDrawer({
   const { resolved } = useTheme();
   const dark = resolved === "dark";
   const [tab, setTab] = useState<"about" | "episodes">("episodes");
+  const dialogRef = useDialogFocus<HTMLDivElement>(open, onClose);
   const comingSoon = t("detail.episodeComingSoon");
   const total = Math.max(episodesCount || 0, episodes.length);
   const slots = useMemo(() => buildEpisodeSlots(episodes, total), [episodes, total]);
@@ -73,21 +75,23 @@ export function EpisodeDrawer({
         open ? "pointer-events-auto" : "pointer-events-none",
       )}
       aria-hidden={!open}
+      inert={!open}
     >
-      <button
-        type="button"
+      <div
         className={cn(
           "absolute inset-0 transition-opacity",
           dark ? "bg-black/55" : "bg-black/45",
           open ? "opacity-100" : "opacity-0",
         )}
-        aria-label={t("common.close")}
+        aria-hidden="true"
         onClick={onClose}
       />
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="episode-drawer-title"
+        tabIndex={-1}
         className={cn(
           "absolute inset-x-0 bottom-0 flex max-h-[72dvh] flex-col rounded-t-[18px] shadow-xl transition-transform duration-300",
           dark ? "bg-[#262626] text-white" : "bg-white text-[#1a1a1a]",
@@ -154,6 +158,7 @@ export function EpisodeDrawer({
                 key={id}
                 type="button"
                 onClick={() => setTab(id)}
+                data-dialog-initial-focus={active || undefined}
                 className={cn(
                   "min-h-11 pb-2 pt-2 text-[17px] transition-colors",
                   active

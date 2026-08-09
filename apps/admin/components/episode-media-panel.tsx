@@ -221,23 +221,69 @@ export function EpisodeVideoUploadButton({
   );
 }
 
+/** Keep in sync with content-detail-panel episode table page size. */
+export const STORAGE_EPISODE_PAGE_SIZE = 10;
+
 export function DramaStoragePanel({
   dramaId,
+  totalsNonce = 0,
   onPurge,
 }: {
   dramaId: string;
+  /** Bump after purge/upload/delete so full drama totals recompute once. */
+  totalsNonce?: number;
   onPurge: (episodeId: string) => Promise<void>;
 }) {
   const { t } = useI18n();
+  const [page, setPage] = useState(1);
+  const [refreshNonce, setRefreshNonce] = useState(0);
+  const [cachedTotals, setCachedTotals] = useState<{
+    objectCount: number;
+    totalBytes: number;
+  } | null>(null);
+  const totalsKey = totalsNonce + refreshNonce;
+  const lastTotalsKeyFetched = useRef<number | null>(null);
+
   const q = useQuery({
-    queryKey: ["admin", "drama-storage", dramaId],
-    queryFn: () => adminDramaStorage(dramaId),
+    queryKey: ["admin", "drama-storage", dramaId, page, STORAGE_EPISODE_PAGE_SIZE, totalsKey],
+    queryFn: async () => {
+      // Full drama R2 sweep only when totalsKey changes (mount / refresh / purge).
+      const includeTotals = lastTotalsKeyFetched.current !== totalsKey;
+      const result = await adminDramaStorage(dramaId, {
+        page,
+        pageSize: STORAGE_EPISODE_PAGE_SIZE,
+        includeTotals,
+      });
+      if (includeTotals) lastTotalsKeyFetched.current = totalsKey;
+      return result;
+    },
     refetchInterval: 15_000,
+    placeholderData: (prev) => prev,
   });
 
+  useEffect(() => {
+    setPage(1);
+    setCachedTotals(null);
+    lastTotalsKeyFetched.current = null;
+  }, [dramaId]);
+
+  useEffect(() => {
+    if (q.data?.totals) setCachedTotals(q.data.totals);
+  }, [q.data?.totals]);
+
   const data = q.data;
-  const totalObjects = data?.episodes.reduce((s, e) => s + e.objectCount, 0) ?? 0;
-  const totalBytes = data?.episodes.reduce((s, e) => s + e.totalBytes, 0) ?? 0;
+  const total = data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(total / STORAGE_EPISODE_PAGE_SIZE) || 1);
+  const totalObjects = cachedTotals?.objectCount ?? 0;
+  const totalBytes = cachedTotals?.totalBytes ?? 0;
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [page, totalPages]);
+
+  function refreshAll() {
+    setRefreshNonce((n) => n + 1);
+  }
 
   return (
     <section className="content-section-card space-y-4">
@@ -246,7 +292,7 @@ export function DramaStoragePanel({
           <h2>{t("mediaStorage")}</h2>
           <p>{t("mediaStorageHint")}</p>
         </div>
-        <Button size="sm" variant="ghost" disabled={q.isFetching} onClick={() => void q.refetch()}>
+        <Button size="sm" variant="ghost" disabled={q.isFetching} onClick={() => refreshAll()}>
           {q.isFetching ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
           {t("refreshStorage")}
         </Button>
@@ -264,11 +310,11 @@ export function DramaStoragePanel({
           {t("storageBackend")}: {data?.storageBackend || "—"}
         </Badge>
         <Badge tone="default">
-          {t("r2Objects")}: {totalObjects} · {fmtBytes(totalBytes)}
+          {t("r2Objects")}: {cachedTotals ? `${totalObjects} · ${fmtBytes(totalBytes)}` : "—"}
         </Badge>
       </div>
 
-      {q.isLoading ? (
+      {q.isLoading && !data ? (
         <div className="flex items-center gap-2 text-sm text-ink-muted">
           <LoaderCircle className="h-4 w-4 animate-spin" />
           {t("loading")}
@@ -333,6 +379,35 @@ export function DramaStoragePanel({
           <p className="text-sm text-ink-muted">{t("emptyEpisodes")}</p>
         ) : null}
       </div>
+
+      {total > 0 ? (
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-white/45 px-3 py-2 text-caption text-ink-muted">
+          <span>
+            {`${(page - 1) * STORAGE_EPISODE_PAGE_SIZE + 1}–${Math.min(page * STORAGE_EPISODE_PAGE_SIZE, total)} / ${total}`}
+          </span>
+          <div className="flex items-center gap-1">
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={page <= 1 || q.isFetching}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              {t("previousPage")}
+            </Button>
+            <span className="min-w-12 text-center font-medium text-ink">
+              {page} / {totalPages}
+            </span>
+            <Button
+              size="sm"
+              variant="secondary"
+              disabled={page >= totalPages || q.isFetching}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+            >
+              {t("nextPage")}
+            </Button>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

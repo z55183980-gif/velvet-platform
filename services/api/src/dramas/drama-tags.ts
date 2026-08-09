@@ -3,17 +3,38 @@
  * Public APIs must strip system meta so consumers only see genre-like tags.
  */
 
-const PROVENANCE_TAGS = new Set(['upload', 'r2', 'transfer', 'ytdlp']);
+const SYSTEM_TAG_PREFIXES = [
+  'type:',
+  'completion:',
+  'status:',
+  'source:',
+  'orientation:',
+  'visibility:',
+  'workflow:',
+  'ytdlp',
+] as const;
+const PROVENANCE_TAGS = new Set([
+  'upload',
+  'r2',
+  'transfer',
+  'ytdlp',
+  'local',
+  'placeholder',
+  'public',
+  'vertical',
+  'horizontal',
+  'manual',
+  'smoke',
+  'online',
+  'demo',
+]);
 
 /** Internal / provenance markers that must not appear on the public web. */
 export function isDramaSystemTag(tag: string): boolean {
-  const t = String(tag || '').trim();
+  const t = String(tag || '').trim().toLowerCase();
   if (!t) return true;
   if (PROVENANCE_TAGS.has(t)) return true;
-  if (t.startsWith('ytdlp')) return true;
-  if (t.startsWith('type:')) return true;
-  if (t.startsWith('completion:')) return true;
-  return false;
+  return SYSTEM_TAG_PREFIXES.some((prefix) => t.startsWith(prefix));
 }
 
 /** Tags safe to expose on public drama list/detail/feed. */
@@ -23,8 +44,9 @@ export function toPublicDramaTags(tags: unknown): string[] {
   const seen = new Set<string>();
   for (const raw of tags) {
     const t = String(raw ?? '').trim();
-    if (!t || isDramaSystemTag(t) || seen.has(t)) continue;
-    seen.add(t);
+    const key = t.toLowerCase();
+    if (!t || isDramaSystemTag(t) || seen.has(key)) continue;
+    seen.add(key);
     out.push(t);
   }
   return out;

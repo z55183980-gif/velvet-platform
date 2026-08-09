@@ -522,10 +522,22 @@ export class AdminEpisodesService {
     };
   }
 
-  async listStorage(dramaId: string) {
+  async listStorage(
+    dramaId: string,
+    opts?: { page?: number; pageSize?: number; includeTotals?: boolean },
+  ) {
+    const where = { dramaId: BigInt(dramaId) };
+    const pageSize = Math.min(100, Math.max(1, Math.floor(opts?.pageSize ?? 10)));
+    const total = await this.prisma.episode.count({ where });
+    const totalPages = Math.max(1, Math.ceil(total / pageSize) || 1);
+    const page = Math.min(totalPages, Math.max(1, Math.floor(opts?.page ?? 1)));
+    const includeTotals = opts?.includeTotals === true;
+
     const episodes = await this.prisma.episode.findMany({
-      where: { dramaId: BigInt(dramaId) },
+      where,
       orderBy: { episodeNumber: 'asc' },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
       select: {
         id: true,
         episodeNumber: true,
@@ -537,6 +549,7 @@ export class AdminEpisodesService {
         uploadStatus: true,
       },
     });
+
     const items: Array<{
       id: string;
       episodeNumber: number;
@@ -568,9 +581,31 @@ export class AdminEpisodesService {
         objects: listed.objects.slice(0, 50),
       });
     }
+
+    let totals: { objectCount: number; totalBytes: number } | undefined;
+    if (includeTotals) {
+      // No drama-level R2 prefix (keys are hls/{episodeId}); sum every episode prefix once.
+      const allUrls = await this.prisma.episode.findMany({
+        where,
+        select: { hlsUrl: true },
+      });
+      let objectCount = 0;
+      let totalBytes = 0;
+      for (const row of allUrls) {
+        const listed = await this.upload.listEpisodeR2Objects(row.hlsUrl);
+        objectCount += listed.objects.length;
+        totalBytes += listed.objects.reduce((s, o) => s + o.size, 0);
+      }
+      totals = { objectCount, totalBytes };
+    }
+
     return {
       ...this.upload.storageStatus(),
       ffmpegReady: !!(await this.upload.detectFfmpeg()),
+      total,
+      page,
+      pageSize,
+      totals,
       episodes: items,
     };
   }

@@ -1,21 +1,33 @@
 /** Strip internal Drama.tags markers before showing on the consumer web. */
 
-const SYSTEM_TAG_PREFIXES = ["type:", "completion:", "ytdlp"] as const;
+const SYSTEM_TAG_PREFIXES = [
+  "type:",
+  "completion:",
+  "status:",
+  "source:",
+  "orientation:",
+  "visibility:",
+  "workflow:",
+  "ytdlp",
+] as const;
 const SYSTEM_TAG_EXACT = new Set([
   "upload",
   "r2",
   "transfer",
   "ytdlp",
+  "local",
   "placeholder",
   "public",
   "vertical",
   "horizontal",
   "manual",
   "smoke",
+  "online",
+  "demo",
 ]);
 
 export function isDramaSystemTag(tag: string): boolean {
-  const t = String(tag || "").trim();
+  const t = String(tag || "").trim().toLowerCase();
   if (!t) return true;
   if (SYSTEM_TAG_EXACT.has(t)) return true;
   return SYSTEM_TAG_PREFIXES.some((p) => t.startsWith(p));
@@ -27,8 +39,9 @@ export function toPublicDramaTags(tags: unknown): string[] {
   const seen = new Set<string>();
   for (const raw of tags) {
     const t = String(raw ?? "").trim();
-    if (!t || isDramaSystemTag(t) || seen.has(t)) continue;
-    seen.add(t);
+    const key = t.toLowerCase();
+    if (!t || isDramaSystemTag(t) || seen.has(key)) continue;
+    seen.add(key);
     out.push(t);
   }
   return out;

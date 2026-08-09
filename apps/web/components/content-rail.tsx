@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { DramaCard } from "./drama-card";
 import type { Drama } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
+import { useLocale } from "@/lib/i18n";
 
 export function ContentRail({
   title,
@@ -18,6 +19,7 @@ export function ContentRail({
   loading?: boolean;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
+  const { t } = useLocale();
 
   const scrollBy = (dir: -1 | 1) => {
     const el = scroller.current;
@@ -37,16 +39,16 @@ export function ContentRail({
           <button
             type="button"
             onClick={() => scrollBy(-1)}
-            className="grid h-9 w-9 place-items-center rounded-full bg-surface-2 text-ink-muted transition-colors hover:bg-surface-3 hover:text-ink"
-            aria-label="Previous"
+            className="grid h-11 w-11 place-items-center rounded-full bg-surface-2 text-ink-muted transition-colors hover:bg-surface-3 hover:text-ink"
+            aria-label={t("common.previous")}
           >
             <ChevronLeft className="h-5 w-5" />
           </button>
           <button
             type="button"
             onClick={() => scrollBy(1)}
-            className="grid h-9 w-9 place-items-center rounded-full bg-surface-2 text-ink-muted transition-colors hover:bg-surface-3 hover:text-ink"
-            aria-label="Next"
+            className="grid h-11 w-11 place-items-center rounded-full bg-surface-2 text-ink-muted transition-colors hover:bg-surface-3 hover:text-ink"
+            aria-label={t("common.next")}
           >
             <ChevronRight className="h-5 w-5" />
           </button>

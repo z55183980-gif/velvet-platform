@@ -588,8 +588,22 @@ export class ContentController {
 
   @Get('dramas/:id/storage')
   @AdminRoles('SUPER_ADMIN', 'OPS')
-  async dramaStorage(@Param('id') id: string) {
-    return ok(await this.episodes.listStorage(id));
+  async dramaStorage(
+    @Param('id') id: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('includeTotals') includeTotals?: string,
+  ) {
+    return ok(
+      await this.episodes.listStorage(id, {
+        page: page ? Number(page) : 1,
+        pageSize: pageSize ? Number(pageSize) : 10,
+        includeTotals:
+          includeTotals == null || includeTotals === ''
+            ? false
+            : !['0', 'false', 'no'].includes(includeTotals.toLowerCase()),
+      }),
+    );
   }
 
   /**

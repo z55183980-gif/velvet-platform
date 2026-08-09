@@ -66,7 +66,7 @@ export function BottomTabBar({
         immersive && "mobile-bottom-tab-immersive",
         standaloneSafeArea && "standalone-safe-bottom-tab",
       )}
-      aria-label="Primary"
+      aria-label={t("common.primaryNavigation")}
     >
       <div className="mx-auto flex h-12 max-w-lg items-stretch justify-around">
         {tabs.map((tab) => {

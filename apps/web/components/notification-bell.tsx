@@ -50,6 +50,7 @@ export function NotificationBell({
   const [items, setItems] = useState<NotifItem[]>([]);
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const bellRef = useRef<HTMLButtonElement | null>(null);
   const onDark = tone === "onDark";
 
   const reload = useCallback(async () => {
@@ -109,8 +110,20 @@ export function NotificationBell({
     function onDoc(e: MouseEvent) {
       if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
     }
-    if (open) document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      setOpen(false);
+      bellRef.current?.focus();
+    }
+    if (open) {
+      document.addEventListener("mousedown", onDoc);
+      document.addEventListener("keydown", onKeyDown);
+    }
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      document.removeEventListener("keydown", onKeyDown);
+    };
   }, [open]);
 
   async function markRead(id: string) {
@@ -130,11 +143,14 @@ export function NotificationBell({
   return (
     <div className="relative" ref={wrapRef}>
       <button
+        ref={bellRef}
         type="button"
         aria-label={t("notifications.title")}
+        aria-expanded={open}
+        aria-controls="notification-popover"
         onClick={() => setOpen((o) => !o)}
         className={cn(
-          "relative grid h-9 w-9 place-items-center rounded-full transition-colors",
+          "relative grid h-11 w-11 place-items-center rounded-full transition-colors",
           onDark
             ? "text-white/70 hover:bg-white/10 hover:text-white"
             : "text-ink-muted hover:bg-surface-2 hover:text-ink",
@@ -148,7 +164,10 @@ export function NotificationBell({
         )}
       </button>
       {open && (
-        <div className="absolute right-0 mt-2 w-[320px] max-h-[420px] overflow-auto rounded-xl border border-line bg-base shadow-lg">
+        <div
+          id="notification-popover"
+          className="absolute right-0 mt-2 w-[320px] max-h-[420px] overflow-auto rounded-xl border border-line bg-base shadow-lg"
+        >
           <div className="flex items-center justify-between border-b border-line px-4 py-3">
             <h3 className="text-body-sm font-semibold text-ink">
               {t("notifications.title")}
@@ -179,17 +198,18 @@ export function NotificationBell({
                   n.bodyZh || "",
                 );
                 return (
-                  <li
-                    key={n.id}
-                    className="cursor-pointer px-4 py-3 hover:bg-surface-2"
-                    onClick={() => !n.readAt && markRead(n.id)}
-                  >
-                    <div className="flex items-start gap-2">
+                  <li key={n.id}>
+                    <button
+                      type="button"
+                      className="min-h-11 w-full px-4 py-3 text-left hover:bg-surface-2 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-brand"
+                      onClick={() => !n.readAt && markRead(n.id)}
+                    >
+                      <div className="flex items-start gap-2">
                       {!n.readAt && (
-                        <span
-                          className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-brand"
-                          aria-label="unread"
-                        />
+                        <>
+                          <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-brand" aria-hidden />
+                          <span className="sr-only">{t("notifications.unread")}</span>
+                        </>
                       )}
                       <div className="min-w-0 flex-1">
                         <p className="text-body-sm font-medium text-ink">{title}</p>
@@ -198,7 +218,8 @@ export function NotificationBell({
                           {new Date(n.createdAt).toLocaleString()}
                         </p>
                       </div>
-                    </div>
+                      </div>
+                    </button>
                   </li>
                 );
               })}

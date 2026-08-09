@@ -1525,7 +1525,7 @@ export function DramaDetail({
                 setShowQuality(false);
                 setShowMore((v) => !v);
               }}
-              className="grid h-11 w-10 place-items-center text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
+              className="grid h-11 w-11 place-items-center text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
               aria-label={t("player.more")}
             >
               <MoreVertical className="h-5 w-5" strokeWidth={1.9} />
@@ -1542,7 +1542,7 @@ export function DramaDetail({
                       setShowRate(false);
                     }}
                     className={cn(
-                      "flex w-full items-center justify-center px-3 py-2.5 text-[13px]",
+                      "flex min-h-11 w-full items-center justify-center px-3 py-2.5 text-[13px]",
                       r === rate ? "font-semibold text-[#ff7e0d]" : "text-white/85",
                     )}
                   >
@@ -1559,7 +1559,7 @@ export function DramaDetail({
                     setMuted((m) => !m);
                     setShowMore(false);
                   }}
-                  className="flex w-full items-center gap-2 px-3 py-2.5 text-[13px] text-white/85"
+                  className="flex min-h-11 w-full items-center gap-2 px-3 py-2.5 text-[13px] text-white/85"
                 >
                   {muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
                   {muted ? t("player.unmute") : t("player.mute")}
@@ -1570,7 +1570,7 @@ export function DramaDetail({
                     setShowMore(false);
                     setShowQuality(true);
                   }}
-                  className="flex w-full items-center gap-2 px-3 py-2.5 text-[13px] text-white/85"
+                  className="flex min-h-11 w-full items-center gap-2 px-3 py-2.5 text-[13px] text-white/85"
                 >
                   {t("player.quality")}
                   <span className="ml-auto text-white/45">
@@ -1587,7 +1587,7 @@ export function DramaDetail({
                   type="button"
                   onClick={() => applyQuality(-1)}
                   className={cn(
-                    "flex w-full items-center justify-center px-3 py-2.5 text-[13px]",
+                    "flex min-h-11 w-full items-center justify-center px-3 py-2.5 text-[13px]",
                     qualityIndex < 0 ? "font-semibold text-[#ff7e0d]" : "text-white/85",
                   )}
                 >
@@ -1599,7 +1599,7 @@ export function DramaDetail({
                     type="button"
                     onClick={() => applyQuality(q.index)}
                     className={cn(
-                      "flex w-full items-center justify-center px-3 py-2.5 text-[13px]",
+                      "flex min-h-11 w-full items-center justify-center px-3 py-2.5 text-[13px]",
                       qualityIndex === q.index ? "font-semibold text-[#ff7e0d]" : "text-white/85",
                     )}
                   >
@@ -1662,7 +1662,7 @@ export function DramaDetail({
                     setMuted((m) => !m);
                     setShowMore(false);
                   }}
-                  className="flex w-full items-center gap-2 px-3 py-2.5 text-[13px] text-white/85"
+                  className="flex min-h-11 w-full items-center gap-2 px-3 py-2.5 text-[13px] text-white/85"
                 >
                   {muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
                   {muted ? t("player.unmute") : t("player.mute")}
@@ -1772,7 +1772,7 @@ export function DramaDetail({
           <button
             type="button"
             onClick={() => void enterLandscapeImmersive()}
-            className="absolute left-1/2 top-[calc(50%+min(30vw,8rem))] z-30 inline-flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-[#2a2c2c]/88 px-4 py-2 text-[13px] font-medium text-white/95 backdrop-blur-sm"
+            className="absolute left-1/2 top-[calc(50%+min(30vw,8rem))] z-30 inline-flex min-h-11 -translate-x-1/2 items-center gap-1.5 rounded-full bg-[#2a2c2c]/88 px-4 py-2 text-[13px] font-medium text-white/95 backdrop-blur-sm"
           >
             <Smartphone className="h-4 w-4 rotate-90" strokeWidth={1.75} />
             {t("player.watchFullscreen")}
@@ -1801,7 +1801,7 @@ export function DramaDetail({
             <div className="flex min-w-0 items-center gap-1.5 sm:gap-2.5">
               <button
                 type="button"
-                className="grid h-9 w-9 shrink-0 place-items-center text-white"
+                className="grid h-11 w-11 shrink-0 place-items-center text-white"
                 aria-label={videoPlaying ? t("player.pause") : t("player.play")}
                 onClick={() => {
                   const v = videoRef.current;
@@ -1834,7 +1834,7 @@ export function DramaDetail({
               <div className="flex min-w-0 items-center gap-5">
                 <button
                   type="button"
-                  className="inline-flex items-center gap-1.5"
+                  className="inline-flex min-h-11 items-center gap-1.5 px-1"
                   onClick={() => void toggleLike()}
                 >
                   <Heart
@@ -1845,7 +1845,7 @@ export function DramaDetail({
                 </button>
                 <button
                   type="button"
-                  className="inline-flex items-center gap-1.5"
+                  className="inline-flex min-h-11 items-center gap-1.5 px-1"
                   onClick={() => void toggleFavorite()}
                 >
                   <Star
@@ -1867,7 +1867,7 @@ export function DramaDetail({
                       setShowMore(false);
                       setShowRate((v) => !v);
                     }}
-                    className="px-1 text-[13px] font-medium text-white/95"
+                    className="min-h-11 px-2 text-[13px] font-medium text-white/95"
                   >
                     {t("player.speed")}
                   </button>
@@ -1882,7 +1882,7 @@ export function DramaDetail({
                             setShowRate(false);
                           }}
                           className={cn(
-                            "flex w-full items-center justify-center px-3 py-2.5 text-[13px]",
+                            "flex min-h-11 w-full items-center justify-center px-3 py-2.5 text-[13px]",
                             r === rate ? "font-semibold text-[#ff7e0d]" : "text-white/85",
                           )}
                         >
@@ -1900,7 +1900,7 @@ export function DramaDetail({
                       setShowMore(false);
                       setShowQuality((v) => !v);
                     }}
-                    className="px-1 text-[13px] font-medium text-white/95"
+                    className="min-h-11 px-2 text-[13px] font-medium text-white/95"
                   >
                     {qualityIndex < 0
                       ? t("player.qualityAuto")
@@ -1913,7 +1913,7 @@ export function DramaDetail({
                         type="button"
                         onClick={() => applyQuality(-1)}
                         className={cn(
-                          "flex w-full items-center justify-center px-3 py-2.5 text-[13px]",
+                          "flex min-h-11 w-full items-center justify-center px-3 py-2.5 text-[13px]",
                           qualityIndex < 0 ? "font-semibold text-[#ff7e0d]" : "text-white/85",
                         )}
                       >
@@ -1925,7 +1925,7 @@ export function DramaDetail({
                           type="button"
                           onClick={() => applyQuality(q.index)}
                           className={cn(
-                            "flex w-full items-center justify-center px-3 py-2.5 text-[13px]",
+                            "flex min-h-11 w-full items-center justify-center px-3 py-2.5 text-[13px]",
                             qualityIndex === q.index
                               ? "font-semibold text-[#ff7e0d]"
                               : "text-white/85",
@@ -1951,7 +1951,7 @@ export function DramaDetail({
               </span>
               <button
                 type="button"
-                className="shrink-0 font-medium text-[#ff9a3d]"
+                className="inline-flex min-h-11 shrink-0 items-center font-medium text-[#ff9a3d]"
                 onClick={() => {
                   const v = videoRef.current;
                   if (v) {
@@ -1969,9 +1969,9 @@ export function DramaDetail({
               </button>
               <button
                 type="button"
-                className="shrink-0 text-white/55"
+                className="grid h-11 w-11 shrink-0 place-items-center text-white/55"
                 onClick={() => setResumeToast(false)}
-                aria-label={t("close")}
+                aria-label={t("common.close")}
               >
                 ×
               </button>
@@ -1992,7 +1992,7 @@ export function DramaDetail({
                   <div className="pointer-events-none max-w-[calc(100%-4.75rem)]">
                     <button
                       type="button"
-                      className="pointer-events-auto inline-flex max-w-full items-center gap-0.5 text-[15px] font-semibold leading-snug text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.65)]"
+                      className="pointer-events-auto inline-flex min-h-11 max-w-full items-center gap-0.5 text-[15px] font-semibold leading-snug text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.65)]"
                       onClick={() => setDrawerOpen(true)}
                     >
                       <span className="truncate">{title}</span>
@@ -2000,7 +2000,7 @@ export function DramaDetail({
                     </button>
                     <button
                       type="button"
-                      className="pointer-events-auto mt-0.5 flex w-full items-start text-left text-[12px] leading-[17px] text-white/88 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
+                      className="pointer-events-auto flex min-h-11 w-full items-center text-left text-[12px] leading-[17px] text-white/88 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"
                       onClick={() => setEpLineExpanded((v) => !v)}
                     >
                       <span className="min-w-0 flex-1">
@@ -2056,7 +2056,7 @@ export function DramaDetail({
                   <button
                     type="button"
                     onClick={() => setDrawerOpen(true)}
-                    className="flex h-10 min-w-0 flex-1 items-center justify-between gap-2 rounded-[10px] bg-[#19191b] px-3.5 text-white"
+                    className="flex h-11 min-w-0 flex-1 items-center justify-between gap-2 rounded-[10px] bg-[#19191b] px-3.5 text-white"
                   >
                     <span className="min-w-0 truncate text-left text-[13px] font-medium leading-none">
                       {t("detail.pickEpisodesBar", { n: drama.episodesCount })}
@@ -2074,7 +2074,7 @@ export function DramaDetail({
                         void enterPortraitFullscreen();
                       }
                     }}
-                    className="grid h-10 w-10 shrink-0 place-items-center text-white"
+                    className="grid h-11 w-11 shrink-0 place-items-center text-white"
                     aria-label={
                       uiImmersive
                         ? t("player.exitFullscreen")
