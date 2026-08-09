@@ -473,6 +473,9 @@ export const LocalUploadWizard = forwardRef<
               (sourceUrl && /^https?:\/\//i.test(sourceUrl)) ||
               (webpageUrl && /^https?:\/\//i.test(webpageUrl))
             );
+            // R2 transfer extracts permanent first frames after download — do not
+            // preview-frame all episodes here (yt-dlp+ffmpeg×N is extremely slow).
+            const stageThumbs = nextOnline.ingestForm !== "r2";
             return {
               id: makeLinkEpisodeId(sourceUrl || webpageUrl || title, i),
               kind: "link" as const,
@@ -483,7 +486,11 @@ export const LocalUploadWizard = forwardRef<
               isFree: true,
               previewSeconds: 0,
               // Episode covers come from each video's first frame — never the drama poster.
-              thumbStatus: hasFrameSource ? ("pending" as const) : ("error" as const),
+              thumbStatus: stageThumbs
+                ? hasFrameSource
+                  ? ("pending" as const)
+                  : ("error" as const)
+                : undefined,
               durationSec: ep.durationSec,
               durationStatus:
                 ep.durationSec != null ? ("ready" as const) : ("unknown" as const),
@@ -508,9 +515,11 @@ export const LocalUploadWizard = forwardRef<
               if (!freeRangeEnd) setFreeRangeEnd(String(next.length));
               return next;
             });
-            queueLinkThumbHydrationRef.current(
-              incoming.filter((ep) => ep.thumbStatus === "pending"),
-            );
+            if (nextOnline.ingestForm !== "r2") {
+              queueLinkThumbHydrationRef.current(
+                incoming.filter((ep) => ep.thumbStatus === "pending"),
+              );
+            }
           } else {
             setEpisodes((prev) => {
               for (const ep of prev) {
@@ -1220,10 +1229,12 @@ export const LocalUploadWizard = forwardRef<
   }
 
   /**
-   * Online link episodes: server first-frame (never drama cover) → preview + permanent thumbnailUrl.
+   * Online link (外链) episodes: server first-frame → preview + permanent thumbnailUrl.
+   * Skipped for R2 ingest — transfer job extracts frames after download.
    * Soft-fail so staging still works if ffmpeg/resolve is unavailable.
    */
   async function hydrateLinkEpisodeThumb(seed: EpisodeDraft) {
+    if (onlineIngestRef.current?.ingestForm === "r2") return;
     const id = seed.id;
     const live = episodesRef.current.find((ep) => ep.id === id);
     if (live && live.kind !== "link") return;
@@ -1308,6 +1319,7 @@ export const LocalUploadWizard = forwardRef<
 
   function queueLinkThumbHydration(seeds: EpisodeDraft[]) {
     if (!seeds.length) return;
+    if (onlineIngestRef.current?.ingestForm === "r2") return;
     const concurrency = 2;
     let cursor = 0;
     const workers = Array.from({ length: Math.min(concurrency, seeds.length) }, async () => {
