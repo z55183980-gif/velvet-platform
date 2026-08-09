@@ -407,14 +407,48 @@ export class EpisodesService {
     return map[ext] || 'application/octet-stream';
   }
 
+  /**
+   * Owned / hosted media must never be rewritten by yt-dlp refresh.
+   * Transfer-to-R2 episodes keep sourcePageUrl for provenance; without this guard,
+   * play/preview would overwrite CDN hlsUrl with a third-party m3u8 whenever
+   * resolvedExpiresAt is missing/expired (see drama 23 EP1–5).
+   */
+  private isOwnedHostedMediaUrl(url: string | null | undefined): boolean {
+    const raw = String(url || '').trim();
+    if (!raw) return false;
+    if (!/^https?:\/\//i.test(raw)) {
+      // Relative keys: uploads/…, hls/…, covers/…, api/v1/media/…
+      return true;
+    }
+    try {
+      const host = new URL(raw).host.toLowerCase();
+      const cdnBase = (
+        this.config.get<string>('CDN_BASE_URL') || 'https://cdn.velvetmovie.space'
+      ).replace(/\/$/, '');
+      const cdnHost = new URL(cdnBase).host.toLowerCase();
+      if (host === cdnHost) return true;
+      if (host.endsWith('.r2.dev') || host.includes('r2.cloudflarestorage.com')) return true;
+      if (host.endsWith('velvetmovie.space')) return true;
+    } catch {
+      return false;
+    }
+    return false;
+  }
+
   private async refreshExternalUrlIfNeeded(episode: {
     id: bigint;
     hlsUrl: string | null;
     sourcePageUrl: string | null;
     playlistIndex: number | null;
     resolvedExpiresAt: Date | null;
+    drama?: { sourceType?: string | null } | null;
   }) {
     if (!episode.sourcePageUrl) return episode.hlsUrl;
+    // Hosted dramas (R2/LOCAL) and any already-owned hlsUrl are final — do not re-resolve.
+    const sourceType = String(episode.drama?.sourceType || '').toUpperCase();
+    if (sourceType === 'R2' || sourceType === 'LOCAL') return episode.hlsUrl;
+    if (this.isOwnedHostedMediaUrl(episode.hlsUrl)) return episode.hlsUrl;
+
     const refreshAt = episode.resolvedExpiresAt?.getTime() ?? 0;
     if (episode.hlsUrl && refreshAt > Date.now() + 5 * 60 * 1000) return episode.hlsUrl;
 
@@ -424,6 +458,19 @@ export class EpisodesService {
     const task = this.ytdlp
       .resolvePlayUrl(episode.sourcePageUrl, 'best_hls', episode.playlistIndex ?? undefined)
       .then(async (playUrl) => {
+        // Re-check before write: concurrent transcode/R2 push may have landed owned media.
+        const current = await this.prisma.episode.findUnique({
+          where: { id: episode.id },
+          select: { hlsUrl: true, drama: { select: { sourceType: true } } },
+        });
+        if (
+          current &&
+          (String(current.drama?.sourceType || '').toUpperCase() === 'R2' ||
+            String(current.drama?.sourceType || '').toUpperCase() === 'LOCAL' ||
+            this.isOwnedHostedMediaUrl(current.hlsUrl))
+        ) {
+          return current.hlsUrl || playUrl;
+        }
         await this.prisma.episode.update({
           where: { id: episode.id },
           data: {

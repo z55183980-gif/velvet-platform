@@ -26,7 +26,11 @@ import { useAuth } from "@/components/auth-context";
 import { EpisodeList } from "@/components/episode-list";
 import { UnlockSheet } from "@/components/unlock-sheet";
 import { VideoPlayer } from "@/components/video-player";
-import { PLAYER_RATES, VerticalPlayer } from "@/components/mobile/vertical-player";
+import {
+  PLAYER_RATES,
+  VerticalPlayer,
+  preloadHlsJs,
+} from "@/components/mobile/vertical-player";
 import { VerticalPager } from "@/components/mobile/vertical-pager";
 import { EpisodeDrawer } from "@/components/mobile/episode-drawer";
 import { useIsMobile } from "@/hooks/use-is-mobile";
@@ -64,6 +68,43 @@ function isUrl(s: string) {
 
 function isHls(url: string) {
   return /\.m3u8(\?|$)/i.test(url);
+}
+
+const PLAY_URL_REFRESH_MS = 5 * 60_000;
+/** Start next-episode media warm once current playback crosses this ratio. */
+const NEXT_WARM_PROGRESS = 0.5;
+
+type PlayUrlCacheEntry = {
+  playUrl: string;
+  expiresAtMs: number;
+  previewOnly: boolean;
+  previewSeconds: number;
+};
+
+function shouldSkipWatchWarmNetwork() {
+  if (typeof navigator === "undefined") return false;
+  const conn = (
+    navigator as Navigator & {
+      connection?: { saveData?: boolean; effectiveType?: string };
+    }
+  ).connection;
+  if (conn?.saveData) return true;
+  const type = conn?.effectiveType;
+  return type === "slow-2g" || type === "2g";
+}
+
+function findNextUnlockedEpisode(
+  episodes: Episode[],
+  selected: Episode,
+  unlocked: (ep: Episode) => boolean,
+): Episode | null {
+  const idx = episodes.findIndex((e) => e.no === selected.no);
+  if (idx < 0) return null;
+  for (let i = idx + 1; i < episodes.length; i++) {
+    const ep = episodes[i];
+    if (ep && unlocked(ep)) return ep;
+  }
+  return null;
 }
 
 function formatCount(n: number, locale: string) {
@@ -229,12 +270,80 @@ export function DramaDetail({
   const previousLandscapeModeRef = useRef(landscapeMode);
   /** CSS landscape immersion is independent from transient WebKit fullscreen events. */
   const landscapeImmersiveIntentRef = useRef(false);
-  const browserFsRef = useRef(false);
+  const browserFsRef = useRef(browserFs);
   /** Do not immediately re-enter while the user exits with the phone still landscape. */
   const suppressLandscapeAutoEnterRef = useRef(false);
   /** Avoid putting t in the HLS setup effect deps (locale switch would rebuild player). */
   const tRef = useRef(t);
   tRef.current = t;
+
+  const playUrlCacheRef = useRef(new Map<string, PlayUrlCacheEntry>());
+  const playUrlInflightRef = useRef(new Map<string, Promise<PlayUrlCacheEntry | null>>());
+  const warmNextRef = useRef<{ episodeId: string; destroy: () => void } | null>(null);
+  const nextWarmArmedRef = useRef(false);
+
+  const readCachedPlayUrl = useCallback((episodeId: string): PlayUrlCacheEntry | null => {
+    const hit = playUrlCacheRef.current.get(episodeId);
+    if (!hit) return null;
+    if (hit.expiresAtMs - Date.now() < PLAY_URL_REFRESH_MS) {
+      playUrlCacheRef.current.delete(episodeId);
+      return null;
+    }
+    return hit;
+  }, []);
+
+  const writeCachedPlayUrl = useCallback(
+    (episodeId: string, r: {
+      playUrl: string;
+      expiresAt: string;
+      previewOnly?: boolean;
+      previewSeconds?: number;
+    }): PlayUrlCacheEntry => {
+      const expiresAtMs = Date.parse(r.expiresAt);
+      const entry: PlayUrlCacheEntry = {
+        playUrl: r.playUrl,
+        expiresAtMs: Number.isFinite(expiresAtMs) ? expiresAtMs : Date.now() + 60 * 60_000,
+        previewOnly: !!r.previewOnly,
+        previewSeconds: r.previewSeconds || 0,
+      };
+      playUrlCacheRef.current.set(episodeId, entry);
+      return entry;
+    },
+    [],
+  );
+
+  const ensureCachedPlayUrl = useCallback(
+    async (episodeId: string, signal?: AbortSignal): Promise<PlayUrlCacheEntry | null> => {
+      const cached = readCachedPlayUrl(episodeId);
+      if (cached) return cached;
+      if (signal?.aborted) return null;
+
+      const existing = playUrlInflightRef.current.get(episodeId);
+      if (existing) {
+        const entry = await existing;
+        if (signal?.aborted) return null;
+        return entry;
+      }
+
+      const task = (async () => {
+        try {
+          const r = await getPlayUrl(episodeId);
+          if (!r?.playUrl) return null;
+          return writeCachedPlayUrl(episodeId, r);
+        } catch {
+          return null;
+        } finally {
+          playUrlInflightRef.current.delete(episodeId);
+        }
+      })();
+
+      playUrlInflightRef.current.set(episodeId, task);
+      const entry = await task;
+      if (signal?.aborted) return null;
+      return entry;
+    },
+    [readCachedPlayUrl, writeCachedPlayUrl],
+  );
 
   useEffect(() => {
     const ac = new AbortController();
@@ -458,6 +567,11 @@ export function DramaDetail({
   }, [mobileReady, loading, data, autoStartWatch, isMobile]);
 
   useEffect(() => {
+    if (!watching) return;
+    void preloadHlsJs();
+  }, [watching]);
+
+  useEffect(() => {
     if (!playerReady || !selected?.id) {
       setPlayUrl(null);
       setPreviewLimit(0);
@@ -476,6 +590,16 @@ export function DramaDetail({
       setPlayErr(null);
       return;
     }
+
+    const cached = readCachedPlayUrl(episodeId);
+    if (cached) {
+      setPlayUrl(cached.playUrl);
+      setPreviewLimit(cached.previewOnly ? cached.previewSeconds : 0);
+      setPlayErr(null);
+      if (!user) markGuestWatched(episodeId);
+      return;
+    }
+
     const ac = new AbortController();
     // Drop previous episode's URL so HLS never attaches the wrong source.
     setPlayUrl(null);
@@ -483,6 +607,11 @@ export function DramaDetail({
     getPlayUrl(episodeId, { signal: ac.signal })
       .then((r) => {
         if (ac.signal.aborted) return;
+        if (!r?.playUrl) {
+          setPlayErr(t("player.error"));
+          return;
+        }
+        writeCachedPlayUrl(episodeId, r);
         setPlayUrl(r.playUrl);
         setPreviewLimit(r.previewOnly ? r.previewSeconds : 0);
         if (!user) markGuestWatched(episodeId);
@@ -493,8 +622,191 @@ export function DramaDetail({
         else setPlayErr(e?.message || t("player.error"));
       });
     return () => ac.abort();
-  }, [playerReady, selected?.id, selectedTrialAvailable, user, authReady, guestReady, canGuestWatch, markGuestWatched, t]);
+  }, [
+    playerReady,
+    selected?.id,
+    selectedTrialAvailable,
+    user,
+    authReady,
+    guestReady,
+    canGuestWatch,
+    markGuestWatched,
+    t,
+    readCachedPlayUrl,
+    writeCachedPlayUrl,
+  ]);
+  // Prefetch next unlocked episode's signed URL (no guest quota burn).
+  useEffect(() => {
+    if (!watching || !selected || !data || !authReady || !guestReady) return;
+    if (shouldSkipWatchWarmNetwork()) return;
+    const next = findNextUnlockedEpisode(data.episodes, selected, isUnlocked);
+    if (!next?.id) return;
+    const episodeId = String(next.id);
+    if (!user && !canGuestWatch(episodeId)) return;
+    if (readCachedPlayUrl(episodeId)) return;
+    const ac = new AbortController();
+    void ensureCachedPlayUrl(episodeId, ac.signal).catch(() => {});
+    return () => ac.abort();
+  }, [
+    watching,
+    selected,
+    data,
+    authReady,
+    guestReady,
+    user,
+    canGuestWatch,
+    isUnlocked,
+    readCachedPlayUrl,
+    ensureCachedPlayUrl,
+  ]);
 
+  // Tear down / hand off next-episode media warm when the current selection changes.
+  useEffect(() => {
+    nextWarmArmedRef.current = false;
+    const warm = warmNextRef.current;
+    if (!warm) return;
+    const selectedId = selected?.id != null ? String(selected.id) : null;
+    if (selectedId && warm.episodeId === selectedId) {
+      // Keep warm briefly so fragment HTTP cache can overlap with main attach.
+      const timer = window.setTimeout(() => {
+        if (warmNextRef.current?.episodeId === selectedId) {
+          warmNextRef.current.destroy();
+        }
+      }, 8_000);
+      return () => window.clearTimeout(timer);
+    }
+    warm.destroy();
+    return undefined;
+  }, [selected?.id]);
+
+  useEffect(() => {
+    return () => {
+      warmNextRef.current?.destroy();
+      warmNextRef.current = null;
+    };
+  }, []);
+
+  // At 50% progress, warm the next episode's first few seconds (paused / short buffer).
+  useEffect(() => {
+    if (!watching || !playUrl || !selected || !data) return;
+    const video = videoRef.current;
+    if (!video) return;
+
+    const warmNext = async () => {
+      if (shouldSkipWatchWarmNetwork()) return;
+      const next = findNextUnlockedEpisode(data.episodes, selected, isUnlocked);
+      if (!next?.id) return;
+      const episodeId = String(next.id);
+      if (!user && !canGuestWatch(episodeId)) return;
+      if (warmNextRef.current?.episodeId === episodeId) return;
+
+      warmNextRef.current?.destroy();
+      warmNextRef.current = null;
+
+      const entry = await ensureCachedPlayUrl(episodeId);
+      if (!entry?.playUrl || entry.previewOnly) return;
+      // Ref.current is mutated across await; avoid TS control-flow narrowing to null.
+      const alreadyWarm = warmNextRef.current as {
+        episodeId: string;
+        destroy: () => void;
+      } | null;
+      if (alreadyWarm?.episodeId === episodeId) return;
+
+      const el = document.createElement("video");
+      el.muted = true;
+      el.playsInline = true;
+      el.preload = "auto";
+      el.setAttribute("aria-hidden", "true");
+      el.style.cssText = "position:fixed;width:1px;height:1px;opacity:0;pointer-events:none;left:-9999px;top:0";
+      document.body.appendChild(el);
+
+      let hls: { destroy: () => void } | null = null;
+      let destroyed = false;
+      const destroy = () => {
+        if (destroyed) return;
+        destroyed = true;
+        try {
+          hls?.destroy();
+        } catch {
+          /* ignore */
+        }
+        try {
+          el.removeAttribute("src");
+          el.load();
+          el.remove();
+        } catch {
+          /* ignore */
+        }
+        if (warmNextRef.current?.episodeId === episodeId) {
+          warmNextRef.current = null;
+        }
+      };
+
+      warmNextRef.current = { episodeId, destroy };
+
+      const url = entry.playUrl;
+      if (!isHls(url)) {
+        el.src = url;
+        return;
+      }
+      if (el.canPlayType("application/vnd.apple.mpegurl")) {
+        el.src = url;
+        return;
+      }
+
+      try {
+        const mod = await preloadHlsJs();
+        if (destroyed || !mod) {
+          destroy();
+          return;
+        }
+        const Hls = mod.default;
+        if (!Hls.isSupported()) {
+          destroy();
+          return;
+        }
+        const instance = new Hls({
+          enableWorker: true,
+          maxBufferLength: 3,
+          maxMaxBufferLength: 4,
+          backBufferLength: 0,
+          startFragPrefetch: true,
+          capLevelToPlayerSize: true,
+        });
+        if (destroyed) {
+          instance.destroy();
+          return;
+        }
+        hls = instance;
+        instance.loadSource(url);
+        instance.attachMedia(el);
+      } catch {
+        destroy();
+      }
+    };
+
+    const onTime = () => {
+      if (nextWarmArmedRef.current) return;
+      const duration = video.duration;
+      if (!Number.isFinite(duration) || duration <= 0) return;
+      if (video.currentTime / duration < NEXT_WARM_PROGRESS) return;
+      nextWarmArmedRef.current = true;
+      void warmNext();
+    };
+
+    video.addEventListener("timeupdate", onTime);
+    onTime();
+    return () => video.removeEventListener("timeupdate", onTime);
+  }, [
+    watching,
+    playUrl,
+    selected,
+    data,
+    user,
+    canGuestWatch,
+    isUnlocked,
+    ensureCachedPlayUrl,
+  ]);
   useEffect(() => {
     const video = videoRef.current;
     if (!video || previewLimit <= 0 || !selected || isUnlocked(selected)) return;

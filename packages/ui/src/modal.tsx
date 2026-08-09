@@ -2,7 +2,7 @@
 
 import { useEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { AlertTriangle, CircleHelp, LoaderCircle, X } from "lucide-react";
+import { AlertTriangle, CircleCheck, CircleHelp, LoaderCircle, X } from "lucide-react";
 import { Button } from "./components";
 import { cn } from "./cn";
 
@@ -141,7 +141,7 @@ export function ConfirmDialog({
   message: string;
   cancelLabel?: string;
   confirmLabel?: string;
-  confirmVariant?: "primary" | "danger";
+  confirmVariant?: "primary" | "danger" | "success";
   busy?: boolean;
   closeLabel?: string;
   className?: string;
@@ -149,6 +149,7 @@ export function ConfirmDialog({
   extraAction?: { label: string; onClick: () => void; busy?: boolean; disabled?: boolean };
 }) {
   const destructive = confirmVariant === "danger";
+  const affirmative = confirmVariant === "success";
 
   return (
     <Modal
@@ -159,11 +160,17 @@ export function ConfirmDialog({
           <span
             className={cn(
               "flex h-9 w-9 shrink-0 items-center justify-center rounded-xl",
-              destructive ? "bg-danger-soft text-danger" : "bg-brand-soft text-brand",
+              destructive
+                ? "bg-danger-soft text-danger"
+                : affirmative
+                  ? "bg-success-soft text-success"
+                  : "bg-brand-soft text-brand",
             )}
           >
             {destructive ? (
               <AlertTriangle className="h-[18px] w-[18px]" strokeWidth={2.25} aria-hidden="true" />
+            ) : affirmative ? (
+              <CircleCheck className="h-[18px] w-[18px]" strokeWidth={2.25} aria-hidden="true" />
             ) : (
               <CircleHelp className="h-[18px] w-[18px]" strokeWidth={2.25} aria-hidden="true" />
             )}
@@ -182,7 +189,11 @@ export function ConfirmDialog({
       <div
         className={cn(
           "rounded-2xl border px-4 py-3.5",
-          destructive ? "border-danger/15 bg-danger-soft/60" : "border-line bg-surface-2/70",
+          destructive
+            ? "border-danger/15 bg-danger-soft/60"
+            : affirmative
+              ? "border-success/15 bg-success-soft/60"
+              : "border-line bg-surface-2/70",
         )}
       >
         <p className="text-body-sm leading-6 text-ink-muted">{message}</p>

@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { useAuth, type AuthUser } from "@/components/auth-context";
-import { VerticalPlayer } from "@/components/mobile/vertical-player";
+import { VerticalPlayer, preloadHlsJs, type MediaTier } from "@/components/mobile/vertical-player";
 import { VerticalPager } from "@/components/mobile/vertical-pager";
 import { UnlockSheet } from "@/components/unlock-sheet";
 import { FeedEpisodeBar } from "@/components/mobile/feed-episode-bar";
@@ -407,7 +407,7 @@ export function VerticalFeed({
   const pinDocumentBody = !(getPwaPlatform() === "ios" && isPwaStandalone());
   useDocumentScrollLock(true, shellRef, { pinBody: pinDocumentBody });
 
-  // Keep adjacent metadata warm, but never pre-download HLS manifests or media segments.
+  // Keep adjacent metadata warm. Next-item media warm-attach is handled per FeedPage tier.
   useEffect(() => {
     syncDetailCacheScope(authScope);
     const drama = dramas[index];
@@ -418,7 +418,7 @@ export function VerticalFeed({
     }
   }, [index, dramas, authScope]);
 
-  // Resolve only the next play URL. The inactive player must not attach media until swiped active.
+  // Resolve the next play URL early so the next page can warm-attach HLS.
   useEffect(() => {
     syncDetailCacheScope(authScope);
     const ac = new AbortController();
@@ -439,6 +439,11 @@ export function VerticalFeed({
       document.removeEventListener("visibilitychange", onVis);
     };
   }, [index, dramas, authScope]);
+
+  // Prefetch hls.js on feed mount so the first swipe does not pay script latency.
+  useEffect(() => {
+    void preloadHlsJs();
+  }, []);
 
   if (bootLoading && dramas.length === 0) {
     return (
@@ -473,10 +478,13 @@ export function VerticalFeed({
         {({ pageIndex, active }) => {
           const drama = dramas[pageIndex];
           if (!drama) return null;
+          const warmCandidate =
+            pageIndex === index + 1 && !shouldSkipNeighborPrefetch();
           return (
             <FeedPage
               drama={drama}
               active={active}
+              warmCandidate={warmCandidate}
               muted={muted}
               onMutedChange={handleMutedChange}
               restoreSound={restoreSound}
@@ -498,6 +506,7 @@ export function VerticalFeed({
 function FeedPage({
   drama,
   active,
+  warmCandidate,
   muted,
   onMutedChange,
   restoreSound,
@@ -506,6 +515,8 @@ function FeedPage({
 }: {
   drama: Drama;
   active: boolean;
+  /** Next item may warm-attach once playUrl is ready (saveData/2g skipped upstream). */
+  warmCandidate: boolean;
   muted: boolean;
   onMutedChange: (m: boolean) => void;
   restoreSound: boolean;
@@ -715,11 +726,21 @@ function FeedPage({
       return;
     }
 
-    // Guests only resolve URL on the active page so peeking won't burn quota.
+    // Guests: prefer cache on inactive pages so peeking does not burn watch quota.
+    // Warm next-item may still join the shared playUrl inflight (prefetch / ensurePlayUrl)
+    // without marking the guest as having watched.
     if (!user && !active) {
       const cachedOnly = getCachedPlayUrl(episodeId);
-      setPlayUrl(cachedOnly);
-      return;
+      if (cachedOnly) {
+        setPlayUrl(cachedOnly);
+        setLoading(false);
+        setPlayErr(null);
+        return;
+      }
+      if (!warmCandidate) {
+        setPlayUrl(null);
+        return;
+      }
     }
 
     const cached = getCachedPlayUrl(episodeId);
@@ -758,6 +779,7 @@ function FeedPage({
     guestReady,
     user,
     active,
+    warmCandidate,
     canGuestWatch,
     markGuestWatched,
     t,
@@ -805,6 +827,12 @@ function FeedPage({
   const needsLogin = authReady && guestReady && episodeUnlocked && !user && !guestAllowed;
   const locked = !!episode && !episodeUnlocked;
   const cover = isUrl(drama.cover[0]) ? drama.cover[0] : undefined;
+  const mediaSrc = playUrl && canPlay ? playUrl : null;
+  const mediaTier: MediaTier = active
+    ? "active"
+    : warmCandidate && mediaSrc
+      ? "warm"
+      : "idle";
 
   function openUnlockGate() {
     if (!authReady) return;
@@ -897,9 +925,10 @@ function FeedPage({
       <VerticalPlayer
           videoRef={videoRef}
           active={active}
+          mediaTier={mediaTier}
           chrome="feed"
           objectFit={landscape ? "contain" : "cover"}
-          src={playUrl && canPlay ? playUrl : null}
+          src={mediaSrc}
           poster={cover}
           autoPlay={active}
           muted={muted}
@@ -917,7 +946,7 @@ function FeedPage({
           lockActionLabel={t("feed.watch")}
           onUnlock={locked ? openUnlockGate : undefined}
           error={active ? playErr : null}
-          loading={active && loading}
+          loading={active && loading && !playUrl}
           showSeek={false}
           tapToToggle={false}
       />

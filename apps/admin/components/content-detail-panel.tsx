@@ -851,7 +851,7 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
             );
           })()}
           {drama.status === "PENDING_REVIEW" ? (
-            <Button size="sm" disabled={actionMut.isPending} onClick={() => act(() => adminApproveDrama(id))}>
+            <Button size="sm" variant="success" disabled={actionMut.isPending} onClick={() => act(() => adminApproveDrama(id))}>
               <Check className="h-4 w-4" />
               {t("approveReview")}
             </Button>
@@ -924,7 +924,7 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
               <div className="content-section-heading"><div><h2>{t("statusAndActions")}</h2><p>{t("statusActionHint")}</p></div></div>
               <FieldLabel label={t("actionReason")}><Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder={t("actionReasonPlaceholder")} /></FieldLabel>
               <div className="flex flex-wrap gap-2">
-                <Button size="sm" disabled={actionMut.isPending} onClick={() => act(() => adminApproveDrama(id))}><Check className="h-4 w-4" />{t("approveReview")}</Button>
+                <Button size="sm" variant="success" disabled={actionMut.isPending} onClick={() => act(() => adminApproveDrama(id))}><Check className="h-4 w-4" />{t("approveReview")}</Button>
                 <Button size="sm" variant="secondary" disabled={actionMut.isPending || !reason.trim()} onClick={() => act(() => adminRejectDrama(id, reason))}><AlertTriangle className="h-4 w-4" />{t("reject")}</Button>
               </div>
             </section>

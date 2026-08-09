@@ -1,10 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { BizException, BizCode } from '../common/biz.exception';
+import { AdminUsersService } from './users.service';
 
 @Injectable()
 export class AdminCreatorsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly users: AdminUsersService,
+  ) {}
 
   async list(filter: { q?: string; kyc?: 'PENDING' | 'APPROVED' | 'REJECTED' | 'ALL'; page?: number; pageSize?: number; sort?: 'available' | 'pending' | 'withdrawn' | 'total' }) {
     const page = Math.max(1, Math.floor(filter.page ?? 1));
@@ -28,7 +32,7 @@ export class AdminCreatorsService {
         skip: (page - 1) * pageSize,
         take: pageSize,
         include: {
-          user: { select: { id: true, email: true, phone: true, nickname: true } },
+          user: { select: { id: true, email: true, phone: true, nickname: true, status: true } },
           earnings: true,
           _count: { select: { dramas: true } },
         },
@@ -54,6 +58,44 @@ export class AdminCreatorsService {
       );
     }
     return { rows, total, page, pageSize };
+  }
+
+  /**
+   * Close a creator account by banning the linked user (blocks login, clears sessions).
+   * Reuses AdminUsersService.setStatus for consistent audit / notification behavior.
+   */
+  async closeAccount(id: string, actorId?: bigint) {
+    const creator = await this.prisma.creator.findUnique({
+      where: { id: BigInt(id) },
+      select: {
+        id: true,
+        userId: true,
+        displayName: true,
+        user: { select: { id: true, status: true } },
+      },
+    });
+    if (!creator) throw new BizException(BizCode.NOT_FOUND, 'creator.notFound');
+    if (!creator.user) throw new BizException(BizCode.NOT_FOUND, 'user.notFound');
+    if (creator.user.status === 'BANNED') {
+      return {
+        id: creator.id.toString(),
+        userId: creator.userId.toString(),
+        status: 'BANNED' as const,
+        alreadyClosed: true,
+      };
+    }
+    const result = await this.users.setStatus(
+      creator.userId.toString(),
+      'BANNED',
+      '关闭账号',
+      actorId,
+    );
+    return {
+      id: creator.id.toString(),
+      userId: result.id,
+      status: result.status,
+      alreadyClosed: false,
+    };
   }
 
   async detail(id: string) {

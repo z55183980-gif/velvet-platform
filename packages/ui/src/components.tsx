@@ -1,7 +1,7 @@
 import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes } from "react";
 import { cn } from "./cn";
 
-type Variant = "primary" | "secondary" | "ghost" | "danger";
+type Variant = "primary" | "secondary" | "ghost" | "danger" | "success";
 type Size = "sm" | "md" | "lg";
 
 const btnBase =
@@ -16,6 +16,9 @@ const variants: Record<Variant, string> = {
     "text-ink-muted hover:text-ink hover:bg-white/40 disabled:text-ink-subtle disabled:hover:bg-transparent",
   danger:
     "border border-danger/20 bg-danger-soft text-danger hover:bg-danger/15 disabled:border-transparent disabled:bg-surface-3 disabled:text-ink-muted",
+  /** Approve / pass / positive confirm — soft green, same visual weight as danger. */
+  success:
+    "border border-success/20 bg-success-soft text-success hover:bg-success/15 disabled:border-transparent disabled:bg-surface-3 disabled:text-ink-muted",
 };
 
 const sizes: Record<Size, string> = {

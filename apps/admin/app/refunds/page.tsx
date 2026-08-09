@@ -60,7 +60,7 @@ export default function AdminRefundsPage() {
         header: t("actions"),
         cell: (r) => (
           <div className="flex flex-wrap items-center gap-1">
-            <Button size="sm" onClick={() => approveRefundMut.mutate(r.orderNo)}>
+            <Button size="sm" variant="success" onClick={() => approveRefundMut.mutate(r.orderNo)}>
               {t("approve")}
             </Button>
             <Input

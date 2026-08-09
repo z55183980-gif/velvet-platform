@@ -31,6 +31,8 @@ export type DramaPageExtractResult = {
   titleEn: string;
   coverUrl: string;
   descriptionZh: string;
+  /** Preferred catalog category slug when the model can choose among allowed ones. */
+  categorySlug: string;
   episodes: DramaPageExtractEpisode[];
   notes: string;
   model: string;
@@ -44,6 +46,7 @@ const EXTRACT_SCHEMA = {
     titleEn: { type: 'string' },
     coverUrl: { type: 'string' },
     descriptionZh: { type: 'string' },
+    categorySlug: { type: 'string' },
     episodes: {
       type: 'array',
       items: {
@@ -59,7 +62,26 @@ const EXTRACT_SCHEMA = {
     },
     notes: { type: 'string' },
   },
-  required: ['titleZh', 'titleEn', 'coverUrl', 'descriptionZh', 'episodes', 'notes'],
+  required: [
+    'titleZh',
+    'titleEn',
+    'coverUrl',
+    'descriptionZh',
+    'categorySlug',
+    'episodes',
+    'notes',
+  ],
+} as const;
+
+const CATEGORY_CLASSIFY_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    categorySlug: { type: 'string' },
+    confidence: { type: 'number' },
+    reason: { type: 'string' },
+  },
+  required: ['categorySlug', 'confidence', 'reason'],
 } as const;
 
 const TITLE_TRANSLATE_SCHEMA = {
@@ -240,6 +262,8 @@ export class OpenaiService {
   async extractDramaPage(opts: {
     pageUrl: string;
     pageText: string;
+    /** When set, ask the model to pick one catalog slug (or empty). */
+    allowedCategorySlugs?: string[];
   }): Promise<DramaPageExtractResult> {
     if (!this.isConfigured()) {
       throw new BizException(
@@ -254,13 +278,21 @@ export class OpenaiService {
       throw new BizException(BizCode.BAD_REQUEST, '页面内容为空，无法抽取');
     }
 
+    const allowed = (opts.allowedCategorySlugs || [])
+      .map((s) => String(s || '').trim())
+      .filter(Boolean);
+    const categoryHint = allowed.length
+      ? ` categorySlug must be one of [${allowed.join(', ')}] when genre is clear, else empty string.`
+      : ' categorySlug should be empty string when no catalog is provided.';
+
     const system =
       'Extract short-drama metadata from a source page. ' +
       'Return playable episode media URLs when present (m3u8/mp4/direct video). ' +
       'If only episode page links exist, put those in sourceUrl and explain in notes. ' +
       'Prefer the full episode list over a single trailer when both appear. ' +
       'episodeNumber must be contiguous starting at 1. Use empty string when unknown. ' +
-      'titleZh should be Simplified Chinese when possible; titleEn English.';
+      'titleZh should be Simplified Chinese when possible; titleEn English.' +
+      categoryHint;
 
     const user = `Page URL: ${pageUrl}\n\nPage text:\n${truncated}`;
     const model = this.model();
@@ -309,8 +341,76 @@ export class OpenaiService {
       titleEn: String(parsed?.titleEn || '').trim().slice(0, TITLE_MAX),
       coverUrl: String(parsed?.coverUrl || '').trim(),
       descriptionZh: String(parsed?.descriptionZh || '').trim().slice(0, DESC_MAX),
+      categorySlug: String(parsed?.categorySlug || '').trim(),
       episodes,
       notes: String(parsed?.notes || '').trim().slice(0, 500),
+      model,
+    };
+  }
+
+  /**
+   * Pick a single catalog category slug from title/description when heuristics are weak.
+   * Returns undefined when the model is unsure or the slug is not allowed.
+   */
+  async classifyDramaCategory(opts: {
+    title?: string;
+    description?: string;
+    pageLabels?: string[];
+    allowedCategorySlugs: string[];
+  }): Promise<{ categorySlug?: string; confidence: number; reason: string; model: string }> {
+    const allowed = (opts.allowedCategorySlugs || [])
+      .map((s) => String(s || '').trim())
+      .filter(Boolean);
+    if (!allowed.length || !this.isConfigured()) {
+      return { confidence: 0, reason: 'unavailable', model: '' };
+    }
+
+    const title = String(opts.title || '').trim().slice(0, TITLE_MAX);
+    const description = String(opts.description || '').trim().slice(0, DESC_MAX);
+    const labels = (opts.pageLabels || []).map((s) => String(s).trim()).filter(Boolean);
+    if (!title && !description && !labels.length) {
+      return { confidence: 0, reason: 'empty input', model: '' };
+    }
+
+    const model = this.model();
+    const system =
+      'Classify a short drama into exactly one catalog category. ' +
+      `categorySlug must be one of [${allowed.join(', ')}] or empty string if uncertain. ` +
+      'confidence is 0..1. Prefer empty when evidence is weak.';
+    const user = [
+      `Title: ${title || '(none)'}`,
+      `Description: ${description || '(none)'}`,
+      `Page labels: ${labels.length ? labels.join(', ') : '(none)'}`,
+      `Allowed: ${allowed.join(', ')}`,
+    ].join('\n');
+
+    let parsed: any;
+    try {
+      parsed = await this.chatJson({
+        model,
+        system,
+        user,
+        useSchema: true,
+        schemaName: 'drama_category',
+        schema: CATEGORY_CLASSIFY_SCHEMA,
+      });
+    } catch (e) {
+      this.logger.warn(
+        `category classify failed: ${e instanceof Error ? e.message : e}`,
+      );
+      return {
+        confidence: 0,
+        reason: e instanceof Error ? e.message : String(e),
+        model,
+      };
+    }
+
+    const slug = String(parsed?.categorySlug || '').trim();
+    const confidence = Number(parsed?.confidence);
+    return {
+      categorySlug: allowed.includes(slug) ? slug : undefined,
+      confidence: Number.isFinite(confidence) ? Math.max(0, Math.min(1, confidence)) : 0,
+      reason: String(parsed?.reason || '').trim().slice(0, 200),
       model,
     };
   }

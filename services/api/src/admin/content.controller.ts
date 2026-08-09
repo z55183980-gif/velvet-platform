@@ -367,6 +367,13 @@ class YtdlpAiExtractDto extends YtdlpAuthFields {
   @IsOptional() @Type(() => Number) @IsNumber() @Min(1) maxEpisodes?: number;
 }
 
+class YtdlpInferCategoryDto {
+  @IsOptional() @IsString() categorySlug?: string;
+  @IsOptional() @IsString() title?: string;
+  @IsOptional() @IsString() description?: string;
+  @IsOptional() @IsArray() @IsString({ each: true }) pageLabels?: string[];
+}
+
 class YtdlpResolveDto extends YtdlpAuthFields {
   @IsNotEmpty() @IsString() url!: string;
   @IsOptional() @IsIn(['best_hls', 'best_mp4', 'best'])
@@ -412,7 +419,7 @@ class YtdlpBrowserDownloadDto extends YtdlpAuthFields {
 
 class YtdlpImportDto extends YtdlpAuthFields {
   @IsNotEmpty() @IsString() url!: string;
-  @IsNotEmpty() @IsString() categorySlug!: string;
+  @IsOptional() @IsString() categorySlug?: string;
   @IsOptional() @IsString() titleZh?: string;
   @IsOptional() @IsString() titleEn?: string;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(1) maxEpisodes?: number;
@@ -431,7 +438,7 @@ class YtdlpTransferEpisodeDto {
 
 class YtdlpTransferDto extends YtdlpAuthFields {
   @IsNotEmpty() @IsString() url!: string;
-  @IsNotEmpty() @IsString() categorySlug!: string;
+  @IsOptional() @IsString() categorySlug?: string;
   @IsNotEmpty() @IsIn(['local', 'r2'])
   target!: 'local' | 'r2';
   @IsOptional() @IsString() titleZh?: string;
@@ -904,6 +911,20 @@ export class ContentController {
         maxEpisodes: dto.maxEpisodes,
         cookiesFile: dto.cookiesFile,
         authBearer: dto.authBearer,
+      }),
+    );
+  }
+
+  /** Infer catalog category for Apply-to-main when probe/AI did not already set one. */
+  @Post('ytdlp/infer-category')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async ytdlpInferCategory(@Body() dto: YtdlpInferCategoryDto) {
+    return ok(
+      await this.ytdlp.inferCategory({
+        categorySlug: dto.categorySlug,
+        title: dto.title,
+        description: dto.description,
+        pageLabels: dto.pageLabels,
       }),
     );
   }

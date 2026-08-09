@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { IsNotEmpty, IsString } from 'class-validator';
 import { ok } from '../common/response';
-import { AdminRoleGuard } from './admin-role.guard';
+import { AdminRoleGuard, AdminRoles } from './admin-role.guard';
 import { AdminGuard } from './admin.guard';
 import { AdminService } from './admin.service';
 import { AdminCreatorsService } from './creators.service';
@@ -72,5 +72,12 @@ export class CreatorsController {
   @Get('creators/:id')
   async creatorDetail(@Param('id') id: string) {
     return ok(await this.creators.detail(id));
+  }
+
+  /** Close creator account → ban linked user (SUPER_ADMIN only, same as user status). */
+  @Post('creators/:id/close')
+  @AdminRoles('SUPER_ADMIN')
+  async closeCreator(@Param('id') id: string, @Req() req: any) {
+    return ok(await this.creators.closeAccount(id, getActor(req)));
   }
 }

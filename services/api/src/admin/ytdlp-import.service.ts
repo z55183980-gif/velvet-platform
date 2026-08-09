@@ -26,10 +26,16 @@ import {
   extractMetaFromNextData,
   type ExtractedPageEpisode,
 } from './online-page-extract.util';
+import {
+  DEFAULT_CATEGORY_SLUGS,
+  inferCategorySlug,
+  sanitizeCategorySlug,
+} from './drama-category-infer.util';
 
 export type YtdlpImportOptions = {
   url: string;
-  categorySlug: string;
+  /** When empty, inferred from title/description before create. */
+  categorySlug?: string;
   titleZh?: string;
   titleEn?: string;
   /** Ignored — imports always create DRAFT. Kept for API compatibility. */
@@ -197,6 +203,7 @@ export class YtdlpImportService implements OnModuleInit {
   /**
    * Path B: fetch public page HTML → deterministic episode href extract (+ OpenAI meta fallback).
    * ReelShort SPA pages put episode lists in HTML/__NEXT_DATA__; stripped text alone is not enough.
+   * Also infers categorySlug (page labels → heuristic → optional LLM).
    */
   async aiExtract(opts: {
     url: string;
@@ -207,12 +214,14 @@ export class YtdlpImportService implements OnModuleInit {
     const pageUrl = await this.provider.assertSafePageUrl(opts.url);
     const auth = this.authFromOpts(opts);
     const candidates = expandDramaPageCandidates(pageUrl);
+    const allowedCategories = await this.listCategorySlugs();
 
     const episodeMap = new Map<number, ExtractedPageEpisode>();
     let bestMeta: {
       title?: string;
       coverUrl?: string;
       description?: string;
+      genreLabels?: string[];
     } = {};
     let bestHtml = '';
     let bestHtmlUrl = pageUrl;
@@ -255,6 +264,11 @@ export class YtdlpImportService implements OnModuleInit {
       if (meta.description && !bestMeta.description) {
         bestMeta.description = meta.description;
       }
+      if (meta.genreLabels?.length) {
+        bestMeta.genreLabels = [
+          ...new Set([...(bestMeta.genreLabels || []), ...meta.genreLabels]),
+        ].slice(0, 12);
+      }
       for (const ep of nextEps) {
         // Prefer page hrefs (playable ingest via yt-dlp later); keep media URLs if no href.
         if (!episodeMap.has(ep.episodeNumber)) episodeMap.set(ep.episodeNumber, ep);
@@ -272,6 +286,7 @@ export class YtdlpImportService implements OnModuleInit {
     let titleEn = bestMeta.title || '';
     let descriptionZh = bestMeta.description || '';
     let coverUrl = bestMeta.coverUrl || '';
+    let categorySlug = '';
 
     const needLlm =
       this.openai.isConfigured() &&
@@ -297,6 +312,7 @@ export class YtdlpImportService implements OnModuleInit {
         const extracted = await this.openai.extractDramaPage({
           pageUrl: bestHtmlUrl,
           pageText,
+          allowedCategorySlugs: allowedCategories,
         });
         model = extracted.model;
         notes = extracted.notes || '';
@@ -308,6 +324,11 @@ export class YtdlpImportService implements OnModuleInit {
         if (extracted.descriptionZh) {
           descriptionZh = extracted.descriptionZh || descriptionZh;
         }
+        const fromLlm = sanitizeCategorySlug(
+          extracted.categorySlug,
+          allowedCategories,
+        );
+        if (fromLlm) categorySlug = fromLlm;
         if (episodes.length < 2 && extracted.episodes.length) {
           for (const ep of extracted.episodes) {
             if (!episodeMap.has(ep.episodeNumber)) {
@@ -332,6 +353,24 @@ export class YtdlpImportService implements OnModuleInit {
       );
     } else if (episodes.length >= 2) {
       notes = `Deterministic extract from ${fetchedOk} page(s); skipped LLM.`;
+    }
+
+    if (!categorySlug) {
+      const resolved = await this.resolveCategorySlug({
+        title: titleZh || titleEn || bestMeta.title,
+        description: descriptionZh || bestMeta.description,
+        pageLabels: bestMeta.genreLabels,
+        allowedSlugs: allowedCategories,
+      });
+      if (resolved.slug) {
+        categorySlug = resolved.slug;
+        if (resolved.via === 'llm' && resolved.model) {
+          model = model || resolved.model;
+        }
+        if (resolved.note) {
+          notes = notes ? `${notes} ${resolved.note}` : resolved.note;
+        }
+      }
     }
 
     const max =
@@ -360,6 +399,7 @@ export class YtdlpImportService implements OnModuleInit {
       source: 'ai';
       titleZh?: string;
       titleEn?: string;
+      categorySlug?: string;
       notes?: string;
       model?: string;
       htmlChars: number;
@@ -379,6 +419,7 @@ export class YtdlpImportService implements OnModuleInit {
       source: 'ai',
       titleZh: titleZh || undefined,
       titleEn: titleEn || undefined,
+      categorySlug: categorySlug || undefined,
       notes: notes || undefined,
       model,
       htmlChars: bestHtml.length,
@@ -400,7 +441,8 @@ export class YtdlpImportService implements OnModuleInit {
     };
 
     this.logger.log(
-      `aiExtract ${pageUrl} → ${episodes.length} eps via ${probe.extractor} (fetched=${fetchedOk})`,
+      `aiExtract ${pageUrl} → ${episodes.length} eps via ${probe.extractor}` +
+        ` category=${categorySlug || '-'} (fetched=${fetchedOk})`,
     );
     return probe;
   }
@@ -547,6 +589,116 @@ export class YtdlpImportService implements OnModuleInit {
     };
   }
 
+  /**
+   * Lightweight category inference for Apply-to-main when probe has no categorySlug.
+   * Same stack as ai-extract: explicit → page/heuristic → LLM.
+   */
+  async inferCategory(opts: {
+    categorySlug?: string;
+    title?: string;
+    description?: string;
+    pageLabels?: string[];
+  }) {
+    const resolved = await this.resolveCategorySlug({
+      categorySlug: opts.categorySlug,
+      title: opts.title,
+      description: opts.description,
+      pageLabels: opts.pageLabels,
+    });
+    return {
+      categorySlug: resolved.slug || null,
+      via: resolved.via || null,
+      note: resolved.note || null,
+      model: resolved.model || null,
+    };
+  }
+
+  private async listCategorySlugs(): Promise<string[]> {
+    const rows = await this.prisma.category.findMany({
+      select: { slug: true },
+      orderBy: { sortOrder: 'asc' },
+    });
+    const slugs = rows.map((r) => r.slug).filter(Boolean);
+    return slugs.length ? slugs : [...DEFAULT_CATEGORY_SLUGS];
+  }
+
+  /**
+   * Resolve catalog category: explicit slug → page/heuristic → LLM classify.
+   * confidence gate for LLM: ≥ 0.55.
+   */
+  private async resolveCategorySlug(opts: {
+    categorySlug?: string;
+    title?: string;
+    description?: string;
+    pageLabels?: string[];
+    allowedSlugs?: string[];
+  }): Promise<{ slug?: string; via?: 'explicit' | 'page' | 'heuristic' | 'llm'; note?: string; model?: string }> {
+    const allowed = opts.allowedSlugs?.length
+      ? opts.allowedSlugs
+      : await this.listCategorySlugs();
+
+    const explicit = sanitizeCategorySlug(opts.categorySlug, allowed);
+    if (explicit) return { slug: explicit, via: 'explicit' };
+
+    const hit = inferCategorySlug({
+      allowedSlugs: allowed,
+      title: opts.title,
+      description: opts.description,
+      pageLabels: opts.pageLabels,
+    });
+    if (hit) {
+      return {
+        slug: hit.slug,
+        via: hit.source,
+        note: `category=${hit.slug} via ${hit.source}`,
+      };
+    }
+
+    if (!this.openai.isConfigured()) return {};
+
+    try {
+      const classified = await this.openai.classifyDramaCategory({
+        title: opts.title,
+        description: opts.description,
+        pageLabels: opts.pageLabels,
+        allowedCategorySlugs: allowed,
+      });
+      if (
+        classified.categorySlug &&
+        classified.confidence >= 0.55
+      ) {
+        return {
+          slug: classified.categorySlug,
+          via: 'llm',
+          model: classified.model,
+          note: `category=${classified.categorySlug} via llm (${classified.confidence.toFixed(2)})`,
+        };
+      }
+    } catch (e: unknown) {
+      this.logger.warn(
+        `category classify skipped: ${e instanceof Error ? e.message : e}`,
+      );
+    }
+    return {};
+  }
+
+  /** Prefer explicit category; if empty, infer from titles/descriptions. */
+  private async requireCategorySlug(opts: {
+    categorySlug?: string;
+    titleZh?: string;
+    titleEn?: string;
+    descriptionEn?: string;
+    descriptionZh?: string;
+  }): Promise<string> {
+    const resolved = await this.resolveCategorySlug({
+      categorySlug: opts.categorySlug,
+      title: opts.titleZh || opts.titleEn,
+      description: opts.descriptionEn || opts.descriptionZh,
+    });
+    if (resolved.slug) return resolved.slug;
+    throw new BizException(BizCode.BAD_REQUEST, '请选择分类');
+  }
+
   private authFromOpts(opts?: {
     cookiesFile?: string;
     authBearer?: string;
@@ -629,8 +781,7 @@ export class YtdlpImportService implements OnModuleInit {
   async importDrama(opts: YtdlpImportOptions, actorId?: bigint) {
     const pageUrl = String(opts.url || '').trim();
     if (!pageUrl) throw new BizException(BizCode.BAD_REQUEST, '请填写公开视频页链接');
-    const categorySlug = String(opts.categorySlug || '').trim();
-    if (!categorySlug) throw new BizException(BizCode.BAD_REQUEST, '请选择分类');
+    const categorySlug = await this.requireCategorySlug(opts);
 
     const auth = this.authFromOpts(opts);
     const probe = await this.provider.probe(pageUrl, auth);
@@ -853,8 +1004,7 @@ export class YtdlpImportService implements OnModuleInit {
    */
   async transferDrama(opts: YtdlpTransferOptions, actorId?: bigint) {
     const pageUrl = String(opts.url || '').trim();
-    const categorySlug = String(opts.categorySlug || '').trim();
-    if (!categorySlug) throw new BizException(BizCode.BAD_REQUEST, '请选择分类');
+    const categorySlug = await this.requireCategorySlug(opts);
     const target = opts.target === 'r2' ? 'r2' : 'local';
 
     const storage = this.upload.storageStatus();
@@ -1217,11 +1367,15 @@ export class YtdlpImportService implements OnModuleInit {
               hlsUrl: relativePath,
               uploadStatus: 'COMPLETED',
               transcodeStatus: 'PENDING',
+              // Provenance only — playback must not re-resolve this into hlsUrl.
               sourcePageUrl: ep.webpageUrl,
               sourceProvider: extractor,
               externalVideoId: ep.id,
               playlistIndex: ep.playlistIndex ?? null,
               resolvedAt: new Date(),
+              // Far-future expiry blocks legacy refreshExternalUrlIfNeeded from
+              // overwriting hosted paths with third-party m3u8 on play/preview.
+              resolvedExpiresAt: new Date('2099-01-01T00:00:00.000Z'),
               ...(ep.durationSec != null ? { durationSec: ep.durationSec } : {}),
               ...(thumbnailUrl ? { thumbnailUrl } : {}),
             },

@@ -5,11 +5,17 @@ import { PrismaService } from '../prisma/prisma.service';
 export class AdminWithdrawsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async list(filter: { status?: 'PENDING' | 'APPROVED' | 'PAID' | 'REJECTED' | 'CANCELLED' | 'ALL'; page?: number; pageSize?: number }) {
+  async list(filter: {
+    status?: 'PENDING' | 'APPROVED' | 'PAID' | 'REJECTED' | 'CANCELLED' | 'ALL' | 'REVIEWED';
+    page?: number;
+    pageSize?: number;
+  }) {
     const page = Math.max(1, Math.floor(filter.page ?? 1));
     const pageSize = Math.min(100, Math.max(5, Math.floor(filter.pageSize ?? 20)));
     const where: any = {};
-    if (filter.status && filter.status !== 'ALL') where.status = filter.status;
+    // REVIEWED = already handled (anything except PENDING) — needed for paginated Ops filter.
+    if (filter.status === 'REVIEWED') where.status = { not: 'PENDING' };
+    else if (filter.status && filter.status !== 'ALL') where.status = filter.status;
     const [rows, total] = await Promise.all([
       this.prisma.withdrawRequest.findMany({
         where,

@@ -31,6 +31,37 @@ const RATES = PLAYER_RATES;
 /** full = desktop-style chrome; feed = 首页流; watch = 剧集内观看 */
 export type VerticalPlayerChrome = "full" | "feed" | "watch";
 
+/** Feed media lifecycle: idle = no attach; warm = next-item short buffer; active = playing. */
+export type MediaTier = "idle" | "warm" | "active";
+
+type HlsLike = {
+  destroy: () => void;
+  loadSource: (source: string) => void;
+  attachMedia: (media: HTMLMediaElement) => void;
+  config: {
+    maxBufferLength: number;
+    maxMaxBufferLength: number;
+    startFragPrefetch: boolean;
+  };
+};
+
+let hlsJsModule: Promise<typeof import("hls.js")> | null = null;
+
+/** Prefetch hls.js so swipe-in does not pay script download latency. */
+export function preloadHlsJs() {
+  if (typeof window === "undefined") return Promise.resolve(null);
+  if (!hlsJsModule) hlsJsModule = import("hls.js");
+  return hlsJsModule;
+}
+
+function feedHlsBufferConfig(tier: MediaTier) {
+  if (tier === "warm") {
+    return { maxBufferLength: 3, maxMaxBufferLength: 4 };
+  }
+  // Active feed: short buffer for swipe abandonment; still enough for seamless start.
+  return { maxBufferLength: 8, maxMaxBufferLength: 12 };
+}
+
 function isImg(s: string) {
   return /^https?:\/\//.test(s) || s.startsWith("/");
 }
@@ -75,6 +106,7 @@ export function VerticalPlayer({
   subtitle,
   onOpenEpisodes,
   active = true,
+  mediaTier: mediaTierProp,
   chrome = "full",
   bottomInset = 0,
   objectFit = "cover",
@@ -111,6 +143,8 @@ export function VerticalPlayer({
   subtitle?: string;
   onOpenEpisodes?: () => void;
   active?: boolean;
+  /** Prefer over `active` for feed warm/active/idle. Falls back to active→active / idle. */
+  mediaTier?: MediaTier;
   chrome?: VerticalPlayerChrome;
   /** Extra space below thin progress (watch page action bar) */
   bottomInset?: number;
@@ -130,6 +164,7 @@ export function VerticalPlayer({
   const videoRef = externalRef ?? innerRef;
   const seekRef = useRef<HTMLDivElement>(null);
   const tapRef = useRef<{ x: number; y: number; t: number } | null>(null);
+  const hlsRef = useRef<HlsLike | null>(null);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(mutedProp ?? true);
   const [current, setCurrent] = useState(0);
@@ -139,10 +174,22 @@ export function VerticalPlayer({
   const [rate, setRate] = useState(playbackRate ?? 1);
   const [showRate, setShowRate] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [hasFirstFrame, setHasFirstFrame] = useState(false);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const aspectChangeRef = useRef(onVideoAspectChange);
   const onEndedRef = useRef(onEnded);
   onEndedRef.current = onEnded;
+
+  const mediaTier: MediaTier = mediaTierProp ?? (active ? "active" : "idle");
+  const isMediaActive = mediaTier === "active";
+  const shouldAttach =
+    !!attachMedia &&
+    (mediaTier === "warm" || mediaTier === "active") &&
+    !!src &&
+    !locked &&
+    !loginRequired;
+  const mediaTierRef = useRef(mediaTier);
+  mediaTierRef.current = mediaTier;
 
   useEffect(() => {
     aspectChangeRef.current = onVideoAspectChange;
@@ -210,14 +257,45 @@ export function VerticalPlayer({
     v.muted = muted;
   }, [muted, videoRef]);
 
-  // Attach media source here so play() is never called against an empty <video>.
+  // Reset first-frame gate whenever the media URL changes or we detach owned media.
+  useEffect(() => {
+    setHasFirstFrame(false);
+  }, [src]);
+
+  useEffect(() => {
+    if (attachMedia && !shouldAttach) setHasFirstFrame(false);
+  }, [attachMedia, shouldAttach]);
+
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v || !src) return;
+    // Parent-owned HLS (attachMedia=false) still paints into this <video>.
+    if (attachMedia && !shouldAttach) return;
+    const mark = () => {
+      if (v.readyState >= 2 && v.videoWidth > 0) setHasFirstFrame(true);
+    };
+    mark();
+    v.addEventListener("loadeddata", mark);
+    v.addEventListener("canplay", mark);
+    v.addEventListener("playing", mark);
+    v.addEventListener("timeupdate", mark);
+    return () => {
+      v.removeEventListener("loadeddata", mark);
+      v.removeEventListener("canplay", mark);
+      v.removeEventListener("playing", mark);
+      v.removeEventListener("timeupdate", mark);
+    };
+  }, [src, videoRef, shouldAttach, attachMedia]);
+
+  // Attach media for warm|active. Deps use shouldAttach (not mediaTier) so warm→active
+  // upgrades without destroy/recreate.
   // Parents that own HLS (drama-detail quality UI) pass attachMedia={false}.
   useEffect(() => {
     const v = videoRef.current;
-    if (!attachMedia || !active || !v || !src || locked || loginRequired) return;
+    if (!shouldAttach || !v || !src) return;
 
     let cancelled = false;
-    let hls: { destroy: () => void } | null = null;
+    let hls: HlsLike | null = null;
 
     const clearSrc = () => {
       try {
@@ -246,22 +324,30 @@ export function VerticalPlayer({
 
     (async () => {
       try {
-        const mod = await import("hls.js");
+        const mod = await preloadHlsJs();
+        if (!mod || cancelled) return;
         const Hls = mod.default;
         if (cancelled || !Hls.isSupported()) return;
         const feedBuffering = chrome === "feed";
+        const tier = mediaTierRef.current;
+        const feedBuf = feedHlsBufferConfig(tier);
         const instance = new Hls({
           enableWorker: true,
           // A vertical feed only needs enough data for an immediate swipe session.
           // Keeping the default long buffer here downloads megabytes the user may
           // abandon on the next gesture.
-          maxBufferLength: feedBuffering ? 8 : 30,
-          maxMaxBufferLength: feedBuffering ? 12 : 600,
+          maxBufferLength: feedBuffering ? feedBuf.maxBufferLength : 30,
+          maxMaxBufferLength: feedBuffering ? feedBuf.maxMaxBufferLength : 600,
           backBufferLength: feedBuffering ? 0 : 30,
           capLevelToPlayerSize: feedBuffering,
-          startFragPrefetch: false,
-        });
+          startFragPrefetch: feedBuffering,
+        }) as HlsLike;
+        if (cancelled) {
+          instance.destroy();
+          return;
+        }
         hls = instance;
+        hlsRef.current = instance;
         instance.loadSource(src);
         instance.attachMedia(v);
       } catch {
@@ -271,15 +357,27 @@ export function VerticalPlayer({
 
     return () => {
       cancelled = true;
+      hlsRef.current = null;
       hls?.destroy();
       clearSrc();
     };
-  }, [attachMedia, active, src, locked, loginRequired, videoRef, chrome]);
+  }, [shouldAttach, src, videoRef, chrome]);
+
+  // Grow buffer when warm upgrades to active without remounting HLS.
+  useEffect(() => {
+    if (chrome !== "feed") return;
+    const hls = hlsRef.current;
+    if (!hls) return;
+    const buf = feedHlsBufferConfig(mediaTier);
+    hls.config.maxBufferLength = buf.maxBufferLength;
+    hls.config.maxMaxBufferLength = buf.maxMaxBufferLength;
+    hls.config.startFragPrefetch = true;
+  }, [mediaTier, chrome]);
 
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
-    if (!active) {
+    if (!isMediaActive) {
       v.pause();
       return;
     }
@@ -296,7 +394,7 @@ export function VerticalPlayer({
       v.removeEventListener("canplay", tryPlay);
       v.removeEventListener("loadeddata", tryPlay);
     };
-  }, [active, autoPlay, src, locked, loginRequired, videoRef]);
+  }, [isMediaActive, autoPlay, src, locked, loginRequired, videoRef]);
 
   useEffect(() => {
     const v = videoRef.current;
@@ -500,7 +598,8 @@ export function VerticalPlayer({
         <p className="text-body text-danger">{error}</p>
       </Overlay>
     );
-  } else if (loading) {
+  } else if (loading && isMediaActive && !src && !hasFirstFrame) {
+    // Prefer poster cover while media is attaching; text loading only before playUrl lands.
     overlay = (
       <Overlay>
         <p className="text-body-sm text-white/70">{t("player.loading")}</p>
@@ -511,6 +610,8 @@ export function VerticalPlayer({
   const progress = duration > 0 ? current / duration : 0;
   const isMinimal = chrome === "feed" || chrome === "watch";
   const chromeVisible = isMinimal || showChrome || !playing || showRate || dragging;
+  const showPosterCover =
+    !!poster && isImg(poster) && !hasFirstFrame && !locked && !loginRequired;
 
   return (
     <div
@@ -528,10 +629,12 @@ export function VerticalPlayer({
       {!locked && !loginRequired ? (
         <video
           ref={videoRef}
-          src={active && src && !/\.m3u8(\?|$)/i.test(src) ? src : undefined}
+          src={shouldAttach && src && !/\.m3u8(\?|$)/i.test(src) ? src : undefined}
           poster={poster && isImg(poster) ? poster : undefined}
-          autoPlay={autoPlay && active}
-          preload={active ? "metadata" : "none"}
+          autoPlay={autoPlay && isMediaActive}
+          preload={
+            mediaTier === "warm" ? "auto" : isMediaActive ? "metadata" : "none"
+          }
           playsInline
           muted={muted}
           loop={chrome === "feed"}
@@ -551,9 +654,13 @@ export function VerticalPlayer({
         />
       ) : null}
 
-      {poster && isImg(poster) && !src && (
-        <SafeImage src={poster} alt="" className="absolute inset-0 h-full w-full object-cover" />
-      )}
+      {showPosterCover ? (
+        <SafeImage
+          src={poster!}
+          alt=""
+          className="absolute inset-0 z-[1] h-full w-full object-cover"
+        />
+      ) : null}
 
       {overlay}
 

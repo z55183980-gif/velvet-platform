@@ -13,6 +13,8 @@ export type PageMetaHints = {
   title?: string;
   coverUrl?: string;
   description?: string;
+  /** Free-form genre / category labels from page JSON when present. */
+  genreLabels?: string[];
   paidStart?: number;
   chapterCount?: number;
 };
@@ -145,6 +147,33 @@ export function extractMetaFromNextData(html: string): {
     if (Number(pageData.chapter_count) > 0) {
       meta.chapterCount = Number(pageData.chapter_count);
     }
+
+    const genreLabels: string[] = [];
+    const pushLabel = (v: unknown) => {
+      if (typeof v === 'string' && v.trim()) genreLabels.push(v.trim());
+      else if (Array.isArray(v)) {
+        for (const item of v) {
+          if (typeof item === 'string' && item.trim()) genreLabels.push(item.trim());
+          else if (item && typeof item === 'object') {
+            const name = String(
+              (item as any).name || (item as any).title || (item as any).label || '',
+            ).trim();
+            if (name) genreLabels.push(name);
+          }
+        }
+      }
+    };
+    pushLabel(pageData.book_type);
+    pushLabel(pageData.bookType);
+    pushLabel(pageData.category);
+    pushLabel(pageData.category_name);
+    pushLabel(pageData.categoryName);
+    pushLabel(pageData.genre);
+    pushLabel(pageData.genres);
+    pushLabel(pageData.tags);
+    pushLabel(pageData.type_name);
+    pushLabel(pageData.typeName);
+    if (genreLabels.length) meta.genreLabels = [...new Set(genreLabels)].slice(0, 12);
 
     const list = Array.isArray(pageData.chapter_list)
       ? pageData.chapter_list

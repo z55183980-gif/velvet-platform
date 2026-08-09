@@ -1377,6 +1377,16 @@ export async function adminGetCreator(id: string) {
   return adminRequest(`/admin/creators/${id}`);
 }
 
+/** Ban the linked user account for a creator (SUPER_ADMIN). */
+export async function adminCloseCreator(id: string) {
+  return adminRequest<{
+    id: string;
+    userId: string;
+    status: string;
+    alreadyClosed?: boolean;
+  }>(`/admin/creators/${id}/close`, { method: "POST", body: "{}" });
+}
+
 export async function adminListSettings() {
   return adminRequest("/admin/settings");
 }
@@ -1702,6 +1712,8 @@ export async function adminYtdlpAiExtract(
     source: "ai";
     titleZh?: string;
     titleEn?: string;
+    /** Inferred catalog slug when heuristics/LLM could pick one. */
+    categorySlug?: string;
     notes?: string;
     model?: string;
     htmlChars: number;
@@ -1724,6 +1736,24 @@ export async function adminYtdlpAiExtract(
       cookiesFile: opts?.cookiesFile,
       authBearer: opts?.authBearer,
     }),
+  });
+}
+
+/** Infer catalog category for fill-to-main when probe has no categorySlug. */
+export async function adminYtdlpInferCategory(body: {
+  categorySlug?: string;
+  title?: string;
+  description?: string;
+  pageLabels?: string[];
+}) {
+  return adminRequest<{
+    categorySlug: string | null;
+    via: "explicit" | "page" | "heuristic" | "llm" | null;
+    note: string | null;
+    model: string | null;
+  }>("/admin/ytdlp/infer-category", {
+    method: "POST",
+    body: JSON.stringify(body),
   });
 }
 
@@ -1786,7 +1816,7 @@ export async function adminYtdlpProbe(
 
 export async function adminYtdlpImport(body: {
   url: string;
-  categorySlug: string;
+  categorySlug?: string;
   titleZh?: string;
   titleEn?: string;
   maxEpisodes?: number;
@@ -1892,7 +1922,7 @@ export type YtdlpTransferJob = {
 
 export async function adminYtdlpTransfer(body: {
   url: string;
-  categorySlug: string;
+  categorySlug?: string;
   target: "local" | "r2";
   titleZh?: string;
   titleEn?: string;

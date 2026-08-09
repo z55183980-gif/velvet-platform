@@ -1255,15 +1255,21 @@ function AdminContentInner() {
               >
                 {t("edit")}
               </Button>
+              <RowMoreMenu
+                row={row}
+                busy={rowBusy}
+                canDelete={isSuperAdmin}
+                onDelete={() => setRowDelete(row)}
+              />
               {pending ? (
                 <>
                   <Button
                     size="sm"
-                    variant="ghost"
+                    variant="success"
                     disabled={rowBusy}
                     title={t("approveReview")}
                     aria-label={t("approveReview")}
-                    className={`${rowActionClass} text-success hover:bg-success-soft hover:text-success`}
+                    className={rowActionClass}
                     onClick={() => {
                       setMenuBusyId(String(row.id));
                       reviewMut.mutate({ id: String(row.id), action: "approve" });
@@ -1287,12 +1293,6 @@ function AdminContentInner() {
                   </Button>
                 </>
               ) : null}
-              <RowMoreMenu
-                row={row}
-                busy={rowBusy}
-                canDelete={isSuperAdmin}
-                onDelete={() => setRowDelete(row)}
-              />
             </div>
           );
         },

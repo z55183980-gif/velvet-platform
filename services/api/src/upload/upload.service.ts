@@ -736,6 +736,8 @@ export class UploadService implements OnModuleInit {
             hlsUrl,
             // After CDN push, drop local original pointer — source lives on R2 media bucket.
             ...(pushedToR2 ? { originalUrl: null } : {}),
+            // Hosted output is authoritative; pin expiry so yt-dlp URL refresh never clobbers it.
+            resolvedExpiresAt: new Date('2099-01-01T00:00:00.000Z'),
             transcodeStatus: 'COMPLETED',
             uploadStatus: 'COMPLETED',
             ...(durationSec != null ? { durationSec } : {}),

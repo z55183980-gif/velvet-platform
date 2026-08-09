@@ -45,7 +45,7 @@ export type DramaInfoFillPayload = {
   /** Optional Chinese synopsis; probe only sets this when description is CJK. */
   descriptionZh?: string;
   totalEpisodes?: number;
-  /** Category is set on the main form — popup must not override unless explicit. */
+  /** Inferred / explicit catalog slug from online AI extract. */
   categorySlug?: string;
   /**
    * When true, overwrite non-empty main-form meta fields.
@@ -70,6 +70,7 @@ type ProbeLike = {
   titleEn?: string | null;
   coverUrl?: string | null;
   description?: string | null;
+  categorySlug?: string | null;
   source?: "ai" | "ytdlp" | string | null;
   episodes?: ProbeEpisodeLike[] | null;
 };
@@ -151,6 +152,8 @@ export function dramaInfoFromYtdlpProbe(
       }
     }
     payload.totalEpisodes = selected.length || undefined;
+    const categorySlug = (probe.categorySlug || "").trim();
+    if (categorySlug) payload.categorySlug = categorySlug;
     if (extras?.overwriteMeta) payload.overwriteMeta = true;
   }
 

@@ -63,7 +63,7 @@ export function ConfirmModal({
   title?: string;
   cancelLabel?: string;
   confirmLabel?: string;
-  confirmVariant?: "primary" | "danger";
+  confirmVariant?: "primary" | "danger" | "success";
   busy?: boolean;
   extraAction?: { label: string; onClick: () => void; busy?: boolean; disabled?: boolean };
 }) {

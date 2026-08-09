@@ -697,6 +697,18 @@ const zh = {
   goKycReview: "去 KYC 审核",
   applyAmount: "申请额",
   afterTax: "税后",
+  withdrawReviewHint: "审核创作者提现申请。通过后将标记为已打款并累计已提现；驳回会退回可提现余额（须填写原因）。仅 SUPER_ADMIN 可操作。",
+  withdrawFilterPending: "待审",
+  withdrawFilterReviewed: "已审",
+  withdrawFilterMore: "更多状态…",
+  withdrawBankInfo: "收款账户",
+  withdrawTaxOnPay: "打款时计税",
+  withdrawPaidAt: "打款",
+  approveAndPay: "通过并打款",
+  confirmApproveWithdraw: "确认通过申请「{no}」并标记已打款？申请额 {amount}，将按当前个税税率扣税并记入已提现。",
+  confirmRejectWithdraw: "确认驳回申请「{no}」？金额将退回创作者可提现余额。",
+  withdrawApproveOk: "已通过并标记打款",
+  withdrawRejectOk: "已驳回提现申请",
 
   // reconcile
   reconcileDate: "对账日期",
@@ -782,7 +794,12 @@ const zh = {
   // creators
   pendingCreators: "待审创作者",
   pendingCreatorsHint: "仅展示 KYC 状态为 PENDING 的创作者。",
+  kycTabHint: "审核创作者 KYC；默认展示待处理项，可通过状态下拉查看已通过 / 已拒绝。",
   creatorSearchPlaceholder: "创作者名 / 邮箱",
+  closeAccount: "关闭账号",
+  confirmCloseCreatorAccount: "确认关闭「{name}」的账号？关闭后该用户无法登录（状态设为封禁），已登录会话将失效。",
+  closeAccountOk: "账号已关闭",
+  closeAccountAlready: "已关闭",
   cccdFront: "正面",
   cccdBack: "背面",
   earningsFrozen: "冻结中",
@@ -2168,6 +2185,21 @@ const en: Record<LabelKey, string> = {
   goKycReview: "Go to KYC review",
   applyAmount: "Requested",
   afterTax: "After tax",
+  withdrawReviewHint:
+    "Review creator withdrawal requests. Approving marks paid and updates withdrawn totals; rejecting refunds available balance (reason required). SUPER_ADMIN only.",
+  withdrawFilterPending: "Pending",
+  withdrawFilterReviewed: "Reviewed",
+  withdrawFilterMore: "More statuses…",
+  withdrawBankInfo: "Payout account",
+  withdrawTaxOnPay: "Taxed on payout",
+  withdrawPaidAt: "Paid",
+  approveAndPay: "Approve & pay",
+  confirmApproveWithdraw:
+    "Approve request “{no}” and mark as paid? Amount {amount}. PIT is withheld at the current rate and credited to withdrawn totals.",
+  confirmRejectWithdraw:
+    "Reject request “{no}”? The amount will be returned to the creator’s available balance.",
+  withdrawApproveOk: "Approved and marked paid",
+  withdrawRejectOk: "Withdrawal rejected",
 
   reconcileDate: "Reconcile date",
   settleHint: "Settlement notes",
@@ -2246,7 +2278,13 @@ const en: Record<LabelKey, string> = {
 
   pendingCreators: "Pending creators",
   pendingCreatorsHint: "Only creators with KYC status PENDING are shown.",
+  kycTabHint: "Review creator KYC. Pending by default; use the status filter for approved / rejected.",
   creatorSearchPlaceholder: "name / email",
+  closeAccount: "Close account",
+  confirmCloseCreatorAccount:
+    "Close account for “{name}”? The user will not be able to sign in (status set to banned) and active sessions will end.",
+  closeAccountOk: "Account closed",
+  closeAccountAlready: "Closed",
   cccdFront: "Front",
   cccdBack: "Back",
   earningsFrozen: "Frozen",
