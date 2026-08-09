@@ -21,10 +21,16 @@ const tabs = [
 
 /**
  * Fixed tab for home + theater + me.
- * The standalone WebView already reserves its bottom system band, so the tab
- * stays h-12 without adding env(safe-area-inset-bottom) a second time.
+ * The label row stays h-12. Theater/Me may add standalone-only safe padding;
+ * the immersive home feed keeps its separate viewport treatment.
  */
-export function BottomTabBar({ immersive = false }: { immersive?: boolean }) {
+export function BottomTabBar({
+  immersive = false,
+  standaloneSafeArea = false,
+}: {
+  immersive?: boolean;
+  standaloneSafeArea?: boolean;
+}) {
   const pathname = usePathname() || "/";
   const { t } = useLocale();
 
@@ -33,6 +39,7 @@ export function BottomTabBar({ immersive = false }: { immersive?: boolean }) {
       className={cn(
         "mobile-bottom-tab fixed inset-x-0 bottom-0 z-50 border-t border-line/60 bg-base/90 backdrop-blur-xl",
         immersive && "mobile-bottom-tab-immersive",
+        standaloneSafeArea && "standalone-safe-bottom-tab",
       )}
       aria-label="Primary"
     >

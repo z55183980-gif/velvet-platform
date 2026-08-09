@@ -176,6 +176,19 @@ html[data-theme="light"] {
   color: var(--color-ink);
 }
 
+/* Theater/Me only: keep tab labels above the Home Screen gesture area. */
+@media (display-mode: standalone) {
+  .standalone-safe-bottom-tab {
+    padding-bottom: var(--mobile-tab-safe-bottom);
+  }
+
+  .standalone-safe-tab-content {
+    padding-bottom: calc(
+      var(--mobile-tab-chrome-height) + var(--mobile-tab-safe-bottom)
+    );
+  }
+}
+
 /*
   Auth / login modal: always dark chrome, even when site theme is light.
 */
