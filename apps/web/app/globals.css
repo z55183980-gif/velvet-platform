@@ -86,7 +86,7 @@
     /* Vietnamese diacritics: keep ligatures + kerning on */
     font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
 
-    /* Dialogs may still need the raw inset; bottom tabs do not add it again. */
+    /* Dialogs and selected standalone tabs may still need the raw inset. */
     --mobile-tab-safe-bottom: env(safe-area-inset-bottom, 0px);
     --mobile-tab-chrome-height: 3rem;
   }
@@ -183,6 +183,11 @@ html[data-theme="light"] {
   }
 
   .standalone-safe-tab-content {
+    /*
+      WebKit can offset bottom-fixed UI by the top safe-area inset when a
+      black-translucent standalone page is shorter than the app viewport.
+    */
+    min-height: 100vh;
     padding-bottom: calc(
       var(--mobile-tab-chrome-height) + var(--mobile-tab-safe-bottom)
     );
