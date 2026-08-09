@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
@@ -23,7 +24,12 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  // Opt into request-time rendering so proxy CSP nonce is stamped on Next bootstrap
+  // scripts. Static prerender left scripts without nonce while CSP required one →
+  // hydration never ran and AdminShell stayed on "加载中…".
+  await headers();
+
   return (
     <html lang="zh" data-theme="light" className={inter.variable} suppressHydrationWarning>
       <body>
