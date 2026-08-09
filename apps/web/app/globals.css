@@ -182,6 +182,11 @@ html[data-theme="light"] {
   .feed-immersive {
     bottom: calc(0px - env(safe-area-inset-bottom, 0px));
   }
+
+  /* Share the extended shell's bottom edge with the feed's absolute controls. */
+  .feed-immersive > .mobile-bottom-tab {
+    position: absolute;
+  }
 }
 
 /*
