@@ -86,14 +86,9 @@
     /* Vietnamese diacritics: keep ligatures + kerning on */
     font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
 
-    /*
-      Bottom-tab safe inset. Non-zero only after PWA black-translucent expands
-      the canvas into the home-indicator band (with viewport-fit=cover).
-      Every tab keeps the same total height. The immersive home tab makes only
-      this safe-area band's background transparent so video remains full-bleed.
-    */
+    /* Dialogs may still need the raw inset; bottom tabs do not add it again. */
     --mobile-tab-safe-bottom: env(safe-area-inset-bottom, 0px);
-    --mobile-tab-chrome-height: calc(3rem + var(--mobile-tab-safe-bottom));
+    --mobile-tab-chrome-height: 3rem;
   }
 
   * {

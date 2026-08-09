@@ -54,7 +54,7 @@ export const metadata: Metadata = {
     capable: true,
     title: "Velvet",
     // Translucent status bar so portrait watch / feed can draw under the notch;
-    // controls use env(safe-area-inset-*). Non-immersive tabs pad the same inset.
+    // Immersive controls use env(safe-area-inset-*); the host reserves tab space.
     statusBarStyle: "black-translucent",
   },
   other: {
@@ -65,7 +65,7 @@ export const metadata: Metadata = {
 /**
  * Lock pinch/double-tap zoom on mobile (short-video feed).
  * viewportFit cover is required so env(safe-area-inset-*) is non-zero
- * in standalone / notch devices (home indicator clearance for bottom nav).
+ * in standalone / notch devices (immersive control clearance).
  */
 export const viewport: Viewport = {
   width: "device-width",

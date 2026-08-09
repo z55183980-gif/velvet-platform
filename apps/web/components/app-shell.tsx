@@ -76,7 +76,7 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
           !lockMobileHome &&
             !onDrama &&
             isMobile &&
-            "pb-[calc(3rem+var(--mobile-tab-safe-bottom))]",
+            "pb-[var(--mobile-tab-chrome-height)]",
           onDrama && isMobile && "bg-base",
           lockMobileHome &&
             isMobile &&
@@ -86,9 +86,7 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
         {children}
       </main>
       {mobileReady && !isMobile ? <Footer /> : null}
-      {mobileReady && isMobile && !onDrama ? (
-        <BottomTabBar transparentSafeArea={lockMobileHome} />
-      ) : null}
+      {mobileReady && isMobile && !onDrama ? <BottomTabBar /> : null}
       <PwaInstallRoot />
     </div>
   );
