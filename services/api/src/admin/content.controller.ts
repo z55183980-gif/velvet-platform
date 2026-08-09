@@ -301,6 +301,8 @@ class OnlineEpisodeDto {
   @Transform(({ value }) => value === true || value === 'true' || value === 1)
   @IsBoolean()
   isFree?: boolean;
+  /** First-frame (or uploaded) episode poster — not the drama cover. */
+  @IsOptional() @IsString() thumbnailUrl?: string;
 }
 
 class CreateOnlineDramaDto {

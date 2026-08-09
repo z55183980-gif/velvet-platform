@@ -57,6 +57,8 @@ export interface OnlineEpisodeInput {
   title?: string;
   episodeNumber?: number;
   isFree?: boolean;
+  /** Permanent first-frame (or operator-uploaded) poster — never the drama cover. */
+  thumbnailUrl?: string;
 }
 
 export interface CreateOnlineDramaInput {
@@ -1446,6 +1448,7 @@ export class AdminService {
       sourceProvider: string | null;
       externalVideoId: string | null;
       playlistIndex: number | null;
+      thumbnailUrl: string | null;
     }> = [];
 
     for (let i = 0; i < dto.episodes.length; i++) {
@@ -1462,6 +1465,7 @@ export class AdminService {
         const sourceProvider = ep.sourceProvider?.trim() || 'manual';
         const externalVideoId =
           ep.externalVideoId?.trim() || manualExternalVideoId(originalUrl);
+        const thumbnailUrl = ep.thumbnailUrl?.trim() || null;
         converted.push({
           episodeNumber,
           title: ep.title?.trim() || null,
@@ -1472,6 +1476,7 @@ export class AdminService {
           sourceProvider,
           externalVideoId,
           playlistIndex: ep.playlistIndex && ep.playlistIndex > 0 ? Math.floor(ep.playlistIndex) : null,
+          thumbnailUrl,
         });
       } catch (e: any) {
         throw new BizException(
@@ -1564,6 +1569,7 @@ export class AdminService {
             priceVnd: isFree ? 0n : 10000n,
             hlsUrl: ep.playUrl,
             originalUrl: ep.originalUrl,
+            thumbnailUrl: ep.thumbnailUrl,
             sourcePageUrl: ep.sourcePageUrl,
             sourceProvider: ep.sourceProvider,
             externalVideoId: ep.externalVideoId,

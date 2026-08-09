@@ -1556,6 +1556,8 @@ export async function adminCreateOnlineDrama(body: {
     title?: string;
     episodeNumber?: number;
     isFree?: boolean;
+    /** First-frame / uploaded episode poster URL. */
+    thumbnailUrl?: string;
   }>;
 }) {
   return adminRequest<{

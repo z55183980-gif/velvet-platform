@@ -42,6 +42,7 @@ import {
   probeLocalVideoDuration,
 } from "@/lib/capture-video-frame";
 import { contentDetailHref } from "@/lib/content-href";
+import { mediaUrl } from "@/lib/media-url";
 import {
   DEFAULT_COMPLETION,
   DEFAULT_CONTENT_TYPE,
@@ -381,6 +382,10 @@ export const LocalUploadWizard = forwardRef<
   const [dropId, setDropId] = useState<string | null>(null);
   const episodesRef = useRef(episodes);
   episodesRef.current = episodes;
+  const onlineIngestRef = useRef(onlineIngest);
+  onlineIngestRef.current = onlineIngest;
+  /** Set after hydrate helpers are defined — used from applyDramaInfo. */
+  const queueLinkThumbHydrationRef = useRef<(eps: EpisodeDraft[]) => void>(() => {});
 
   useImperativeHandle(
     ref,
@@ -445,30 +450,7 @@ export const LocalUploadWizard = forwardRef<
           setTotalEpisodesDirty(true);
         }
         if (payload.online) {
-          const cover = payload.coverUrl?.trim() || "";
-          const incoming: EpisodeDraft[] = payload.online.episodes.map((ep, i) => {
-            const sourceUrl = ep.sourceUrl?.trim() || undefined;
-            const webpageUrl = ep.webpageUrl?.trim() || undefined;
-            const title =
-              (ep.title || "").trim() ||
-              defaultEpisodeTitle(sourceUrl || webpageUrl || `ep-${ep.episodeNumber || i + 1}`);
-            return {
-              id: makeLinkEpisodeId(sourceUrl || webpageUrl || title, i),
-              kind: "link" as const,
-              sourceUrl,
-              webpageUrl,
-              playlistIndex: ep.playlistIndex,
-              title: title.slice(0, 80),
-              isFree: true,
-              previewSeconds: 0,
-              thumbPreviewUrl: cover || undefined,
-              thumbStatus: cover ? ("ready" as const) : ("error" as const),
-              durationSec: ep.durationSec,
-              durationStatus:
-                ep.durationSec != null ? ("ready" as const) : ("unknown" as const),
-            };
-          });
-          setOnlineIngest({
+          const nextOnline = {
             pageUrl: payload.online.pageUrl.trim(),
             ingestForm: payload.online.ingestForm,
             formatPreference: payload.online.formatPreference,
@@ -479,7 +461,35 @@ export const LocalUploadWizard = forwardRef<
             watermarkX: payload.online.watermarkX,
             watermarkY: payload.online.watermarkY,
             watermarkScale: payload.online.watermarkScale,
+          };
+          onlineIngestRef.current = nextOnline;
+          const incoming: EpisodeDraft[] = payload.online.episodes.map((ep, i) => {
+            const sourceUrl = ep.sourceUrl?.trim() || undefined;
+            const webpageUrl = ep.webpageUrl?.trim() || undefined;
+            const title =
+              (ep.title || "").trim() ||
+              defaultEpisodeTitle(sourceUrl || webpageUrl || `ep-${ep.episodeNumber || i + 1}`);
+            const hasFrameSource = !!(
+              (sourceUrl && /^https?:\/\//i.test(sourceUrl)) ||
+              (webpageUrl && /^https?:\/\//i.test(webpageUrl))
+            );
+            return {
+              id: makeLinkEpisodeId(sourceUrl || webpageUrl || title, i),
+              kind: "link" as const,
+              sourceUrl,
+              webpageUrl,
+              playlistIndex: ep.playlistIndex,
+              title: title.slice(0, 80),
+              isFree: true,
+              previewSeconds: 0,
+              // Episode covers come from each video's first frame — never the drama poster.
+              thumbStatus: hasFrameSource ? ("pending" as const) : ("error" as const),
+              durationSec: ep.durationSec,
+              durationStatus:
+                ep.durationSec != null ? ("ready" as const) : ("unknown" as const),
+            };
           });
+          setOnlineIngest(nextOnline);
           setWatermark({
             enabled: !!payload.online.watermarkEnabled,
             x: payload.online.watermarkX ?? DEFAULT_PLACEMENT.x,
@@ -489,13 +499,27 @@ export const LocalUploadWizard = forwardRef<
           if (incoming.length) {
             setEpisodes((prev) => {
               // Online apply replaces prior link rows so only the latest selection is staged.
+              for (const ep of prev) {
+                if (ep.kind === "link") revokeThumbPreview(ep.thumbPreviewUrl);
+              }
               const keptFiles = prev.filter((ep) => ep.kind === "file");
               const next = [...keptFiles, ...incoming];
+              episodesRef.current = next;
               if (!freeRangeEnd) setFreeRangeEnd(String(next.length));
               return next;
             });
+            queueLinkThumbHydrationRef.current(
+              incoming.filter((ep) => ep.thumbStatus === "pending"),
+            );
           } else {
-            setEpisodes((prev) => prev.filter((ep) => ep.kind === "file"));
+            setEpisodes((prev) => {
+              for (const ep of prev) {
+                if (ep.kind === "link") revokeThumbPreview(ep.thumbPreviewUrl);
+              }
+              const next = prev.filter((ep) => ep.kind === "file");
+              episodesRef.current = next;
+              return next;
+            });
           }
         }
         setError(null);
@@ -1192,8 +1216,112 @@ export const LocalUploadWizard = forwardRef<
   }
 
   function revokeThumbPreview(url?: string) {
-    if (url) URL.revokeObjectURL(url);
+    if (url?.startsWith("blob:")) URL.revokeObjectURL(url);
   }
+
+  /**
+   * Online link episodes: server first-frame (never drama cover) → preview + permanent thumbnailUrl.
+   * Soft-fail so staging still works if ffmpeg/resolve is unavailable.
+   */
+  async function hydrateLinkEpisodeThumb(seed: EpisodeDraft) {
+    const id = seed.id;
+    const live = episodesRef.current.find((ep) => ep.id === id);
+    if (live && live.kind !== "link") return;
+    if (live?.thumbnailUrl && live.thumbStatus === "ready") return;
+
+    const ep = live?.kind === "link" ? live : seed;
+    const online = onlineIngestRef.current;
+    const direct = ep.sourceUrl?.trim();
+    const targetUrl =
+      (direct && isPlayableMediaUrl(direct) ? direct : undefined) ||
+      ep.webpageUrl?.trim() ||
+      direct ||
+      "";
+    if (!/^https?:\/\//i.test(targetUrl)) {
+      setEpisodes((prev) => {
+        const idx = prev.findIndex((e) => e.id === id);
+        if (idx < 0) return prev;
+        const next = [...prev];
+        next[idx] = { ...next[idx], thumbStatus: "error" };
+        return next;
+      });
+      return;
+    }
+
+    try {
+      const frame = await adminYtdlpPreviewFrame({
+        url: targetUrl,
+        formatPreference:
+          online?.formatPreference === "best_hls"
+            ? "best_mp4"
+            : online?.formatPreference || "best_mp4",
+        playlistIndex: ep.playlistIndex,
+        cookiesFile: online?.cookiesFile,
+        authBearer: online?.authBearer,
+      });
+      const preview = mediaUrl(frame.url) || frame.url;
+      let kept = false;
+      setEpisodes((prev) => {
+        const idx = prev.findIndex((e) => e.id === id);
+        if (idx < 0) return prev;
+        kept = true;
+        const next = [...prev];
+        revokeThumbPreview(next[idx].thumbPreviewUrl);
+        next[idx] = {
+          ...next[idx],
+          thumbPreviewUrl: preview,
+          thumbStatus: "pending",
+        };
+        return next;
+      });
+      if (!kept) return;
+
+      const res = await fetch(preview);
+      if (!res.ok) throw new Error(`frame fetch ${res.status}`);
+      const blob = await res.blob();
+      const saved = await adminUploadImage(blob, {
+        kind: "thumbnail",
+        filename: `${(ep.title || "episode").replace(/[^\w\u4e00-\u9fff-]+/g, "").slice(0, 40) || "episode"}-thumb.jpg`,
+      });
+      setEpisodes((prev) => {
+        const idx = prev.findIndex((e) => e.id === id);
+        if (idx < 0) return prev;
+        const next = [...prev];
+        next[idx] = {
+          ...next[idx],
+          thumbnailUrl: saved.url,
+          thumbPreviewUrl: mediaUrl(saved.url) || saved.url,
+          thumbStatus: "ready",
+        };
+        return next;
+      });
+    } catch {
+      setEpisodes((prev) => {
+        const idx = prev.findIndex((e) => e.id === id);
+        if (idx < 0) return prev;
+        const next = [...prev];
+        next[idx] = { ...next[idx], thumbStatus: "error" };
+        return next;
+      });
+    }
+  }
+
+  function queueLinkThumbHydration(seeds: EpisodeDraft[]) {
+    if (!seeds.length) return;
+    const concurrency = 2;
+    let cursor = 0;
+    const workers = Array.from({ length: Math.min(concurrency, seeds.length) }, async () => {
+      while (cursor < seeds.length) {
+        const i = cursor++;
+        const seed = seeds[i];
+        // Skip if this draft was replaced by a newer online apply.
+        if (!episodesRef.current.some((ep) => ep.id === seed.id && ep.kind === "link")) continue;
+        await hydrateLinkEpisodeThumb(seed);
+      }
+    });
+    void Promise.all(workers);
+  }
+  queueLinkThumbHydrationRef.current = queueLinkThumbHydration;
 
   /** Capture first frame → local preview + upload thumbnail URL (silent on failure).
    * Duration is read from the same demux pass when available.
@@ -1579,11 +1707,33 @@ export const LocalUploadWizard = forwardRef<
         );
       }
 
-      const playable = linkEps.map((ep, i) => ({
-        episodeNumber: i + 1,
-        title: ep.title,
-        sourceUrl: (ep.sourceUrl || "").trim(),
-      }));
+      // Finish any outstanding first-frame uploads before persist (soft timeout).
+      const needThumbs = linkEps.filter((ep) => {
+        const live = episodesRef.current.find((e) => e.id === ep.id) ?? ep;
+        return !live.thumbnailUrl?.trim();
+      });
+      if (needThumbs.length) {
+        queueLinkThumbHydration(needThumbs);
+        const deadline = Date.now() + 90_000;
+        while (Date.now() < deadline) {
+          const pending = needThumbs.some((ep) => {
+            const live = episodesRef.current.find((e) => e.id === ep.id);
+            return live?.thumbStatus === "pending";
+          });
+          if (!pending) break;
+          await new Promise((r) => setTimeout(r, 400));
+        }
+      }
+
+      const playable = linkEps.map((ep, i) => {
+        const live = episodesRef.current.find((e) => e.id === ep.id) ?? ep;
+        return {
+          episodeNumber: i + 1,
+          title: ep.title,
+          sourceUrl: (ep.sourceUrl || "").trim(),
+          thumbnailUrl: live.thumbnailUrl?.trim() || undefined,
+        };
+      });
       if (!playable.length) throw new Error(t("onlineNeedEpisodes"));
 
       const policy = resolvePolicyForTotal(playable.length);
@@ -2081,10 +2231,10 @@ export const LocalUploadWizard = forwardRef<
                               draggable={false}
                               className="ep-card__thumb"
                             />
-                          ) : ep.kind === "link" ? (
-                            <Link2 className="h-5 w-5" aria-hidden />
                           ) : ep.thumbStatus === "pending" ? (
                             <LoaderCircle className="h-5 w-5 animate-spin" aria-hidden />
+                          ) : ep.kind === "link" ? (
+                            <Link2 className="h-5 w-5" aria-hidden />
                           ) : (
                             <Film className="h-5 w-5" aria-hidden />
                           )}
