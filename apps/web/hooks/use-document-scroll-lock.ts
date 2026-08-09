@@ -14,6 +14,11 @@ type StyleSnapshot = {
   bodyWidth: string;
 };
 
+type DocumentScrollLockOptions = {
+  /** iOS standalone feed must keep body in the full viewport coordinate space. */
+  pinBody?: boolean;
+};
+
 /**
  * Nested scroll locks share one document style snapshot + scrollY.
  * Only the outermost (depth 0→1) applies, and only the last release restores.
@@ -22,7 +27,7 @@ let lockDepth = 0;
 let savedScrollY = 0;
 let baseStyles: StyleSnapshot | null = null;
 
-function applyDocumentLock() {
+function applyDocumentLock(pinBody: boolean) {
   const html = document.documentElement;
   const body = document.body;
   savedScrollY = window.scrollY;
@@ -41,11 +46,13 @@ function applyDocumentLock() {
   html.style.overscrollBehavior = "none";
   body.style.overflow = "hidden";
   body.style.overscrollBehavior = "none";
-  body.style.position = "fixed";
-  body.style.top = `-${savedScrollY}px`;
-  body.style.left = "0";
-  body.style.right = "0";
-  body.style.width = "100%";
+  if (pinBody) {
+    body.style.position = "fixed";
+    body.style.top = `-${savedScrollY}px`;
+    body.style.left = "0";
+    body.style.right = "0";
+    body.style.width = "100%";
+  }
 }
 
 function releaseDocumentLock() {
@@ -74,16 +81,17 @@ function releaseDocumentLock() {
 export function useDocumentScrollLock(
   enabled: boolean,
   rootRef?: RefObject<HTMLElement | null>,
+  { pinBody = true }: DocumentScrollLockOptions = {},
 ) {
   useEffect(() => {
     if (!enabled) return;
-    if (lockDepth === 0) applyDocumentLock();
+    if (lockDepth === 0) applyDocumentLock(pinBody);
     lockDepth += 1;
     return () => {
       lockDepth = Math.max(0, lockDepth - 1);
       if (lockDepth === 0) releaseDocumentLock();
     };
-  }, [enabled]);
+  }, [enabled, pinBody]);
 
   useEffect(() => {
     if (!enabled) return;

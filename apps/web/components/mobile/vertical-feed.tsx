@@ -33,6 +33,7 @@ import { pickContentText, pickTitleText, type Locale } from "@/lib/languages";
 import { cn, formatCredits } from "@/lib/utils";
 import { useGuestWatchQuota } from "@/lib/use-guest-watch-quota";
 import { useDocumentScrollLock } from "@/hooks/use-document-scroll-lock";
+import { getPwaPlatform, isPwaStandalone } from "@/lib/pwa";
 import {
   lockPortraitOrientation,
   unlockScreenOrientation,
@@ -400,8 +401,11 @@ export function VerticalFeed({
     return () => setLocked(false);
   }, [setLocked]);
 
-  // Pin the document so iOS can't rubber-band the visual viewport (chrome would appear to drag).
-  useDocumentScrollLock(true);
+  // A fixed body shortens the viewport in iOS Home Screen mode. Keep the body
+  // unpinned there so the feed and shared tab use the same physical bottom;
+  // overflow/touch locking still prevents rubber-band scrolling.
+  const pinDocumentBody = !(getPwaPlatform() === "ios" && isPwaStandalone());
+  useDocumentScrollLock(true, shellRef, { pinBody: pinDocumentBody });
 
   // Keep adjacent metadata warm, but never pre-download HLS manifests or media segments.
   useEffect(() => {
