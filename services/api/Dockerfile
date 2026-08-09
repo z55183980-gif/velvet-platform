@@ -1,6 +1,6 @@
 # Optional container image for velvet-api with yt-dlp preinstalled.
 # Production can keep using PM2 — the API will auto-download yt-dlp into STORAGE_ROOT/bin
-# when YTDLP_AUTO_INSTALL=true (default).
+# when YTDLP_AUTO_INSTALL=true (default) and YTDLP_SHA256 is set.
 #
 # Build (from monorepo root, after API is built):
 #   pnpm --filter velvet-api build
@@ -8,10 +8,15 @@
 #
 FROM node:20-bookworm-slim
 
+# Pinned yt-dlp_linux (standalone) — never use /releases/latest without checksum.
+ARG YTDLP_RELEASE_TAG=2025.10.14
+ARG YTDLP_SHA256=83d2c55a8893b49d0ccd23f5c528acf06840fc59bd1100519832b60724af34b7
+
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl ffmpeg \
   && curl -fsSL -o /usr/local/bin/yt-dlp \
-    https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
+    "https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_RELEASE_TAG}/yt-dlp_linux" \
+  && echo "${YTDLP_SHA256}  /usr/local/bin/yt-dlp" | sha256sum -c - \
   && chmod a+rx /usr/local/bin/yt-dlp \
   && yt-dlp --version \
   && rm -rf /var/lib/apt/lists/*
@@ -29,7 +34,9 @@ ENV NODE_ENV=production \
     PORT=4100 \
     YTDLP_BIN=/usr/local/bin/yt-dlp \
     YTDLP_AUTO_INSTALL=false \
-    YTDLP_ENABLED=true
+    YTDLP_ENABLED=true \
+    YTDLP_RELEASE_TAG=2025.10.14 \
+    YTDLP_SHA256=83d2c55a8893b49d0ccd23f5c528acf06840fc59bd1100519832b60724af34b7
 
 EXPOSE 4100
 CMD ["node", "dist/src/main.js"]

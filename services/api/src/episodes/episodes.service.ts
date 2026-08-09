@@ -22,6 +22,11 @@ import {
   truncateM3u8ByDuration,
   verifyEpisodePreviewSig,
 } from './preview-media.util';
+import {
+  assertSafeHttpUrl,
+  mediaFetchAllowHosts,
+  safeFetchText,
+} from '../common/safe-http-fetch';
 
 @Injectable()
 export class EpisodesService {
@@ -282,9 +287,18 @@ export class EpisodesService {
     }
 
     const maxBytes = estimatePreviewMaxBytes(episode.previewSeconds, episode.durationSec, null);
+    const allowHosts = mediaFetchAllowHosts(
+      this.config.get<string>('CDN_BASE_URL') || base,
+    );
+    await assertSafeHttpUrl(raw, { allowHosts });
     const upstream = await fetch(raw, {
       headers: { Range: `bytes=0-${maxBytes - 1}`, 'User-Agent': 'VelvetPreview/1.0' },
+      redirect: 'manual',
+      signal: AbortSignal.timeout(8_000),
     });
+    if ([301, 302, 303, 307, 308].includes(upstream.status)) {
+      throw new BizException(BizCode.FORBIDDEN, 'fetch.redirectDenied');
+    }
     if (!(upstream.ok || upstream.status === 206)) {
       throw new BizException(BizCode.NOT_FOUND, 'preview.sourceUnavailable');
     }
@@ -347,18 +361,30 @@ export class EpisodesService {
         throw new BizException(BizCode.FORBIDDEN, 'preview.masterUnsupported');
       }
       if ('absoluteUrl' in resolved) {
+        // Absolute child URIs only allowed under the configured CDN / media allowlist.
+        // Never fetch arbitrary external hosts from master playlists (SSRF).
+        const allow = mediaFetchAllowHosts(
+          this.config.get<string>('CDN_BASE_URL') || cdnBase,
+        );
+        let childHost = '';
+        try {
+          childHost = new URL(resolved.absoluteUrl).hostname.toLowerCase();
+        } catch {
+          throw new BizException(BizCode.FORBIDDEN, 'preview.masterUnsupported');
+        }
+        if (!allow.some((h) => childHost === h || childHost.endsWith(`.${h}`))) {
+          throw new BizException(BizCode.FORBIDDEN, 'preview.externalVariantDenied');
+        }
         source = resolved.absoluteUrl;
       } else if (/^https?:\/\//.test(source) && cdnBase && source.startsWith(cdnBase)) {
         source = `${cdnBase.replace(/\/$/, '')}/${resolved.relativePath}`;
       } else if (!/^https?:\/\//.test(source)) {
         source = resolved.relativePath;
+      } else if (cdnBase && source.startsWith(cdnBase)) {
+        source = `${cdnBase.replace(/\/$/, '')}/${resolved.relativePath}`;
       } else {
-        // External absolute master with relative child — resolve against master URL
-        try {
-          source = new URL(variantUri, source).toString();
-        } catch {
-          throw new BizException(BizCode.FORBIDDEN, 'preview.masterUnsupported');
-        }
+        // Refuse resolving relative children against arbitrary external absolute masters.
+        throw new BizException(BizCode.FORBIDDEN, 'preview.masterUnsupported');
       }
       body = await this.loadTextSource(source, cdnBase);
       meta = this.playlistSegmentMeta(source, cdnBase);
@@ -437,17 +463,38 @@ export class EpisodesService {
         const objectKey = decodeURIComponent(u.pathname.replace(/^\/+/, ''));
         const obj = await this.r2.getMediaObject(objectKey);
         const chunks: Buffer[] = [];
+        let total = 0;
+        const maxBytes = 2 * 1024 * 1024;
         for await (const c of obj.body) {
-          chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c));
+          const buf = Buffer.isBuffer(c) ? c : Buffer.from(c);
+          total += buf.length;
+          if (total > maxBytes) {
+            throw new BizException(BizCode.FORBIDDEN, 'fetch.bodyTooLarge');
+          }
+          chunks.push(buf);
         }
-        return Buffer.concat(chunks).toString('utf8');
-      } catch {
-        /* fetch fallback */
+        const text = Buffer.concat(chunks).toString('utf8');
+        if (!text.includes('#EXTM3U')) {
+          throw new BizException(BizCode.FORBIDDEN, 'fetch.notM3u8');
+        }
+        return text;
+      } catch (e) {
+        if (e instanceof BizException) throw e;
+        /* fetch fallback through SSRF-safe path */
       }
     }
-    const res = await fetch(raw, { headers: { 'User-Agent': 'VelvetPreview/1.0' } });
-    if (!res.ok) throw new BizException(BizCode.NOT_FOUND, 'preview.sourceUnavailable');
-    return await res.text();
+    const allowHosts = mediaFetchAllowHosts(
+      this.config.get<string>('CDN_BASE_URL') || cdnBase,
+    );
+    return safeFetchText(raw, {
+      allowHosts,
+      timeoutMs: 8_000,
+      maxBytes: 2 * 1024 * 1024,
+      maxRedirects: 3,
+      requireM3u8: true,
+      acceptContentTypes: /mpegurl|m3u8|text\/plain|application\/octet-stream/i,
+      userAgent: 'VelvetPreview/1.0',
+    });
   }
 
   private resolveLocalFile(raw: string): string | null {

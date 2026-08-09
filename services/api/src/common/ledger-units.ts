@@ -59,6 +59,57 @@ export function creditsToUsdCents(
   return (credits * micros) / 1_000_000n;
 }
 
+export type WalletLedgerSplit = {
+  amountUsdCents: bigint;
+  creatorIncomeUsdCents: bigint;
+  platformFeeUsdCents: bigint;
+  usdCentsPerCredit: number;
+  financeFrozen: boolean;
+  deferredCreatorIncomeUsdCents: bigint | null;
+};
+
+/**
+ * Wallet unlock/buyout money split. Returns null when rate unknown (caller must fail closed).
+ * While finance frozen: creatorIncomeUsdCents=0; deferred amount kept for ops backfill.
+ */
+export function splitWalletCreditsLedger(
+  credits: bigint,
+  revenueShare: number,
+  opts?: { usdCentsPerCredit?: number | null; financeFrozen?: boolean },
+): WalletLedgerSplit | null {
+  const rate = resolveUsdCentsPerCredit(opts?.usdCentsPerCredit ?? null);
+  const amountUsdCents = creditsToUsdCents(credits, rate);
+  if (amountUsdCents == null || rate == null) return null;
+  const share = Number.isFinite(revenueShare) ? Math.min(1, Math.max(0, revenueShare)) : 0;
+  const shareIncome = BigInt(Math.floor(Number(amountUsdCents) * share));
+  const frozen = opts?.financeFrozen ?? isFinanceOpsFrozen();
+  if (frozen) {
+    return {
+      amountUsdCents,
+      creatorIncomeUsdCents: 0n,
+      platformFeeUsdCents: amountUsdCents,
+      usdCentsPerCredit: rate,
+      financeFrozen: true,
+      deferredCreatorIncomeUsdCents: shareIncome,
+    };
+  }
+  return {
+    amountUsdCents,
+    creatorIncomeUsdCents: shareIncome,
+    platformFeeUsdCents: amountUsdCents - shareIncome,
+    usdCentsPerCredit: rate,
+    financeFrozen: false,
+    deferredCreatorIncomeUsdCents: null,
+  };
+}
+
+/** payAmount is USD major units; amountUsdCents is minor. Never assign cents into payAmount. */
+export function usdCentsToPayAmountMajor(amountUsdCents: bigint): string {
+  const n = Number(amountUsdCents);
+  if (!Number.isFinite(n)) return '0.00';
+  return (n / 100).toFixed(2);
+}
+
 export function financeFreezePayload() {
   return {
     financeOpsFrozen: isFinanceOpsFrozen(),

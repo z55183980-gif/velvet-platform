@@ -23,11 +23,11 @@ const EDGE_RESIST = 0.32;
 const TAP_IGNORE_SELECTOR =
   "button, a, input, textarea, select, label, [role='button'], [role='slider'], [data-no-tap]";
 
-type PageOffset = -1 | 0 | 1;
+type PageOffset = number;
 
 /**
  * Douyin-style vertical pager: finger-follow drag, then snap by distance/velocity.
- * Parent renders a sliding window of prev / current / next pages.
+ * Parent renders a sliding window of prev / current / next(+ahead) pages.
  */
 export function VerticalPager({
   index,
@@ -35,6 +35,7 @@ export function VerticalPager({
   onChange,
   blocked = false,
   onTap,
+  ahead = 1,
   className,
   children,
 }: {
@@ -45,6 +46,11 @@ export function VerticalPager({
   blocked?: boolean;
   /** Fired on a short press with little movement (not a swipe). */
   onTap?: () => void;
+  /**
+   * How many upcoming pages to keep mounted after the current one.
+   * Home feed uses 2 so the second-next item can media-warm for fast swipes.
+   */
+  ahead?: number;
   className?: string;
   children: (ctx: {
     offset: PageOffset;
@@ -327,7 +333,10 @@ export function VerticalPager({
   const pages: PageOffset[] = [];
   if (canPrev) pages.push(-1);
   pages.push(0);
-  if (canNext) pages.push(1);
+  const aheadCount = Math.max(0, Math.floor(ahead));
+  for (let step = 1; step <= aheadCount; step++) {
+    if (index + step < count) pages.push(step);
+  }
 
   return (
     <div

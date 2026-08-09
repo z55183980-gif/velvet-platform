@@ -40,10 +40,6 @@ import {
 } from "@/lib/screen-orientation";
 import { DataErrorState } from "@/components/data-error-state";
 
-function isUrl(s: string) {
-  return /^https?:\/\//.test(s) || s.startsWith("/");
-}
-
 function formatCount(n: number, locale: string) {
   const zhStyle = locale === "zh";
   if (zhStyle) {
@@ -75,8 +71,11 @@ type PlayUrlEntry = {
   expiresAtMs: number;
 };
 
-/** Keep only the immediately adjacent metadata warm. */
-const PREFETCH_OFFSETS = [-1, 1] as const;
+/** Adjacent drama details to keep warm (prev / next / next+1). */
+const PREFETCH_DETAIL_OFFSETS = [-1, 1, 2] as const;
+/** Play-URL lookahead on good networks (next + next+1). Media warm stays on next only. */
+const PREFETCH_PLAY_URL_OFFSETS_FULL = [1, 2] as const;
+const PREFETCH_PLAY_URL_OFFSETS_LITE = [1] as const;
 const PLAY_URL_REFRESH_MS = 5 * 60_000;
 const PLAY_URL_CACHE_MAX = 24;
 const DETAIL_CACHE_MAX = 24;
@@ -109,16 +108,29 @@ function isPlayableEpisode(ep: Episode | null | undefined): ep is Episode {
   return !!(ep && (ep.isFree || ep.unlocked));
 }
 
-function shouldSkipNeighborPrefetch() {
-  if (typeof navigator === "undefined") return false;
+type FeedPrefetchTier = "full" | "url-only" | "off";
+
+/** full = URL + media warm; url-only = signed URL only (3g); off = saveData / 2g. */
+function feedPrefetchTier(): FeedPrefetchTier {
+  if (typeof navigator === "undefined") return "full";
   const conn = (
     navigator as Navigator & {
       connection?: { saveData?: boolean; effectiveType?: string };
     }
   ).connection;
-  if (conn?.saveData) return true;
+  if (conn?.saveData) return "off";
   const type = conn?.effectiveType;
-  return type === "slow-2g" || type === "2g";
+  if (type === "slow-2g" || type === "2g") return "off";
+  if (type === "3g") return "url-only";
+  return "full";
+}
+
+function shouldSkipNeighborPrefetch() {
+  return feedPrefetchTier() === "off";
+}
+
+function shouldWarmNextMedia() {
+  return feedPrefetchTier() === "full";
 }
 
 function trimPlayUrlCache() {
@@ -207,6 +219,24 @@ async function prefetchNeighborPlayUrl(dramaId: string, signal?: AbortSignal) {
   await ensurePlayUrl(String(entry.episode.id), signal);
 }
 
+async function prefetchPlayUrlsAhead(
+  dramas: Drama[],
+  index: number,
+  signal?: AbortSignal,
+) {
+  if (signal?.aborted || shouldSkipNeighborPrefetch()) return;
+  const tier = feedPrefetchTier();
+  const offsets =
+    tier === "full" ? PREFETCH_PLAY_URL_OFFSETS_FULL : PREFETCH_PLAY_URL_OFFSETS_LITE;
+  await Promise.all(
+    offsets.map((offset) => {
+      const next = dramas[index + offset];
+      if (!next) return Promise.resolve();
+      return prefetchNeighborPlayUrl(next.id, signal);
+    }),
+  );
+}
+
 function buildFeedMeta(
   drama: Drama,
   locale: Locale,
@@ -241,8 +271,8 @@ function buildFeedMeta(
 
 const FEED_PAGE_SIZE = 20;
 const FEED_PIN_HOTTEST = 3;
-const FEED_LOAD_MORE_THRESHOLD = 4;
-const HOME_FEED_MUTED_KEY = "velvet_home_feed_muted";
+/** Start paging earlier so the tail never waits on the network. */
+const FEED_LOAD_MORE_THRESHOLD = 8;
 
 type HomeFeedSnapshot = {
   dramas: Drama[];
@@ -285,9 +315,8 @@ export function VerticalFeed({
       ? Math.min(restoredHomeFeed.index, Math.max(0, restoredHomeFeed.dramas.length - 1))
       : 0,
   );
-  // Browser autoplay policies require the first feed item to begin muted.
+  // Always start muted so mobile browsers allow autoplay; unmute only on user tap.
   const [muted, setMuted] = useState(true);
-  const [restoreSound, setRestoreSound] = useState(false);
   const [pagerBlocked, setPagerBlocked] = useState(false);
   const shellRef = useRef<HTMLDivElement>(null);
   const togglePlayRef = useRef<(() => void) | null>(null);
@@ -312,22 +341,8 @@ export function VerticalFeed({
   const shouldRestoreHomeFeed = !!(restoredHomeFeed && restoredHomeFeed.dramas.length > 0);
   const seededFromSsr = !!(initialFeed?.rows.length);
 
-  useEffect(() => {
-    try {
-      setRestoreSound(localStorage.getItem(HOME_FEED_MUTED_KEY) === "0");
-    } catch {
-      setRestoreSound(false);
-    }
-  }, []);
-
   const handleMutedChange = useCallback((next: boolean) => {
     setMuted(next);
-    setRestoreSound(!next);
-    try {
-      localStorage.setItem(HOME_FEED_MUTED_KEY, next ? "1" : "0");
-    } catch {
-      /* Storage can be unavailable in private/restricted contexts. */
-    }
   }, []);
 
   useEffect(() => {
@@ -428,26 +443,25 @@ export function VerticalFeed({
   const pinDocumentBody = !(getPwaPlatform() === "ios" && isPwaStandalone());
   useDocumentScrollLock(true, shellRef, { pinBody: pinDocumentBody });
 
-  // Keep adjacent metadata warm. Next-item media warm-attach is handled per FeedPage tier.
+  // Keep nearby metadata warm. Next-item media warm-attach is handled per FeedPage tier.
   useEffect(() => {
     syncDetailCacheScope(authScope);
     const drama = dramas[index];
     if (!drama) return;
-    for (const offset of PREFETCH_OFFSETS) {
+    for (const offset of PREFETCH_DETAIL_OFFSETS) {
       const id = dramas[index + offset]?.id;
       if (id && !detailCache.has(id)) void ensureDetail(id).catch(() => {});
     }
   }, [index, dramas, authScope]);
 
-  // Resolve the next play URL early so the next page can warm-attach HLS.
+  // Resolve upcoming play URLs early so the next page can warm-attach HLS (+2 is URL-only).
   useEffect(() => {
     syncDetailCacheScope(authScope);
     const ac = new AbortController();
 
     const run = async () => {
       if (typeof document !== "undefined" && document.hidden) return;
-      const next = dramas[index + 1];
-      if (next) await prefetchNeighborPlayUrl(next.id, ac.signal);
+      await prefetchPlayUrlsAhead(dramas, index, ac.signal);
     };
 
     void run();
@@ -495,20 +509,25 @@ export function VerticalFeed({
         onChange={onIndexChange}
         blocked={pagerBlocked}
         onTap={onFeedTap}
+        ahead={2}
       >
         {({ pageIndex, active }) => {
           const drama = dramas[pageIndex];
           if (!drama) return null;
-          const warmCandidate =
-            pageIndex === index + 1 && !shouldSkipNeighborPrefetch();
+          const delta = pageIndex - index;
+          const warmRank: 0 | 1 | 2 =
+            shouldWarmNextMedia() && delta === 1
+              ? 1
+              : shouldWarmNextMedia() && delta === 2
+                ? 2
+                : 0;
           return (
             <FeedPage
               drama={drama}
               active={active}
-              warmCandidate={warmCandidate}
+              warmRank={warmRank}
               muted={muted}
               onMutedChange={handleMutedChange}
-              restoreSound={restoreSound}
               onSeekingChange={onSeekingChange}
               registerTogglePlay={registerTogglePlay}
             />
@@ -527,20 +546,18 @@ export function VerticalFeed({
 function FeedPage({
   drama,
   active,
-  warmCandidate,
+  warmRank,
   muted,
   onMutedChange,
-  restoreSound,
   onSeekingChange,
   registerTogglePlay,
 }: {
   drama: Drama;
   active: boolean;
-  /** Next item may warm-attach once playUrl is ready (saveData/2g skipped upstream). */
-  warmCandidate: boolean;
+  /** 1 = next (full warm); 2 = next+1 (light warm); 0 = idle. Skipped on 3g / saveData / 2g. */
+  warmRank: 0 | 1 | 2;
   muted: boolean;
   onMutedChange: (m: boolean) => void;
-  restoreSound: boolean;
   onSeekingChange: (seeking: boolean) => void;
   registerTogglePlay: (fn: (() => void) | null) => void;
 }) {
@@ -564,19 +581,6 @@ function FeedPage({
   /** Home feed only: sticky center Pause after user tap-to-pause (not scroll-away auto-pause). */
   const [userPaused, setUserPaused] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
-
-  useEffect(() => {
-    const video = videoRef.current;
-    if (!active || !restoreSound || !playUrl || !video) return;
-    const restore = () => {
-      if (!video.muted) return;
-      video.muted = false;
-      onMutedChange(false);
-    };
-    video.addEventListener("playing", restore, { once: true });
-    if (!video.paused && video.readyState >= 2) restore();
-    return () => video.removeEventListener("playing", restore);
-  }, [active, restoreSound, playUrl, onMutedChange]);
 
   const meta = useMemo(() => buildFeedMeta(drama, locale, t), [drama, locale, t]);
 
@@ -758,7 +762,7 @@ function FeedPage({
         setPlayErr(null);
         return;
       }
-      if (!warmCandidate) {
+      if (!warmRank) {
         setPlayUrl(null);
         return;
       }
@@ -800,7 +804,7 @@ function FeedPage({
     guestReady,
     user,
     active,
-    warmCandidate,
+    warmRank,
     canGuestWatch,
     markGuestWatched,
     t,
@@ -847,13 +851,14 @@ function FeedPage({
   const canPlay = episodeUnlocked && !!(user || guestAllowed);
   const needsLogin = authReady && guestReady && episodeUnlocked && !user && !guestAllowed;
   const locked = !!episode && !episodeUnlocked;
-  const cover = isUrl(drama.cover[0]) ? drama.cover[0] : undefined;
   const mediaSrc = playUrl && canPlay ? playUrl : null;
   const mediaTier: MediaTier = active
     ? "active"
-    : warmCandidate && mediaSrc
+    : warmRank === 1 && mediaSrc
       ? "warm"
-      : "idle";
+      : warmRank === 2 && mediaSrc
+        ? "warm-far"
+        : "idle";
 
   function openUnlockGate() {
     if (!authReady) return;
@@ -950,7 +955,6 @@ function FeedPage({
           chrome="feed"
           objectFit={landscape ? "contain" : "cover"}
           src={mediaSrc}
-          poster={cover}
           autoPlay={active}
           muted={muted}
           onMutedChange={onMutedChange}

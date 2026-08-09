@@ -278,19 +278,25 @@ export class PaymentsService {
         const refundStatus = String(
           payload?.data?.object?.status || payload?.status || '',
         ).toLowerCase();
-        if (
-          eventType === 'refund.updated' &&
-          refundStatus &&
-          refundStatus !== 'succeeded' &&
-          refundStatus !== 'paid'
-        ) {
+        // Only revoke local entitlements after Stripe refund succeeded.
+        // Pending/failed must not strip credits/VIP.
+        if (refundStatus && refundStatus !== 'succeeded' && refundStatus !== 'paid') {
+          this.log.warn({
+            event: 'webhook.refund.not_succeeded',
+            provider: 'stripe',
+            orderNo: parsedStripe.orderNo,
+            eventId,
+            eventType,
+            refundStatus,
+            latencyMs: Date.now() - t0,
+          });
           return { received: true, ignored: true, reason: 'refund_not_succeeded' };
         }
 
-        // Partial Stripe refunds must not strip all credits/VIP.
+        // Partial Stripe refunds: flag for ops; never strip full entitlements.
         const order = await this.prisma.order.findUnique({
           where: { orderNo: parsedStripe.orderNo },
-          select: { amountVnd: true, payCurrency: true, meta: true },
+          select: { amountVnd: true, payCurrency: true, meta: true, refundStatus: true },
         });
         const orderMinor = order ? Number(order.amountVnd) : null;
         const full = isFullStripeRefund({
@@ -306,6 +312,7 @@ export class PaymentsService {
             await this.prisma.order.update({
               where: { orderNo: parsedStripe.orderNo },
               data: {
+                // Do not mark refund APPROVED — entitlements stay until full refund.
                 meta: {
                   ...prevMeta,
                   partialRefundPending: true,
@@ -320,6 +327,25 @@ export class PaymentsService {
                 } as any,
               },
             });
+            if (eventId) {
+              try {
+                await this.prisma.webhookEvent.create({
+                  data: {
+                    provider: 'stripe',
+                    eventId: String(eventId),
+                    orderNo: parsedStripe.orderNo,
+                    payload: {
+                      ignored: 'partial_refund',
+                      eventType,
+                      refundAmountMinor: parsedStripe.refundAmountMinor ?? null,
+                      amountRefundedMinor: parsedStripe.amountRefundedMinor ?? null,
+                    } as any,
+                  },
+                });
+              } catch {
+                /* duplicate event id — ignore */
+              }
+            }
           }
           this.log.warn({
             event: 'webhook.refund.partial_ignored',

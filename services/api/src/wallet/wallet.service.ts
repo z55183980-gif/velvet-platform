@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { HttpStatus, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { BizException, BizCode } from '../common/biz.exception';
@@ -10,9 +10,10 @@ import { LockAccessService } from '../common/lock-access.service';
 import { PlatformSettingsService } from '../common/platform-settings.service';
 import { createStripeCheckoutSession } from '../payments/stripe-checkout';
 import {
-  creditsToUsdCents,
   isFinanceOpsFrozen,
   resolveUsdCentsPerCredit,
+  splitWalletCreditsLedger,
+  usdCentsToPayAmountMajor,
 } from '../common/ledger-units';
 
 const WALLET_RETRY = 3;
@@ -303,19 +304,21 @@ export class WalletService {
               creatorIncomeVnd: ledger.creatorIncomeUsdCents,
               platformFeeVnd: ledger.platformFeeUsdCents,
               payCurrency: 'USD',
-              payAmount: new Prisma.Decimal(ledger.amountUsdCents.toString())
-                .div(100)
-                .toDecimalPlaces(2),
-              fxRate: new Prisma.Decimal(String(ledger.usdCentsPerCredit ?? 0)),
-              fxSource: ledger.ledgerDirty ? 'wallet-credits-unpriced' : 'wallet-credits',
+              payAmount: new Prisma.Decimal(usdCentsToPayAmountMajor(ledger.amountUsdCents)),
+              fxRate: new Prisma.Decimal(String(ledger.usdCentsPerCredit)),
+              fxSource: ledger.financeFrozen ? 'wallet-credits-frozen' : 'wallet-credits',
               paymentMethod: 'WALLET',
               paymentStatus: 'PENDING',
               meta: {
                 revenueShare: share.toString(),
                 ledgerCurrency: 'USD',
                 ledgerMinorUnit: 'USD_CENTS',
-                ledgerDirty: ledger.ledgerDirty,
+                ledgerDirty: false,
                 usdCentsPerCredit: ledger.usdCentsPerCredit,
+                financeFrozen: ledger.financeFrozen,
+                deferredCreatorIncomeUsdCents:
+                  ledger.deferredCreatorIncomeUsdCents?.toString() ?? null,
+                creatorAccrualSkipped: ledger.financeFrozen,
               } as any,
             },
           });
@@ -506,9 +509,11 @@ export class WalletService {
         if (!charged) throw new BizException(BizCode.INSUFFICIENT_BALANCE, 'Số dư không đủ để mở tập này');
 
         const paidAt = new Date();
+        // Preserve create-time payAmount (USD major) / fx metadata — do not overwrite
+        // with amountVnd (USD cents), which would inflate by 100x.
         await tx.order.update({
           where: { id: order.id },
-          data: { paymentStatus: 'PAID', paidAt, payAmount: new Prisma.Decimal(order.amountVnd.toString()), fxRate: new Prisma.Decimal(1), fxSource: 'wallet' },
+          data: { paymentStatus: 'PAID', paidAt },
         });
 
         const unlockRec = await tx.userUnlock.create({
@@ -892,19 +897,20 @@ export class WalletService {
         creatorIncomeVnd: ledger.creatorIncomeUsdCents,
         platformFeeVnd: ledger.platformFeeUsdCents,
         payCurrency: 'USD',
-        payAmount: new Prisma.Decimal(ledger.amountUsdCents.toString())
-          .div(100)
-          .toDecimalPlaces(2),
-        fxRate: new Prisma.Decimal(String(ledger.usdCentsPerCredit ?? 0)),
-        fxSource: ledger.ledgerDirty ? 'wallet-credits-unpriced' : 'wallet-credits',
+        payAmount: new Prisma.Decimal(usdCentsToPayAmountMajor(ledger.amountUsdCents)),
+        fxRate: new Prisma.Decimal(String(ledger.usdCentsPerCredit)),
+        fxSource: ledger.financeFrozen ? 'wallet-credits-frozen' : 'wallet-credits',
         paymentMethod: 'WALLET',
         paymentStatus: 'PENDING',
         meta: {
           revenueShare: share.toString(),
           ledgerCurrency: 'USD',
           ledgerMinorUnit: 'USD_CENTS',
-          ledgerDirty: ledger.ledgerDirty,
+          ledgerDirty: false,
           usdCentsPerCredit: ledger.usdCentsPerCredit,
+          financeFrozen: ledger.financeFrozen,
+          deferredCreatorIncomeUsdCents: ledger.deferredCreatorIncomeUsdCents?.toString() ?? null,
+          creatorAccrualSkipped: ledger.financeFrozen,
         } as any,
       },
     });
@@ -1199,31 +1205,25 @@ export class WalletService {
 
   /**
    * Split wallet credit spend into USD-cents ledger fields.
-   * Without USD_CENTS_PER_CREDIT, money columns stay 0 and meta.ledgerDirty=true
-   * (do not invent a rate; credits still move in amountCredits).
+   * Fail-closed without USD_CENTS_PER_CREDIT (no silent dirty money columns).
+   *
+   * While FINANCE_OPS_FROZEN: keep amountUsdCents for the order, but write
+   * creatorIncomeVnd=0 and store deferredCreatorIncomeUsdCents in meta so T+7
+   * cannot settle debt that was never accrued to pendingVnd.
    */
   private async splitCreditsToUsdLedger(credits: bigint, share: Prisma.Decimal) {
-    const rate = resolveUsdCentsPerCredit(null);
-    const amountUsdCents = creditsToUsdCents(credits, rate);
-    if (amountUsdCents == null) {
-      return {
-        amountUsdCents: 0n,
-        creatorIncomeUsdCents: 0n,
-        platformFeeUsdCents: 0n,
-        usdCentsPerCredit: null as number | null,
-        ledgerDirty: true,
-      };
+    const ledger = splitWalletCreditsLedger(credits, Number(share), {
+      usdCentsPerCredit: resolveUsdCentsPerCredit(null),
+      financeFrozen: isFinanceOpsFrozen(),
+    });
+    if (!ledger) {
+      throw new BizException(
+        BizCode.BAD_REQUEST,
+        'ledger.usdCentsPerCreditRequired',
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
     }
-    const creatorIncomeUsdCents = toBigInt(
-      Math.floor(Number(amountUsdCents) * Number(share)),
-    );
-    return {
-      amountUsdCents,
-      creatorIncomeUsdCents,
-      platformFeeUsdCents: amountUsdCents - creatorIncomeUsdCents,
-      usdCentsPerCredit: rate,
-      ledgerDirty: false,
-    };
+    return ledger;
   }
 
   private async attachStripeCheckout(

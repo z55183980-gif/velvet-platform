@@ -38,9 +38,54 @@ export type StripeRefundResult = {
   alreadyRefunded: boolean;
 };
 
+/** Stripe terminal success statuses for Refund objects. */
+export function isStripeRefundSucceeded(status: string | null | undefined): boolean {
+  const s = String(status || '')
+    .trim()
+    .toLowerCase();
+  return s === 'succeeded' || s === 'paid';
+}
+
+/**
+ * Retrieve an existing Stripe Refund by id (re_…).
+ * Used to verify historical meta.stripeRefundId instead of assuming success.
+ */
+export async function retrieveStripeRefund(opts: {
+  refundId: string;
+  fetchImpl?: typeof fetch;
+}): Promise<StripeRefundResult> {
+  const refundId = String(opts.refundId || '').trim();
+  if (!refundId.startsWith('re_')) {
+    throw new BizException(BizCode.BAD_REQUEST, 'stripe.refundInvalidId');
+  }
+  const fetchFn = opts.fetchImpl || fetch;
+  const res = await fetchFn(
+    `https://api.stripe.com/v1/refunds/${encodeURIComponent(refundId)}`,
+    {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${secretKey()}` },
+    },
+  );
+  const json = (await res.json().catch(() => null)) as Record<string, any> | null;
+  if (!res.ok) {
+    const message = String(json?.error?.message || '').trim();
+    throw new BizException(
+      BizCode.BAD_REQUEST,
+      message || `Stripe refund retrieve failed (${res.status})`,
+    );
+  }
+  return {
+    refundId: String(json?.id || refundId),
+    status: String(json?.status || 'unknown'),
+    amountMinor: Number(json?.amount) || 0,
+    currency: String(json?.currency || 'usd').toLowerCase(),
+    alreadyRefunded: isStripeRefundSucceeded(String(json?.status || '')),
+  };
+}
+
 /**
  * Create a Stripe Refund (test-mode or live). Idempotent via Idempotency-Key.
- * Does not mutate local wallet — caller runs the local saga after success.
+ * Does not mutate local wallet — caller runs the local saga only after succeeded.
  */
 export async function createStripeRefund(input: StripeRefundInput): Promise<StripeRefundResult> {
   const ref = String(input.paymentIntentOrChargeId || '').trim();

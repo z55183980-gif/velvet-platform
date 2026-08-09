@@ -6,6 +6,8 @@ import { UploadService } from './upload.service';
 import {
   TRANSCODE_QUEUE_NAME,
   TranscodeQueueJobData,
+  WORKER_HEARTBEAT_KEY,
+  WORKER_HEARTBEAT_TTL_SEC,
   createRedisConnection,
   isWorkerProcess,
   readRedisUrl,
@@ -18,6 +20,7 @@ export class TranscodeQueueService implements OnModuleInit, OnModuleDestroy {
   private connection: IORedis | null = null;
   private queue: Queue<TranscodeQueueJobData> | null = null;
   private worker: Worker<TranscodeQueueJobData> | null = null;
+  private heartbeatTimer: NodeJS.Timeout | null = null;
 
   constructor(
     private readonly config: ConfigService,
@@ -112,6 +115,7 @@ export class TranscodeQueueService implements OnModuleInit, OnModuleDestroy {
             `${exhausted ? ' (DLQ)' : ''}: ${err?.message || err}`,
         );
       });
+      this.startHeartbeat();
       this.logger.log(
         `BullMQ worker started queue=${TRANSCODE_QUEUE_NAME} process=${isWorkerProcess() ? 'worker' : 'api-inline'}`,
       );
@@ -128,12 +132,34 @@ export class TranscodeQueueService implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleDestroy() {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
     await this.worker?.close().catch(() => undefined);
     await this.queue?.close().catch(() => undefined);
     await this.connection?.quit().catch(() => undefined);
     this.worker = null;
     this.queue = null;
     this.connection = null;
+  }
+
+  private startHeartbeat() {
+    if (!this.connection || this.heartbeatTimer) return;
+    const beat = async () => {
+      try {
+        await this.connection?.set(
+          WORKER_HEARTBEAT_KEY,
+          String(Date.now()),
+          'EX',
+          WORKER_HEARTBEAT_TTL_SEC,
+        );
+      } catch (e: any) {
+        this.logger.warn(`worker heartbeat failed: ${e?.message || e}`);
+      }
+    };
+    void beat();
+    this.heartbeatTimer = setInterval(() => void beat(), 20_000);
   }
 
   /** Push an already-persisted mediaTranscodeJob id onto BullMQ (or inline pump). */

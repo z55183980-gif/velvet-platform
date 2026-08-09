@@ -115,13 +115,29 @@ export class ReconcileService {
           });
           if (claimed.count !== 1) return false;
 
-          await tx.creatorEarning.update({
-            where: { creatorId: order.creatorId! },
+          // Guard: never settle income that was never credited to pending
+          // (e.g. finance-frozen unlocks with creatorAccrualSkipped).
+          const moved = await tx.creatorEarning.updateMany({
+            where: {
+              creatorId: order.creatorId!,
+              pendingVnd: { gte: order.creatorIncomeVnd },
+            },
             data: {
               pendingVnd: { decrement: order.creatorIncomeVnd },
               availableVnd: { increment: order.creatorIncomeVnd },
             },
           });
+          if (moved.count !== 1) {
+            // Roll back claim so ops can investigate / backfill pending.
+            await tx.order.update({
+              where: { id: order.id },
+              data: { earningSettled: false },
+            });
+            this.logger.warn(
+              `[settle-t7] order ${order.orderNo} skipped: pendingVnd < creatorIncomeVnd`,
+            );
+            return false;
+          }
           return true;
         });
         if (didSettle) settled++;

@@ -71,6 +71,8 @@ type AccountSnapshot = {
 let accountSnapshot: AccountSnapshot | null = null;
 
 function accountUserKey(user: AuthUser | null) {
+  // Prefer immutable backend id; fall back to contact identifiers only if missing.
+  if (user?.id) return `id:${user.id}`;
   return user?.email || user?.phone || user?.username || user?.label || "";
 }
 
@@ -206,13 +208,18 @@ export default function AccountPage() {
     else if (user?.email) setNickname(user.email.split("@")[0]);
   }, [user]);
 
+  const loadGenRef = useRef(0);
+  const loadAbortRef = useRef<AbortController | null>(null);
+
   const loadKind = useCallback(
     async (
       kind: "favorites" | "history" | "likes" | "orders" | "transactions",
-      opts?: { force?: boolean },
+      opts?: { force?: boolean; signal?: AbortSignal; principal?: string },
     ) => {
       if (!user) return;
-      const key = `${userKey}|${kind}|${kind === "favorites" ? favGroup : ""}`;
+      const principal = opts?.principal ?? userKey;
+      if (!principal) return;
+      const key = `${principal}|${kind}|${kind === "favorites" ? favGroup : ""}`;
       const cached = cacheRef.current.get(key);
       const hasCached =
         (kind === "favorites" && cached?.favorites) ||
@@ -222,6 +229,7 @@ export default function AccountPage() {
         (kind === "transactions" && cached?.transactions);
 
       if (hasCached && !opts?.force) {
+        if (principal !== userKey) return;
         if (kind === "favorites") {
           setFavorites(cached!.favorites || []);
           if (cached!.favGroups) setFavGroups(cached!.favGroups);
@@ -232,12 +240,19 @@ export default function AccountPage() {
         return;
       }
 
+      const gen = loadGenRef.current;
+      const stillCurrent = () =>
+        !opts?.signal?.aborted &&
+        gen === loadGenRef.current &&
+        principal === userKey;
+
       try {
         if (kind === "favorites") {
           const [r, g] = await Promise.all([
             getFavorites(1, favGroup || undefined),
             getFavoriteGroups(),
           ]);
+          if (!stillCurrent()) return;
           const rows = r?.rows || [];
           const groups = g || [];
           cacheRef.current.set(key, { favorites: rows, favGroups: groups });
@@ -245,26 +260,31 @@ export default function AccountPage() {
           setFavGroups(groups);
         } else if (kind === "history") {
           const r = await getWatchHistory(1);
+          if (!stillCurrent()) return;
           const rows = r?.rows || [];
           cacheRef.current.set(key, { history: rows });
           setHistory(rows);
         } else if (kind === "likes") {
           const r = await getLikes(1);
+          if (!stillCurrent()) return;
           const rows = r?.rows || [];
           cacheRef.current.set(key, { likes: rows });
           setLikes(rows);
         } else if (kind === "orders") {
           const r = await getMyOrders(1);
+          if (!stillCurrent()) return;
           const rows = r?.rows || [];
           cacheRef.current.set(key, { orders: rows });
           setOrders(rows);
         } else {
           const r = await getWalletTransactions(1);
+          if (!stillCurrent()) return;
           const rows = r?.rows || [];
           cacheRef.current.set(key, { transactions: rows });
           setTransactions(rows);
         }
       } catch {
+        if (!stillCurrent()) return;
         if (kind === "favorites") setFavorites([]);
         else if (kind === "history") setHistory([]);
         else if (kind === "likes") setLikes([]);
@@ -307,12 +327,18 @@ export default function AccountPage() {
 
   // Prefetch lists once (mobile + desktop share cache); refresh favorites when group changes
   useEffect(() => {
-    if (!user) return;
-    let cancelled = false;
+    if (!user || !userKey) return;
+    loadAbortRef.current?.abort();
+    const ac = new AbortController();
+    loadAbortRef.current = ac;
+    const principal = userKey;
+    const gen = ++loadGenRef.current;
     const run = async () => {
       const restored = initialSnapshotRef.current;
       const snapshotIsFresh =
-        !!restored && Date.now() - restored.savedAt < ACCOUNT_SNAPSHOT_TTL_MS;
+        !!restored &&
+        restored.userKey === principal &&
+        Date.now() - restored.savedAt < ACCOUNT_SNAPSHOT_TTL_MS;
       const needsSkeleton =
         !restored &&
         favorites.length === 0 &&
@@ -322,7 +348,11 @@ export default function AccountPage() {
       if (needsSkeleton) setInitialLoading(true);
       else if (!snapshotIsFresh) setRefreshing(true);
       try {
-        const options = snapshotIsFresh ? undefined : { force: true };
+        const options = {
+          ...(snapshotIsFresh ? {} : { force: true as const }),
+          signal: ac.signal,
+          principal,
+        };
         await Promise.all([
           loadKind("favorites", options),
           loadKind("history", options),
@@ -330,9 +360,11 @@ export default function AccountPage() {
           loadKind("orders", options),
           loadKind("transactions", options),
         ]);
-        if (!snapshotIsFresh) refreshedAtRef.current = Date.now();
+        if (!ac.signal.aborted && gen === loadGenRef.current && !snapshotIsFresh) {
+          refreshedAtRef.current = Date.now();
+        }
       } finally {
-        if (!cancelled) {
+        if (!ac.signal.aborted && gen === loadGenRef.current) {
           setInitialLoading(false);
           setRefreshing(false);
         }
@@ -340,11 +372,11 @@ export default function AccountPage() {
     };
     void run();
     return () => {
-      cancelled = true;
+      ac.abort();
     };
     // favorites/history/orders lengths only gate first-paint skeleton
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, favGroup, loadKind]);
+  }, [user, userKey, favGroup, loadKind]);
 
   const loading = initialLoading;
 

@@ -3,7 +3,12 @@ import { PrismaService } from '../prisma/prisma.service';
 import { BizException, BizCode } from '../common/biz.exception';
 import { AuditService } from '../common/audit.service';
 import { WalletService } from '../wallet/wallet.service';
-import { createStripeRefund } from '../payments/stripe-refund';
+import {
+  createStripeRefund,
+  isFullStripeRefund,
+  isStripeRefundSucceeded,
+  retrieveStripeRefund,
+} from '../payments/stripe-refund';
 
 @Injectable()
 export class AdminRefundService {
@@ -14,31 +19,53 @@ export class AdminRefundService {
   ) {}
 
   /**
-   * For Stripe-paid TOPUP/VIP: call Stripe Refund API before local credit/VIP revoke.
-   * Stores provider refund id on order.meta (idempotent via Stripe Idempotency-Key).
+   * For Stripe-paid TOPUP/VIP: ensure a Stripe Refund exists and is verified.
+   * Never assumes a historical refund id succeeded — retrieves status from Stripe.
+   * Local credit/VIP revoke must only run after status is succeeded (caller checks).
    */
-  private async ensureProviderRefund(order: {
-    id: bigint;
-    orderNo: string;
-    paymentMethod: string;
-    paymentStatus: string;
-    externalRef: string | null;
-    amountVnd: bigint;
-    payCurrency: string;
-    meta: unknown;
-    orderType: string;
-  }) {
+  private async ensureProviderRefund(
+    order: {
+      id: bigint;
+      orderNo: string;
+      paymentMethod: string;
+      paymentStatus: string;
+      externalRef: string | null;
+      amountVnd: bigint;
+      payCurrency: string;
+      meta: unknown;
+      orderType: string;
+    },
+    opts?: { fetchImpl?: typeof fetch },
+  ) {
     if (order.paymentMethod !== 'STRIPE') return null;
     if (order.orderType !== 'TOPUP' && order.orderType !== 'VIP_SUB') return null;
 
     const prevMeta = order.meta && typeof order.meta === 'object' ? (order.meta as any) : {};
-    if (prevMeta.stripeRefundId) {
+    const existingId = String(prevMeta.stripeRefundId || '').trim();
+    if (existingId) {
+      const retrieved = await retrieveStripeRefund({
+        refundId: existingId,
+        fetchImpl: opts?.fetchImpl,
+      });
+      await this.prisma.order.update({
+        where: { id: order.id },
+        data: {
+          meta: {
+            ...prevMeta,
+            stripeRefundId: retrieved.refundId,
+            stripeRefundAmountMinor: retrieved.amountMinor,
+            stripeRefundCurrency: retrieved.currency,
+            stripeRefundStatus: retrieved.status,
+            ledgerCurrency: 'USD',
+          } as any,
+        },
+      });
       return {
-        refundId: String(prevMeta.stripeRefundId),
-        alreadyRefunded: true,
-        amountMinor: Number(prevMeta.stripeRefundAmountMinor) || Number(order.amountVnd),
-        currency: String(prevMeta.stripeRefundCurrency || 'usd'),
-        status: 'succeeded',
+        refundId: retrieved.refundId,
+        alreadyRefunded: retrieved.alreadyRefunded,
+        amountMinor: retrieved.amountMinor,
+        currency: retrieved.currency,
+        status: retrieved.status,
       };
     }
 
@@ -53,7 +80,38 @@ export class AdminRefundService {
       amountMinor: Number.isFinite(amountMinor) && amountMinor > 0 ? amountMinor : undefined,
       idempotencyKey: `velvet-refund:${order.orderNo}`,
       metadata: { orderNo: order.orderNo, order_no: order.orderNo },
+      fetchImpl: opts?.fetchImpl,
     });
+
+    // Partial Stripe refunds are not supported for local entitlement revoke.
+    if (
+      !isFullStripeRefund({
+        refundAmountMinor: stripe.amountMinor,
+        orderAmountMinor: amountMinor,
+      }) &&
+      stripe.amountMinor > 0 &&
+      Number.isFinite(amountMinor) &&
+      amountMinor > 0
+    ) {
+      await this.prisma.order.update({
+        where: { id: order.id },
+        data: {
+          meta: {
+            ...prevMeta,
+            stripeRefundId: stripe.refundId,
+            stripeRefundAmountMinor: stripe.amountMinor,
+            stripeRefundCurrency: stripe.currency,
+            stripeRefundStatus: stripe.status,
+            partialRefundPending: true,
+            ledgerCurrency: 'USD',
+          } as any,
+        },
+      });
+      throw new BizException(
+        BizCode.CONFLICT,
+        'stripe.partialRefundUnsupported',
+      );
+    }
 
     await this.prisma.order.update({
       where: { id: order.id },
@@ -113,7 +171,7 @@ export class AdminRefundService {
     return { orderNo: updated.orderNo, refundStatus: updated.refundStatus };
   }
 
-  async approve(orderNo: string, actorId?: bigint) {
+  async approve(orderNo: string, actorId?: bigint, opts?: { fetchImpl?: typeof fetch }) {
     const order = await this.prisma.order.findUnique({ where: { orderNo } });
     if (!order) throw new BizException(BizCode.NOT_FOUND, 'order.notFound');
     if (order.paymentStatus === 'REFUNDED') {
@@ -130,8 +188,32 @@ export class AdminRefundService {
       throw new BizException(BizCode.ORDER_NOT_PAID, 'Đơn chưa thanh toán');
     }
 
-    // Stripe real-money refund first; local credits/VIP revoke second (webhook is idempotent).
-    const providerRefund = await this.ensureProviderRefund(order);
+    // Stripe real-money refund first; local credits/VIP revoke only after succeeded.
+    const providerRefund = await this.ensureProviderRefund(order, opts);
+    if (
+      providerRefund &&
+      !isStripeRefundSucceeded(providerRefund.status)
+    ) {
+      await this.audit.write({
+        actorId,
+        action: 'order.refund.pending_provider',
+        targetType: 'order',
+        targetId: orderNo,
+        payload: {
+          orderType: order.orderType,
+          stripeRefundId: providerRefund.refundId,
+          stripeRefundStatus: providerRefund.status,
+        },
+      });
+      return {
+        refunded: false,
+        alreadyRefunded: false,
+        pendingProvider: true,
+        orderNo,
+        stripeRefundId: providerRefund.refundId,
+        stripeRefundStatus: providerRefund.status,
+      };
+    }
 
     let refund: { refunded: boolean; alreadyRefunded: boolean; orderNo: string };
     if (order.orderType === 'EPISODE_UNLOCK') {
@@ -164,6 +246,7 @@ export class AdminRefundService {
         amountCredits: (order.amountCredits ?? 0n).toString(),
         alreadyRefunded: refund.alreadyRefunded,
         stripeRefundId: providerRefund?.refundId ?? null,
+        stripeRefundStatus: providerRefund?.status ?? null,
       },
     });
     return { ...refund, stripeRefundId: providerRefund?.refundId ?? null };

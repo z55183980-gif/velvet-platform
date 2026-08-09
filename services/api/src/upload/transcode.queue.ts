@@ -2,6 +2,10 @@ import { ConfigService } from '@nestjs/config';
 import IORedis from 'ioredis';
 
 export const TRANSCODE_QUEUE_NAME = 'velvet-transcode';
+/** Redis key written by velvet-worker; API readiness checks freshness. */
+export const WORKER_HEARTBEAT_KEY = 'velvet:worker:heartbeat';
+export const WORKER_HEARTBEAT_TTL_SEC = 90;
+export const WORKER_HEARTBEAT_MAX_AGE_MS = 60_000;
 
 export type TranscodeQueueJobData = {
   jobId: string;

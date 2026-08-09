@@ -12,6 +12,7 @@ import {
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import {
+  ADMIN_TOKEN_KEY,
   adminLogout as apiLogout,
   adminMe,
   clearAdminToken,
@@ -82,11 +83,56 @@ export function AdminSessionProvider({ children }: { children: ReactNode }) {
     void refresh();
   }, [refresh]);
 
+  // Cross-tab logout/login: drop privileged QueryClient cache when token changes.
+  useEffect(() => {
+    const onStorage = (ev: StorageEvent) => {
+      if (ev.key !== ADMIN_TOKEN_KEY) return;
+      memoryAdmin = null;
+      setAdmin(null);
+      clearCachedQueries();
+      if (!ev.newValue) {
+        setReady(true);
+        router.replace("/login");
+        return;
+      }
+      void refresh();
+    };
+    const bc =
+      typeof BroadcastChannel !== "undefined"
+        ? new BroadcastChannel("velvet-admin-session")
+        : null;
+    const onBroadcast = (ev: MessageEvent) => {
+      const type = (ev.data as { type?: string } | null)?.type;
+      if (type !== "token-changed" && type !== "logout") return;
+      memoryAdmin = null;
+      setAdmin(null);
+      clearCachedQueries();
+      if (type === "logout" || !getAdminToken()) {
+        setReady(true);
+        router.replace("/login");
+        return;
+      }
+      void refresh();
+    };
+    window.addEventListener("storage", onStorage);
+    bc?.addEventListener("message", onBroadcast);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      bc?.removeEventListener("message", onBroadcast);
+      bc?.close();
+    };
+  }, [clearCachedQueries, refresh, router]);
+
   const logout = useCallback(async () => {
     await apiLogout();
     memoryAdmin = null;
     setAdmin(null);
     clearCachedQueries();
+    try {
+      new BroadcastChannel("velvet-admin-session").postMessage({ type: "logout" });
+    } catch {
+      /* ignore */
+    }
     router.replace("/login");
   }, [router, clearCachedQueries]);
 

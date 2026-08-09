@@ -31,8 +31,8 @@ const RATES = PLAYER_RATES;
 /** full = desktop-style chrome; feed = 首页流; watch = 剧集内观看 */
 export type VerticalPlayerChrome = "full" | "feed" | "watch";
 
-/** Feed media lifecycle: idle = no attach; warm = next-item short buffer; active = playing. */
-export type MediaTier = "idle" | "warm" | "active";
+/** Feed media lifecycle: idle = no attach; warm = next; warm-far = next+1 short buffer; active = playing. */
+export type MediaTier = "idle" | "warm" | "warm-far" | "active";
 
 type HlsLike = {
   destroy: () => void;
@@ -54,9 +54,18 @@ export function preloadHlsJs() {
   return hlsJsModule;
 }
 
+function isFeedWarmTier(tier: MediaTier) {
+  return tier === "warm" || tier === "warm-far";
+}
+
 function feedHlsBufferConfig(tier: MediaTier) {
+  if (tier === "warm-far") {
+    // Second-next: just enough for a fast double-swipe without stealing current bandwidth.
+    return { maxBufferLength: 2, maxMaxBufferLength: 3 };
+  }
   if (tier === "warm") {
-    return { maxBufferLength: 3, maxMaxBufferLength: 4 };
+    // Slightly longer warm buffer so swipe-in usually has a ready first segment.
+    return { maxBufferLength: 5, maxMaxBufferLength: 6 };
   }
   // Active feed: short buffer for swipe abandonment; still enough for seamless start.
   return { maxBufferLength: 8, maxMaxBufferLength: 12 };
@@ -184,7 +193,7 @@ export function VerticalPlayer({
   const isMediaActive = mediaTier === "active";
   const shouldAttach =
     !!attachMedia &&
-    (mediaTier === "warm" || mediaTier === "active") &&
+    (isFeedWarmTier(mediaTier) || mediaTier === "active") &&
     !!src &&
     !locked &&
     !loginRequired;
@@ -633,7 +642,7 @@ export function VerticalPlayer({
           poster={poster && isImg(poster) ? poster : undefined}
           autoPlay={autoPlay && isMediaActive}
           preload={
-            mediaTier === "warm" ? "auto" : isMediaActive ? "metadata" : "none"
+            isFeedWarmTier(mediaTier) ? "auto" : isMediaActive ? "metadata" : "none"
           }
           playsInline
           muted={muted}

@@ -20,12 +20,29 @@ export function getAdminToken() {
   return localStorage.getItem(ADMIN_TOKEN_KEY) || "";
 }
 
+function broadcastAdminSession(type: "token-changed" | "logout") {
+  if (typeof window === "undefined" || typeof BroadcastChannel === "undefined") return;
+  try {
+    const bc = new BroadcastChannel("velvet-admin-session");
+    bc.postMessage({ type });
+    bc.close();
+  } catch {
+    /* ignore */
+  }
+}
+
 export function setAdminToken(token: string) {
-  if (typeof window !== "undefined") localStorage.setItem(ADMIN_TOKEN_KEY, token);
+  if (typeof window !== "undefined") {
+    localStorage.setItem(ADMIN_TOKEN_KEY, token);
+    broadcastAdminSession("token-changed");
+  }
 }
 
 export function clearAdminToken() {
-  if (typeof window !== "undefined") localStorage.removeItem(ADMIN_TOKEN_KEY);
+  if (typeof window !== "undefined") {
+    localStorage.removeItem(ADMIN_TOKEN_KEY);
+    broadcastAdminSession("logout");
+  }
 }
 
 /** Admin UI is bilingual zh/en only — never fall back to browser language (often vi). */

@@ -35,6 +35,8 @@ export interface WalletInfo {
 }
 
 export type AuthUser = {
+  /** Stable backend user id when session exposes it (preferred cache key). */
+  id?: string | null;
   phone: string | null;
   email: string | null;
   username?: string | null;
@@ -105,8 +107,11 @@ function toUser(s: any, fallback?: string): AuthUser {
   const email = s?.email ?? null;
   const username = s?.username ?? null;
   const nickname = s?.nickname ?? null;
+  const id =
+    s?.id != null && String(s.id).trim() !== "" ? String(s.id) : null;
   const label = nickname || username || email || phone || fallback || "user";
   return {
+    id,
     phone,
     email,
     username,
@@ -126,6 +131,7 @@ function usersEqual(a: AuthUser | null, b: AuthUser | null): boolean {
   if (a === b) return true;
   if (!a || !b) return false;
   return (
+    a.id === b.id &&
     a.phone === b.phone &&
     a.email === b.email &&
     a.username === b.username &&

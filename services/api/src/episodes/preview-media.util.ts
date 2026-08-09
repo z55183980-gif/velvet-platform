@@ -75,7 +75,11 @@ export function pickMasterVariantUri(body: string): string | null {
   return bestUri;
 }
 
-/** Resolve a playlist-relative URI to a posix path (no leading slash). Absolute http(s) returned as-is. */
+/**
+ * Resolve a playlist-relative URI to a posix path (no leading slash).
+ * Absolute http(s) children are returned only as absoluteUrl — callers must
+ * SSRF-validate / allowlist before fetching (prefer relative under same origin).
+ */
 export function resolvePlaylistChildUri(
   playlistRelPath: string,
   uri: string,

@@ -76,5 +76,10 @@ jobs:
       - name: Build
         run: pnpm --filter velvet-api build
 
+      - name: Worker bundle smoke
+        run: |
+          test -f services/api/dist/src/worker.js
+          node --check services/api/dist/src/worker.js
+
       - name: Unit tests
         run: pnpm --filter velvet-api test

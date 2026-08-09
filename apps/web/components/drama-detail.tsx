@@ -72,7 +72,7 @@ function isHls(url: string) {
 
 const PLAY_URL_REFRESH_MS = 5 * 60_000;
 /** Start next-episode media warm once current playback crosses this ratio. */
-const NEXT_WARM_PROGRESS = 0.5;
+const NEXT_WARM_PROGRESS = 0.2;
 
 type PlayUrlCacheEntry = {
   playUrl: string;
@@ -712,7 +712,7 @@ export function DramaDetail({
     };
   }, []);
 
-  // At 50% progress, warm the next episode's first few seconds (paused / short buffer).
+  // At 20% progress, warm the next episode's first few seconds (paused / short buffer).
   useEffect(() => {
     if (!watching || !playUrl || !selected || !data) return;
     const video = videoRef.current;
@@ -1474,7 +1474,6 @@ export function DramaDetail({
           data.episodes.findIndex((e) => e.no === selected.no),
         )
       : 0;
-    const coverUrl = coverIsImg ? drama.cover[0] : undefined;
     const pagerMenusOpen = showRate || showMore || showQuality || drawerOpen;
 
     return (
@@ -1732,8 +1731,6 @@ export function DramaDetail({
                 if (offset !== 0) {
                   return (
                     <WatchEpisodePeek
-                      coverUrl={coverUrl}
-                      coverFallback={drama.cover}
                       label={t("detail.episodeLabel", { n: ep.no })}
                       title={title}
                     />
@@ -1752,7 +1749,6 @@ export function DramaDetail({
                       onPlaybackRateChange={setRate}
                       attachMedia={false}
                       src={canPlay && playUrl ? playUrl : null}
-                      poster={coverUrl}
                       autoPlay
                       muted={muted}
                       onMutedChange={setMuted}
@@ -2781,29 +2777,14 @@ export function DramaDetail({
 }
 
 function WatchEpisodePeek({
-  coverUrl,
-  coverFallback,
   label,
   title,
 }: {
-  coverUrl?: string;
-  coverFallback: string[];
   label: string;
   title: string;
 }) {
   return (
     <div className="relative h-full min-h-0 overflow-hidden bg-black">
-      {coverUrl ? (
-        <SafeImage src={coverUrl} alt={title} className="h-full w-full object-cover" draggable={false} />
-      ) : (
-        <div
-          className="h-full w-full"
-          style={{
-            background: `linear-gradient(150deg, ${coverFallback[0]}, ${coverFallback[1] || coverFallback[0]})`,
-          }}
-        />
-      )}
-      <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-transparent to-black/25" />
       <div className="absolute inset-x-0 bottom-24 px-3">
         <p className="truncate text-[17px] font-semibold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.65)]">
           {title}
