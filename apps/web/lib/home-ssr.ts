@@ -1,9 +1,13 @@
-import { resolveApiProxyTarget } from "./api-proxy-target.mjs";
 import { mapDrama, type HomeBanner } from "./api";
 import type { Drama } from "./mock-data";
+import { serverApiGet } from "./ssr-api";
 
 /** PC Popular dramas page size (API max is 50). */
 export const HOME_PAGE_SIZE = 30;
+
+/** Mobile VerticalFeed page size (matches vertical-feed.tsx). */
+export const HOME_FEED_PAGE_SIZE = 20;
+export const HOME_FEED_PIN_HOTTEST = 3;
 
 export type HomeDesktopInitial = {
   banners: HomeBanner[];
@@ -15,29 +19,12 @@ export type HomeDesktopInitial = {
   hasMore: boolean;
 };
 
-const HOME_SSR_TIMEOUT_MS = 5_000;
-
-type ApiEnvelope<T> = {
-  code?: number;
-  data?: T;
-  message?: unknown;
+export type HomeMobileFeedInitial = {
+  rows: Drama[];
+  page: number;
+  hasMore: boolean;
+  total: number;
 };
-
-async function serverApiGet<T>(path: string): Promise<T> {
-  const base = resolveApiProxyTarget();
-  const res = await fetch(`${base}/api/v1${path}`, {
-    headers: { Accept: "application/json", "Accept-Language": "en" },
-    next: { revalidate: 30 },
-    signal: AbortSignal.timeout(HOME_SSR_TIMEOUT_MS),
-  });
-  const json = (await res.json().catch(() => null)) as ApiEnvelope<T> | null;
-  if (!res.ok || !json || json.code !== 0 || json.data === undefined) {
-    throw new Error(
-      `[home-ssr] ${path} failed (${res.status})${json?.message ? `: ${String(json.message)}` : ""}`,
-    );
-  }
-  return json.data;
-}
 
 function mapBanner(b: any): HomeBanner {
   return {
@@ -65,10 +52,11 @@ export function likelyMobileUserAgent(ua: string): boolean {
 export async function loadHomeDesktopInitial(): Promise<HomeDesktopInitial | null> {
   try {
     const [bannersRaw, featuredRaw, homeRaw] = await Promise.all([
-      serverApiGet<any[]>("/banners").catch(() => []),
-      serverApiGet<any[]>("/dramas/featured").catch(() => []),
+      serverApiGet<any[]>("/banners", "home-ssr").catch(() => []),
+      serverApiGet<any[]>("/dramas/featured", "home-ssr").catch(() => []),
       serverApiGet<{ rows: any[]; total: number }>(
         `/dramas?page=1&pageSize=${HOME_PAGE_SIZE}&sort=hot`,
+        "home-ssr",
       ),
     ]);
     const banners = (Array.isArray(bannersRaw) ? bannersRaw : []).map(mapBanner);
@@ -89,6 +77,42 @@ export async function loadHomeDesktopInitial(): Promise<HomeDesktopInitial | nul
     if (process.env.NODE_ENV === "production") {
       console.warn(
         "[home-ssr] desktop initial load failed:",
+        err instanceof Error ? err.message : err,
+      );
+    }
+    return null;
+  }
+}
+
+/**
+ * Server prefetch for mobile home VerticalFeed (ops hottest pins + 7d heat).
+ */
+export async function loadHomeMobileFeedInitial(): Promise<HomeMobileFeedInitial | null> {
+  try {
+    const params = new URLSearchParams({
+      page: "1",
+      pageSize: String(HOME_FEED_PAGE_SIZE),
+      pinHottest: String(HOME_FEED_PIN_HOTTEST),
+    });
+    const feedRaw = await serverApiGet<{
+      rows: any[];
+      total: number;
+      hasMore?: boolean;
+      page?: number;
+    }>(`/dramas/feed?${params.toString()}`, "home-ssr");
+    const rows = (Array.isArray(feedRaw?.rows) ? feedRaw.rows : []).map(mapDrama);
+    const total = Number(feedRaw?.total) || rows.length;
+    if (rows.length === 0) return null;
+    const page = feedRaw.page || 1;
+    const hasMore =
+      typeof feedRaw.hasMore === "boolean"
+        ? feedRaw.hasMore
+        : page * HOME_FEED_PAGE_SIZE < total;
+    return { rows, page, hasMore, total };
+  } catch (err) {
+    if (process.env.NODE_ENV === "production") {
+      console.warn(
+        "[home-ssr] mobile feed initial load failed:",
         err instanceof Error ? err.message : err,
       );
     }

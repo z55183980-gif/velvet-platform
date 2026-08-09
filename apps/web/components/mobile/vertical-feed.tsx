@@ -255,13 +255,25 @@ type HomeFeedSnapshot = {
 /** Preserve the home feed while a client-side watch route is open. */
 let homeFeedSnapshot: HomeFeedSnapshot | null = null;
 
+/** Soft-nav peek so Home can skip the desktop skeleton gate before useIsMobile is ready. */
+export function peekHomeFeedSnapshot(): HomeFeedSnapshot | null {
+  return homeFeedSnapshot;
+}
+
 export function VerticalFeed({
   dramas: dramasProp,
   source,
+  initialFeed,
 }: {
   dramas?: Drama[];
   /** When "home", load GET /dramas/feed with paging (ops pin + 7d heat). */
   source?: "home";
+  /** SSR seed for cold mobile home (ignored when module snapshot exists). */
+  initialFeed?: {
+    rows: Drama[];
+    page: number;
+    hasMore: boolean;
+  } | null;
 }) {
   const { t } = useLocale();
   const { user, unlocked } = useAuth();
@@ -281,20 +293,24 @@ export function VerticalFeed({
   const togglePlayRef = useRef<(() => void) | null>(null);
 
   const [dramas, setDramas] = useState<Drama[]>(() =>
-    restoredHomeFeed?.dramas ?? dramasProp ?? [],
+    restoredHomeFeed?.dramas ?? initialFeed?.rows ?? dramasProp ?? [],
   );
   const [bootLoading, setBootLoading] = useState(
-    source === "home" && !restoredHomeFeed && !(dramasProp && dramasProp.length),
+    source === "home" &&
+      !restoredHomeFeed &&
+      !(initialFeed?.rows.length) &&
+      !(dramasProp && dramasProp.length),
   );
-  const [page, setPage] = useState(() => restoredHomeFeed?.page ?? 1);
+  const [page, setPage] = useState(() => restoredHomeFeed?.page ?? initialFeed?.page ?? 1);
   const [hasMore, setHasMore] = useState(() =>
-    restoredHomeFeed?.hasMore ?? source === "home",
+    restoredHomeFeed?.hasMore ?? initialFeed?.hasMore ?? source === "home",
   );
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const loadMoreLock = useRef(false);
   const shouldRestoreHomeFeed = !!(restoredHomeFeed && restoredHomeFeed.dramas.length > 0);
+  const seededFromSsr = !!(initialFeed?.rows.length);
 
   useEffect(() => {
     try {
@@ -322,6 +338,11 @@ export function VerticalFeed({
   useEffect(() => {
     if (source !== "home") return;
     if (shouldRestoreHomeFeed) return;
+    // Cold mobile home already has SSR rows — keep them (reloadKey forces refetch).
+    if (seededFromSsr && reloadKey === 0) {
+      setBootLoading(false);
+      return;
+    }
     const ac = new AbortController();
     setBootLoading(true);
     setLoadError(false);
@@ -342,7 +363,7 @@ export function VerticalFeed({
         if (!ac.signal.aborted) setBootLoading(false);
       });
     return () => ac.abort();
-  }, [source, shouldRestoreHomeFeed, reloadKey]);
+  }, [source, shouldRestoreHomeFeed, reloadKey, seededFromSsr]);
 
   useEffect(() => {
     if (source !== "home" || dramas.length === 0) return;

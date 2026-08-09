@@ -5,10 +5,14 @@ import { useSearchParams } from "next/navigation";
 import { useLocale } from "@/lib/i18n";
 import { dramaToHeroSlide, Hero, type HeroSlide } from "@/components/hero";
 import { DramaCard } from "@/components/drama-card";
-import { VerticalFeed } from "@/components/mobile/vertical-feed";
+import { VerticalFeed, peekHomeFeedSnapshot } from "@/components/mobile/vertical-feed";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { loadBanners, loadFeatured, loadHome, type HomeBanner } from "@/lib/api";
-import { HOME_PAGE_SIZE, type HomeDesktopInitial } from "@/lib/home-ssr";
+import {
+  HOME_PAGE_SIZE,
+  type HomeDesktopInitial,
+  type HomeMobileFeedInitial,
+} from "@/lib/home-ssr";
 import type { Drama } from "@/lib/mock-data";
 import { cn } from "@/lib/utils";
 import { DataErrorState } from "@/components/data-error-state";
@@ -130,7 +134,15 @@ function toCacheEntry(
   };
 }
 
-function HomeInner({ initialUnfiltered }: { initialUnfiltered: HomeDesktopInitial | null }) {
+function HomeInner({
+  initialUnfiltered,
+  initialMobileFeed,
+  preferMobileFeed,
+}: {
+  initialUnfiltered: HomeDesktopInitial | null;
+  initialMobileFeed: HomeMobileFeedInitial | null;
+  preferMobileFeed: boolean;
+}) {
   const { locale, t } = useLocale();
   const { mobile: isMobile, ready: mobileReady } = useIsMobile();
   const params = useSearchParams();
@@ -488,24 +500,61 @@ function HomeInner({ initialUnfiltered }: { initialUnfiltered: HomeDesktopInitia
 
   const gridDramas = hot.length > 0 ? hot : rows;
 
-  // Wait for breakpoint before choosing mobile feed vs desktop grid (avoids layout flash).
-  // Soft-nav remounts / SSR always start ready=false; paint desktop immediately when we
-  // already have grid data so PC users never see an empty skeleton shell.
-  if (!mobileReady && !restoredDesktop) {
-    return (
-      <div className="mx-auto max-w-[1280px] px-4 py-10 md:px-10">
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
-          {Array.from({ length: 12 }).map((_, i) => (
-            <div key={i} className="aspect-[2/3] animate-pulse rounded-lg bg-surface-2" />
-          ))}
+  const mobileFeedSeeded =
+    !filtered &&
+    (preferMobileFeed ||
+      !!(initialMobileFeed && initialMobileFeed.rows.length > 0) ||
+      !!(peekHomeFeedSnapshot()?.dramas.length));
+
+  // Soft-nav remounts / SSR always start ready=false.
+  // - PC with desktop snapshot/SSR: paint grid immediately
+  // - Mobile UA / feed snapshot / SSR feed: paint VerticalFeed immediately (never the PC grid skeleton)
+  if (!mobileReady) {
+    if (mobileFeedSeeded) {
+      return (
+        <VerticalFeed
+          source="home"
+          initialFeed={
+            initialMobileFeed
+              ? {
+                  rows: initialMobileFeed.rows,
+                  page: initialMobileFeed.page,
+                  hasMore: initialMobileFeed.hasMore,
+                }
+              : null
+          }
+        />
+      );
+    }
+    if (!restoredDesktop) {
+      return (
+        <div className="mx-auto max-w-[1280px] px-4 py-10 md:px-10">
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
+            {Array.from({ length: 12 }).map((_, i) => (
+              <div key={i} className="aspect-[2/3] animate-pulse rounded-lg bg-surface-2" />
+            ))}
+          </div>
         </div>
-      </div>
-    );
+      );
+    }
   }
 
   // Mobile home: mixed feed (ops hottest + 7d heat), self-paging
   if (mobileReady && isMobile && !filtered) {
-    return <VerticalFeed source="home" />;
+    return (
+      <VerticalFeed
+        source="home"
+        initialFeed={
+          initialMobileFeed
+            ? {
+                rows: initialMobileFeed.rows,
+                page: initialMobileFeed.page,
+                hasMore: initialMobileFeed.hasMore,
+              }
+            : null
+        }
+      />
+    );
   }
 
   const showSkeleton = initialLoading && gridDramas.length === 0 && rows.length === 0;
@@ -601,12 +650,20 @@ function HomeInner({ initialUnfiltered }: { initialUnfiltered: HomeDesktopInitia
 
 export function HomeClient({
   initialUnfiltered,
+  initialMobileFeed,
+  preferMobileFeed = false,
 }: {
   initialUnfiltered: HomeDesktopInitial | null;
+  initialMobileFeed?: HomeMobileFeedInitial | null;
+  preferMobileFeed?: boolean;
 }) {
   return (
     <Suspense fallback={null}>
-      <HomeInner initialUnfiltered={initialUnfiltered} />
+      <HomeInner
+        initialUnfiltered={initialUnfiltered}
+        initialMobileFeed={initialMobileFeed ?? null}
+        preferMobileFeed={preferMobileFeed}
+      />
     </Suspense>
   );
 }
