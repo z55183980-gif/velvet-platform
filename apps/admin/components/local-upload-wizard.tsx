@@ -816,7 +816,7 @@ export const LocalUploadWizard = forwardRef<
     // Only validate when the operator manually overrode 总集数 (empty/auto remains allowed).
     if (totalEpisodesDirty) {
       if (!Number.isInteger(totalEpisodes)) return t("totalEpisodesMustBeInteger");
-      if (totalEpisodes <= episodes.length) {
+      if (totalEpisodes < episodes.length) {
         return t("totalEpisodesMustExceedUploaded", { n: episodes.length });
       }
     }
