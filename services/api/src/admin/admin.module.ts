@@ -36,6 +36,8 @@ import { CreatorsController } from './creators.controller';
 import { OpsController } from './ops.controller';
 import { SettingsController } from './settings.controller';
 import { AdminNotificationsController } from './notifications.controller';
+import { AdminFeedbackController } from './feedback.controller';
+import { AdminFeedbackService } from './feedback.service';
 import { YtdlpProvider } from './ytdlp.provider';
 import { YtdlpImportService } from './ytdlp-import.service';
 import { UploadModule } from '../upload/upload.module';
@@ -57,6 +59,7 @@ import { CloudflareAnalyticsService } from './cloudflare-analytics.service';
     OpsController,
     SettingsController,
     AdminNotificationsController,
+    AdminFeedbackController,
     OpsMonitorController,
   ],
   providers: [
@@ -81,6 +84,7 @@ import { CloudflareAnalyticsService } from './cloudflare-analytics.service';
     AdminsService,
     AdminExportService,
     AdminOpsService,
+    AdminFeedbackService,
     YtdlpProvider,
     YtdlpImportService,
     CloudflareAnalyticsService,

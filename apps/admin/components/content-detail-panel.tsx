@@ -130,11 +130,11 @@ type Drama = {
   sourceType?: string;
   tags?: string[];
   creator?: { displayName?: string };
-  category?: { slug?: string; nameZh?: string; nameEn?: string };
+  category?: { slug?: string; nameZh?: string | null; nameEn?: string; nameFr?: string | null };
   episodes?: Episode[];
 };
 
-type Category = { slug: string; nameZh?: string; nameEn?: string };
+type Category = { slug: string; nameZh?: string | null; nameEn?: string; nameFr?: string | null };
 type DetailTab = "overview" | "info" | "episodes" | "policy";
 /** Marker returned by delete mutation so shared onSuccess skips detail refetch. */
 type DramaDeletedResult = { __velvetDramaDeleted: true };
@@ -845,7 +845,7 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
             {drama.isFeatured ? <span className="content-flag content-flag--brand"><Sparkles className="h-3 w-3" />{t("featuredFlag")}</span> : null}
           </div>
           <h1 className="mt-2 truncate text-[22px] font-bold tracking-tight text-ink">{drama.titleEn || drama.titleZh || drama.titleFr || "—"}</h1>
-          <p className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-ink-subtle"><span>{drama.slug}</span><span>·</span><span>{drama.creator?.displayName || "—"}</span><span>·</span><span>{drama.category?.nameZh || drama.category?.nameEn || "—"}</span></p>
+          <p className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-ink-subtle"><span>{drama.slug}</span><span>·</span><span>{drama.creator?.displayName || "—"}</span><span>·</span><span>{drama.category?.nameEn || drama.category?.nameZh || drama.category?.nameFr || "—"}</span></p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
           {(() => {
@@ -1025,7 +1025,7 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
                   <option value="">{t("selectCategory")}</option>
                   {(categoriesQ.data ?? []).map((category) => (
                     <option key={category.slug} value={category.slug}>
-                      {category.nameZh || category.nameEn || category.slug}
+                      {category.nameEn || category.nameZh || category.nameFr || category.slug}
                     </option>
                   ))}
                 </Select>

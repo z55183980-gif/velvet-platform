@@ -127,12 +127,12 @@ const DEFS: Record<string, Def> = {
 };
 
 const CATEGORIES = [
-  { slug: 'do_thi', nameEn: 'Urban', nameZh: '都市' },
-  { slug: 'ngon_tinh', nameEn: 'Romance', nameZh: '言情' },
-  { slug: 'hanh_dong', nameEn: 'Action', nameZh: '动作' },
-  { slug: 'hai_huoc', nameEn: 'Comedy', nameZh: '喜剧' },
-  { slug: 'tam_ly', nameEn: 'Psychological', nameZh: '心理' },
-  { slug: 'co_trang', nameEn: 'Costume', nameZh: '古装' },
+  { slug: 'do_thi', nameEn: 'Urban', nameZh: '都市', nameFr: 'Urbain' },
+  { slug: 'ngon_tinh', nameEn: 'Romance', nameZh: '言情', nameFr: 'Romance' },
+  { slug: 'hanh_dong', nameEn: 'Action', nameZh: '动作', nameFr: 'Action' },
+  { slug: 'hai_huoc', nameEn: 'Comedy', nameZh: '喜剧', nameFr: 'Comédie' },
+  { slug: 'tam_ly', nameEn: 'Psychological', nameZh: '心理', nameFr: 'Psychologique' },
+  { slug: 'co_trang', nameEn: 'Costume', nameZh: '古装', nameFr: 'Costume' },
 ];
 
 function numCmp(a: string, b: string) {

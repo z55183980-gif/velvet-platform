@@ -133,11 +133,12 @@ model Session {
   @@map("sessions")
 }
 
-// ========== 分类（主数据，F9：slug + 双语名）==========
+// ========== 分类（主数据，F9：slug + 三语名；English 为主语言）==========
 model Category {
   slug        String   @id
   nameEn      String
-  nameZh      String
+  nameZh      String?
+  nameFr      String?
   sortOrder   Int      @default(0)
   isActive    Boolean  @default(true)
   createdAt   DateTime @default(now()) @db.Timestamptz

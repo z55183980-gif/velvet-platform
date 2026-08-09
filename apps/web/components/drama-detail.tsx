@@ -1284,7 +1284,7 @@ export function DramaDetail({
   const { drama } = data;
   const title = pickTitleText(locale, drama.titleEn, drama.titleZh, drama.titleFr);
   const desc = pickContentText(locale, drama.descEn, drama.descZh);
-  const cat = categoryName(drama.categorySlug, locale);
+  const cat = categoryName(drama.category ?? drama.categorySlug, locale);
   const coverIsImg = isUrl(drama.cover[0]);
   const favoriteDramaId = drama.numericId || drama.id;
 
@@ -2527,7 +2527,7 @@ export function DramaDetail({
                   const rTitle = pickTitleText(locale, d.titleEn, d.titleZh, d.titleFr);
                   const rCover = isUrl(d.cover[0]);
                   const rTags = toPublicDramaTags(d.tags).slice(0, 3);
-                  const rCat = categoryName(d.categorySlug, locale);
+                  const rCat = categoryName(d.category ?? d.categorySlug, locale);
                   const chipTags = rTags.length ? rTags : rCat ? [rCat] : [];
                   return (
                     <Link key={d.id} href={`/drama/${d.id}`} className="min-w-0">

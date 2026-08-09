@@ -1145,6 +1145,17 @@ export async function adminListWithdraws(params: Record<string, string | number 
   return adminRequest(`/admin/withdraws/list${toQuery(params)}`);
 }
 
+export async function adminListFeedback(params: Record<string, string | number | undefined> = {}) {
+  return adminRequest(`/admin/feedback${toQuery(params)}`);
+}
+
+export async function adminSetFeedbackStatus(id: string, status: "NEW" | "REVIEWING" | "CLOSED") {
+  return adminRequest(`/admin/feedback/${encodeURIComponent(id)}/status`, {
+    method: "POST",
+    body: JSON.stringify({ status }),
+  });
+}
+
 export async function adminPendingWithdraws(overdueHours?: number) {
   return adminRequest(
     `/admin/withdraws/pending${overdueHours != null ? `?overdueHours=${overdueHours}` : ""}`,
@@ -1480,8 +1491,32 @@ export async function adminUpdateStripePaymentGateway(input: {
   });
 }
 
+export type AdminListItem = {
+  id: string;
+  email: string;
+  username: string;
+  displayName?: string | null;
+  status: string;
+  role: "SUPER_ADMIN" | "OPS" | string;
+  lastLoginAt?: string | null;
+  createdAt?: string;
+};
+
 export async function adminListAdmins() {
-  return adminRequest<AdminProfile[]>("/admin/admins");
+  return adminRequest<AdminListItem[]>("/admin/admins");
+}
+
+export async function adminCreateAdmin(body: {
+  email: string;
+  password: string;
+  username?: string;
+  displayName?: string;
+  role?: "SUPER_ADMIN" | "OPS";
+}) {
+  return adminRequest<AdminListItem>("/admin/admins", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 export async function adminSetAdminRole(id: string, role: "SUPER_ADMIN" | "OPS") {

@@ -4,12 +4,12 @@ import * as crypto from 'crypto';
 const prisma = new PrismaClient();
 
 const categories = [
-  { slug: 'do_thi', nameEn: 'Urban', nameZh: '都市', sortOrder: 1 },
-  { slug: 'ngon_tinh', nameEn: 'Romance', nameZh: '言情', sortOrder: 2 },
-  { slug: 'hanh_dong', nameEn: 'Action', nameZh: '动作', sortOrder: 3 },
-  { slug: 'hai_huoc', nameEn: 'Comedy', nameZh: '喜剧', sortOrder: 4 },
-  { slug: 'tam_ly', nameEn: 'Psychological', nameZh: '心理', sortOrder: 5 },
-  { slug: 'co_trang', nameEn: 'Costume', nameZh: '古装', sortOrder: 6 },
+  { slug: 'do_thi', nameEn: 'Urban', nameZh: '都市', nameFr: 'Urbain', sortOrder: 1 },
+  { slug: 'ngon_tinh', nameEn: 'Romance', nameZh: '言情', nameFr: 'Romance', sortOrder: 2 },
+  { slug: 'hanh_dong', nameEn: 'Action', nameZh: '动作', nameFr: 'Action', sortOrder: 3 },
+  { slug: 'hai_huoc', nameEn: 'Comedy', nameZh: '喜剧', nameFr: 'Comédie', sortOrder: 4 },
+  { slug: 'tam_ly', nameEn: 'Psychological', nameZh: '心理', nameFr: 'Psychologique', sortOrder: 5 },
+  { slug: 'co_trang', nameEn: 'Costume', nameZh: '古装', nameFr: 'Costume', sortOrder: 6 },
 ];
 
 interface SeedDrama {

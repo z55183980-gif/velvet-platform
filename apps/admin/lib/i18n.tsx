@@ -150,6 +150,19 @@ const zh = {
   featured: "推荐位",
   hottest: "最热剧集",
   messages: "消息推送",
+  feedback: "反馈投诉",
+  feedbackContactEmail: "联系邮箱",
+  feedbackBody: "内容",
+  feedbackDetail: "反馈详情",
+  feedbackCatFeedback: "反馈",
+  feedbackCatComplaint: "投诉",
+  feedbackCatSuggestion: "建议",
+  feedbackMarkReviewing: "标记处理中",
+  feedbackMarkClosed: "标记已关闭",
+  feedbackReopen: "重新打开",
+  feedbackStatusNew: "待处理",
+  feedbackStatusReviewing: "处理中",
+  feedbackStatusClosed: "已关闭",
   users: "用户列表",
   userOverview: "用户概览",
   usersBanned: "封禁风控",
@@ -588,6 +601,18 @@ const zh = {
   createUser: "创建用户",
   createUserHint: "创建可登录的前台账号；密码至少 6 位。",
   userCreatedOk: "用户已创建",
+  createAdmin: "创建管理员",
+  createAdminHint: "创建可登录管理端的账号；密码至少 8 位。",
+  adminSearchPlaceholder: "邮箱 / 用户名 / 显示名",
+  adminCreatedOk: "管理员已创建",
+  fieldDisplayName: "显示名",
+  roleAll: "全部角色",
+  roleSuperAdmin: "超级管理员",
+  roleOps: "运营",
+  setRoleSuperAdmin: "设为超级管理员",
+  setRoleOps: "设为运营",
+  adminUsernameHint: "3–32 位小写字母、数字或下划线；留空取邮箱前缀",
+  passwordMin8: "密码至少 8 位",
   fieldEmail: "邮箱",
   fieldPhone: "手机",
   fieldNickname: "昵称",
@@ -758,6 +783,9 @@ const zh = {
   // categories / content
   searchTitleSlugCreator: "标题 / slug / 创作者",
   isActive: "是否启用",
+  nameEnLabel: "英文名称",
+  nameZhLabel: "中文名称",
+  nameFrLabel: "法语名称",
 
   // redeem
   batchName: "批次名称",
@@ -1482,6 +1510,7 @@ const zh = {
 
   // categories / wallet validation
   slugRequired: "slug 必填",
+  nameEnRequired: "请填写英文名称",
   userIdRequired: "请填写 userId",
   manualAdjustSuper: "人工调账（SUPER_ADMIN）",
 
@@ -1659,6 +1688,19 @@ const en: Record<LabelKey, string> = {
   featured: "Featured",
   hottest: "Hottest dramas",
   messages: "Push messages",
+  feedback: "Feedback",
+  feedbackContactEmail: "Contact email",
+  feedbackBody: "Message",
+  feedbackDetail: "Feedback detail",
+  feedbackCatFeedback: "Feedback",
+  feedbackCatComplaint: "Complaint",
+  feedbackCatSuggestion: "Suggestion",
+  feedbackMarkReviewing: "Mark reviewing",
+  feedbackMarkClosed: "Mark closed",
+  feedbackReopen: "Reopen",
+  feedbackStatusNew: "New",
+  feedbackStatusReviewing: "Reviewing",
+  feedbackStatusClosed: "Closed",
   users: "Users",
   userOverview: "User overview",
   usersBanned: "Bans & risk",
@@ -2093,6 +2135,18 @@ const en: Record<LabelKey, string> = {
   createUser: "Create user",
   createUserHint: "Create a front-end login account. Password must be at least 6 characters.",
   userCreatedOk: "User created",
+  createAdmin: "Create admin",
+  createAdminHint: "Create a backend login account. Password must be at least 8 characters.",
+  adminSearchPlaceholder: "email / username / display name",
+  adminCreatedOk: "Admin created",
+  fieldDisplayName: "Display name",
+  roleAll: "All roles",
+  roleSuperAdmin: "Super admin",
+  roleOps: "Ops",
+  setRoleSuperAdmin: "Set as super admin",
+  setRoleOps: "Set as ops",
+  adminUsernameHint: "3–32 lowercase letters, numbers, or underscores; leave blank to use email prefix",
+  passwordMin8: "Password must be at least 8 characters",
   fieldEmail: "Email",
   fieldPhone: "Phone",
   fieldNickname: "Nickname",
@@ -2261,6 +2315,9 @@ const en: Record<LabelKey, string> = {
 
   searchTitleSlugCreator: "Title / slug / creator",
   isActive: "Active",
+  nameEnLabel: "English name",
+  nameZhLabel: "Chinese name",
+  nameFrLabel: "French name",
 
   batchName: "Batch name",
   voidUnused: "Void unused",
@@ -2996,6 +3053,7 @@ const en: Record<LabelKey, string> = {
   reconcileTab: "Reconcile",
 
   slugRequired: "Slug is required",
+  nameEnRequired: "English name is required",
   userIdRequired: "Please enter userId",
   manualAdjustSuper: "Manual adjustment (SUPER_ADMIN)",
 
@@ -3158,8 +3216,16 @@ export function statusLabel(tFn: I18nContextValue["t"], status?: string | null) 
   switch (status) {
     case "ALL":
       return tFn("statusAll");
+    case "NEW":
+      return tFn("feedbackStatusNew");
+    case "REVIEWING":
+      return tFn("feedbackStatusReviewing");
+    case "CLOSED":
+      return tFn("feedbackStatusClosed");
     case "ACTIVE":
       return tFn("statusActive");
+    case "DISABLED":
+      return tFn("statusSuspended");
     case "SUSPENDED":
       return tFn("statusSuspended");
     case "BANNED":

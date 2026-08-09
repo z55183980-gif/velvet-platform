@@ -28,6 +28,7 @@ import {
   LayoutGrid,
   LogOut,
   Menu,
+  MessageSquareWarning,
   Plus,
   Settings2,
   Activity,
@@ -77,7 +78,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/content", key: "content", icon: Clapperboard, end: true },
       { href: "/content?view=pending", key: "contentPending", icon: ShieldCheck, end: true },
       { href: "/hottest", key: "hottest", icon: Flame, end: true },
-      { href: "/content?modal=categories", key: "categories", icon: FolderTree, end: true },
+      { href: "/categories", key: "categories", icon: FolderTree, end: true },
     ],
   },
   {
@@ -87,6 +88,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/banners", key: "banners", icon: LayoutGrid },
       { href: "/featured", key: "featured", icon: Star, end: true },
       { href: "/messages", key: "messages", icon: Inbox, end: true },
+      { href: "/feedback", key: "feedback", icon: MessageSquareWarning, end: true },
     ],
   },
   {
@@ -145,29 +147,22 @@ function isActive(pathname: string, searchParams: URLSearchParams, item: NavItem
       const matched =
         view === "pending" ||
         (!view && searchParams.get("status") === "PENDING_REVIEW");
-      return pathname === path && matched && searchParams.get("modal") !== "categories";
+      return pathname === path && matched;
     }
 
     for (const [key, value] of params.entries()) {
       if (searchParams.get(key) !== value) return false;
     }
-    // List-filter nav items should not stay active when a form modal is open.
-    if (!params.has("modal") && searchParams.get("modal") === "categories") return false;
     return pathname === path;
   }
 
   if (path === "/content") {
-    const modal = searchParams.get("modal");
     const view = searchParams.get("view");
     const status = searchParams.get("status");
     // Pending keeps its own nav item; latest bookmarks stay under 剧集管理.
     const isPending =
       view === "pending" || status === "PENDING_REVIEW";
-    return (
-      pathname === "/content" &&
-      !isPending &&
-      (!modal || modal === "detail")
-    );
+    return pathname === "/content" && !isPending;
   }
 
   if (path === "/content/add") {

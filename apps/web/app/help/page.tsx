@@ -149,6 +149,9 @@ export default function HelpPage() {
             <div>
               <label htmlFor="help-email" className="mb-2 block text-sm text-ink-muted">
                 {t("help.emailLabel")}
+                <span className="ml-0.5 text-danger" aria-hidden>
+                  *
+                </span>
               </label>
               <input
                 id="help-email"

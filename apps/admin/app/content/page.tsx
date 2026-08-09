@@ -27,7 +27,6 @@ import {
 } from "@velvet/api-client";
 import { Badge, Button, DataTable, Input, Select, Switch, fmtNum, type Column } from "@velvet/ui";
 import { AdminShell } from "@/components/admin-shell";
-import { CategoriesModal } from "@/components/categories-modal";
 import { ContentDetailModal } from "@/components/content-detail-modal";
 import {
   ContentSearchBar,
@@ -60,9 +59,9 @@ type Drama = {
   createdAt?: string | null;
   _count?: { episodes?: number };
 };
-type Category = { slug: string; nameZh?: string; nameEn?: string };
+type Category = { slug: string; nameZh?: string; nameEn?: string; nameFr?: string };
 type Creator = { id: string | number; displayName?: string };
-type ContentModal = "detail" | "categories";
+type ContentModal = "detail";
 type ContentView = "all" | "latest" | "pending";
 
 const statuses = ["ALL", "DRAFT", "PENDING_REVIEW", "LIVE", "OFFLINE", "REJECTED"];
@@ -493,8 +492,7 @@ function AdminContentInner() {
   const pageFromUrl = Math.max(1, Number(searchParams.get("page") || 1) || 1);
   const pageSizeFromUrl = parsePageSize(searchParams.get("pageSize"));
   const modalParam = searchParams.get("modal");
-  const modal =
-    modalParam === "detail" || modalParam === "categories" ? modalParam : null;
+  const modal: ContentModal | null = modalParam === "detail" ? "detail" : null;
   const detailId = modal === "detail" ? searchParams.get("id") : null;
   const detailTab = modal === "detail" ? parseContentDetailTab(searchParams.get("tab")) : null;
   const urlFilterKey = searchParams.toString();
@@ -525,6 +523,10 @@ function AdminContentInner() {
   const [menuBusyId, setMenuBusyId] = useState<string | null>(null);
 
   useEffect(() => {
+    if (modalParam === "categories") {
+      router.replace("/categories");
+      return;
+    }
     if (modalParam !== "add") return;
     const tab = searchParams.get("tab");
     const qs =
@@ -1631,7 +1633,6 @@ function AdminContentInner() {
         initialTab={detailTab ?? undefined}
         onClose={closeModal}
       />
-      <CategoriesModal open={modal === "categories"} onClose={closeModal} />
       <ConfirmModal
         open={lifecycleConfirm === "offline"}
         onClose={() => setLifecycleConfirm(null)}

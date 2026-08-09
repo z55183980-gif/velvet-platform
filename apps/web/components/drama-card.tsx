@@ -28,7 +28,7 @@ export function DramaCard({
 }) {
   const { locale, t } = useLocale();
   const title = pickTitleText(locale, drama.titleEn, drama.titleZh, drama.titleFr);
-  const cat = categoryName(drama.categorySlug, locale);
+  const cat = categoryName(drama.category ?? drama.categorySlug, locale);
   const isFree = drama.freeCount > 0;
   const isGrid = variant === "grid";
 

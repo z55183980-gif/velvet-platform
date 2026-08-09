@@ -812,7 +812,7 @@ export class AdminService {
       await this.prisma.category.upsert({
         where: { slug: c.slug },
         create: c,
-        update: { nameEn: c.nameEn, nameZh: c.nameZh },
+        update: { nameEn: c.nameEn, nameZh: c.nameZh, nameFr: c.nameFr },
       });
     }
 
@@ -1196,14 +1196,22 @@ export class AdminService {
   }
 
   async createCategory(
-    dto: { slug: string; nameEn: string; nameZh: string; sortOrder?: number; isActive?: boolean },
+    dto: {
+      slug: string;
+      nameEn: string;
+      nameZh?: string | null;
+      nameFr?: string | null;
+      sortOrder?: number;
+      isActive?: boolean;
+    },
     actorId?: bigint,
   ) {
     const cat = await this.prisma.category.create({
       data: {
         slug: dto.slug,
-        nameEn: dto.nameEn,
-        nameZh: dto.nameZh,
+        nameEn: dto.nameEn.trim(),
+        nameZh: dto.nameZh?.trim() || null,
+        nameFr: dto.nameFr?.trim() || null,
         sortOrder: dto.sortOrder ?? 0,
         isActive: dto.isActive ?? true,
       },
@@ -1220,8 +1228,9 @@ export class AdminService {
 
   async updateCategory(slug: string, dto: any, actorId?: bigint) {
     const data: any = {};
-    if (dto.nameEn != null) data.nameEn = dto.nameEn;
-    if (dto.nameZh != null) data.nameZh = dto.nameZh;
+    if (dto.nameEn != null) data.nameEn = String(dto.nameEn).trim();
+    if (dto.nameZh !== undefined) data.nameZh = dto.nameZh?.trim() || null;
+    if (dto.nameFr !== undefined) data.nameFr = dto.nameFr?.trim() || null;
     if (dto.sortOrder != null) data.sortOrder = Number(dto.sortOrder);
     if (dto.isActive != null) data.isActive = !!dto.isActive;
     const cat = await this.prisma.category.update({

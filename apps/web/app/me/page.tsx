@@ -449,29 +449,41 @@ export default function AccountPage() {
 
   if (!user) {
     return (
-      <div className="mx-auto max-w-[480px] px-4 py-20 text-center">
-        <p className="text-overline uppercase tracking-widest text-brand">{t("account.title")}</p>
-        <h1 className="mt-2 text-h2 font-semibold text-ink">{t("account.loginHint")}</h1>
-        <p className="mt-3 text-body text-ink-muted">{t("account.loginVipHint")}</p>
-        <div className="mt-8 flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
-          <button
-            onClick={() => openLogin("login")}
-            className="rounded-full bg-brand px-6 py-3 text-body-sm font-medium text-white hover:opacity-90"
+      <div className="pb-16 md:pb-0">
+        <div className="flex items-center justify-end gap-1 px-3 pt-2 md:hidden">
+          <Link
+            href="/help"
+            className="grid h-10 w-10 place-items-center rounded-full text-ink-muted hover:bg-surface-2 hover:text-ink"
+            aria-label={t("nav.help")}
+            title={t("nav.help")}
           >
-            {t("account.loginNow")}
-          </button>
-          <button
-            onClick={() => openLogin("register")}
-            className="rounded-full bg-gold px-6 py-3 text-body-sm font-semibold text-ink hover:opacity-90"
-          >
-            {t("account.freeRegister")}
-          </button>
+            <HelpCircle className="h-5 w-5" />
+          </Link>
         </div>
-        <div className="mt-10 rounded-2xl border border-line/80 bg-surface text-left">
-          <div className="flex items-center gap-3 px-4 py-3">
-            <Languages className="h-4 w-4 text-ink-muted" />
-            <span className="flex-1 text-body-sm text-ink">{t("account.language")}</span>
-            <LanguageSwitcher />
+        <div className="mx-auto max-w-[480px] px-4 py-20 text-center">
+          <p className="text-overline uppercase tracking-widest text-brand">{t("account.title")}</p>
+          <h1 className="mt-2 text-h2 font-semibold text-ink">{t("account.loginHint")}</h1>
+          <p className="mt-3 text-body text-ink-muted">{t("account.loginVipHint")}</p>
+          <div className="mt-8 flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
+            <button
+              onClick={() => openLogin("login")}
+              className="rounded-full bg-brand px-6 py-3 text-body-sm font-medium text-white hover:opacity-90"
+            >
+              {t("account.loginNow")}
+            </button>
+            <button
+              onClick={() => openLogin("register")}
+              className="rounded-full bg-gold px-6 py-3 text-body-sm font-semibold text-ink hover:opacity-90"
+            >
+              {t("account.freeRegister")}
+            </button>
+          </div>
+          <div className="mt-10 rounded-2xl border border-line/80 bg-surface text-left">
+            <div className="flex items-center gap-3 px-4 py-3">
+              <Languages className="h-4 w-4 text-ink-muted" />
+              <span className="flex-1 text-body-sm text-ink">{t("account.language")}</span>
+              <LanguageSwitcher />
+            </div>
           </div>
         </div>
       </div>
@@ -562,8 +574,6 @@ export default function AccountPage() {
         onRedeem={onRedeem}
         showNickname={showNickname}
         setShowNickname={setShowNickname}
-        showHelp={showHelp}
-        setShowHelp={setShowHelp}
         refundBusy={refundBusy}
         onRefund={onRefund}
       />

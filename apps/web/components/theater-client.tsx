@@ -6,7 +6,7 @@ import { useLocale } from "@/lib/i18n";
 import { DramaCard } from "@/components/drama-card";
 import { loadCategories, loadHome, loadHottest } from "@/lib/api";
 import type { Category, Drama } from "@/lib/mock-data";
-import { pickContentText } from "@/lib/languages";
+import { pickTitleText } from "@/lib/languages";
 import { cn } from "@/lib/utils";
 import { DataErrorState } from "@/components/data-error-state";
 import {
@@ -459,7 +459,7 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
           </Chip>
           {categories.map((c) => (
             <Chip key={c.slug} active={cat === c.slug} onClick={() => selectCat(c.slug)}>
-              {pickContentText(locale, c.nameEn, c.nameZh)}
+              {pickTitleText(locale, c.nameEn, c.nameZh || "", c.nameFr)}
             </Chip>
           ))}
         </div>

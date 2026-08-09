@@ -28,8 +28,8 @@ import { FeedEpisodeBar } from "@/components/mobile/feed-episode-bar";
 import { useMobileFeedLock } from "@/components/mobile/mobile-feed-lock";
 import { getPlayUrl, loadDramaDetail, loadFeed, checkFavorite, addFavorite, removeFavorite, checkLike, addLike, removeLike, reportProgress, unlockDrama, type DramaDetailPayload } from "@/lib/api";
 import type { Drama, Episode } from "@/lib/mock-data";
-import { categories, episodeIsLandscape } from "@/lib/mock-data";
-import { pickContentText, pickTitleText, type Locale } from "@/lib/languages";
+import { categoryName, episodeIsLandscape } from "@/lib/mock-data";
+import { pickTitleText, type Locale } from "@/lib/languages";
 import { cn, formatCredits } from "@/lib/utils";
 import { useGuestWatchQuota } from "@/lib/use-guest-watch-quota";
 import { useDocumentScrollLock } from "@/hooks/use-document-scroll-lock";
@@ -256,8 +256,7 @@ function buildFeedMeta(
   t: (key: string, vars?: Record<string, string | number>) => string,
 ) {
   const title = pickTitleText(locale, drama.titleEn, drama.titleZh, drama.titleFr);
-  const cat = categories.find((c) => c.slug === drama.categorySlug);
-  const catName = cat ? pickContentText(locale, cat.nameEn, cat.nameZh) : "";
+  const catName = categoryName(drama.category ?? drama.categorySlug, locale);
   const ratingLabel = formatRating(drama.rating);
   const tags: { key: string; node: ReactNode }[] = [];
   if (ratingLabel) {

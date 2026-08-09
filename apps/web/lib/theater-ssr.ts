@@ -24,6 +24,7 @@ function mapCategory(c: any): Category {
     slug: String(c.slug || ""),
     nameEn: c.nameEn || "",
     nameZh: c.nameZh || "",
+    nameFr: c.nameFr || "",
   };
 }
 

@@ -1,4 +1,15 @@
-import { Allow, ArrayMaxSize, IsArray, IsBoolean, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  Allow,
+  ArrayMaxSize,
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 import { Body, Controller, Get, Param, Post, Put, Req, UseGuards } from '@nestjs/common';
 import { BizCode, BizException } from '../common/biz.exception';
 import { ok } from '../common/response';
@@ -19,6 +30,14 @@ class SettingUpdateDto {
 
 class AdminRoleDto {
   @IsNotEmpty() @IsString() role!: 'SUPER_ADMIN' | 'OPS';
+}
+
+class CreateAdminDto {
+  @IsNotEmpty() @IsString() email!: string;
+  @IsNotEmpty() @IsString() @MinLength(8) password!: string;
+  @IsOptional() @IsString() username?: string;
+  @IsOptional() @IsString() displayName?: string;
+  @IsOptional() @IsIn(['SUPER_ADMIN', 'OPS']) role?: 'SUPER_ADMIN' | 'OPS';
 }
 
 class StripeGatewayUpdateDto {
@@ -60,6 +79,12 @@ export class SettingsController {
   @AdminRoles('SUPER_ADMIN')
   async listAdmins() {
     return ok(await this.admins.list());
+  }
+
+  @Post('admins')
+  @AdminRoles('SUPER_ADMIN')
+  async createAdmin(@Body() dto: CreateAdminDto, @Req() req: any) {
+    return ok(await this.admins.create(dto, getActor(req)));
   }
 
   @Post('admins/:id/role')

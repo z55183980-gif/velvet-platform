@@ -71,7 +71,7 @@ import { isPlayableMediaUrl } from "@/lib/playable-url";
 import { useUploadQueue } from "@/lib/upload-queue";
 import { VIDEO_ACCEPT, isVideoFile } from "@/lib/video-formats";
 
-type Category = { slug: string; nameZh?: string; nameEn?: string };
+type Category = { slug: string; nameZh?: string | null; nameEn?: string; nameFr?: string | null };
 type DraftRecord = {
   id: string;
   titleZh: string;
@@ -2560,7 +2560,7 @@ export const LocalUploadWizard = forwardRef<
                       <option value="">{t("selectCategory")}</option>
                       {(categoriesQ.data ?? []).map((c) => (
                         <option key={c.slug} value={c.slug}>
-                          {c.nameZh || c.nameEn || c.slug}
+                          {c.nameEn || c.nameZh || c.nameFr || c.slug}
                         </option>
                       ))}
                     </Select>

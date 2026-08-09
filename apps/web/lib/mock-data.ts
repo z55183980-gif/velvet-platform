@@ -1,11 +1,12 @@
 export type { Locale } from "./languages";
-import { pickContentText, type Locale } from "./languages";
+import { pickTitleText, type Locale } from "./languages";
 import { publicTagsMatchQuery } from "./drama-tags";
 
 export interface Category {
   slug: string;
   nameEn: string;
-  nameZh: string;
+  nameZh?: string;
+  nameFr?: string;
 }
 
 export interface Episode {
@@ -42,6 +43,8 @@ export interface Drama {
   descEn: string;
   descZh: string;
   categorySlug: string;
+  /** Localized category from API when available (prefer over mock lookup). */
+  category?: Category;
   /** Theme/genre tags (Hongguo-style chips under title) */
   tags?: string[];
   cover: [string, string];
@@ -62,12 +65,12 @@ export interface Drama {
 }
 
 export const categories: Category[] = [
-  { slug: "do_thi", nameEn: "Urban", nameZh: "都市" },
-  { slug: "ngon_tinh", nameEn: "Romance", nameZh: "言情" },
-  { slug: "hanh_dong", nameEn: "Action", nameZh: "动作" },
-  { slug: "hai_huoc", nameEn: "Comedy", nameZh: "喜剧" },
-  { slug: "tam_ly", nameEn: "Psychological", nameZh: "心理" },
-  { slug: "co_trang", nameEn: "Costume", nameZh: "古装" },
+  { slug: "do_thi", nameEn: "Urban", nameZh: "都市", nameFr: "Urbain" },
+  { slug: "ngon_tinh", nameEn: "Romance", nameZh: "言情", nameFr: "Romance" },
+  { slug: "hanh_dong", nameEn: "Action", nameZh: "动作", nameFr: "Action" },
+  { slug: "hai_huoc", nameEn: "Comedy", nameZh: "喜剧", nameFr: "Comédie" },
+  { slug: "tam_ly", nameEn: "Psychological", nameZh: "心理", nameFr: "Psychologique" },
+  { slug: "co_trang", nameEn: "Costume", nameZh: "古装", nameFr: "Costume" },
 ];
 
 function makeEpisodes(count: number, freeCount: number, price: number): Episode[] {
@@ -235,10 +238,31 @@ export function getDrama(id: string): Drama | undefined {
   return dramas.find((d) => d.id === id);
 }
 
-export function categoryName(slug: string, locale: Locale): string {
-  const cat = categories.find((c) => c.slug === slug);
+/**
+ * Resolve a category display name for the UI locale (en / zh / fr).
+ * Accepts either an API category object or a slug (falls back to mock catalog).
+ */
+export function categoryName(
+  slugOrCat: string | Pick<Category, "slug" | "nameEn" | "nameZh" | "nameFr"> | null | undefined,
+  locale: Locale,
+  catalog: Category[] = categories,
+): string {
+  if (slugOrCat && typeof slugOrCat === "object") {
+    return (
+      pickTitleText(
+        locale,
+        slugOrCat.nameEn || "",
+        slugOrCat.nameZh || "",
+        slugOrCat.nameFr || "",
+      ) ||
+      slugOrCat.slug ||
+      ""
+    );
+  }
+  const slug = slugOrCat || "";
+  const cat = catalog.find((c) => c.slug === slug);
   if (!cat) return slug;
-  return pickContentText(locale, cat.nameEn, cat.nameZh);
+  return pickTitleText(locale, cat.nameEn, cat.nameZh || "", cat.nameFr);
 }
 
 // ---- 兜底数据（API 不可达时使用，保持预览可见）----

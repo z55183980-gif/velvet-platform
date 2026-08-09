@@ -22,7 +22,7 @@ export type ContentSearchFilters = {
   dateTo: string;
 };
 
-type CategoryOption = { slug: string; nameZh?: string; nameEn?: string };
+type CategoryOption = { slug: string; nameZh?: string | null; nameEn?: string; nameFr?: string | null };
 type CreatorOption = { id: string | number; displayName?: string };
 
 type ContentSearchBarProps = {
@@ -147,7 +147,7 @@ export function ContentSearchBar({
     const category = categories.find((item) => item.slug === value.categorySlug);
     chips.push({
       key: "category",
-      label: `${t("category")}: ${category?.nameZh || category?.nameEn || value.categorySlug}`,
+      label: `${t("category")}: ${category?.nameEn || category?.nameZh || category?.nameFr || value.categorySlug}`,
       clear: () => patch({ categorySlug: "" }),
     });
   }
@@ -269,7 +269,7 @@ export function ContentSearchBar({
                     <option value="">{t("allCategories")}</option>
                     {categories.map((category) => (
                       <option key={category.slug} value={category.slug}>
-                        {category.nameZh || category.nameEn}
+                        {category.nameEn || category.nameZh || category.nameFr}
                       </option>
                     ))}
                   </Select>

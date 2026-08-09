@@ -162,7 +162,8 @@ class BannerDto {
 class CategoryDto {
   @IsNotEmpty() @IsString() slug!: string;
   @IsNotEmpty() @IsString() nameEn!: string;
-  @IsNotEmpty() @IsString() nameZh!: string;
+  @IsOptional() @IsString() nameZh?: string | null;
+  @IsOptional() @IsString() nameFr?: string | null;
   @IsOptional() @Type(() => Number) @IsNumber() sortOrder?: number;
   @IsOptional()
   @Transform(({ value }) => value === true || value === 'true' || value === 1)

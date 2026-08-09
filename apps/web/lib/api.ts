@@ -161,7 +161,15 @@ export function mapDrama(d: any): Drama {
     titleFr: d.titleFr || "",
     descEn: d.descriptionEn || "",
     descZh: d.descriptionZh || "",
-    categorySlug: d.categorySlug || "",
+    categorySlug: d.categorySlug || d.category?.slug || "",
+    category: d.category
+      ? {
+          slug: String(d.category.slug || d.categorySlug || ""),
+          nameEn: d.category.nameEn || "",
+          nameZh: d.category.nameZh || "",
+          nameFr: d.category.nameFr || "",
+        }
+      : undefined,
     tags: (() => {
       const cleaned = toPublicDramaTags(d.tags);
       return cleaned.length ? cleaned : undefined;
@@ -254,7 +262,15 @@ export async function loadCategories(opts?: { signal?: AbortSignal }): Promise<C
     60_000,
     async () => {
       try {
-        return await request<Category[]>("/categories");
+        const list = await request<any[]>("/categories");
+        return (Array.isArray(list) ? list : [])
+          .map((c) => ({
+            slug: String(c?.slug || ""),
+            nameEn: c?.nameEn || "",
+            nameZh: c?.nameZh || "",
+            nameFr: c?.nameFr || "",
+          }))
+          .filter((c) => c.slug);
       } catch (err) {
         if (isAbortError(err)) throw err;
         // Production: rethrow so cachedGet reject path does not cache empty fallbacks.

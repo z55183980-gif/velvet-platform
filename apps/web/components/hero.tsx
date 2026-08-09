@@ -36,7 +36,7 @@ export type HeroSlide = {
 };
 
 function dramaTags(drama: Drama, locale: Locale, t: (k: string) => string): string[] {
-  const cat = categoryName(drama.categorySlug, locale);
+  const cat = categoryName(drama.category ?? drama.categorySlug, locale);
   const tags = [cat];
   if (drama.isVip) tags.push(t("card.vip"));
   if (drama.freeCount > 0) tags.push(t("card.free"));

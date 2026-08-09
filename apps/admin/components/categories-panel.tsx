@@ -14,12 +14,20 @@ import { useMemo, useState } from "react";
 type Row = {
   slug: string;
   nameEn?: string;
-  nameZh?: string;
+  nameZh?: string | null;
+  nameFr?: string | null;
   sortOrder?: number;
   isActive?: boolean;
 };
 
-const emptyForm = { slug: "", nameZh: "", sortOrder: 0, isActive: true };
+const emptyForm = {
+  slug: "",
+  nameEn: "",
+  nameZh: "",
+  nameFr: "",
+  sortOrder: 0,
+  isActive: true,
+};
 
 export function CategoriesPanel() {
   const { t } = useI18n();
@@ -35,13 +43,15 @@ export function CategoriesPanel() {
 
   const saveMut = useMutation({
     mutationFn: async () => {
-      const nameZh = form.nameZh.trim();
-      if (!nameZh) throw new Error(t("onlineNeedTitle"));
-      const nameEn = nameZh;
+      const nameEn = form.nameEn.trim();
+      if (!nameEn) throw new Error(t("nameEnRequired"));
+      const nameZh = form.nameZh.trim() || null;
+      const nameFr = form.nameFr.trim() || null;
       if (editSlug) {
         return adminUpdateCategory(editSlug, {
           nameEn,
           nameZh,
+          nameFr,
           sortOrder: form.sortOrder,
           isActive: form.isActive,
         });
@@ -51,6 +61,7 @@ export function CategoriesPanel() {
         slug: form.slug.trim(),
         nameEn,
         nameZh,
+        nameFr,
         sortOrder: form.sortOrder,
         isActive: form.isActive,
       });
@@ -75,7 +86,9 @@ export function CategoriesPanel() {
   const columns: Column<Row>[] = useMemo(
     () => [
       { key: "slug", header: t("colSlug"), cell: (r) => r.slug },
-      { key: "zh", header: t("colName"), cell: (r) => r.nameZh || r.nameEn || "—" },
+      { key: "en", header: t("nameEnLabel"), cell: (r) => r.nameEn || "—" },
+      { key: "zh", header: t("nameZhLabel"), cell: (r) => r.nameZh || "—" },
+      { key: "fr", header: t("nameFrLabel"), cell: (r) => r.nameFr || "—" },
       { key: "sort", header: t("colSort"), cell: (r) => String(r.sortOrder ?? 0), className: "tabular-nums" },
       {
         key: "active",
@@ -96,7 +109,9 @@ export function CategoriesPanel() {
                 setEditSlug(r.slug);
                 setForm({
                   slug: r.slug,
-                  nameZh: r.nameZh || r.nameEn || "",
+                  nameEn: r.nameEn || "",
+                  nameZh: r.nameZh || "",
+                  nameFr: r.nameFr || "",
                   sortOrder: r.sortOrder ?? 0,
                   isActive: !!r.isActive,
                 });
@@ -131,11 +146,27 @@ export function CategoriesPanel() {
           />
         </label>
         <label className="text-caption text-ink-muted">
-          {t("colName")}
+          {t("nameEnLabel")}
+          <Input
+            className="mt-1"
+            value={form.nameEn}
+            onChange={(e) => setForm((f) => ({ ...f, nameEn: e.target.value }))}
+          />
+        </label>
+        <label className="text-caption text-ink-muted">
+          {t("nameZhLabel")}
           <Input
             className="mt-1"
             value={form.nameZh}
             onChange={(e) => setForm((f) => ({ ...f, nameZh: e.target.value }))}
+          />
+        </label>
+        <label className="text-caption text-ink-muted">
+          {t("nameFrLabel")}
+          <Input
+            className="mt-1"
+            value={form.nameFr}
+            onChange={(e) => setForm((f) => ({ ...f, nameFr: e.target.value }))}
           />
         </label>
         <label className="text-caption text-ink-muted">

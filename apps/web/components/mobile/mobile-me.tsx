@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Bell,
@@ -28,6 +28,7 @@ import { LanguageSwitcher } from "@/components/language-switcher";
 import { cn, formatAmount, mediaUrl } from "@/lib/utils";
 import { isPwaStandalone, openPwaInstallGuide } from "@/lib/pwa";
 import { SafeImage } from "@/components/safe-image";
+import { useDocumentScrollLock } from "@/hooks/use-document-scroll-lock";
 
 export type MobileMeTab = "history" | "favorites" | "liked";
 
@@ -80,8 +81,6 @@ type Props = {
   onRedeem: () => Promise<void>;
   showNickname: boolean;
   setShowNickname: (v: boolean | ((p: boolean) => boolean)) => void;
-  showHelp: boolean;
-  setShowHelp: (v: boolean | ((p: boolean) => boolean)) => void;
   refundBusy: string | null;
   onRefund: (orderNo: string, reason: string) => Promise<void>;
 };
@@ -148,8 +147,6 @@ export function MobileMe(props: Props) {
     onRedeem,
     showNickname,
     setShowNickname,
-    showHelp,
-    setShowHelp,
     refundBusy,
     onRefund,
   } = props;
@@ -164,6 +161,9 @@ export function MobileMe(props: Props) {
   const [showOrders, setShowOrders] = useState(false);
   const [historyStatus, setHistoryStatus] = useState<HistoryStatusFilter>("all");
   const [themeMounted, setThemeMounted] = useState(false);
+  const settingsSheetRef = useRef<HTMLDivElement>(null);
+
+  useDocumentScrollLock(settingsOpen, settingsSheetRef);
 
   useEffect(() => {
     setThemeMounted(true);
@@ -311,6 +311,14 @@ export function MobileMe(props: Props) {
         >
           <Settings className="h-5 w-5" />
         </button>
+        <Link
+          href="/help"
+          className="grid h-10 w-10 place-items-center rounded-full text-ink-muted hover:bg-surface-2 hover:text-ink"
+          aria-label={t("nav.help")}
+          title={t("nav.help")}
+        >
+          <HelpCircle className="h-5 w-5" />
+        </Link>
       </div>
 
       {/* Avatar + name */}
@@ -792,7 +800,7 @@ export function MobileMe(props: Props) {
         )}
       </div>
 
-      {/* Settings sheet — redeem, nickname, language, creator, help, orders, messages, logout */}
+      {/* Settings sheet — redeem, nickname, language, creator, orders, messages, logout */}
       {settingsOpen && (
         <div className="fixed inset-0 z-[60] md:hidden">
           <button
@@ -801,7 +809,10 @@ export function MobileMe(props: Props) {
             aria-label={t("account.closeSettings")}
             onClick={() => setSettingsOpen(false)}
           />
-          <div className="absolute inset-x-0 bottom-0 max-h-[88dvh] overflow-y-auto rounded-t-3xl border border-line bg-base pb-[calc(1rem+var(--mobile-tab-safe-bottom))] shadow-2xl">
+          <div
+            ref={settingsSheetRef}
+            className="absolute inset-x-0 bottom-0 max-h-[88dvh] overflow-y-auto overscroll-y-contain rounded-t-3xl border border-line bg-base pb-[calc(1rem+var(--mobile-tab-safe-bottom))] shadow-2xl [-webkit-overflow-scrolling:touch]"
+          >
             <div className="sticky top-0 z-10 flex items-center justify-between border-b border-line bg-base/95 px-4 py-3 backdrop-blur">
               <h2 className="text-body font-semibold text-ink">{t("account.settingsTitle")}</h2>
               <button
@@ -1028,26 +1039,6 @@ export function MobileMe(props: Props) {
                     <span className="flex-1 text-body-sm text-ink">{t("pwa.settingsEntry")}</span>
                     <ChevronRight className="h-4 w-4 text-ink-subtle" />
                   </button>
-                )}
-
-                <button
-                  type="button"
-                  onClick={() => setShowHelp((v) => !v)}
-                  className="flex w-full items-center gap-3 border-t border-line px-4 py-3.5 text-left hover:bg-surface-2"
-                >
-                  <HelpCircle className="h-4 w-4 text-ink-muted" />
-                  <span className="flex-1 text-body-sm text-ink">{t("account.helpAbout")}</span>
-                  <ChevronRight
-                    className={cn(
-                      "h-4 w-4 text-ink-subtle transition-transform",
-                      showHelp && "rotate-90",
-                    )}
-                  />
-                </button>
-                {showHelp && (
-                  <p className="border-t border-line px-4 py-3 text-body-sm text-ink-muted">
-                    {t("account.helpBody")}
-                  </p>
                 )}
 
                 <button

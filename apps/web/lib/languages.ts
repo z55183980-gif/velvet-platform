@@ -78,14 +78,14 @@ export function getInterfaceLanguageShortLabel(code?: string | null): string {
   );
 }
 
-/** Descriptions / categories still en/zh; only zh UI uses Chinese — others use English. */
+/** Descriptions still en/zh; only zh UI uses Chinese — others use English. */
 export function contentLocale(locale: Locale): "en" | "zh" {
   return locale === "zh" ? "zh" : "en";
 }
 
 /**
- * General content (descriptions, category names, …): locale field, then the other language.
- * Prefer {@link pickTitleText} for drama/episode titles.
+ * General content (descriptions, …): locale field, then the other language.
+ * Prefer {@link pickTitleText} for drama titles and category names (en/zh/fr).
  */
 export function pickContentText(
   locale: Locale,
