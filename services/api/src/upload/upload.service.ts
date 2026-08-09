@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { BizException, BizCode } from '../common/biz.exception';
 import { signMediaPath } from '../common/media-sign.util';
@@ -70,6 +71,16 @@ export class UploadService implements OnModuleInit {
   async onModuleInit() {
     await this.detectFfmpeg().catch(() => undefined);
     // Pending job recovery is driven by TranscodeQueueService after dispatcher wiring.
+  }
+
+  /** Hourly: purge unreferenced uploads + stale multipart staging (disk DoS mitigation). */
+  @Cron(CronExpression.EVERY_HOUR)
+  async cronCleanupOrphanUploads() {
+    try {
+      await this.cleanupOrphanUploads();
+    } catch (e: any) {
+      this.logger.warn(`orphan upload GC failed: ${e?.message || e}`);
+    }
   }
 
   setJobDispatcher(dispatcher: JobDispatcher | null) {
@@ -156,11 +167,129 @@ export class UploadService implements OnModuleInit {
     return null;
   }
 
-  saveUpload(file: Express.Multer.File): UploadResult {
+  /** Per-user durable upload quota (bytes). Env override: UPLOAD_USER_QUOTA_BYTES. */
+  userUploadQuotaBytes(): number {
+    const n = Number(process.env.UPLOAD_USER_QUOTA_BYTES || 2 * 1024 * 1024 * 1024);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 2 * 1024 * 1024 * 1024;
+  }
+
+  /** Orphan uploads older than this are deleted (hours). */
+  orphanUploadTtlHours(): number {
+    const n = Number(process.env.UPLOAD_ORPHAN_TTL_HOURS || 24);
+    return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 24;
+  }
+
+  /** Sum bytes under uploads/ owned by user prefix `{userId}-` or referenced by their episodes. */
+  assertWithinUserQuota(userId: bigint, incomingBytes: number) {
+    const quota = this.userUploadQuotaBytes();
+    const dir = this.getUploadDir();
+    const prefix = `${userId.toString()}-`;
+    let used = 0;
+    try {
+      for (const name of fs.readdirSync(dir)) {
+        if (!name.startsWith(prefix)) continue;
+        try {
+          used += fs.statSync(path.join(dir, name)).size;
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch {
+      used = 0;
+    }
+    if (used + Math.max(0, incomingBytes) > quota) {
+      throw new BizException(BizCode.FORBIDDEN, 'upload.quotaExceeded');
+    }
+  }
+
+  /**
+   * Delete uploads/ files not referenced by any episode and older than TTL.
+   * Also purges stale .multipart staging files (always safe — never final media).
+   */
+  async cleanupOrphanUploads(opts?: {
+    ttlHours?: number;
+  }): Promise<{ removed: number; freedBytes: number }> {
+    const ttlMs = (opts?.ttlHours ?? this.orphanUploadTtlHours()) * 3600_000;
+    const cutoff = Date.now() - ttlMs;
+    let removed = 0;
+    let freedBytes = 0;
+
+    const referenced = new Set<string>();
+    const rows = await this.prisma.episode.findMany({
+      select: { originalUrl: true, hlsUrl: true },
+      take: 50_000,
+    });
+    for (const r of rows) {
+      for (const u of [r.originalUrl, r.hlsUrl]) {
+        if (!u) continue;
+        const norm = u.replace(/\\/g, '/');
+        if (norm.startsWith('uploads/')) referenced.add(path.basename(norm));
+      }
+    }
+
+    const dir = this.getUploadDir();
+    try {
+      for (const name of fs.readdirSync(dir)) {
+        if (referenced.has(name)) continue;
+        const abs = path.join(dir, name);
+        let st: fs.Stats;
+        try {
+          st = fs.statSync(abs);
+        } catch {
+          continue;
+        }
+        if (!st.isFile() || st.mtimeMs > cutoff) continue;
+        try {
+          fs.rmSync(abs, { force: true });
+          removed += 1;
+          freedBytes += st.size;
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+
+    const staging = path.join(this.getStorageRoot(), '.multipart');
+    try {
+      for (const name of fs.readdirSync(staging)) {
+        const abs = path.join(staging, name);
+        let st: fs.Stats;
+        try {
+          st = fs.statSync(abs);
+        } catch {
+          continue;
+        }
+        if (!st.isFile() || st.mtimeMs > cutoff) continue;
+        try {
+          fs.rmSync(abs, { force: true });
+          removed += 1;
+          freedBytes += st.size;
+        } catch {
+          /* ignore */
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+
+    if (removed > 0) {
+      this.logger.warn(
+        `orphan upload GC removed ${removed} file(s), freed ~${freedBytes} bytes`,
+      );
+    }
+    return { removed, freedBytes };
+  }
+
+  saveUpload(file: Express.Multer.File, opts?: { userId?: bigint }): UploadResult {
     if (!file) throw new BizException(BizCode.BAD_REQUEST, '未收到文件');
     const ext = path.extname(file.originalname || '').toLowerCase() || '.mp4';
     if (!VIDEO_EXT.has(ext)) {
       throw new BizException(BizCode.BAD_REQUEST, `不支持的格式: ${ext}`);
+    }
+    if (opts?.userId != null) {
+      this.assertWithinUserQuota(opts.userId, file.size || 0);
     }
     const rawMime = file.mimetype || '';
     const mime =
@@ -168,7 +297,8 @@ export class UploadService implements OnModuleInit {
         ? VIDEO_MIME_BY_EXT[ext] || 'video/mp4'
         : rawMime;
     const id = crypto.randomUUID().replace(/-/g, '').slice(0, 16);
-    const filename = `${Date.now()}-${id}${ext}`;
+    const owner = opts?.userId != null ? `${opts.userId.toString()}-` : '';
+    const filename = `${owner}${Date.now()}-${id}${ext}`;
     const abs = path.join(this.getUploadDir(), filename);
     if (file.path) {
       const staged = path.resolve(file.path);
@@ -237,7 +367,7 @@ export class UploadService implements OnModuleInit {
   /** 封面/缩略图上传 → STORAGE_ROOT/covers；R2 开启时同步推送到 velvet-media */
   async saveImage(
     file: Express.Multer.File,
-    kind: 'cover' | 'thumbnail' | 'image' = 'cover',
+    kind: 'cover' | 'thumbnail' | 'image' | 'avatar' = 'cover',
   ): Promise<UploadResult & { url: string }> {
     if (!file) throw new BizException(BizCode.BAD_REQUEST, '未收到文件');
     let ext = path.extname(file.originalname || '').toLowerCase();
@@ -394,15 +524,17 @@ export class UploadService implements OnModuleInit {
 
   /**
    * Remove local files + R2 objects for media URLs.
-   * Hard-fails when R2 cleanup is required but cannot complete, so callers can
-   * abort DB deletes and avoid "DB gone / objects remain" inconsistency.
+   * Callers should clear / delete DB refs first, then purge with allowOrphans=true
+   * so a storage failure cannot leave hanging refs. When allowOrphans is false
+   * (rare pre-check paths), R2 failures still hard-fail.
    */
   async purgeMediaUrls(
     urls: Array<string | null | undefined>,
-    opts?: { requireR2?: boolean },
+    opts?: { requireR2?: boolean; allowOrphans?: boolean },
   ): Promise<{
     r2Deleted: number;
     localDeleted: number;
+    error?: string;
   }> {
     let localDeleted = 0;
     for (const url of urls) {
@@ -438,12 +570,19 @@ export class UploadService implements OnModuleInit {
       return !!this.r2.mediaPrefixFromUrl(raw);
     });
     const requireR2 = !!opts?.requireR2 || remoteR2;
+    const allowOrphans = !!opts?.allowOrphans;
 
     if (!this.r2.hasCredentials()) {
       if (requireR2) {
+        const msg =
+          '媒资清理失败：需要删除 R2/CDN 对象但服务端未配置 R2 凭证';
+        if (allowOrphans) {
+          this.logger.error(`${msg} (DB already updated; orphan objects may remain)`);
+          return { r2Deleted: 0, localDeleted, error: msg };
+        }
         throw new BizException(
           BizCode.CONFLICT,
-          '媒资清理失败：需要删除 R2/CDN 对象但服务端未配置 R2 凭证，已中止删除（数据库未改动）',
+          `${msg}，已中止删除（数据库未改动）`,
         );
       }
       return { r2Deleted: 0, localDeleted };
@@ -455,6 +594,13 @@ export class UploadService implements OnModuleInit {
     } catch (e: any) {
       const msg = e?.message || String(e);
       this.logger.error(`R2 purge failed: ${msg}`);
+      if (allowOrphans) {
+        return {
+          r2Deleted: 0,
+          localDeleted,
+          error: `R2 purge failed: ${msg}`,
+        };
+      }
       throw new BizException(
         BizCode.CONFLICT,
         `媒资清理失败（R2）：${msg}。已中止删除（数据库未改动）`,

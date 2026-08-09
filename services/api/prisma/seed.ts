@@ -36,7 +36,32 @@ const dramas: SeedDrama[] = [
   { titleEn: 'Lone Assassin', titleZh: '孤影杀手', descEn: 'An assassin seeking redemption.', descZh: '寻求救赎的孤独杀手。', category: 'hanh_dong', episodes: 11, cover: 'https://picsum.photos/seed/d09/600/800' },
 ];
 
+function assertSeedAllowed() {
+  const env = (
+    process.env.ENVIRONMENT ||
+    process.env.APP_ENV ||
+    process.env.NODE_ENV ||
+    ''
+  )
+    .trim()
+    .toLowerCase();
+  const isProd = env === 'production' || env === 'prod' || env === 'live';
+  if (!isProd) return;
+  if (process.env.ALLOW_PRODUCTION_SEED !== '1') {
+    throw new Error(
+      'Refusing prisma seed in production. Set ALLOW_PRODUCTION_SEED=1 only for controlled bootstrap.',
+    );
+  }
+  const pwd = process.env.ADMIN_BOOTSTRAP_PASSWORD || '';
+  if (!pwd || pwd === 'admin' || pwd.length < 12) {
+    throw new Error(
+      'Production seed requires ADMIN_BOOTSTRAP_PASSWORD (min 12 chars, not the default "admin").',
+    );
+  }
+}
+
 async function main() {
+  assertSeedAllowed();
   // 始终确保默认管理员存在（幂等）
   await ensureBootstrapAdmin();
 

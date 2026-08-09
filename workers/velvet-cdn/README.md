@@ -14,3 +14,5 @@ npx wrangler deploy
 # Prefer API secret put over PowerShell piping:
 # PUT /accounts/.../workers/scripts/velvet-cdn/secrets
 ```
+
+`wrangler` is a **devDependency** only (deploy/dev toolchain). It is not shipped with API/web/admin production runtime. Keep it ≥4.59.1 (prefer current pin) so `pnpm audit` / `npm audit` on this package stay clear; CI gates on `pnpm audit --prod` for the monorepo.

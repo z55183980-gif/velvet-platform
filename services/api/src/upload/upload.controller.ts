@@ -50,38 +50,38 @@ export class UploadController {
     @Body() body: { episodeId?: string; transcode?: string },
   ) {
     try {
-      const creator = await this.creator.ensureCreator(user.userId);
-      let episode: any = null;
-      if (body?.episodeId) {
-        episode = await this.prisma.episode.findUnique({
-          where: { id: BigInt(body.episodeId) },
-          include: { drama: true },
-        });
-        if (!episode) throw new BizException(BizCode.NOT_FOUND, 'episode.notFound');
-        if (episode.drama.creatorId !== creator.id) {
-          throw new BizException(BizCode.FORBIDDEN, 'common.forbidden');
-        }
-        if (episode.drama.status !== 'DRAFT' && episode.drama.status !== 'REJECTED') {
-          throw new BizException(BizCode.CONFLICT, '审核中或已上线的作品不能替换片源');
-        }
+      // Do not auto-create creator on every login — uploads require an existing ACTIVE creator.
+      const creator = await this.prisma.creator.findUnique({ where: { userId: user.userId } });
+      if (!creator || creator.status !== 'ACTIVE') {
+        throw new BizException(BizCode.FORBIDDEN, 'upload.creatorRequired');
+      }
+      // Durable media must bind to an owned draft episode (blocks orphan disk fill).
+      if (!body?.episodeId) {
+        throw new BizException(BizCode.BAD_REQUEST, 'upload.episodeRequired');
+      }
+      const episode = await this.prisma.episode.findUnique({
+        where: { id: BigInt(body.episodeId) },
+        include: { drama: true },
+      });
+      if (!episode) throw new BizException(BizCode.NOT_FOUND, 'episode.notFound');
+      if (episode.drama.creatorId !== creator.id) {
+        throw new BizException(BizCode.FORBIDDEN, 'common.forbidden');
+      }
+      if (episode.drama.status !== 'DRAFT' && episode.drama.status !== 'REJECTED') {
+        throw new BizException(BizCode.CONFLICT, '审核中或已上线的作品不能替换片源');
       }
 
-      const saved = this.upload.saveUpload(file);
-      let job: Awaited<ReturnType<UploadService['enqueueTranscode']>> | null = null;
-      if (episode) {
-        await this.prisma.episode.update({
-          where: { id: episode.id },
-          data: {
-            originalUrl: saved.relativePath,
-            hlsUrl: saved.relativePath,
-            uploadStatus: 'COMPLETED',
-            transcodeStatus: 'PENDING',
-          },
-        });
-        job = await this.upload.enqueueTranscode(saved.relativePath, String(episode.id));
-      } else if (body?.transcode === '1' || body?.transcode === 'true') {
-        job = await this.upload.enqueueTranscode(saved.relativePath);
-      }
+      const saved = this.upload.saveUpload(file, { userId: user.userId });
+      await this.prisma.episode.update({
+        where: { id: episode.id },
+        data: {
+          originalUrl: saved.relativePath,
+          hlsUrl: saved.relativePath,
+          uploadStatus: 'COMPLETED',
+          transcodeStatus: 'PENDING',
+        },
+      });
+      const job = await this.upload.enqueueTranscode(saved.relativePath, String(episode.id));
 
       return ok({
         ...saved,
@@ -198,8 +198,9 @@ export class UploadController {
     @UploadedFile() file: Express.Multer.File,
     @CurrentUser() user: AuthUser,
   ) {
-    const saved = this.upload.saveDocument(file, 'avatar');
-    const avatarUrl = `/api/v1/media/${saved.relativePath}`;
+    // Public covers/ path (no media signature) — profiles must render for all viewers.
+    const saved = await this.upload.saveImage(file, 'avatar');
+    const avatarUrl = saved.url;
     await this.prisma.user.update({
       where: { id: user.userId },
       data: { avatarUrl },

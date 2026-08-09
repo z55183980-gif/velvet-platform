@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from "react";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   adminLogout as apiLogout,
   adminMe,
@@ -35,15 +36,22 @@ const AdminSessionContext = createContext<AdminSessionContextValue | null>(null)
 
 export function AdminSessionProvider({ children }: { children: ReactNode }) {
   const router = useRouter();
+  const queryClient = useQueryClient();
   const [admin, setAdmin] = useState<AdminProfile | null>(memoryAdmin);
   const [ready, setReady] = useState(!!memoryAdmin);
   const [refreshing, setRefreshing] = useState(false);
+
+  const clearCachedQueries = useCallback(() => {
+    // Prevent lower-priv admins from seeing prior high-priv QueryClient data (30s staleTime).
+    queryClient.clear();
+  }, [queryClient]);
 
   const refresh = useCallback(async () => {
     const token = getAdminToken();
     if (!token) {
       memoryAdmin = null;
       setAdmin(null);
+      clearCachedQueries();
       setReady(true);
       router.replace("/login");
       return;
@@ -51,6 +59,10 @@ export function AdminSessionProvider({ children }: { children: ReactNode }) {
     setRefreshing(true);
     try {
       const me = await adminMe();
+      // Identity change (or re-login): drop cached privileged queries.
+      if (!memoryAdmin || memoryAdmin.id !== me.id || memoryAdmin.role !== me.role) {
+        clearCachedQueries();
+      }
       memoryAdmin = me;
       setAdmin(me);
       setReady(true);
@@ -58,12 +70,13 @@ export function AdminSessionProvider({ children }: { children: ReactNode }) {
       memoryAdmin = null;
       setAdmin(null);
       clearAdminToken();
+      clearCachedQueries();
       setReady(true);
       router.replace("/login");
     } finally {
       setRefreshing(false);
     }
-  }, [router]);
+  }, [router, clearCachedQueries]);
 
   useEffect(() => {
     void refresh();
@@ -73,8 +86,9 @@ export function AdminSessionProvider({ children }: { children: ReactNode }) {
     await apiLogout();
     memoryAdmin = null;
     setAdmin(null);
+    clearCachedQueries();
     router.replace("/login");
-  }, [router]);
+  }, [router, clearCachedQueries]);
 
   const value = useMemo(
     () => ({ admin, ready, refreshing, refresh, logout }),

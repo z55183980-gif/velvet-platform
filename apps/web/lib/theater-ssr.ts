@@ -52,13 +52,19 @@ export async function loadTheaterInitial(searchParams: {
     const sort = parseSort(searchParams.sort);
     const q = one(searchParams.q);
 
-    const categoriesRaw = await serverApiGet<any[]>("/categories", "theater-ssr").catch(() => []);
-    const categories = (Array.isArray(categoriesRaw) ? categoriesRaw : [])
-      .map(mapCategory)
-      .filter((c) => c.slug);
+    // Parallelize categories + first page so worst TTFB ≈ one 5s budget, not two.
+    const categoriesPromise = serverApiGet<any[]>("/categories", "theater-ssr").catch(
+      () => [] as any[],
+    );
 
     if (sort === "hottest" && !cat && !q) {
-      const listRaw = await serverApiGet<any[]>("/dramas/hottest", "theater-ssr");
+      const [categoriesRaw, listRaw] = await Promise.all([
+        categoriesPromise,
+        serverApiGet<any[]>("/dramas/hottest", "theater-ssr"),
+      ]);
+      const categories = (Array.isArray(categoriesRaw) ? categoriesRaw : [])
+        .map(mapCategory)
+        .filter((c) => c.slug);
       const rows = (Array.isArray(listRaw) ? listRaw : []).map(mapDrama);
       return {
         categories,
@@ -81,10 +87,16 @@ export async function loadTheaterInitial(searchParams: {
     if (cat) params.set("category", cat);
     if (q) params.set("q", q);
 
-    const homeRaw = await serverApiGet<{ rows: any[]; total: number }>(
-      `/dramas?${params.toString()}`,
-      "theater-ssr",
-    );
+    const [categoriesRaw, homeRaw] = await Promise.all([
+      categoriesPromise,
+      serverApiGet<{ rows: any[]; total: number }>(
+        `/dramas?${params.toString()}`,
+        "theater-ssr",
+      ),
+    ]);
+    const categories = (Array.isArray(categoriesRaw) ? categoriesRaw : [])
+      .map(mapCategory)
+      .filter((c) => c.slug);
     const rows = (Array.isArray(homeRaw?.rows) ? homeRaw.rows : []).map(mapDrama);
     const total = Number(homeRaw?.total) || rows.length;
     return {

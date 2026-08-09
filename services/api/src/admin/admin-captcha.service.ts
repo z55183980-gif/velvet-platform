@@ -10,12 +10,12 @@ export class AdminCaptchaService {
     return this.captcha.isDisabled('admin');
   }
 
-  issue(): CaptchaChallenge {
+  issue(): Promise<CaptchaChallenge> {
     return this.captcha.issue('admin');
   }
 
-  verify(captchaId: string, captchaCode: string): void {
-    this.captcha.verify('admin', captchaId, captchaCode);
+  verify(captchaId: string, captchaCode: string): Promise<void> {
+    return this.captcha.verify('admin', captchaId, captchaCode);
   }
 }
 

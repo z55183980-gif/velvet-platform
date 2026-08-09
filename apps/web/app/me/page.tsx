@@ -212,7 +212,7 @@ export default function AccountPage() {
       opts?: { force?: boolean },
     ) => {
       if (!user) return;
-      const key = `${kind}|${kind === "favorites" ? favGroup : ""}`;
+      const key = `${userKey}|${kind}|${kind === "favorites" ? favGroup : ""}`;
       const cached = cacheRef.current.get(key);
       const hasCached =
         (kind === "favorites" && cached?.favorites) ||
@@ -272,8 +272,38 @@ export default function AccountPage() {
         else setTransactions([]);
       }
     },
-    [user, favGroup],
+    [user, userKey, favGroup],
   );
+
+  // Account switch: never reuse another user's lists/orders cache.
+  useEffect(() => {
+    if (!userKey) {
+      cacheRef.current = new Map();
+      setFavorites([]);
+      setHistory([]);
+      setLikes([]);
+      setOrders([]);
+      setTransactions([]);
+      setFavGroups([]);
+      refreshedAtRef.current = 0;
+      initialSnapshotRef.current = null;
+      return;
+    }
+    if (accountSnapshot && accountSnapshot.userKey !== userKey) {
+      accountSnapshot = null;
+    }
+    if (initialSnapshotRef.current?.userKey !== userKey) {
+      initialSnapshotRef.current = null;
+      cacheRef.current = new Map();
+      setFavorites([]);
+      setHistory([]);
+      setLikes([]);
+      setOrders([]);
+      setTransactions([]);
+      setFavGroups([]);
+      refreshedAtRef.current = 0;
+    }
+  }, [userKey]);
 
   // Prefetch lists once (mobile + desktop share cache); refresh favorites when group changes
   useEffect(() => {

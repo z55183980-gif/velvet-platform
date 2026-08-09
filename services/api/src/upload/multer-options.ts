@@ -4,7 +4,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { VIDEO_EXT, VIDEO_MIME_BY_EXT } from '../admin/local-import.util';
 
-export const VIDEO_UPLOAD_MAX_BYTES = 512 * 1024 * 1024;
+/** Hard cap per request — large enough for short drama, small enough to blunt disk DoS. */
+export const VIDEO_UPLOAD_MAX_BYTES = Number(
+  process.env.VIDEO_UPLOAD_MAX_BYTES || 80 * 1024 * 1024,
+);
 
 function multipartTempDir(): string {
   const root = path.resolve(process.env.STORAGE_ROOT || path.join(process.cwd(), 'storage'));

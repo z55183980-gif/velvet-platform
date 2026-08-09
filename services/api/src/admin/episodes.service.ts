@@ -224,11 +224,8 @@ export class AdminEpisodesService {
     });
     if (!ep) throw new BizException(BizCode.NOT_FOUND, 'episode.notFound');
 
-    const purge = await this.upload.purgeMediaUrls(
-      [ep.hlsUrl, ep.originalUrl, ep.thumbnailUrl],
-      { requireR2: ep.drama.sourceType === 'R2' },
-    );
-
+    // DB first so a failed storage purge cannot leave rows pointing at deleted files.
+    const mediaUrls = [ep.hlsUrl, ep.originalUrl, ep.thumbnailUrl];
     await this.prisma.$transaction(async (tx) => {
       await tx.episode.delete({ where: { id: ep.id } });
       const remaining = await tx.episode.findMany({
@@ -255,6 +252,12 @@ export class AdminEpisodesService {
       });
     });
 
+    const purge = await this.upload.purgeMediaUrls(mediaUrls, {
+      requireR2: ep.drama.sourceType === 'R2',
+      // Row already gone — prefer orphan objects over hanging refs; surface purge errors.
+      allowOrphans: true,
+    });
+
     await this.audit.write({
       actorId,
       action: 'episode.delete',
@@ -272,11 +275,8 @@ export class AdminEpisodesService {
   async purgeMedia(id: string, actorId?: bigint) {
     const ep = await this.prisma.episode.findUnique({ where: { id: BigInt(id) } });
     if (!ep) throw new BizException(BizCode.NOT_FOUND, 'episode.notFound');
-    const purge = await this.upload.purgeMediaUrls([
-      ep.hlsUrl,
-      ep.originalUrl,
-      ep.thumbnailUrl,
-    ]);
+    const mediaUrls = [ep.hlsUrl, ep.originalUrl, ep.thumbnailUrl];
+    // Clear DB refs first so clients never see URLs for already-deleted objects.
     await this.prisma.episode.update({
       where: { id: ep.id },
       data: {
@@ -289,6 +289,7 @@ export class AdminEpisodesService {
         transcodeStatus: 'PENDING',
       },
     });
+    const purge = await this.upload.purgeMediaUrls(mediaUrls, { allowOrphans: true });
     await this.audit.write({
       actorId,
       action: 'episode.media.purge',
@@ -319,8 +320,7 @@ export class AdminEpisodesService {
     this.assertHostedUploadAllowed(ep.drama.sourceType);
     if (!file) throw new BizException(BizCode.BAD_REQUEST, '未收到文件');
 
-    await this.upload.purgeMediaUrls([ep.hlsUrl, ep.originalUrl]).catch(() => undefined);
-
+    const previousUrls = [ep.hlsUrl, ep.originalUrl];
     const saved = this.upload.saveUpload(file);
     await this.prisma.episode.update({
       where: { id: ep.id },
@@ -334,6 +334,10 @@ export class AdminEpisodesService {
         transcodeStatus: 'PENDING',
       },
     });
+    // Purge old objects only after DB points at the new upload.
+    await this.upload
+      .purgeMediaUrls(previousUrls, { allowOrphans: true })
+      .catch(() => undefined);
     const job = await this.upload.enqueueTranscode(saved.relativePath, String(ep.id), opts);
     await this.audit.write({
       actorId,
@@ -485,7 +489,7 @@ export class AdminEpisodesService {
     if (!ep) throw new BizException(BizCode.NOT_FOUND, 'episode.notFound');
     this.assertHostedUploadAllowed(ep.drama.sourceType);
 
-    await this.upload.purgeMediaUrls([ep.hlsUrl, ep.originalUrl]).catch(() => undefined);
+    const previousUrls = [ep.hlsUrl, ep.originalUrl];
     const saved = await this.upload.ingestDirectUploadKey(key, originalFilename);
     await this.prisma.episode.update({
       where: { id: ep.id },
@@ -499,6 +503,9 @@ export class AdminEpisodesService {
         transcodeStatus: 'PENDING',
       },
     });
+    await this.upload
+      .purgeMediaUrls(previousUrls, { allowOrphans: true })
+      .catch(() => undefined);
     const job = await this.upload.enqueueTranscode(saved.relativePath, String(ep.id), opts);
     await this.audit.write({
       actorId,

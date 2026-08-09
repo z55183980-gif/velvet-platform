@@ -12,6 +12,7 @@ import {
   resolveStripeWebhookSecrets,
   verifyStripeSignature,
 } from './stripe-gateway.runtime';
+import { isFullStripeRefund } from './stripe-refund';
 
 /** provider 路径参数 → Order.paymentMethod */
 const PROVIDER_TO_METHOD: Record<string, string> = {
@@ -285,9 +286,63 @@ export class PaymentsService {
         ) {
           return { received: true, ignored: true, reason: 'refund_not_succeeded' };
         }
+
+        // Partial Stripe refunds must not strip all credits/VIP.
+        const order = await this.prisma.order.findUnique({
+          where: { orderNo: parsedStripe.orderNo },
+          select: { amountVnd: true, payCurrency: true, meta: true },
+        });
+        const orderMinor = order ? Number(order.amountVnd) : null;
+        const full = isFullStripeRefund({
+          refundAmountMinor: parsedStripe.refundAmountMinor,
+          amountRefundedMinor: parsedStripe.amountRefundedMinor,
+          chargeAmountMinor: parsedStripe.chargeAmountMinor,
+          orderAmountMinor: orderMinor,
+        });
+        if (!full) {
+          if (order) {
+            const prevMeta =
+              order.meta && typeof order.meta === 'object' ? (order.meta as any) : {};
+            await this.prisma.order.update({
+              where: { orderNo: parsedStripe.orderNo },
+              data: {
+                meta: {
+                  ...prevMeta,
+                  partialRefundPending: true,
+                  lastPartialRefund: {
+                    eventId,
+                    eventType,
+                    refundAmountMinor: parsedStripe.refundAmountMinor ?? null,
+                    amountRefundedMinor: parsedStripe.amountRefundedMinor ?? null,
+                    providerRefundId: parsedStripe.providerRefundId ?? null,
+                    at: new Date().toISOString(),
+                  },
+                } as any,
+              },
+            });
+          }
+          this.log.warn({
+            event: 'webhook.refund.partial_ignored',
+            provider: 'stripe',
+            orderNo: parsedStripe.orderNo,
+            eventId,
+            eventType,
+            refundAmountMinor: parsedStripe.refundAmountMinor,
+            amountRefundedMinor: parsedStripe.amountRefundedMinor,
+            orderAmountMinor: orderMinor,
+            latencyMs: Date.now() - t0,
+          });
+          return { received: true, ignored: true, reason: 'partial_refund' };
+        }
+
         const result = await this.wallet.revokeOnProviderRefund(
           parsedStripe.orderNo,
           `Stripe ${eventType}`,
+          {
+            providerRefundId: parsedStripe.providerRefundId,
+            amountMinor: parsedStripe.amountRefundedMinor ?? parsedStripe.refundAmountMinor,
+            currency: parsedStripe.currency,
+          },
         );
         if (eventId) {
           try {

@@ -153,6 +153,17 @@ class ResetPasswordDto {
   password!: string;
 }
 
+class BindPasswordDto {
+  @IsString()
+  @MinLength(6, { message: 'auth.passwordMinLength' })
+  password!: string;
+
+  /** Required when the account already has a password. */
+  @IsOptional()
+  @IsString()
+  currentPassword?: string;
+}
+
 @Controller('v1/auth')
 export class AuthController {
   constructor(
@@ -176,14 +187,14 @@ export class AuthController {
   /** Web 登录/注册图形验证码（对齐管理端 SVG captcha） */
   @Throttle({ global: { limit: 10, ttl: 60_000 } })
   @Get('captcha')
-  captchaChallenge() {
-    return ok(this.captcha.issue('web'));
+  async captchaChallenge() {
+    return ok(await this.captcha.issue('web'));
   }
 
   /** Google OAuth: open in popup → redirect to Google */
   @Throttle({ global: { limit: 20, ttl: 60_000 } })
   @Get('google/start')
-  googleStart(
+  async googleStart(
     @Query('origin') origin: string | undefined,
     @Query('mode') mode: string | undefined,
     @Query('returnTo') returnTo: string | undefined,
@@ -191,7 +202,7 @@ export class AuthController {
     @Res() res: Response,
   ) {
     try {
-      const url = this.auth.beginGoogleOAuth(origin, { mode, returnTo });
+      const url = await this.auth.beginGoogleOAuth(origin, { mode, returnTo });
       return res.redirect(302, url);
     } catch (e: any) {
       const key =
@@ -228,7 +239,7 @@ export class AuthController {
     @Req() req: Request,
     @Res() res: Response,
   ) {
-    const peeked = this.auth.peekGoogleState(state);
+    const peeked = await this.auth.peekGoogleState(state);
     const fallbackOrigin = peeked?.origin || this.auth.getDefaultWebOrigin();
     const fallbackMode = peeked?.mode || 'popup';
     const fallbackReturnTo = peeked?.returnTo || '/';
@@ -342,7 +353,7 @@ export class AuthController {
     return ok(result, this.msg(req, 'auth.loginSuccess'));
   }
 
-  /** 内测：邮箱 + 账号 + 密码（无需验证码）。公测可传 code 做邮箱激活。 */
+  /** 邮箱 + 密码注册。已存在邮箱一律拒绝；OTP 开启时需传 code。 */
   @Throttle({ global: { limit: 10, ttl: 60_000 } })
   @Post('email/register')
   async registerEmail(
@@ -350,7 +361,7 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    this.captcha.verify('web', dto.captchaId || '', dto.captchaCode || '');
+    await this.captcha.verify('web', dto.captchaId || '', dto.captchaCode || '');
     const result = await this.auth.registerEmail(dto, getClientMeta(req));
     this.setSessionCookie(res, result.token);
     return ok(result, this.msg(req, 'auth.registerSuccess'));
@@ -364,7 +375,7 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ) {
-    this.captcha.verify('web', dto.captchaId || '', dto.captchaCode || '');
+    await this.captcha.verify('web', dto.captchaId || '', dto.captchaCode || '');
     const account = String(dto.account || dto.email || '').trim();
     const result = await this.auth.loginWithPassword(account, dto.password, getClientMeta(req));
     this.setSessionCookie(res, result.token);
@@ -390,6 +401,18 @@ export class AuthController {
     const result = await this.auth.resetPassword(dto, getClientMeta(req));
     this.setSessionCookie(res, result.token);
     return ok(result, this.msg(req, 'auth.resetSuccess'));
+  }
+
+  /**
+   * Authenticated password bind/change.
+   * Google / passwordless users may set a password with a valid session;
+   * accounts that already have a password must pass currentPassword.
+   */
+  @Post('password/bind')
+  @UseGuards(AuthGuard)
+  async bindPassword(@Body() dto: BindPasswordDto, @CurrentUser() user: AuthUser, @Req() req: Request) {
+    const profile = await this.auth.bindPassword(user.userId, dto);
+    return ok(profile, this.msg(req, 'auth.bindPasswordSuccess'));
   }
 
   @Post('sign-out')

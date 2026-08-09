@@ -114,8 +114,12 @@ export class MediaController {
 
     const ext = path.extname(abs).toLowerCase();
     const posixRel = normalized.replace(/\\/g, '/');
+    // Legacy avatars were saved under docs/avatar-* but are profile-public (unsigned).
+    const isLegacyPublicAvatar =
+      /^docs\/avatar-[^/]+$/i.test(posixRel);
     const isPrivateDoc =
-      posixRel === 'docs' || posixRel.startsWith('docs/');
+      !isLegacyPublicAvatar &&
+      (posixRel === 'docs' || posixRel.startsWith('docs/'));
     const needsSig = VIDEO_EXTS.has(ext) || isPrivateDoc;
     const key = requireSecret(
       'CDN_SIGN_KEY',

@@ -37,6 +37,78 @@ export function verifyEpisodePreviewSig(
   }
 }
 
+/** True when playlist is a master (multivariant) — EXTINF truncation does not apply. */
+export function isMasterM3u8(body: string): boolean {
+  return /^#EXT-X-STREAM-INF:/im.test(body);
+}
+
+/**
+ * Pick a media-variant URI from a master playlist (lowest BANDWIDTH).
+ * Ignores I-FRAME-STREAM-INF / EXT-X-MEDIA audio-only alts.
+ */
+export function pickMasterVariantUri(body: string): string | null {
+  const lines = body.split(/\r?\n/);
+  let bestUri: string | null = null;
+  let bestBw = Number.POSITIVE_INFINITY;
+  let pendingBw: number | null = null;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (/^#EXT-X-I-FRAME-STREAM-INF:/i.test(trimmed)) {
+      pendingBw = null;
+      continue;
+    }
+    if (/^#EXT-X-STREAM-INF:/i.test(trimmed)) {
+      const m = /BANDWIDTH=(\d+)/i.exec(trimmed);
+      pendingBw = m ? Number(m[1]) : Number.MAX_SAFE_INTEGER;
+      continue;
+    }
+    if (pendingBw != null && !trimmed.startsWith('#')) {
+      if (Number.isFinite(pendingBw) && pendingBw < bestBw) {
+        bestBw = pendingBw;
+        bestUri = trimmed;
+      }
+      pendingBw = null;
+    }
+  }
+  return bestUri;
+}
+
+/** Resolve a playlist-relative URI to a posix path (no leading slash). Absolute http(s) returned as-is. */
+export function resolvePlaylistChildUri(
+  playlistRelPath: string,
+  uri: string,
+): { absoluteUrl: string } | { relativePath: string } | null {
+  const raw = String(uri || '').trim();
+  if (!raw || /^data:/i.test(raw)) return null;
+  if (/^https?:\/\//i.test(raw)) return { absoluteUrl: raw };
+
+  const pathOnly = raw.split(/[?#]/)[0];
+  if (!pathOnly) return null;
+  if (pathOnly.startsWith('/')) {
+    return { relativePath: pathOnly.replace(/^\/+/, '') };
+  }
+  const playlistPosix = playlistRelPath.replace(/\\/g, '/').replace(/^\/+/, '');
+  const dir = playlistPosix.includes('/')
+    ? playlistPosix.slice(0, playlistPosix.lastIndexOf('/'))
+    : '';
+  const joined = dir ? `${dir}/${pathOnly}` : pathOnly;
+  const normalized = joined
+    .split('/')
+    .reduce<string[]>((acc, part) => {
+      if (!part || part === '.') return acc;
+      if (part === '..') {
+        acc.pop();
+        return acc;
+      }
+      acc.push(part);
+      return acc;
+    }, [])
+    .join('/');
+  return { relativePath: normalized };
+}
+
 /** Keep only media segments until cumulative EXTINF >= previewSeconds. */
 export function truncateM3u8ByDuration(body: string, previewSeconds: number): string {
   const limit = Math.max(1, previewSeconds);

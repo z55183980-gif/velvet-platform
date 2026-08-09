@@ -1,10 +1,11 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { OtpService, OtpPurpose } from './otp.service';
 import { SessionService } from './session.service';
 import { MailerService } from '../common/mailer.service';
 import { ConfigService } from '@nestjs/config';
 import { BizException, BizCode } from '../common/biz.exception';
+import { EphemeralKv } from '../common/ephemeral-kv';
 import { ClientMeta, enrichClientMeta } from '../common/request-meta';
 import * as crypto from 'crypto';
 
@@ -36,7 +37,7 @@ type GoogleOAuthState = {
 };
 
 @Injectable()
-export class AuthService {
+export class AuthService implements OnModuleDestroy {
   private readonly cookieName = 'dv_session';
   private readonly adminToken: string;
   /** 公测开关：邮箱 OTP 登录/注册激活（找回密码不受此限制） */
@@ -49,8 +50,8 @@ export class AuthService {
   private readonly googleRedirectUri: string;
   private readonly defaultWebOrigin: string;
   private readonly allowedOrigins: Set<string>;
-  /** Short-lived OAuth CSRF states (single-process; OK for current deploy). */
-  private readonly googleStates = new Map<string, GoogleOAuthState>();
+  /** OAuth CSRF states — Redis in prod; Map only for local single-process. */
+  private readonly googleStates: EphemeralKv;
   private readonly captchaDisabledWeb: boolean;
 
   constructor(
@@ -60,6 +61,7 @@ export class AuthService {
     private readonly mailer: MailerService,
     config: ConfigService,
   ) {
+    this.googleStates = new EphemeralKv(config, 'oauth:google');
     this.adminToken =
       config.get<string>('ADMIN_TOKEN') ||
       (process.env.NODE_ENV === 'production' ? '' : 'dev-admin');
@@ -92,11 +94,15 @@ export class AuthService {
     if (this.defaultWebOrigin) this.allowedOrigins.add(this.defaultWebOrigin);
   }
 
+  async onModuleDestroy() {
+    await this.googleStates.quit();
+  }
+
   /** 前台/管理端读取鉴权通道能力 */
   getAuthChannels() {
     return {
       password: true,
-      /** 内测注册不强制邮箱验证码；公测打开 AUTH_EMAIL_OTP_ENABLED 后可要求 code */
+      /** 打开 AUTH_EMAIL_OTP_ENABLED 后注册必须传邮箱验证码；生产启动强制开启 */
       registerRequiresOtp: this.emailOtpEnabled,
       emailOtp: {
         enabled: this.emailOtpEnabled,
@@ -126,10 +132,10 @@ export class AuthService {
   }
 
   /** Build Google authorize URL; `origin` is the web origin for postMessage / redirect. */
-  beginGoogleOAuth(
+  async beginGoogleOAuth(
     originHint?: string,
     opts?: { mode?: string; returnTo?: string },
-  ): string {
+  ): Promise<string> {
     if (!this.isGoogleEnabled()) {
       throw new BizException(BizCode.BAD_REQUEST, 'auth.googleDisabled');
     }
@@ -137,14 +143,15 @@ export class AuthService {
     const mode: GoogleOAuthMode =
       String(opts?.mode || '').trim().toLowerCase() === 'redirect' ? 'redirect' : 'popup';
     const returnTo = this.sanitizeReturnTo(opts?.returnTo);
-    this.purgeExpiredGoogleStates();
     const state = crypto.randomBytes(24).toString('hex');
-    this.googleStates.set(state, {
+    const ttlSec = 10 * 60;
+    const payload: GoogleOAuthState = {
       origin,
       mode,
       returnTo,
-      expiresAt: Date.now() + 10 * 60 * 1000,
-    });
+      expiresAt: Date.now() + ttlSec * 1000,
+    };
+    await this.googleStates.set(state, JSON.stringify(payload), ttlSec);
     const params = new URLSearchParams({
       client_id: this.googleClientId,
       redirect_uri: this.googleRedirectUri,
@@ -171,8 +178,16 @@ export class AuthService {
     returnTo: string;
   }> {
     const state = String(opts.state || '').trim();
-    const st = state ? this.googleStates.get(state) : undefined;
-    if (st) this.googleStates.delete(state);
+    // Atomic consume so concurrent callbacks cannot reuse the same state.
+    const raw = state ? await this.googleStates.getdel(state) : null;
+    let st: GoogleOAuthState | null = null;
+    if (raw) {
+      try {
+        st = JSON.parse(raw) as GoogleOAuthState;
+      } catch {
+        st = null;
+      }
+    }
 
     const origin = st?.origin || this.defaultWebOrigin;
     const mode = st?.mode || 'popup';
@@ -201,9 +216,14 @@ export class AuthService {
   }
 
   /** Peek OAuth state before consuming (for error HTML / redirects). */
-  peekGoogleState(state?: string): GoogleOAuthState | null {
-    const st = this.googleStates.get(String(state || '').trim());
-    return st || null;
+  async peekGoogleState(state?: string): Promise<GoogleOAuthState | null> {
+    const raw = await this.googleStates.get(String(state || '').trim());
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw) as GoogleOAuthState;
+    } catch {
+      return null;
+    }
   }
 
   sanitizeReturnTo(raw?: string): string {
@@ -241,13 +261,6 @@ export class AuthService {
       }
     }
     return this.defaultWebOrigin;
-  }
-
-  private purgeExpiredGoogleStates() {
-    const now = Date.now();
-    for (const [k, v] of this.googleStates) {
-      if (v.expiresAt < now) this.googleStates.delete(k);
-    }
   }
 
   private async fetchGoogleProfile(code: string): Promise<{
@@ -428,7 +441,8 @@ export class AuthService {
 
     if (purpose === 'register') {
       const existing = await this.prisma.user.findUnique({ where: { email: normalized } });
-      if (existing?.passwordHash) {
+      // Any existing account (Google / passwordless / password) blocks register OTP.
+      if (existing) {
         throw new BizException(BizCode.CONFLICT, 'auth.emailAlreadyRegistered');
       }
     }
@@ -492,7 +506,8 @@ export class AuthService {
 
   /**
    * 注册：邮箱 + 密码（username 可选；未传则按邮箱自动生成）。
-   * 公测：打开 AUTH_EMAIL_OTP_ENABLED 后必须传 code。
+   * 已存在邮箱一律冲突（含 Google / 无密码账号）；不可通过注册绑定密码。
+   * AUTH_EMAIL_OTP_ENABLED 开启时必须传 code；生产启动会强制开启。
    */
   async registerEmail(
     opts: {
@@ -525,55 +540,81 @@ export class AuthService {
     }
 
     const byEmail = await this.prisma.user.findUnique({ where: { email: normalized } });
-    if (byEmail?.passwordHash) {
+    // Always conflict: Google / passwordless / password accounts must not be overwritable.
+    if (byEmail) {
       throw new BizException(BizCode.CONFLICT, 'auth.emailAlreadyRegistered');
     }
 
     let username = this.normalizeUsername(String(opts.username || '').trim());
     if (!username) {
-      username = await this.allocateUsernameFromEmail(normalized, byEmail?.id);
+      username = await this.allocateUsernameFromEmail(normalized);
     } else {
       const taken = await this.prisma.user.findUnique({ where: { username } });
-      if (taken && taken.id !== byEmail?.id) {
+      if (taken) {
         throw new BizException(BizCode.CONFLICT, 'auth.usernameTaken');
       }
     }
 
     const nickname =
       String(opts.nickname || '').trim() ||
-      byEmail?.nickname ||
       this.nicknameFromEmail(normalized) ||
       username ||
       'user';
     const passwordHash = this.hashPassword(password);
 
-    let user;
-    if (byEmail) {
-      user = await this.prisma.user.update({
-        where: { id: byEmail.id },
-        data: {
-          passwordHash,
-          username: byEmail.username || username,
-          nickname: byEmail.nickname || nickname,
-        },
-      });
-    } else {
-      user = await this.prisma.user.create({
-        data: {
-          email: normalized,
-          username,
-          nickname,
-          passwordHash,
-        },
-      });
-      await this.prisma.wallet.upsert({
-        where: { userId: user.id },
-        create: { userId: user.id },
-        update: {},
-      });
-    }
+    const user = await this.prisma.user.create({
+      data: {
+        email: normalized,
+        username,
+        nickname,
+        passwordHash,
+      },
+    });
+    await this.prisma.wallet.upsert({
+      where: { userId: user.id },
+      create: { userId: user.id },
+      update: {},
+    });
 
     return this.issueSession(user, meta);
+  }
+
+  /**
+   * Bind or change password for the authenticated user.
+   * - No password yet (Google / passwordless): session alone is enough.
+   * - Already has password: require currentPassword (re-auth).
+   * Unauthenticated password binding must use verified OTP via resetPassword.
+   */
+  async bindPassword(
+    userId: bigint,
+    opts: { password: string; currentPassword?: string },
+  ) {
+    const password = String(opts.password || '');
+    if (password.length < MIN_PASSWORD_LEN) {
+      throw new BizException(BizCode.BAD_REQUEST, 'auth.passwordMinLength', undefined, {
+        min: MIN_PASSWORD_LEN,
+      });
+    }
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new BizException(BizCode.UNAUTHORIZED, 'auth.sessionInvalid');
+    }
+    if (user.status === 'BANNED' || user.status === 'SUSPENDED') {
+      throw new BizException(BizCode.FORBIDDEN, 'auth.accountDisabled');
+    }
+    if (user.passwordHash) {
+      const current = String(opts.currentPassword || '');
+      if (!current || !this.verifyPassword(current, user.passwordHash)) {
+        throw new BizException(BizCode.UNAUTHORIZED, 'auth.invalidCredentials');
+      }
+    }
+    const passwordHash = this.hashPassword(password);
+    const updated = await this.prisma.user.update({
+      where: { id: user.id },
+      data: { passwordHash },
+      include: { creator: true },
+    });
+    return this.toProfile(updated);
   }
 
   /** 账号或邮箱 + 密码登录 */

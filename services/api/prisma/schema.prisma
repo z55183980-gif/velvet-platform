@@ -220,6 +220,8 @@ model Drama {
   @@index([creatorId])
   @@index([isOfficial, isFeatured, status])
   @@index([isHottest, hottestSortOrder])
+  /// Preserved from gap_round3; keep in schema so migrate drift does not drop it.
+  @@index([tags], type: Gin, map: "dramas_tags_gin_idx")
   @@map("dramas")
 }
 

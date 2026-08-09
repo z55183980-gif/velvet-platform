@@ -5,6 +5,7 @@ import { toBigInt, genOrderNo } from '../common/money.util';
 import { withPrismaGuard } from '../common/prisma-error.util';
 import { ContentReadinessService } from '../common/content-readiness.service';
 import { PlatformSettingsService } from '../common/platform-settings.service';
+import { isFinanceOpsFrozen } from '../common/ledger-units';
 
 @Injectable()
 export class CreatorService {
@@ -325,6 +326,9 @@ export class CreatorService {
   }
 
   async createWithdraw(userId: bigint, amountVnd: number | string, bankInfo: any) {
+    if (isFinanceOpsFrozen()) {
+      throw new BizException(BizCode.FORBIDDEN, 'finance.opsFrozen');
+    }
     const creator = await this.ensureCreator(userId);
     if (creator.kycStatus !== 'APPROVED') {
       throw new BizException(BizCode.FORBIDDEN, 'creator.kycRequiredForWithdraw');

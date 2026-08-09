@@ -31,13 +31,55 @@ function fixture(options: { failBalanceMove?: boolean } = {}) {
 }
 
 test('counts a settlement only after the transaction succeeds', async () => {
-  const { service, claimCalls } = fixture();
-  assert.deepEqual(await service.settleNow(7), { eligible: 1, settled: 1, days: 7 });
-  assert.equal(claimCalls(), 1);
+  const prev = process.env.FINANCE_OPS_FROZEN;
+  process.env.FINANCE_OPS_FROZEN = '0';
+  try {
+    const { service, claimCalls } = fixture();
+    assert.deepEqual(await service.settleNow(7), {
+      eligible: 1,
+      settled: 1,
+      days: 7,
+      financeOpsFrozen: false,
+    });
+    assert.equal(claimCalls(), 1);
+  } finally {
+    if (prev === undefined) delete process.env.FINANCE_OPS_FROZEN;
+    else process.env.FINANCE_OPS_FROZEN = prev;
+  }
 });
 
 test('does not issue an out-of-transaction claim rollback after failure', async () => {
-  const { service, claimCalls } = fixture({ failBalanceMove: true });
-  assert.deepEqual(await service.settleNow(7), { eligible: 1, settled: 0, days: 7 });
-  assert.equal(claimCalls(), 1);
+  const prev = process.env.FINANCE_OPS_FROZEN;
+  process.env.FINANCE_OPS_FROZEN = '0';
+  try {
+    const { service, claimCalls } = fixture({ failBalanceMove: true });
+    assert.deepEqual(await service.settleNow(7), {
+      eligible: 1,
+      settled: 0,
+      days: 7,
+      financeOpsFrozen: false,
+    });
+    assert.equal(claimCalls(), 1);
+  } finally {
+    if (prev === undefined) delete process.env.FINANCE_OPS_FROZEN;
+    else process.env.FINANCE_OPS_FROZEN = prev;
+  }
+});
+
+test('settleNow no-ops while finance ops frozen (USD reconciliation)', async () => {
+  const prev = process.env.FINANCE_OPS_FROZEN;
+  process.env.FINANCE_OPS_FROZEN = '1';
+  try {
+    const { service, claimCalls } = fixture();
+    assert.deepEqual(await service.settleNow(7), {
+      eligible: 0,
+      settled: 0,
+      days: 7,
+      financeOpsFrozen: true,
+    });
+    assert.equal(claimCalls(), 0);
+  } finally {
+    if (prev === undefined) delete process.env.FINANCE_OPS_FROZEN;
+    else process.env.FINANCE_OPS_FROZEN = prev;
+  }
 });

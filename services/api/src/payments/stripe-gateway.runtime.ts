@@ -137,6 +137,11 @@ export function parseStripeWebhookPayload(payload: any): {
   payAmountMajor?: string;
   fromFlatPayload?: boolean;
   currency?: string;
+  /** Refund / charge amounts in Stripe minor units (cents for USD). */
+  refundAmountMinor?: number;
+  amountRefundedMinor?: number;
+  chargeAmountMinor?: number;
+  providerRefundId?: string;
 } {
   if (!payload || typeof payload !== 'object') {
     return { eventId: null, eventType: null, orderNo: null };
@@ -155,6 +160,16 @@ export function parseStripeWebhookPayload(payload: any): {
       payAmountMajor: payload.payAmount != null ? String(payload.payAmount) : undefined,
       fromFlatPayload: true,
       currency: payload.currency ? String(payload.currency) : undefined,
+      // Flat payloads may pass minor units for refund tests
+      refundAmountMinor:
+        payload.refundAmountMinor != null ? Number(payload.refundAmountMinor) : undefined,
+      amountRefundedMinor:
+        payload.amountRefundedMinor != null ? Number(payload.amountRefundedMinor) : undefined,
+      chargeAmountMinor:
+        payload.chargeAmountMinor != null ? Number(payload.chargeAmountMinor) : undefined,
+      providerRefundId: payload.providerRefundId
+        ? String(payload.providerRefundId)
+        : undefined,
     };
   }
 
@@ -183,6 +198,27 @@ export function parseStripeWebhookPayload(payload: any): {
     meta.orderId ||
     null;
 
+  const refundAmountMinor =
+    typeof obj.amount === 'number'
+      ? obj.amount
+      : obj.amount != null
+        ? Number(obj.amount)
+        : undefined;
+  const amountRefundedMinor =
+    typeof obj.amount_refunded === 'number'
+      ? obj.amount_refunded
+      : obj.amount_refunded != null
+        ? Number(obj.amount_refunded)
+        : undefined;
+  const chargeAmountMinor =
+    typeof obj.amount_captured === 'number'
+      ? obj.amount_captured
+      : typeof obj.amount === 'number' && eventType?.startsWith('charge.')
+        ? obj.amount
+        : obj.charge && typeof obj.charge === 'object' && typeof obj.charge.amount === 'number'
+          ? obj.charge.amount
+          : undefined;
+
   return {
     eventId,
     eventType,
@@ -193,10 +229,25 @@ export function parseStripeWebhookPayload(payload: any): {
             ? obj.payment_intent.id || obj.payment_intent
             : obj.payment_intent,
         )
-      : obj.id
+      : obj.id && String(obj.id).startsWith('ch_')
         ? String(obj.id)
-        : undefined,
+        : obj.charge
+          ? String(typeof obj.charge === 'object' ? obj.charge.id || obj.charge : obj.charge)
+          : obj.id
+            ? String(obj.id)
+            : undefined,
     fromFlatPayload: false,
     currency: obj.currency ? String(obj.currency).toUpperCase() : undefined,
+    refundAmountMinor: Number.isFinite(refundAmountMinor as number)
+      ? (refundAmountMinor as number)
+      : undefined,
+    amountRefundedMinor: Number.isFinite(amountRefundedMinor as number)
+      ? (amountRefundedMinor as number)
+      : undefined,
+    chargeAmountMinor: Number.isFinite(chargeAmountMinor as number)
+      ? (chargeAmountMinor as number)
+      : undefined,
+    providerRefundId:
+      typeof obj.id === 'string' && obj.id.startsWith('re_') ? obj.id : undefined,
   };
 }

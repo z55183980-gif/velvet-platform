@@ -39,10 +39,41 @@ export function requireSecret(
   return fallbackDev;
 }
 
+function envFlagTrue(value: string | undefined | null): boolean {
+  const s = String(value ?? '')
+    .trim()
+    .toLowerCase();
+  return s === '1' || s === 'true' || s === 'yes' || s === 'on';
+}
+
+/**
+ * Fail-fast production auth posture: email ownership must be verifiable (OTP),
+ * and web CAPTCHA must stay on for register/login abuse resistance.
+ */
+export function assertProductionAuthConfig(): void {
+  if (!isProductionEnv()) return;
+  if (!envFlagTrue(process.env.AUTH_EMAIL_OTP_ENABLED)) {
+    throw new Error(
+      '[security] AUTH_EMAIL_OTP_ENABLED must be true in production (email ownership verification)',
+    );
+  }
+  if (envFlagTrue(process.env.AUTH_WEB_CAPTCHA_DISABLED)) {
+    throw new Error(
+      '[security] AUTH_WEB_CAPTCHA_DISABLED must not be enabled in production',
+    );
+  }
+}
+
 export function assertProductionSecrets(): void {
   if (!isProductionEnv()) return;
   requireSecret('JWT_SECRET', process.env.JWT_SECRET, '');
   requireSecret('CDN_SIGN_KEY', process.env.CDN_SIGN_KEY, '');
+  const redisUrl = String(process.env.REDIS_URL || '').trim();
+  if (!redisUrl) {
+    throw new Error(
+      '[security] REDIS_URL is required in production (OTP / CAPTCHA / OAuth state / queues)',
+    );
+  }
   const bootstrapPw = process.env.ADMIN_BOOTSTRAP_PASSWORD;
   if (bootstrapPw != null && String(bootstrapPw).trim() !== '') {
     if (String(bootstrapPw).length < 12 || isWeakSecret(bootstrapPw)) {
@@ -51,6 +82,7 @@ export function assertProductionSecrets(): void {
       );
     }
   }
+  assertProductionAuthConfig();
 }
 
 /** Constant-time string compare for webhook secrets. */

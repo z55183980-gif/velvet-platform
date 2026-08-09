@@ -322,7 +322,12 @@ export class DramasService {
     if (userId) {
       const [unlocks, user, dUnlock] = await Promise.all([
         this.prisma.userUnlock.findMany({
-          where: { userId, episodeId: { in: episodes.map((e) => e.id) } },
+          // Paid purchases only — ignore legacy VIP/free soft unlocks (orderId null)
+          where: {
+            userId,
+            episodeId: { in: episodes.map((e) => e.id) },
+            orderId: { not: null },
+          },
           select: { episodeId: true },
         }),
         this.prisma.user.findUnique({ where: { id: userId }, select: { vipExpireAt: true } }),

@@ -11,7 +11,9 @@
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",
-    "prisma:generate": "pnpm --filter velvet-api prisma:generate"
+    "prisma:generate": "pnpm --filter velvet-api prisma:generate",
+    "audit:prod": "pnpm audit --prod --registry=https://registry.npmjs.org",
+    "audit:all": "pnpm audit --registry=https://registry.npmjs.org"
   },
   "devDependencies": {
     "turbo": "^2.5.4",

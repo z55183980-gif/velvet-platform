@@ -73,8 +73,10 @@ export class TranscodeQueueService implements OnModuleInit, OnModuleDestroy {
       connection: this.connection,
       defaultJobOptions: {
         removeOnComplete: 100,
-        removeOnFail: 200,
-        attempts: 1,
+        // Retain failed jobs as an in-queue DLQ for ops inspection / retry.
+        removeOnFail: 1_000,
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 5_000 },
       },
     });
     this.upload.setJobDispatcher(async (jobId) => {
@@ -102,8 +104,12 @@ export class TranscodeQueueService implements OnModuleInit, OnModuleDestroy {
         },
       );
       this.worker.on('failed', (job, err) => {
+        const attempts = job?.opts?.attempts ?? 1;
+        const made = job?.attemptsMade ?? 0;
+        const exhausted = made >= attempts;
         this.logger.error(
-          `bullmq job failed id=${job?.id} data=${job?.data?.jobId}: ${err?.message || err}`,
+          `bullmq job failed id=${job?.id} data=${job?.data?.jobId} attempt=${made}/${attempts}` +
+            `${exhausted ? ' (DLQ)' : ''}: ${err?.message || err}`,
         );
       });
       this.logger.log(
@@ -149,8 +155,9 @@ export class TranscodeQueueService implements OnModuleInit, OnModuleDestroy {
         {
           jobId,
           removeOnComplete: 100,
-          removeOnFail: 200,
-          attempts: 1,
+          removeOnFail: 1_000,
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 5_000 },
         },
       );
       return;

@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { Button, Input, Switch, cn } from "@velvet/ui";
 import { Save } from "lucide-react";
 import { useI18n } from "../lib/i18n";
@@ -84,6 +84,11 @@ export function DramaPlaybackPolicyForm({
   const customEditable = isGlobal || !inheritGlobal;
   const rangeDisabled = disabled || allFree || (!isGlobal && !episodeTotal);
 
+  // Coerce dirty mid-range drafts (start>1) back to first-N semantics.
+  useEffect(() => {
+    if (freeRangeStart !== "1") onFreeRangeStartChange("1");
+  }, [freeRangeStart, onFreeRangeStartChange]);
+
   const previewFreeCount =
     !isGlobal && inheritGlobal
       ? freeCountWhenInheriting({
@@ -91,7 +96,7 @@ export function DramaPlaybackPolicyForm({
           globalMode,
           globalFreeCount,
         })
-      : freeEpisodeCountFromCustomPolicy(episodeTotal, freeRangeStart, freeRangeEnd, allFree);
+      : freeEpisodeCountFromCustomPolicy(episodeTotal, "1", freeRangeEnd, allFree);
 
   const previewCredits = Math.max(1, priceCredits || 10);
   const previewIsAllFree = allFree || (episodeTotal > 0 && previewFreeCount >= episodeTotal);
@@ -178,10 +183,11 @@ export function DramaPlaybackPolicyForm({
                     <Input
                       type="number"
                       min={1}
-                      max={!isGlobal && episodeTotal ? episodeTotal : undefined}
-                      value={freeRangeStart}
-                      disabled={rangeDisabled}
-                      onChange={(e) => onFreeRangeStartChange(e.target.value)}
+                      max={1}
+                      value="1"
+                      disabled
+                      readOnly
+                      title="FREE_FIRST_N is first-N only; start is always episode 1"
                     />
                   </label>
                   <label className="upload-field">
@@ -196,6 +202,10 @@ export function DramaPlaybackPolicyForm({
                     />
                   </label>
                 </div>
+                <p className="text-caption text-ink-muted mt-1">
+                  Free means episodes 1…N only. Mid-range free (e.g. 5–10) is not supported and
+                  must not be saved as FREE_FIRST_N.
+                </p>
               </div>
             </div>
             <div className="policy-mode-card">

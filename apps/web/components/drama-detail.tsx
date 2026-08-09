@@ -281,16 +281,28 @@ export function DramaDetail({
   const playUrlInflightRef = useRef(new Map<string, Promise<PlayUrlCacheEntry | null>>());
   const warmNextRef = useRef<{ episodeId: string; destroy: () => void } | null>(null);
   const nextWarmArmedRef = useRef(false);
+  /** Bound signed play URLs to account — guest/B must not reuse A's paid URL. */
+  const authCacheKey =
+    user?.email || user?.phone || user?.username || user?.label || (authReady ? "guest" : "pending");
 
-  const readCachedPlayUrl = useCallback((episodeId: string): PlayUrlCacheEntry | null => {
-    const hit = playUrlCacheRef.current.get(episodeId);
-    if (!hit) return null;
-    if (hit.expiresAtMs - Date.now() < PLAY_URL_REFRESH_MS) {
-      playUrlCacheRef.current.delete(episodeId);
-      return null;
-    }
-    return hit;
-  }, []);
+  const playCacheKey = useCallback(
+    (episodeId: string) => `${authCacheKey}:${episodeId}`,
+    [authCacheKey],
+  );
+
+  const readCachedPlayUrl = useCallback(
+    (episodeId: string): PlayUrlCacheEntry | null => {
+      const key = playCacheKey(episodeId);
+      const hit = playUrlCacheRef.current.get(key);
+      if (!hit) return null;
+      if (hit.expiresAtMs - Date.now() < PLAY_URL_REFRESH_MS) {
+        playUrlCacheRef.current.delete(key);
+        return null;
+      }
+      return hit;
+    },
+    [playCacheKey],
+  );
 
   const writeCachedPlayUrl = useCallback(
     (episodeId: string, r: {
@@ -306,10 +318,10 @@ export function DramaDetail({
         previewOnly: !!r.previewOnly,
         previewSeconds: r.previewSeconds || 0,
       };
-      playUrlCacheRef.current.set(episodeId, entry);
+      playUrlCacheRef.current.set(playCacheKey(episodeId), entry);
       return entry;
     },
-    [],
+    [playCacheKey],
   );
 
   const ensureCachedPlayUrl = useCallback(
@@ -318,7 +330,8 @@ export function DramaDetail({
       if (cached) return cached;
       if (signal?.aborted) return null;
 
-      const existing = playUrlInflightRef.current.get(episodeId);
+      const inflightKey = playCacheKey(episodeId);
+      const existing = playUrlInflightRef.current.get(inflightKey);
       if (existing) {
         const entry = await existing;
         if (signal?.aborted) return null;
@@ -333,17 +346,27 @@ export function DramaDetail({
         } catch {
           return null;
         } finally {
-          playUrlInflightRef.current.delete(episodeId);
+          playUrlInflightRef.current.delete(inflightKey);
         }
       })();
 
-      playUrlInflightRef.current.set(episodeId, task);
+      playUrlInflightRef.current.set(inflightKey, task);
       const entry = await task;
       if (signal?.aborted) return null;
       return entry;
     },
-    [readCachedPlayUrl, writeCachedPlayUrl],
+    [playCacheKey, readCachedPlayUrl, writeCachedPlayUrl],
   );
+
+  // Account switch: drop signed URLs + playback state bound to the previous principal.
+  useEffect(() => {
+    playUrlCacheRef.current.clear();
+    playUrlInflightRef.current.clear();
+    setPlayUrl(null);
+    setPreviewLimit(0);
+    setPlayErr(null);
+    setWatching(false);
+  }, [authCacheKey]);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -358,6 +381,9 @@ export function DramaDetail({
     setFavCount(0);
     setLiked(false);
     setLikeCount(0);
+    setUnlockedNos(new Set());
+    setSelected(null);
+    setPlayUrl(null);
     loadDramaDetail(id, { signal: ac.signal })
       .then((d) => {
         if (ac.signal.aborted) return;
@@ -382,7 +408,7 @@ export function DramaDetail({
         if (!ac.signal.aborted) setLoading(false);
       });
     return () => ac.abort();
-  }, [id, reloadKey]);
+  }, [id, reloadKey, authCacheKey]);
 
   useEffect(() => {
     if (!data || selected) return;

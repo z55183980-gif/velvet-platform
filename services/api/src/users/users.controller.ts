@@ -104,8 +104,9 @@ export class UsersController {
     @UploadedFile() file: Express.Multer.File,
     @CurrentUser() user: AuthUser,
   ) {
-    const saved = this.upload.saveDocument(file, 'avatar');
-    const avatarUrl = `/api/v1/media/${saved.relativePath}`;
+    // Public covers/ path (no media signature) — profiles must render for all viewers.
+    const saved = await this.upload.saveImage(file, 'avatar');
+    const avatarUrl = saved.url;
     await this.prisma.user.update({
       where: { id: user.userId },
       data: { avatarUrl },

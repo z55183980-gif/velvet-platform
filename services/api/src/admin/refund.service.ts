@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { BizException, BizCode } from '../common/biz.exception';
 import { AuditService } from '../common/audit.service';
 import { WalletService } from '../wallet/wallet.service';
+import { createStripeRefund } from '../payments/stripe-refund';
 
 @Injectable()
 export class AdminRefundService {
@@ -11,6 +12,64 @@ export class AdminRefundService {
     private readonly audit: AuditService,
     private readonly wallet: WalletService,
   ) {}
+
+  /**
+   * For Stripe-paid TOPUP/VIP: call Stripe Refund API before local credit/VIP revoke.
+   * Stores provider refund id on order.meta (idempotent via Stripe Idempotency-Key).
+   */
+  private async ensureProviderRefund(order: {
+    id: bigint;
+    orderNo: string;
+    paymentMethod: string;
+    paymentStatus: string;
+    externalRef: string | null;
+    amountVnd: bigint;
+    payCurrency: string;
+    meta: unknown;
+    orderType: string;
+  }) {
+    if (order.paymentMethod !== 'STRIPE') return null;
+    if (order.orderType !== 'TOPUP' && order.orderType !== 'VIP_SUB') return null;
+
+    const prevMeta = order.meta && typeof order.meta === 'object' ? (order.meta as any) : {};
+    if (prevMeta.stripeRefundId) {
+      return {
+        refundId: String(prevMeta.stripeRefundId),
+        alreadyRefunded: true,
+        amountMinor: Number(prevMeta.stripeRefundAmountMinor) || Number(order.amountVnd),
+        currency: String(prevMeta.stripeRefundCurrency || 'usd'),
+        status: 'succeeded',
+      };
+    }
+
+    const paymentRef = String(order.externalRef || prevMeta.stripePaymentIntentId || '').trim();
+    if (!paymentRef) {
+      throw new BizException(BizCode.BAD_REQUEST, 'stripe.refundMissingPaymentRef');
+    }
+
+    const amountMinor = Number(order.amountVnd);
+    const stripe = await createStripeRefund({
+      paymentIntentOrChargeId: paymentRef,
+      amountMinor: Number.isFinite(amountMinor) && amountMinor > 0 ? amountMinor : undefined,
+      idempotencyKey: `velvet-refund:${order.orderNo}`,
+      metadata: { orderNo: order.orderNo, order_no: order.orderNo },
+    });
+
+    await this.prisma.order.update({
+      where: { id: order.id },
+      data: {
+        meta: {
+          ...prevMeta,
+          stripeRefundId: stripe.refundId,
+          stripeRefundAmountMinor: stripe.amountMinor,
+          stripeRefundCurrency: stripe.currency,
+          stripeRefundStatus: stripe.status,
+          ledgerCurrency: 'USD',
+        } as any,
+      },
+    });
+    return stripe;
+  }
 
   /** 列出工单：refundStatus = REQUESTED */
   async listRequests(filter: { page?: number; pageSize?: number }) {
@@ -71,6 +130,9 @@ export class AdminRefundService {
       throw new BizException(BizCode.ORDER_NOT_PAID, 'Đơn chưa thanh toán');
     }
 
+    // Stripe real-money refund first; local credits/VIP revoke second (webhook is idempotent).
+    const providerRefund = await this.ensureProviderRefund(order);
+
     let refund: { refunded: boolean; alreadyRefunded: boolean; orderNo: string };
     if (order.orderType === 'EPISODE_UNLOCK') {
       refund = await this.wallet.refundOrder(orderNo, order.userId, 'admin-approve', {
@@ -78,6 +140,12 @@ export class AdminRefundService {
       });
     } else if (order.orderType === 'TOPUP') {
       refund = await this.wallet.refundTopupByAdmin(orderNo, 'admin-approve');
+    } else if (order.orderType === 'VIP_SUB') {
+      refund = await this.wallet.revokeOnProviderRefund(orderNo, 'admin-approve', {
+        providerRefundId: providerRefund?.refundId,
+        amountMinor: providerRefund?.amountMinor,
+        currency: providerRefund?.currency,
+      });
     } else {
       throw new BizException(BizCode.FORBIDDEN, 'Loại đơn không hỗ trợ hoàn');
     }
@@ -95,9 +163,10 @@ export class AdminRefundService {
         orderType: order.orderType,
         amountCredits: (order.amountCredits ?? 0n).toString(),
         alreadyRefunded: refund.alreadyRefunded,
+        stripeRefundId: providerRefund?.refundId ?? null,
       },
     });
-    return refund;
+    return { ...refund, stripeRefundId: providerRefund?.refundId ?? null };
   }
 
   async refuse(orderNo: string, reason: string, actorId?: bigint) {

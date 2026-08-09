@@ -9,6 +9,11 @@ import { StructuredLogger } from '../common/structured-logger.service';
 import { LockAccessService } from '../common/lock-access.service';
 import { PlatformSettingsService } from '../common/platform-settings.service';
 import { createStripeCheckoutSession } from '../payments/stripe-checkout';
+import {
+  creditsToUsdCents,
+  isFinanceOpsFrozen,
+  resolveUsdCentsPerCredit,
+} from '../common/ledger-units';
 
 const WALLET_RETRY = 3;
 const PAY_CURRENCY = 'USD';
@@ -283,8 +288,7 @@ export class WalletService {
         if (!order) {
           const creator = await tx.creator.findUnique({ where: { id: drama.creatorId } });
           const share = creator?.revenueShare ?? (await this.defaultRevenueShare());
-          const creatorIncome = toBigInt(Math.floor(Number(buyout) * Number(share)));
-          const platformFee = buyout - creatorIncome;
+          const ledger = await this.splitCreditsToUsdLedger(buyout, share);
           order = await tx.order.create({
             data: {
               orderNo: genOrderNo('DB'),
@@ -293,17 +297,26 @@ export class WalletService {
               creatorId: drama.creatorId,
               orderType: 'DRAMA_BUYOUT',
               dramaId,
-              amountVnd: buyout,
+              // amountVnd* = USD cents (legacy column name); credits stay in amountCredits
+              amountVnd: ledger.amountUsdCents,
               amountCredits: buyout,
-              creatorIncomeVnd: creatorIncome,
-              platformFeeVnd: platformFee,
-              payCurrency: 'CREDITS',
-              payAmount: new Prisma.Decimal(buyout.toString()),
-              fxRate: new Prisma.Decimal(1),
-              fxSource: 'wallet',
+              creatorIncomeVnd: ledger.creatorIncomeUsdCents,
+              platformFeeVnd: ledger.platformFeeUsdCents,
+              payCurrency: 'USD',
+              payAmount: new Prisma.Decimal(ledger.amountUsdCents.toString())
+                .div(100)
+                .toDecimalPlaces(2),
+              fxRate: new Prisma.Decimal(String(ledger.usdCentsPerCredit ?? 0)),
+              fxSource: ledger.ledgerDirty ? 'wallet-credits-unpriced' : 'wallet-credits',
               paymentMethod: 'WALLET',
               paymentStatus: 'PENDING',
-              meta: { revenueShare: share.toString() } as any,
+              meta: {
+                revenueShare: share.toString(),
+                ledgerCurrency: 'USD',
+                ledgerMinorUnit: 'USD_CENTS',
+                ledgerDirty: ledger.ledgerDirty,
+                usdCentsPerCredit: ledger.usdCentsPerCredit,
+              } as any,
             },
           });
         }
@@ -385,15 +398,23 @@ export class WalletService {
     const existing = await this.prisma.userUnlock.findUnique({
       where: { userId_episodeId: { userId, episodeId } },
     });
-    if (existing) {
+    // Paid unlocks (orderId set) are permanent. Soft rows (orderId null) from legacy
+    // VIP/free grants must NOT short-circuit — they expire with VIP / policy changes.
+    if (existing?.orderId != null) {
       return {
         unlocked: true,
         alreadyUnlocked: true,
-        isFree: existing.orderId === null,
+        isFree: false,
         episodeId: episodeId.toString(),
         unlockId: existing.id.toString(),
-        orderId: existing.orderId?.toString() ?? null,
+        orderId: existing.orderId.toString(),
       };
+    }
+    if (existing && existing.orderId == null) {
+      // Drop stale soft unlock so free→paid / VIP expiry cannot keep access forever.
+      await this.prisma.userUnlock.deleteMany({
+        where: { userId, episodeId, orderId: null },
+      });
     }
 
     const episode = await this.prisma.episode.findUnique({
@@ -407,7 +428,7 @@ export class WalletService {
       await this.lockAccess.resolveForDrama(episode.drama),
     );
 
-    // VIP / 整剧买断：软解锁（不扣积分）
+    // VIP / buyout / free: ephemeral entitlements — do NOT persist UserUnlock(orderId=null).
     if (!isFree) {
       const [user, dramaUnlock] = await Promise.all([
         this.prisma.user.findUnique({ where: { id: userId }, select: { vipExpireAt: true } }),
@@ -417,74 +438,28 @@ export class WalletService {
       ]);
       const vipActive = !!(user?.vipExpireAt && user.vipExpireAt.getTime() > Date.now());
       if (vipActive || dramaUnlock) {
-        try {
-          const rec = await this.prisma.userUnlock.create({ data: { userId, episodeId } });
-          await this.prisma.episode.update({
-            where: { id: episodeId },
-            data: { unlockCount: { increment: 1 } },
-          });
-          return {
-            unlocked: true,
-            alreadyUnlocked: false,
-            isFree: false,
-            viaVip: vipActive,
-            viaDramaBuyout: !!dramaUnlock,
-            episodeId: episodeId.toString(),
-            unlockId: rec.id.toString(),
-            orderId: null,
-          };
-        } catch (e: any) {
-          if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-            const again = await this.prisma.userUnlock.findUnique({
-              where: { userId_episodeId: { userId, episodeId } },
-            });
-            return {
-              unlocked: true,
-              alreadyUnlocked: true,
-              isFree: false,
-              viaVip: vipActive,
-              viaDramaBuyout: !!dramaUnlock,
-              episodeId: episodeId.toString(),
-              unlockId: again?.id.toString() ?? null,
-              orderId: null,
-            };
-          }
-          throw e;
-        }
+        return {
+          unlocked: true,
+          alreadyUnlocked: false,
+          isFree: false,
+          viaVip: vipActive,
+          viaDramaBuyout: !!dramaUnlock,
+          episodeId: episodeId.toString(),
+          unlockId: null,
+          orderId: dramaUnlock?.orderId?.toString() ?? null,
+        };
       }
     }
 
     if (isFree) {
-      try {
-        const rec = await this.prisma.userUnlock.create({ data: { userId, episodeId } });
-        await this.prisma.episode.update({
-          where: { id: episodeId },
-          data: { unlockCount: { increment: 1 } },
-        });
-        return {
-          unlocked: true,
-          alreadyUnlocked: false,
-          isFree: true,
-          episodeId: episodeId.toString(),
-          unlockId: rec.id.toString(),
-          orderId: null,
-        };
-      } catch (e: any) {
-        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-          const again = await this.prisma.userUnlock.findUnique({
-            where: { userId_episodeId: { userId, episodeId } },
-          });
-          return {
-            unlocked: true,
-            alreadyUnlocked: true,
-            isFree: true,
-            episodeId: episodeId.toString(),
-            unlockId: again?.id.toString() ?? null,
-            orderId: null,
-          };
-        }
-        throw e;
-      }
+      return {
+        unlocked: true,
+        alreadyUnlocked: false,
+        isFree: true,
+        episodeId: episodeId.toString(),
+        unlockId: null,
+        orderId: null,
+      };
     }
 
     await this.ensureWallet(userId);
@@ -894,15 +869,14 @@ export class WalletService {
 
     const creator = await tx.creator.findUnique({ where: { id: episode.drama.creatorId } });
     const share = creator?.revenueShare ?? (await this.defaultRevenueShare());
-    // Ledger unit follows charged credits (priceVnd is legacy alias; sync when zero).
-    const price =
+    // Charge credits from wallet; money columns are USD cents (never raw credits).
+    const credits =
       episode.priceCredits > 0n
         ? episode.priceCredits
         : episode.priceVnd > 0n
           ? episode.priceVnd
           : 0n;
-    const creatorIncome = toBigInt(Math.floor(Number(price) * Number(share)));
-    const platformFee = price - creatorIncome;
+    const ledger = await this.splitCreditsToUsdLedger(credits, share);
 
     return tx.order.create({
       data: {
@@ -913,16 +887,25 @@ export class WalletService {
         orderType: 'EPISODE_UNLOCK',
         episodeId: episode.id,
         dramaId: episode.dramaId,
-        amountVnd: price,
-        amountCredits: episode.priceCredits > 0n ? episode.priceCredits : price,
-        creatorIncomeVnd: creatorIncome,
-        platformFeeVnd: platformFee,
-        payCurrency: 'CREDITS',
-        payAmount: new Prisma.Decimal(price.toString()),
-        fxRate: new Prisma.Decimal(1),
-        fxSource: 'wallet',
+        amountVnd: ledger.amountUsdCents,
+        amountCredits: credits,
+        creatorIncomeVnd: ledger.creatorIncomeUsdCents,
+        platformFeeVnd: ledger.platformFeeUsdCents,
+        payCurrency: 'USD',
+        payAmount: new Prisma.Decimal(ledger.amountUsdCents.toString())
+          .div(100)
+          .toDecimalPlaces(2),
+        fxRate: new Prisma.Decimal(String(ledger.usdCentsPerCredit ?? 0)),
+        fxSource: ledger.ledgerDirty ? 'wallet-credits-unpriced' : 'wallet-credits',
         paymentMethod: 'WALLET',
         paymentStatus: 'PENDING',
+        meta: {
+          revenueShare: share.toString(),
+          ledgerCurrency: 'USD',
+          ledgerMinorUnit: 'USD_CENTS',
+          ledgerDirty: ledger.ledgerDirty,
+          usdCentsPerCredit: ledger.usdCentsPerCredit,
+        } as any,
       },
     });
   }
@@ -990,7 +973,15 @@ export class WalletService {
    * Stripe charge.refunded / refund.updated：回收 TOPUP 积分或缩短 VIP。
    * 幂等：已 REFUNDED 直接返回。
    */
-  async revokeOnProviderRefund(orderNo: string, reason?: string) {
+  async revokeOnProviderRefund(
+    orderNo: string,
+    reason?: string,
+    provider?: {
+      providerRefundId?: string;
+      amountMinor?: number;
+      currency?: string;
+    },
+  ) {
     const order = await this.prisma.order.findUnique({ where: { orderNo } });
     if (!order) throw new BizException(BizCode.NOT_FOUND, 'order.notFound');
     if (order.paymentStatus === 'REFUNDED') {
@@ -998,6 +989,21 @@ export class WalletService {
     }
     if (order.paymentStatus !== 'PAID') {
       throw new BizException(BizCode.ORDER_NOT_PAID, 'order.unpaidCannotCompleteRefund');
+    }
+    if (provider?.providerRefundId || provider?.amountMinor != null) {
+      const prevMeta = order.meta && typeof order.meta === 'object' ? (order.meta as any) : {};
+      await this.prisma.order.update({
+        where: { id: order.id },
+        data: {
+          meta: {
+            ...prevMeta,
+            stripeRefundId: provider.providerRefundId ?? prevMeta.stripeRefundId,
+            stripeRefundAmountMinor: provider.amountMinor ?? prevMeta.stripeRefundAmountMinor,
+            stripeRefundCurrency: provider.currency ?? prevMeta.stripeRefundCurrency,
+            ledgerCurrency: prevMeta.ledgerCurrency || 'USD',
+          } as any,
+        },
+      });
     }
     if (order.orderType === 'TOPUP') {
       return this.refundTopupByAdmin(orderNo, reason || 'Stripe refund');
@@ -1086,6 +1092,7 @@ export class WalletService {
   private async creditTopup(tx: Prisma.TransactionClient, order: any) {
     const credits = order.amountCredits ?? 0n;
     let finalBalance = 0n;
+    let credited = false;
     for (let attempt = 0; attempt < WALLET_RETRY; attempt++) {
       const wallet = await tx.wallet.findUnique({ where: { userId: order.userId } });
       if (!wallet) {
@@ -1103,6 +1110,7 @@ export class WalletService {
           },
         });
         finalBalance = credits;
+        credited = true;
         break;
       }
       const newBalance = wallet.balanceCredits + credits;
@@ -1126,10 +1134,12 @@ export class WalletService {
           },
         });
         finalBalance = newBalance;
+        credited = true;
         break;
       }
     }
-    if (finalBalance === 0n) {
+    // Do not treat balance===0 as failure: topping up a negative balance to exactly 0 is valid.
+    if (!credited) {
       throw new BizException(BizCode.CONFLICT, 'wallet.updateFailed');
     }
 
@@ -1155,28 +1165,65 @@ export class WalletService {
     }
   }
 
+  /**
+   * Accrue creator pending income in **USD cents** (legacy *Vnd columns).
+   * No-ops while FINANCE_OPS_FROZEN — stops mixing credits/VND into withdrawable balances.
+   */
   private async creditCreator(
     tx: Prisma.TransactionClient,
     creatorId: bigint,
-    incomeVnd: bigint,
+    incomeUsdCents: bigint,
   ) {
+    if (isFinanceOpsFrozen() || incomeUsdCents <= 0n) return;
     const earning = await tx.creatorEarning.findUnique({ where: { creatorId } });
     if (earning) {
       await tx.creatorEarning.update({
         where: { creatorId },
-        data: { pendingVnd: { increment: incomeVnd }, totalEarnedVnd: { increment: incomeVnd } },
+        data: {
+          pendingVnd: { increment: incomeUsdCents },
+          totalEarnedVnd: { increment: incomeUsdCents },
+        },
       });
     } else {
       await tx.creatorEarning.create({
         data: {
           creatorId,
-          pendingVnd: incomeVnd,
-          totalEarnedVnd: incomeVnd,
+          pendingVnd: incomeUsdCents,
+          totalEarnedVnd: incomeUsdCents,
           availableVnd: 0n,
           withdrawnVnd: 0n,
         },
       });
     }
+  }
+
+  /**
+   * Split wallet credit spend into USD-cents ledger fields.
+   * Without USD_CENTS_PER_CREDIT, money columns stay 0 and meta.ledgerDirty=true
+   * (do not invent a rate; credits still move in amountCredits).
+   */
+  private async splitCreditsToUsdLedger(credits: bigint, share: Prisma.Decimal) {
+    const rate = resolveUsdCentsPerCredit(null);
+    const amountUsdCents = creditsToUsdCents(credits, rate);
+    if (amountUsdCents == null) {
+      return {
+        amountUsdCents: 0n,
+        creatorIncomeUsdCents: 0n,
+        platformFeeUsdCents: 0n,
+        usdCentsPerCredit: null as number | null,
+        ledgerDirty: true,
+      };
+    }
+    const creatorIncomeUsdCents = toBigInt(
+      Math.floor(Number(amountUsdCents) * Number(share)),
+    );
+    return {
+      amountUsdCents,
+      creatorIncomeUsdCents,
+      platformFeeUsdCents: amountUsdCents - creatorIncomeUsdCents,
+      usdCentsPerCredit: rate,
+      ledgerDirty: false,
+    };
   }
 
   private async attachStripeCheckout(

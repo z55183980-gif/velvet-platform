@@ -1,9 +1,8 @@
 import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
-import IORedis from 'ioredis';
 import { BizException, BizCode } from '../common/biz.exception';
-import { createRedisConnection, readRedisUrl } from '../upload/transcode.queue';
+import { EphemeralKv } from '../common/ephemeral-kv';
 import { isProductionEnv } from '../common/security-config';
 
 export type OtpChannel = 'phone' | 'email';
@@ -17,13 +16,48 @@ interface OtpEntry {
 }
 
 /**
- * OTP 存储：有 REDIS_URL 时用 Redis；否则内存 Map（仅本地）。
- * 错码 ≥5 次锁定 15 分钟。生产禁止打印验证码。
+ * Atomic OTP verify via Redis Lua (GET + compare + DEL/SET in one round-trip).
+ * Production requires Redis; Map is local/dev only.
  */
+const VERIFY_LUA = `
+local raw = redis.call('GET', KEYS[1])
+if not raw then return {'missing'} end
+local entry = cjson.decode(raw)
+local now = tonumber(ARGV[1])
+local code = ARGV[2]
+local maxFails = tonumber(ARGV[3])
+local lockMs = tonumber(ARGV[4])
+if entry['lockedUntil'] and tonumber(entry['lockedUntil']) > now then
+  return {'locked', tostring(entry['lockedUntil'])}
+end
+if tonumber(entry['expiresAt']) < now then
+  redis.call('DEL', KEYS[1])
+  return {'expired'}
+end
+if tostring(entry['code']) == code then
+  redis.call('DEL', KEYS[1])
+  return {'ok'}
+end
+local failCount = tonumber(entry['failCount'] or 0) + 1
+entry['failCount'] = failCount
+local lockedUntil = tonumber(entry['lockedUntil'] or 0)
+if failCount >= maxFails then
+  lockedUntil = now + lockMs
+  entry['lockedUntil'] = lockedUntil
+end
+local exp = tonumber(entry['expiresAt'])
+local ttlMs = math.max(exp, lockedUntil) - now
+local ttl = math.max(1, math.ceil(ttlMs / 1000))
+redis.call('SET', KEYS[1], cjson.encode(entry), 'EX', ttl)
+if failCount >= maxFails then
+  return {'locked_max'}
+end
+return {'bad'}
+`;
+
 @Injectable()
 export class OtpService implements OnModuleDestroy {
-  private readonly store = new Map<string, OtpEntry>();
-  private readonly redis: IORedis | null;
+  private readonly kv: EphemeralKv;
   private readonly ttlMs: number;
   private readonly length: number;
   private readonly maxFails = 5;
@@ -32,60 +66,35 @@ export class OtpService implements OnModuleDestroy {
   constructor(config: ConfigService) {
     this.ttlMs = (config.get<number>('OTP_TTL_SECONDS') || 300) * 1000;
     this.length = config.get<number>('OTP_LENGTH') || 6;
-    this.redis = readRedisUrl(config) ? createRedisConnection(config) : null;
-    if (isProductionEnv() && !this.redis) {
-      // eslint-disable-next-line no-console
-      console.warn('[otp] REDIS_URL missing in production — OTP store is process-local');
-    }
+    this.kv = new EphemeralKv(config, 'otp');
   }
 
   async onModuleDestroy() {
-    if (this.redis) {
-      try {
-        await this.redis.quit();
-      } catch {
-        /* ignore */
-      }
-    }
+    await this.kv.quit();
   }
 
   private key(channel: OtpChannel, identity: string, purpose: OtpPurpose = 'login') {
-    return `otp:${channel}:${purpose}:${identity.trim().toLowerCase()}`;
+    return `${channel}:${purpose}:${identity.trim().toLowerCase()}`;
   }
 
   private async read(k: string): Promise<OtpEntry | null> {
-    if (this.redis) {
-      const raw = await this.redis.get(k);
-      if (!raw) return null;
-      try {
-        return JSON.parse(raw) as OtpEntry;
-      } catch {
-        return null;
-      }
+    const raw = await this.kv.get(k);
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw) as OtpEntry;
+    } catch {
+      return null;
     }
-    return this.store.get(k) || null;
   }
 
   private async write(k: string, entry: OtpEntry) {
-    if (this.redis) {
-      const ttlSec = Math.max(
-        1,
-        Math.ceil(
-          (Math.max(entry.expiresAt, entry.lockedUntil || 0) - Date.now()) / 1000,
-        ),
-      );
-      await this.redis.set(k, JSON.stringify(entry), 'EX', ttlSec);
-      return;
-    }
-    this.store.set(k, entry);
-  }
-
-  private async del(k: string) {
-    if (this.redis) {
-      await this.redis.del(k);
-      return;
-    }
-    this.store.delete(k);
+    const ttlSec = Math.max(
+      1,
+      Math.ceil(
+        (Math.max(entry.expiresAt, entry.lockedUntil || 0) - Date.now()) / 1000,
+      ),
+    );
+    await this.kv.set(k, JSON.stringify(entry), ttlSec);
   }
 
   async generate(
@@ -125,13 +134,39 @@ export class OtpService implements OnModuleDestroy {
     purpose: OtpPurpose = 'login',
   ): Promise<boolean> {
     const k = this.key(channel, identity, purpose);
+    if (this.kv.backend === 'redis') {
+      return this.verifyRedis(k, code);
+    }
+    return this.verifyMemory(k, code);
+  }
+
+  private async verifyRedis(k: string, code: string): Promise<boolean> {
+    const result = (await this.kv.eval(VERIFY_LUA, [k], [
+      Date.now(),
+      String(code),
+      this.maxFails,
+      this.lockMs,
+    ])) as string[];
+    const status = result?.[0];
+    if (status === 'ok') return true;
+    if (status === 'locked' || status === 'locked_max') {
+      throw new BizException(
+        BizCode.OTP_LOCKED,
+        status === 'locked_max' ? 'auth.otpLockedMaxFails' : 'auth.otpLocked',
+      );
+    }
+    return false;
+  }
+
+  private async verifyMemory(k: string, code: string): Promise<boolean> {
+    // Single-process local only — still delete-on-success before returning.
     const entry = await this.read(k);
     if (!entry) return false;
     if (entry.lockedUntil && Date.now() < entry.lockedUntil) {
       throw new BizException(BizCode.OTP_LOCKED, 'auth.otpLocked');
     }
     if (Date.now() > entry.expiresAt) {
-      await this.del(k);
+      await this.kv.del(k);
       return false;
     }
     if (entry.code !== code) {
@@ -144,7 +179,7 @@ export class OtpService implements OnModuleDestroy {
       await this.write(k, entry);
       return false;
     }
-    await this.del(k);
+    await this.kv.del(k);
     return true;
   }
 }

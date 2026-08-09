@@ -20,6 +20,7 @@ import { AuditService } from '../common/audit.service';
 import { UploadService } from '../upload/upload.service';
 import { ContentReadinessService } from '../common/content-readiness.service';
 import { PlatformSettingsService } from '../common/platform-settings.service';
+import { financeFreezePayload, isFinanceOpsFrozen } from '../common/ledger-units';
 import {
   isLockAccessMode,
   LockAccessService,
@@ -344,6 +345,9 @@ export class AdminService {
   }
 
   async approveWithdraw(id: string, actorId?: bigint | null) {
+    if (isFinanceOpsFrozen()) {
+      throw new BizException(BizCode.FORBIDDEN, 'finance.opsFrozen');
+    }
     const req = await this.prisma.withdrawRequest.findUnique({ where: { id: BigInt(id) } });
     if (!req) throw new BizException(BizCode.NOT_FOUND, 'request.notFound');
     if (req.status !== 'PENDING') {
@@ -451,6 +455,8 @@ export class AdminService {
       gmvVnd: (paidAgg._sum.amountVnd ?? 0n).toString(),
       platformRevenueVnd: (paidAgg._sum.platformFeeVnd ?? 0n).toString(),
       paidOrders: paidAgg._count.id,
+      // Legacy *Vnd keys; values are untrusted USD-cents mix until reconciliation.
+      ...financeFreezePayload(),
     };
   }
 
@@ -1775,11 +1781,8 @@ export class AdminService {
     for (const ep of drama.episodes) {
       urls.push(ep.hlsUrl, ep.originalUrl, ep.thumbnailUrl);
     }
-    // Must succeed before DB delete — otherwise UI would report success while R2 orphans remain.
-    const purge = await this.upload.purgeMediaUrls(urls, {
-      requireR2: drama.sourceType === 'R2',
-    });
-
+    // DB first: never leave live rows pointing at already-deleted objects.
+    // Storage orphans (if purge fails) are ops-reconcilable; hanging refs are not.
     await this.prisma.$transaction(async (tx) => {
       // Clear child FKs that lack onDelete: Cascade (Episode has Cascade, but
       // likes/favorites/unlocks do not — otherwise PG raises likes_dramaId_fkey etc.)
@@ -1791,6 +1794,10 @@ export class AdminService {
       });
       await tx.episode.deleteMany({ where: { dramaId } });
       await tx.drama.delete({ where: { id: dramaId } });
+    });
+    const purge = await this.upload.purgeMediaUrls(urls, {
+      requireR2: drama.sourceType === 'R2',
+      allowOrphans: true,
     });
     await this.audit.write({
       actorId,

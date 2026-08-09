@@ -197,6 +197,8 @@ function HomeInner({
   }
   const hasContentRef = useRef(entryHasContent(restore));
   const loadMoreLock = useRef(false);
+  /** Bumps on filter/key change so stale page-1 revalidate cannot wipe page-2. */
+  const listGenerationRef = useRef(0);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef({
     hot,
@@ -296,6 +298,7 @@ function HomeInner({
 
     const cached = cacheRef.current.get(key);
     const ac = new AbortController();
+    const generation = ++listGenerationRef.current;
 
     if (cached) {
       setHeroSlides(cached.heroSlides);
@@ -321,6 +324,11 @@ function HomeInner({
       setRefreshing(true);
     }
 
+    const stillCurrent = () =>
+      !ac.signal.aborted &&
+      listGenerationRef.current === generation &&
+      listRef.current.page <= 1;
+
     const run = async () => {
       try {
         setLoadError(false);
@@ -329,7 +337,7 @@ function HomeInner({
             loadFeatured({ signal: ac.signal }),
             loadHome(1, HOME_PAGE_SIZE, { category, q, sort, signal: ac.signal }),
           ]);
-          if (ac.signal.aborted) return;
+          if (!stillCurrent()) return;
           const feat = f.length ? f : h.rows.slice(0, 5);
           const slides = feat.map((d) => dramaToHeroSlide(d, locale, t));
           const nextPage = 1;
@@ -360,7 +368,7 @@ function HomeInner({
             loadFeatured({ signal: ac.signal }),
             loadHome(1, HOME_PAGE_SIZE, { sort: "hot", signal: ac.signal }),
           ]);
-          if (ac.signal.aborted) return;
+          if (!stillCurrent()) return;
           const feat = f.length > 0 ? f : hHot.rows.slice(0, 5);
           const slides =
             b.length > 0
@@ -395,7 +403,7 @@ function HomeInner({
           setHasMore(nextHasMore);
         }
       } catch {
-        if (ac.signal.aborted) return;
+        if (!stillCurrent()) return;
         setLoadError(true);
         if (!cacheRef.current.has(key)) {
           hasContentRef.current = false;
@@ -409,7 +417,7 @@ function HomeInner({
           setHasMore(false);
         }
       } finally {
-        if (ac.signal.aborted) return;
+        if (ac.signal.aborted || listGenerationRef.current !== generation) return;
         setInitialLoading(false);
         setRefreshing(false);
       }
@@ -437,15 +445,23 @@ function HomeInner({
     loadMoreLock.current = true;
     setLoadingMore(true);
     const nextPage = cur.page + 1;
+    const generation = listGenerationRef.current;
+    const requestKey = key;
+    const ac = new AbortController();
     try {
       const h = await loadHome(nextPage, HOME_PAGE_SIZE, {
         category: filtered ? category : undefined,
         q: filtered ? q : undefined,
         sort: filtered ? sort : "hot",
+        signal: ac.signal,
       });
-      const base = filtered ? cur.rows : cur.hot.length > 0 ? cur.hot : cur.rows;
+      if (ac.signal.aborted || listGenerationRef.current !== generation) return;
+      // Filter key must still match; otherwise drop stale page-N.
+      if (requestKey !== key) return;
+      const live = listRef.current;
+      const base = filtered ? live.rows : live.hot.length > 0 ? live.hot : live.rows;
       const merged = appendUnique(base, h.rows);
-      const nextTotal = h.total || cur.total;
+      const nextTotal = h.total || live.total;
       const nextHasMore =
         h.rows.length > 0 && computeHasMore(nextPage, HOME_PAGE_SIZE, merged.length, nextTotal);
       if (filtered) {
@@ -458,14 +474,14 @@ function HomeInner({
       setTotal(nextTotal);
       setPage(nextPage);
       setHasMore(nextHasMore);
-      const prev = cacheRef.current.get(key);
+      const prev = cacheRef.current.get(requestKey);
       persistCache({
-        heroSlides: prev?.heroSlides ?? cur.heroSlides,
+        heroSlides: prev?.heroSlides ?? live.heroSlides,
         hot: filtered ? [] : merged,
         rows: merged,
         total: nextTotal,
-        banners: prev?.banners ?? cur.banners,
-        featured: prev?.featured ?? cur.featured,
+        banners: prev?.banners ?? live.banners,
+        featured: prev?.featured ?? live.featured,
         page: nextPage,
         hasMore: nextHasMore,
       });

@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { BizCode, BizException } from '../common/biz.exception';
+import { financeFreezePayload } from '../common/ledger-units';
 import { PrismaService } from '../prisma/prisma.service';
 
 export type DashboardRange = 'today' | '7d' | '30d' | 'custom';
@@ -66,7 +67,7 @@ export class DashboardService {
       todos,
       rankings,
       bizBreakdown,
-      meta: { dramaCount },
+      meta: { dramaCount, ...financeFreezePayload() },
     };
   }
 

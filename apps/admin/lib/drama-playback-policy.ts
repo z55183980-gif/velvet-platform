@@ -75,6 +75,11 @@ export function resolveCustomFreePolicy(
   if (freeEnd < freeStart) {
     throw new Error("INVALID_RANGE");
   }
+  // Runtime FREE_FIRST_N only supports first-N (episodes 1..N). Mid-range
+  // free (e.g. 5–10) would incorrectly free 1–10 if we stamped freeCount=end.
+  if (freeStart !== 1) {
+    throw new Error("START_MUST_BE_ONE");
+  }
   if (total > 0 && freeStart > total) {
     return { freeThru: 0, freeCount: 0, lockMode: "VIP_ALL" };
   }
@@ -108,7 +113,7 @@ export function freeEpisodeCountFromCustomPolicy(
  * Global settings free policy (no drama total).
  * `allFree` → episodeLockMode=ALL_FREE (future episodes stay free).
  * freeEnd === 0 → VIP_ALL (all episodes paid; create encodes this via start > total).
- * Otherwise FREE_FIRST_N with freeCount = end (first-N; start is UI parity).
+ * Otherwise FREE_FIRST_N with freeCount = end (first-N only; start must be 1).
  */
 export function resolveGlobalFreeRangePolicy(
   allFree: boolean,
@@ -131,6 +136,9 @@ export function resolveGlobalFreeRangePolicy(
   }
   if (freeEnd < freeStart) {
     throw new Error("INVALID_RANGE");
+  }
+  if (freeStart !== 1) {
+    throw new Error("START_MUST_BE_ONE");
   }
   return { freeCount: freeEnd, lockMode: "FREE_FIRST_N" };
 }

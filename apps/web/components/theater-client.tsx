@@ -112,6 +112,8 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
   }
   const hasContentRef = useRef(!!seedList?.rows.length);
   const loadMoreLock = useRef(false);
+  /** Bumps on filter change so stale page-1/page-N responses cannot mix. */
+  const listGenerationRef = useRef(0);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef({
     rows,
@@ -241,6 +243,7 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
     const key = cacheKey(cat, sort, q);
     const cached = cacheRef.current.get(key);
     const ac = new AbortController();
+    const generation = ++listGenerationRef.current;
 
     if (cached) {
       setRows(cached.rows);
@@ -261,6 +264,11 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
     } else {
       setRefreshing(true);
     }
+
+    const stillCurrent = () =>
+      !ac.signal.aborted &&
+      listGenerationRef.current === generation &&
+      listRef.current.page <= 1;
 
     setLoadError(false);
     const load =
@@ -285,7 +293,7 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
 
     load
       .then((r) => {
-        if (ac.signal.aborted) return;
+        if (!stillCurrent()) return;
         cacheRef.current.set(key, r);
         hasContentRef.current = true;
         setRows(r.rows);
@@ -294,7 +302,7 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
         setHasMore(r.hasMore);
       })
       .catch((err) => {
-        if (ac.signal.aborted || (err instanceof DOMException && err.name === "AbortError")) return;
+        if (!stillCurrent() || (err instanceof DOMException && err.name === "AbortError")) return;
         setLoadError(true);
         if (!cacheRef.current.has(key)) {
           hasContentRef.current = false;
@@ -305,7 +313,7 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
         }
       })
       .finally(() => {
-        if (ac.signal.aborted) return;
+        if (ac.signal.aborted || listGenerationRef.current !== generation) return;
         setInitialLoading(false);
         setRefreshing(false);
       });
@@ -323,14 +331,20 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
     setLoadingMore(true);
     const nextPage = cur.page + 1;
     const key = cacheKey(cur.cat, cur.sort, cur.q);
+    const generation = listGenerationRef.current;
+    const ac = new AbortController();
     try {
       const h = await loadHome(nextPage, THEATER_PAGE_SIZE, {
         category: cur.cat || undefined,
         q: cur.q || undefined,
         sort: cur.sort === "hottest" ? "hot" : cur.sort,
+        signal: ac.signal,
       });
-      const merged = appendUnique(cur.rows, h.rows);
-      const nextTotal = h.total || cur.total;
+      if (ac.signal.aborted || listGenerationRef.current !== generation) return;
+      const live = listRef.current;
+      if (cacheKey(live.cat, live.sort, live.q) !== key) return;
+      const merged = appendUnique(live.rows, h.rows);
+      const nextTotal = h.total || live.total;
       const nextHasMore =
         h.rows.length > 0 && computeHasMore(nextPage, THEATER_PAGE_SIZE, merged.length, nextTotal);
       setRows(merged);

@@ -15,6 +15,9 @@ import { inferExternalUrlExpiry } from '../admin/online-drama.util';
 import { R2StorageService } from '../storage/r2.storage.service';
 import {
   estimatePreviewMaxBytes,
+  isMasterM3u8,
+  pickMasterVariantUri,
+  resolvePlaylistChildUri,
   signEpisodePreview,
   truncateM3u8ByDuration,
   verifyEpisodePreviewSig,
@@ -61,6 +64,7 @@ export class EpisodesService {
       const [u, user, dramaUnlock] = await Promise.all([
         this.prisma.userUnlock.findUnique({
           where: { userId_episodeId: { userId, episodeId } },
+          select: { orderId: true },
         }),
         this.prisma.user.findUnique({ where: { id: userId }, select: { vipExpireAt: true } }),
         this.prisma.userDramaUnlock.findUnique({
@@ -68,7 +72,9 @@ export class EpisodesService {
         }),
       ]);
       const vipActive = !!(user?.vipExpireAt && user.vipExpireAt.getTime() > Date.now());
-      unlocked = !!u || vipActive || !!dramaUnlock;
+      // Only paid UserUnlock (orderId set) is permanent; soft/VIP/free rows do not survive.
+      const paidUnlock = !!(u && u.orderId != null);
+      unlocked = paidUnlock || vipActive || !!dramaUnlock;
     }
 
     // 未解锁：绝不下发完整片源 URL；仅签发 API 预览网关（按时长裁剪）
@@ -198,25 +204,27 @@ export class EpisodesService {
     res.setHeader('X-Preview-Seconds', String(episode.previewSeconds));
 
     if (/\.m3u8(\?|$)/i.test(raw) || (!/^https?:\/\//.test(raw) && raw.endsWith('.m3u8'))) {
-      const playlist = await this.loadTextSource(raw, base);
-      const truncated = truncateM3u8ByDuration(playlist, episode.previewSeconds);
-      let playlistRel = raw.replace(/^\/+/, '').replace(/\\/g, '/');
-      let segmentBase = '';
-      if (/^https?:\/\//.test(raw) && base && raw.startsWith(base)) {
-        try {
-          const u = new URL(raw);
-          playlistRel = decodeURIComponent(u.pathname.replace(/^\/+/, ''));
-          segmentBase = base;
-        } catch {
-          playlistRel = 'index.m3u8';
-        }
-      } else if (!/^https?:\/\//.test(raw)) {
-        segmentBase = '/api/v1/media';
+      // Never return a master playlist: variant URIs would get full media signatures and
+      // bypass duration truncation. Resolve to one media playlist, then truncate segments.
+      const prepared = await this.preparePreviewMediaPlaylist(raw, base);
+      const truncated = truncateM3u8ByDuration(prepared.body, episode.previewSeconds);
+      if (isMasterM3u8(truncated)) {
+        throw new BizException(BizCode.FORBIDDEN, 'preview.masterUnsupported');
       }
 
       let body = truncated;
-      if (segmentBase) {
-        body = this.toAbsoluteSignedPlaylist(truncated, playlistRel, expN, key, segmentBase);
+      if (prepared.segmentBase) {
+        body = this.toAbsoluteSignedPlaylist(
+          truncated,
+          prepared.playlistRel,
+          expN,
+          key,
+          prepared.segmentBase,
+        );
+      }
+      // Defense: signed body must not expose child .m3u8 variant lines
+      if (isMasterM3u8(body) || /#EXT-X-STREAM-INF:/i.test(body)) {
+        throw new BizException(BizCode.FORBIDDEN, 'preview.masterUnsupported');
       }
       const buf = Buffer.from(body, 'utf8');
       res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
@@ -315,6 +323,71 @@ export class EpisodesService {
       nodeStream.destroy();
       limiter.destroy();
     });
+  }
+
+  /**
+   * Load HLS source for preview. Master playlists are never returned: we pick the
+   * lowest-bandwidth media variant and load that instead. Nested masters are refused.
+   */
+  private async preparePreviewMediaPlaylist(
+    raw: string,
+    cdnBase: string,
+  ): Promise<{ body: string; playlistRel: string; segmentBase: string }> {
+    let source = raw;
+    let body = await this.loadTextSource(source, cdnBase);
+    let meta = this.playlistSegmentMeta(source, cdnBase);
+
+    if (isMasterM3u8(body)) {
+      const variantUri = pickMasterVariantUri(body);
+      if (!variantUri) {
+        throw new BizException(BizCode.FORBIDDEN, 'preview.masterUnsupported');
+      }
+      const resolved = resolvePlaylistChildUri(meta.playlistRel, variantUri);
+      if (!resolved) {
+        throw new BizException(BizCode.FORBIDDEN, 'preview.masterUnsupported');
+      }
+      if ('absoluteUrl' in resolved) {
+        source = resolved.absoluteUrl;
+      } else if (/^https?:\/\//.test(source) && cdnBase && source.startsWith(cdnBase)) {
+        source = `${cdnBase.replace(/\/$/, '')}/${resolved.relativePath}`;
+      } else if (!/^https?:\/\//.test(source)) {
+        source = resolved.relativePath;
+      } else {
+        // External absolute master with relative child — resolve against master URL
+        try {
+          source = new URL(variantUri, source).toString();
+        } catch {
+          throw new BizException(BizCode.FORBIDDEN, 'preview.masterUnsupported');
+        }
+      }
+      body = await this.loadTextSource(source, cdnBase);
+      meta = this.playlistSegmentMeta(source, cdnBase);
+      if (isMasterM3u8(body)) {
+        throw new BizException(BizCode.FORBIDDEN, 'preview.masterUnsupported');
+      }
+    }
+
+    return { body, playlistRel: meta.playlistRel, segmentBase: meta.segmentBase };
+  }
+
+  private playlistSegmentMeta(
+    raw: string,
+    cdnBase: string,
+  ): { playlistRel: string; segmentBase: string } {
+    let playlistRel = raw.replace(/^\/+/, '').replace(/\\/g, '/');
+    let segmentBase = '';
+    if (/^https?:\/\//.test(raw) && cdnBase && raw.startsWith(cdnBase)) {
+      try {
+        const u = new URL(raw);
+        playlistRel = decodeURIComponent(u.pathname.replace(/^\/+/, ''));
+        segmentBase = cdnBase;
+      } catch {
+        playlistRel = 'index.m3u8';
+      }
+    } else if (!/^https?:\/\//.test(raw)) {
+      segmentBase = '/api/v1/media';
+    }
+    return { playlistRel, segmentBase };
   }
 
   private toAbsoluteSignedPlaylist(

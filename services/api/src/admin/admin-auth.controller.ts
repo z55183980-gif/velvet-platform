@@ -93,13 +93,13 @@ export class AdminAuthController {
 
   @Get('captcha')
   async captchaChallenge() {
-    return ok(this.captcha.issue());
+    return ok(await this.captcha.issue());
   }
 
   @Throttle({ global: { limit: 10, ttl: 60_000 } })
   @Post('login')
   async login(@Body() dto: LoginDto, @Res({ passthrough: true }) res: Response) {
-    this.captcha.verify(dto.captchaId || '', dto.captchaCode || '');
+    await this.captcha.verify(dto.captchaId || '', dto.captchaCode || '');
     const account = dto.account || dto.email || dto.username || '';
     const result = await this.auth.login(account, dto.password);
     this.setCookie(res, result.token);

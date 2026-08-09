@@ -1,0 +1,56 @@
+name: Web + Admin
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/web/**'
+      - 'apps/admin/**'
+      - 'packages/**'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'package.json'
+      - '.github/workflows/web-admin.yml'
+  pull_request:
+    paths:
+      - 'apps/web/**'
+      - 'apps/admin/**'
+      - 'packages/**'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'package.json'
+      - '.github/workflows/web-admin.yml'
+
+jobs:
+  typecheck-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.14.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck web / admin
+        run: |
+          pnpm --filter velvet-web typecheck
+          pnpm --filter velvet-admin typecheck
+
+      - name: Build web
+        run: pnpm --filter velvet-web build
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+
+      - name: Build admin
+        run: pnpm --filter velvet-admin build
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'

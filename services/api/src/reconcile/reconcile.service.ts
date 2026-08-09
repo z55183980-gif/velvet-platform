@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { fetchStripePaidCountsForDay } from '../payments/stripe-reconcile';
+import { isFinanceOpsFrozen } from '../common/ledger-units';
 
 const PROVIDERS = ['STRIPE', 'WECHAT', 'ALIPAY', 'MOMO', 'ZALOPAY', 'VIETQR', 'BANK_TRANSFER'];
 const T7_MS = 7 * 24 * 60 * 60 * 1000;
@@ -48,26 +49,33 @@ export class ReconcileService {
     }
   }
 
-  /** 每小时：T+7 将 pendingVnd → availableVnd */
+  /** 每小时：T+7 将 pendingVnd → availableVnd（USD cents；财务冻结时跳过） */
   @Cron(CronExpression.EVERY_HOUR)
   async settleT7Earnings() {
+    if (isFinanceOpsFrozen()) {
+      this.logger.warn('[settle-t7] skipped: FINANCE_OPS_FROZEN (USD ledger reconciliation)');
+      return;
+    }
     const cutoff = new Date(Date.now() - T7_MS);
     await this.settleEligible(cutoff, 200);
   }
 
   /** 手动触发 T+7（开发/运维；可传 days 覆盖冷却天数，默认 7） */
   async settleNow(days = 7) {
+    if (isFinanceOpsFrozen()) {
+      return { eligible: 0, settled: 0, days, financeOpsFrozen: true };
+    }
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const before = await this.prisma.order.count({
       where: {
-        orderType: 'EPISODE_UNLOCK',
+        orderType: { in: ['EPISODE_UNLOCK', 'DRAMA_BUYOUT'] },
         paymentStatus: 'PAID',
         earningSettled: false,
         paidAt: { lte: cutoff },
       },
     });
     const settled = await this.settleEligible(cutoff, 500);
-    return { eligible: before, settled, days };
+    return { eligible: before, settled, days, financeOpsFrozen: false };
   }
 
   /**
@@ -75,9 +83,11 @@ export class ReconcileService {
    * Safe under concurrent API+manual triggers (no FOR UPDATE required).
    */
   private async settleEligible(cutoff: Date, take: number): Promise<number> {
+    if (isFinanceOpsFrozen()) return 0;
     const orders = await this.prisma.order.findMany({
       where: {
-        orderType: 'EPISODE_UNLOCK',
+        // Buyout income must settle on the same USD-cents ledger as episode unlocks.
+        orderType: { in: ['EPISODE_UNLOCK', 'DRAMA_BUYOUT'] },
         paymentStatus: 'PAID',
         earningSettled: false,
         creatorId: { not: null },
