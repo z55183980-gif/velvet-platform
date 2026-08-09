@@ -141,7 +141,7 @@ function cachedGet<T>(
 }
 
 // ---- 字段映射：API 响应 → 前端模型 ----
-function mapDrama(d: any): Drama {
+export function mapDrama(d: any): Drama {
   const cover = d.coverUrl || "";
   const favRaw = d.favoriteCount;
   const favoriteCount =
