@@ -141,6 +141,12 @@ export class AdminOpsService {
     if (dto.lockMode !== undefined) {
       if (dto.lockMode === null || dto.lockMode === 'INHERIT') {
         data.lockMode = null;
+        // Stamp global freeCount so denormalized drama.freeEpisodeCount stays consistent
+        // when caller did not pass an explicit freeEpisodeCount.
+        if (dto.freeEpisodeCount == null) {
+          const global = await this.lockAccess.getGlobalPolicy();
+          data.freeEpisodeCount = global.freeCount;
+        }
       } else if (
         dto.lockMode === 'FREE_FIRST_N' ||
         dto.lockMode === 'VIP_ALL' ||

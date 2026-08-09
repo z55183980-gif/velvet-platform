@@ -695,7 +695,8 @@ function AdminContentInner() {
       qc.setQueriesData<{ rows: Drama[]; total: number }>(
         { queryKey: ["admin", "dramas"] },
         (old) => {
-          if (!old) return old;
+          // Skip sibling caches under this prefix (e.g. ["admin","dramas","counts"]).
+          if (!old?.rows) return old;
           return {
             ...old,
             rows: old.rows.map((row) =>
@@ -747,7 +748,8 @@ function AdminContentInner() {
       qc.setQueriesData<{ rows: Drama[]; total: number }>(
         { queryKey: ["admin", "dramas"] },
         (old) => {
-          if (!old) return old;
+          // Skip sibling caches under this prefix (e.g. ["admin","dramas","counts"]).
+          if (!old?.rows) return old;
           return {
             ...old,
             rows: old.rows.map((row) => {
@@ -795,7 +797,8 @@ function AdminContentInner() {
       qc.setQueriesData<{ rows: Drama[]; total: number }>(
         { queryKey: ["admin", "dramas"] },
         (old) => {
-          if (!old) return old;
+          // Skip sibling caches under this prefix (e.g. ["admin","dramas","counts"]).
+          if (!old?.rows) return old;
           return {
             ...old,
             rows: old.rows.map((row) =>

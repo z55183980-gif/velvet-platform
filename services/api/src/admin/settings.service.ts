@@ -2,7 +2,7 @@ import { Injectable, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuditService } from '../common/audit.service';
 import { BizException, BizCode } from '../common/biz.exception';
-import { isLockAccessMode } from '../common/lock-access.service';
+import { isLockAccessMode, LockAccessService } from '../common/lock-access.service';
 import { STRIPE_GATEWAY_SETTING_KEY } from '../payments/stripe-gateway.constants';
 
 const DEFAULT_KEYS: {
@@ -122,6 +122,7 @@ export class SettingsService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly lockAccess: LockAccessService,
   ) {}
 
   async onModuleInit() {
@@ -226,6 +227,30 @@ export class SettingsService implements OnModuleInit {
       targetId: key,
       payload: { prev: prev?.value ?? null, next: row.value },
     });
+
+    if (key === 'episodeLockMode' || key === 'defaultFreeEpisodes') {
+      await this.cascadeGlobalLockToInheritingDramas();
+    }
+
     return { key: row.key, value: row.value, updatedAt: row.updatedAt };
+  }
+
+  /** Keep denormalized freeEpisodeCount + episode.isFree in sync for Follow Global dramas. */
+  private async cascadeGlobalLockToInheritingDramas() {
+    const global = await this.lockAccess.getGlobalPolicy();
+    const inheriting = await this.prisma.drama.findMany({
+      where: { lockMode: null },
+      select: { id: true },
+    });
+    if (!inheriting.length) return;
+
+    await this.prisma.drama.updateMany({
+      where: { lockMode: null },
+      data: { freeEpisodeCount: global.freeCount },
+    });
+
+    for (const { id } of inheriting) {
+      await this.lockAccess.syncEpisodeAccessFlags(id);
+    }
   }
 }

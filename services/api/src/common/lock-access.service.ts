@@ -24,6 +24,16 @@ export function isEpisodeFreeByPolicy(opts: {
   return opts.episodeNumber <= Math.max(0, Math.floor(opts.freeEpisodeCount || 0));
 }
 
+/** When lockMode is null (Follow Global), freeCount must come from global policy —
+ * drama.freeEpisodeCount may be a stale stamp from a prior ALL_FREE (e.g. total episodes). */
+export function resolveInheritedFreeCount(opts: {
+  inherited: boolean;
+  dramaFreeEpisodeCount: number;
+  globalFreeCount: number;
+}): number {
+  return opts.inherited ? opts.globalFreeCount : opts.dramaFreeEpisodeCount;
+}
+
 @Injectable()
 export class LockAccessService {
   constructor(private readonly prisma: PrismaService) {}
@@ -54,7 +64,11 @@ export class LockAccessService {
     const inherited = drama.lockMode == null;
     return {
       mode: drama.lockMode ?? global.mode,
-      freeCount: drama.freeEpisodeCount,
+      freeCount: resolveInheritedFreeCount({
+        inherited,
+        dramaFreeEpisodeCount: drama.freeEpisodeCount,
+        globalFreeCount: global.freeCount,
+      }),
       inherited,
       globalMode: global.mode,
       globalFreeCount: global.freeCount,

@@ -25,7 +25,7 @@ import {
   adminUpdateEpisode,
   adminPurgeEpisodeMedia,
 } from "@velvet/api-client";
-import { Badge, Button, DataTable, Input, Select, Switch, cn, fmtNum, type Column } from "@velvet/ui";
+import { Badge, Button, DataTable, Input, Select, cn, fmtNum, type Column } from "@velvet/ui";
 import {
   AlertTriangle,
   ArrowDown,
@@ -66,6 +66,7 @@ import {
 import { EpisodeThumbnailField } from "@/components/episode-thumbnail-field";
 import { DramaCoverField } from "@/components/drama-cover-field";
 import { DramaCoverThumb } from "@/components/drama-cover-thumb";
+import { DramaPlaybackPolicyForm } from "@/components/drama-playback-policy-form";
 import {
   DEFAULT_COMPLETION,
   DEFAULT_CONTENT_TYPE,
@@ -77,6 +78,12 @@ import {
   type DramaCompletion,
   type DramaContentType,
 } from "@/lib/drama-tags";
+import {
+  freeThruWhenInheriting,
+  parseLockMode,
+  resolveCustomFreePolicy,
+  stampFreeCountWhenInheriting,
+} from "@/lib/drama-playback-policy";
 import { useAdminSession } from "@/lib/admin-session";
 import { contentDetailHref } from "@/lib/content-href";
 import { useI18n, statusLabel } from "@/lib/i18n";
@@ -133,11 +140,6 @@ function isDramaDeletedResult(data: unknown): data is DramaDeletedResult {
 }
 type AddEpisodeMethod = "upload" | "url" | "public";
 type AddEpisodeOption = { key: AddEpisodeMethod; labelKey: "addEpisodeMethodUpload" | "addEpisodeMethodUrl" | "addEpisodeMethodPublic"; advanced?: boolean };
-type LockMode = "FREE_FIRST_N" | "VIP_ALL" | "ALL_FREE";
-
-function parseLockMode(raw: unknown): LockMode {
-  return raw === "VIP_ALL" || raw === "ALL_FREE" || raw === "FREE_FIRST_N" ? raw : "FREE_FIRST_N";
-}
 
 function episodeAddOptions(sourceType?: string, status?: string): {
   options: AddEpisodeOption[];
@@ -518,61 +520,6 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
     act(() => adminReorderEpisodes(id, list.map((e) => String(e.id))));
   }, [act, episodes, id]);
 
-  function freeEpisodeCountFromPolicy() {
-    if (!episodes.length) return 0;
-    if (inheritGlobal) {
-      if (globalMode === "ALL_FREE") return episodes.length;
-      if (globalMode === "VIP_ALL") return 0;
-      return Math.min(episodes.length, Math.max(0, globalFreeCount));
-    }
-    if (!freeRangeStart && !freeRangeEnd) return episodes.length;
-    const start = Number(freeRangeStart);
-    const end = Number(freeRangeEnd);
-    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end < start) {
-      return episodes.length;
-    }
-    const lo = Math.max(1, start);
-    const hi = Math.min(episodes.length, end);
-    return Math.max(0, hi - lo + 1);
-  }
-
-  function resolveCustomFreePolicy(total: number) {
-    // Empty range → all free
-    if (!freeRangeStart && !freeRangeEnd) {
-      return {
-        freeThru: total,
-        freeCount: total,
-        lockMode: "ALL_FREE" as LockMode,
-      };
-    }
-    const freeStart = Number(freeRangeStart);
-    const freeEnd = Number(freeRangeEnd);
-    if (
-      !Number.isInteger(freeStart) ||
-      !Number.isInteger(freeEnd) ||
-      freeStart < 1 ||
-      freeEnd < freeStart
-    ) {
-      throw new Error(t("policyRangeInvalid", { total: total || 1 }));
-    }
-    // Out-of-range (e.g. start=total+1) encodes VIP_ALL / zero free — do not throw.
-    if (total > 0 && freeStart > total) {
-      return { freeThru: 0, freeCount: 0, lockMode: "VIP_ALL" as LockMode };
-    }
-    if (total > 0 && freeEnd > total) {
-      throw new Error(t("policyRangeInvalid", { total: total || 1 }));
-    }
-    // Free-first-N product model: unlock episodeNumber <= freeThru (end when start is 1).
-    const freeThru = Math.max(0, Math.min(total, freeEnd));
-    const lockMode: LockMode =
-      total > 0 && freeThru >= total ? "ALL_FREE" : freeThru <= 0 ? "VIP_ALL" : "FREE_FIRST_N";
-    return {
-      freeThru,
-      freeCount: lockMode === "ALL_FREE" ? total : lockMode === "VIP_ALL" ? 0 : freeThru,
-      lockMode,
-    };
-  }
-
   async function applyEpisodeAccessFields(opts: {
     freeThru: number;
     allFree: boolean;
@@ -598,24 +545,18 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
     const total = episodes.length;
 
     if (inheritGlobal) {
-      const freeCount =
-        globalMode === "ALL_FREE"
-          ? Math.max(total, globalFreeCount)
-          : globalMode === "VIP_ALL"
-            ? 0
-            : globalFreeCount;
+      // Stamp global freeCount (not episode total) so Follow Global stays consistent with API resolve.
       await adminUpdateDrama(id, {
-        freeEpisodeCount: freeCount,
+        freeEpisodeCount: stampFreeCountWhenInheriting(globalFreeCount),
         lockMode: null,
         buyoutCredits: null,
       });
       if (!total) return;
-      const freeThru =
-        globalMode === "ALL_FREE"
-          ? total
-          : globalMode === "VIP_ALL"
-            ? 0
-            : Math.min(total, globalFreeCount);
+      const freeThru = freeThruWhenInheriting({
+        total,
+        globalMode,
+        globalFreeCount,
+      });
       await applyEpisodeAccessFields({
         freeThru,
         allFree: globalMode === "ALL_FREE",
@@ -625,7 +566,13 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
       return;
     }
 
-    const { freeThru, freeCount, lockMode } = resolveCustomFreePolicy(total);
+    let resolved: ReturnType<typeof resolveCustomFreePolicy>;
+    try {
+      resolved = resolveCustomFreePolicy(total, freeRangeStart, freeRangeEnd);
+    } catch {
+      throw new Error(t("policyRangeInvalid", { total: total || 1 }));
+    }
+    const { freeThru, freeCount, lockMode } = resolved;
     if (total > 0 && freeCount < total && priceCredits <= 0) {
       throw new Error(t("policyPriceInvalid"));
     }
@@ -1382,191 +1329,30 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
         </div> : null}
 
         {tab === "policy" ? (
-          <section className="content-section-card space-y-3">
-            <div className="content-section-heading">
-              <div>
-                <h2>{t("uploadSectionPolicy")}</h2>
-                <p>{t("uploadSectionPolicyHint")}</p>
-              </div>
-            </div>
-
-            <div className="policy-mode-card is-selected">
-              <div className="policy-mode-card__body">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <strong>{t("policyGlobalCard")}</strong>
-                    <small>{t("policyGlobalCardHint")}</small>
-                  </div>
-                  <div className="flex shrink-0 flex-col items-end gap-1">
-                    <Switch
-                      size="sm"
-                      checked={inheritGlobal}
-                      disabled={actionMut.isPending}
-                      aria-label={t("policyInheritGlobal")}
-                      onCheckedChange={setInheritGlobal}
-                    />
-                    <span className="text-caption text-ink-muted">{t("policyInheritGlobal")}</span>
-                  </div>
-                </div>
-                <p className="mt-2 text-caption text-ink-muted">{t("policyInheritGlobalHint")}</p>
-                <div
-                  className={cn(
-                    "policy-preview mt-2",
-                    globalMode === "ALL_FREE" ? "is-free" : "is-partial",
-                  )}
-                >
-                  <span className="policy-preview__dot" aria-hidden />
-                  <p>
-                    {globalMode === "ALL_FREE"
-                      ? t("settingsPolicyPreviewAllFree")
-                      : globalMode === "VIP_ALL"
-                        ? t("settingsPolicyPreviewVipAll")
-                        : t("settingsPolicyPreviewFreeFirstN", { n: globalFreeCount })}
-                    {globalMode !== "ALL_FREE" && globalPreviewSeconds > 0
-                      ? t("settingsPolicyPreviewTrialSuffix", { seconds: globalPreviewSeconds })
-                      : null}
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {!inheritGlobal ? (
-              <>
-                <div className="policy-mode-grid" aria-label={t("uploadSectionPolicy")}>
-                  <div className="policy-mode-card">
-                    <div className="policy-mode-card__body">
-                      <strong>{t("policyAllFree")}</strong>
-                      <small>{t("policyModeHint")}</small>
-                      <div className="policy-range-grid">
-                        <label className="upload-field">
-                          <span>{t("policyRangeStart")}</span>
-                          <Input
-                            type="number"
-                            min={1}
-                            max={episodes.length || undefined}
-                            value={freeRangeStart}
-                            disabled={actionMut.isPending || !episodes.length}
-                            onChange={(e) => setFreeRangeStart(e.target.value)}
-                          />
-                        </label>
-                        <label className="upload-field">
-                          <span>{t("policyRangeEnd")}</span>
-                          <Input
-                            type="number"
-                            min={1}
-                            max={episodes.length || undefined}
-                            value={freeRangeEnd}
-                            disabled={actionMut.isPending || !episodes.length}
-                            onChange={(e) => setFreeRangeEnd(e.target.value)}
-                          />
-                        </label>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="policy-mode-card">
-                    <div className="policy-mode-card__body">
-                      <strong>{t("policyPartialFree")}</strong>
-                      <small>{t("policyMemberHint")}</small>
-                      <label className="upload-field">
-                        <span>{t("priceCreditsPerEpisode")}</span>
-                        <Input
-                          type="number"
-                          min={1}
-                          value={priceCredits}
-                          disabled={actionMut.isPending}
-                          onChange={(e) => setPriceCredits(Number(e.target.value) || 0)}
-                        />
-                      </label>
-                      <div className="policy-preview-options">
-                        <div className="policy-preview-choices" role="radiogroup" aria-label={t("policyAllowPreview")}>
-                          <label className="policy-preview-toggle">
-                            <input
-                              type="radio"
-                              name="edit-member-preview-policy"
-                              checked={!allowPreview}
-                              disabled={actionMut.isPending}
-                              onChange={() => setAllowPreview(false)}
-                            />
-                            <span>{t("policyPreviewDisabled")}</span>
-                          </label>
-                          <label className="policy-preview-toggle">
-                            <input
-                              type="radio"
-                              name="edit-member-preview-policy"
-                              checked={allowPreview}
-                              disabled={actionMut.isPending}
-                              onChange={() => setAllowPreview(true)}
-                            />
-                            <span>{t("policyAllowPreview")}</span>
-                          </label>
-                        </div>
-                        {allowPreview ? (
-                          <label className="upload-field">
-                            <span>{t("policyPreviewSeconds")}</span>
-                            <Input
-                              type="number"
-                              min={1}
-                              value={previewSeconds}
-                              disabled={actionMut.isPending}
-                              onChange={(e) => setPreviewSeconds(Math.max(1, Number(e.target.value) || 10))}
-                            />
-                          </label>
-                        ) : null}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                {episodes.length > 0 ? (
-                  <div
-                    className={cn(
-                      "policy-preview",
-                      freeEpisodeCountFromPolicy() >= episodes.length ? "is-free" : "is-partial",
-                    )}
-                  >
-                    <span className="policy-preview__dot" aria-hidden />
-                    <p>
-                      {freeEpisodeCountFromPolicy() >= episodes.length
-                        ? t("policyPreviewAllFree", { total: episodes.length })
-                        : t("policyPreviewPartial", {
-                            total: episodes.length,
-                            free: freeEpisodeCountFromPolicy(),
-                            price: priceCredits,
-                          })}
-                    </p>
-                  </div>
-                ) : null}
-              </>
-            ) : episodes.length > 0 ? (
-              <div
-                className={cn(
-                  "policy-preview",
-                  freeEpisodeCountFromPolicy() >= episodes.length ? "is-free" : "is-partial",
-                )}
-              >
-                <span className="policy-preview__dot" aria-hidden />
-                <p>
-                  {freeEpisodeCountFromPolicy() >= episodes.length
-                    ? t("policyPreviewAllFree", { total: episodes.length })
-                    : t("policyPreviewPartial", {
-                        total: episodes.length,
-                        free: freeEpisodeCountFromPolicy(),
-                        price: Math.max(1, priceCredits || 10),
-                      })}
-                </p>
-              </div>
-            ) : null}
-
-            <div className="flex justify-end border-t border-line pt-4">
-              <Button
-                size="sm"
-                disabled={actionMut.isPending}
-                onClick={() => act(() => savePlaybackPolicy())}
-              >
-                <Save className="h-4 w-4" />
-                {t("saveLockPolicy")}
-              </Button>
-            </div>
-          </section>
+          <DramaPlaybackPolicyForm
+            variant="upload-panel"
+            inheritGlobal={inheritGlobal}
+            onInheritGlobalChange={setInheritGlobal}
+            globalMode={globalMode}
+            globalFreeCount={globalFreeCount}
+            globalPreviewSeconds={globalPreviewSeconds}
+            episodeTotal={episodes.length}
+            freeRangeStart={freeRangeStart}
+            freeRangeEnd={freeRangeEnd}
+            onFreeRangeStartChange={setFreeRangeStart}
+            onFreeRangeEndChange={setFreeRangeEnd}
+            priceCredits={priceCredits}
+            onPriceCreditsChange={setPriceCredits}
+            allowPreview={allowPreview}
+            onAllowPreviewChange={setAllowPreview}
+            previewSeconds={previewSeconds}
+            onPreviewSecondsChange={setPreviewSeconds}
+            disabled={actionMut.isPending}
+            previewRadioName="edit-member-preview-policy"
+            showSaveButton
+            savePending={actionMut.isPending}
+            onSave={() => act(() => savePlaybackPolicy())}
+          />
         ) : null}
       </div>
 
