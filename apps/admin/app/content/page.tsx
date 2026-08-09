@@ -856,9 +856,21 @@ function AdminContentInner() {
         setNotice(null);
         setError(null);
         const detail = result.failed?.map((f) => `${f.id}: ${f.error}`).join("; ") ?? "";
+        const r2 = result.purge?.r2Deleted ?? 0;
+        const local = result.purge?.localDeleted ?? 0;
         if (failed > 0) {
+          const purgeNote =
+            updated > 0
+              ? `（成功项：R2 清理 ${r2}，本地清理 ${local}）`
+              : "";
           setDeleteResult(
-            t("deleteLifecyclePartial", { ok: updated, fail: failed, detail }),
+            [
+              t("deleteLifecyclePartial", { ok: updated, fail: failed, detail }),
+              purgeNote,
+              t("deleteLifecyclePurgeHint"),
+            ]
+              .filter(Boolean)
+              .join("\n"),
           );
         } else if (skipped > 0 || updated < requested) {
           setDeleteResult(
@@ -869,7 +881,7 @@ function AdminContentInner() {
             }),
           );
         } else {
-          setDeleteResult(t("deleteLifecycleOk", { ok: updated }));
+          setDeleteResult(t("deleteLifecycleOk", { ok: updated, r2, local }));
         }
         await qc.invalidateQueries({ queryKey: ["admin", "dramas"] });
         return;
@@ -1658,7 +1670,7 @@ function AdminContentInner() {
         title={t("deleteLifecycleTitle")}
         size="sm"
       >
-        <p className="text-body-sm text-ink-muted">{deleteResult}</p>
+        <p className="whitespace-pre-wrap text-body-sm text-ink-muted">{deleteResult}</p>
         <div className="mt-4 flex justify-end">
           <Button size="sm" variant="secondary" onClick={() => setDeleteResult(null)}>
             {t("confirm")}

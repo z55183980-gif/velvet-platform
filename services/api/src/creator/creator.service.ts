@@ -257,8 +257,13 @@ export class CreatorService {
       throw new BizException(BizCode.CONFLICT, 'Chỉ xoá được phim ở trạng thái DRAFT');
     }
     await this.prisma.$transaction(async (tx) => {
-      await tx.episode.deleteMany({ where: { dramaId: drama.id } });
+      await tx.like.deleteMany({ where: { dramaId: drama.id } });
       await tx.favorite.deleteMany({ where: { dramaId: drama.id } });
+      await tx.userDramaUnlock.deleteMany({ where: { dramaId: drama.id } });
+      await tx.userUnlock.deleteMany({
+        where: { episode: { dramaId: drama.id } },
+      });
+      await tx.episode.deleteMany({ where: { dramaId: drama.id } });
       await tx.drama.delete({ where: { id: drama.id } });
     });
     return { ok: true };

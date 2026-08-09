@@ -855,6 +855,7 @@ export async function adminBatchDramaLifecycle(body: {
     updated: number;
     skipped: number;
     failed: { id: string; error: string }[];
+    purge?: { r2Deleted: number; localDeleted: number };
   }>("/admin/dramas/batch-lifecycle", {
     method: "POST",
     body: JSON.stringify(body),

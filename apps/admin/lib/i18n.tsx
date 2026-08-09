@@ -819,9 +819,10 @@ const zh = {
   batchLifecycleOk: "{action}成功 {ok} 部",
   batchLifecycleSkipped: "选中 {n} 部，实际{action} {ok} 部，跳过 {skip} 部（状态不符等）",
   deleteLifecycleTitle: "删除结果",
-  deleteLifecycleOk: "删除成功 {ok} 部",
+  deleteLifecycleOk: "删除成功 {ok} 部（R2 清理 {r2}，本地清理 {local}）",
   deleteLifecycleSkipped: "选中 {n} 部，实际删除 {ok} 部，跳过 {skip} 部（状态不符等）",
   deleteLifecyclePartial: "删除完成 {ok} 部，失败 {fail} 部：{detail}",
+  deleteLifecyclePurgeHint: "失败项不会改库；若提示媒资清理失败，请检查 R2 凭证后重试。",
   batchApplyOk: "批量配置已更新",
   approveReviewOk: "已审核通过",
   rejectReviewOk: "已拒绝",
@@ -2276,10 +2277,12 @@ const en: Record<LabelKey, string> = {
   batchLifecycleSkipped:
     "Selected {n}; {action} applied to {ok}; skipped {skip} (ineligible status, etc.)",
   deleteLifecycleTitle: "Delete result",
-  deleteLifecycleOk: "Successfully deleted {ok}",
+  deleteLifecycleOk: "Successfully deleted {ok} (R2 purged {r2}, local purged {local})",
   deleteLifecycleSkipped:
     "Selected {n}; deleted {ok}; skipped {skip} (ineligible status, orders, etc.)",
   deleteLifecyclePartial: "Deleted {ok}, failed {fail}: {detail}",
+  deleteLifecyclePurgeHint:
+    "Failed items leave the DB untouched. If purge failed, fix R2 credentials and retry.",
   batchApplyOk: "Batch settings updated",
   approveReviewOk: "Approved",
   rejectReviewOk: "Rejected",

@@ -210,14 +210,16 @@ export class AdminEpisodesService {
   }
 
   async delete(id: string, actorId?: bigint) {
-    const ep = await this.prisma.episode.findUnique({ where: { id: BigInt(id) } });
+    const ep = await this.prisma.episode.findUnique({
+      where: { id: BigInt(id) },
+      include: { drama: { select: { sourceType: true } } },
+    });
     if (!ep) throw new BizException(BizCode.NOT_FOUND, 'episode.notFound');
 
-    const purge = await this.upload.purgeMediaUrls([
-      ep.hlsUrl,
-      ep.originalUrl,
-      ep.thumbnailUrl,
-    ]);
+    const purge = await this.upload.purgeMediaUrls(
+      [ep.hlsUrl, ep.originalUrl, ep.thumbnailUrl],
+      { requireR2: ep.drama.sourceType === 'R2' },
+    );
 
     await this.prisma.$transaction(async (tx) => {
       await tx.episode.delete({ where: { id: ep.id } });

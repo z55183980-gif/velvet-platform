@@ -392,8 +392,15 @@ export class UploadService implements OnModuleInit {
     };
   }
 
-  /** Remove local files + R2 objects for episode media URLs. */
-  async purgeMediaUrls(urls: Array<string | null | undefined>): Promise<{
+  /**
+   * Remove local files + R2 objects for media URLs.
+   * Hard-fails when R2 cleanup is required but cannot complete, so callers can
+   * abort DB deletes and avoid "DB gone / objects remain" inconsistency.
+   */
+  async purgeMediaUrls(
+    urls: Array<string | null | undefined>,
+    opts?: { requireR2?: boolean },
+  ): Promise<{
     r2Deleted: number;
     localDeleted: number;
   }> {
@@ -424,13 +431,35 @@ export class UploadService implements OnModuleInit {
         this.logger.warn(`local purge failed for ${rel}: ${e?.message || e}`);
       }
     }
-    let r2Deleted = 0;
-    try {
-      r2Deleted = await this.r2.purgeUrls(urls);
-    } catch (e: any) {
-      this.logger.error(`R2 purge failed: ${e?.message || e}`);
+
+    const remoteR2 = urls.some((u) => {
+      const raw = u?.trim();
+      if (!raw || !/^https?:\/\//i.test(raw)) return false;
+      return !!this.r2.mediaPrefixFromUrl(raw);
+    });
+    const requireR2 = !!opts?.requireR2 || remoteR2;
+
+    if (!this.r2.hasCredentials()) {
+      if (requireR2) {
+        throw new BizException(
+          BizCode.CONFLICT,
+          '媒资清理失败：需要删除 R2/CDN 对象但服务端未配置 R2 凭证，已中止删除（数据库未改动）',
+        );
+      }
+      return { r2Deleted: 0, localDeleted };
     }
-    return { r2Deleted, localDeleted };
+
+    try {
+      const r2Deleted = await this.r2.purgeUrls(urls);
+      return { r2Deleted, localDeleted };
+    } catch (e: any) {
+      const msg = e?.message || String(e);
+      this.logger.error(`R2 purge failed: ${msg}`);
+      throw new BizException(
+        BizCode.CONFLICT,
+        `媒资清理失败（R2）：${msg}。已中止删除（数据库未改动）`,
+      );
+    }
   }
 
   async listEpisodeR2Objects(hlsUrl: string | null | undefined) {

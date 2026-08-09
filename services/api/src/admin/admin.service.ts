@@ -1754,9 +1754,20 @@ export class AdminService {
     for (const ep of drama.episodes) {
       urls.push(ep.hlsUrl, ep.originalUrl, ep.thumbnailUrl);
     }
-    const purge = await this.upload.purgeMediaUrls(urls);
+    // Must succeed before DB delete — otherwise UI would report success while R2 orphans remain.
+    const purge = await this.upload.purgeMediaUrls(urls, {
+      requireR2: drama.sourceType === 'R2',
+    });
 
     await this.prisma.$transaction(async (tx) => {
+      // Clear child FKs that lack onDelete: Cascade (Episode has Cascade, but
+      // likes/favorites/unlocks do not — otherwise PG raises likes_dramaId_fkey etc.)
+      await tx.like.deleteMany({ where: { dramaId } });
+      await tx.favorite.deleteMany({ where: { dramaId } });
+      await tx.userDramaUnlock.deleteMany({ where: { dramaId } });
+      await tx.userUnlock.deleteMany({
+        where: { episode: { dramaId } },
+      });
       await tx.episode.deleteMany({ where: { dramaId } });
       await tx.drama.delete({ where: { id: dramaId } });
     });
@@ -1831,10 +1842,14 @@ export class AdminService {
 
     const failed: { id: string; error: string }[] = [];
     let updated = 0;
+    let r2Deleted = 0;
+    let localDeleted = 0;
     for (const id of uniqueIds) {
       try {
-        await this.deleteDrama(id, reasonText, actorId);
+        const result = await this.deleteDrama(id, reasonText, actorId);
         updated += 1;
+        r2Deleted += result.purge?.r2Deleted ?? 0;
+        localDeleted += result.purge?.localDeleted ?? 0;
       } catch (e: any) {
         failed.push({
           id,
@@ -1843,11 +1858,20 @@ export class AdminService {
       }
     }
     const skipped = Math.max(0, uniqueIds.length - updated - failed.length);
+    const purge = { r2Deleted, localDeleted };
     await this.audit.write({
       actorId,
       action: 'drama.batchDelete',
       targetType: 'drama',
-      payload: { ids: uniqueIds, reason: reasonText, requested: uniqueIds.length, updated, skipped, failed },
+      payload: {
+        ids: uniqueIds,
+        reason: reasonText,
+        requested: uniqueIds.length,
+        updated,
+        skipped,
+        failed,
+        purge,
+      },
     });
     return {
       action,
@@ -1855,6 +1879,7 @@ export class AdminService {
       updated,
       skipped,
       failed,
+      purge,
     };
   }
 
