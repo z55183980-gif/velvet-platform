@@ -165,6 +165,18 @@ export function DramaCoverField({
             <span>{t("noCover")}</span>
           </div>
         )}
+        {url ? (
+          <button
+            type="button"
+            className="drama-cover-field__clear"
+            disabled={disabled || busy}
+            aria-label={t("coverClear")}
+            title={t("coverClear")}
+            onClick={() => onChange("")}
+          >
+            <Trash2 className="h-5 w-5" />
+          </button>
+        ) : null}
       </div>
 
       <div className="drama-cover-field__actions">
@@ -190,17 +202,6 @@ export function DramaCoverField({
           <Video className="h-3.5 w-3.5" />
           {t("thumbFromVideo")}
         </button>
-        {url ? (
-          <button
-            type="button"
-            className="drama-cover-field__btn drama-cover-field__btn--ghost"
-            disabled={disabled || busy}
-            onClick={() => onChange("")}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            {t("coverClear")}
-          </button>
-        ) : null}
       </div>
 
       <p className="drama-cover-field__hint">{t("coverRecommendation")}</p>

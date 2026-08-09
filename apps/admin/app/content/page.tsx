@@ -1,12 +1,11 @@
 "use client";
 
-import { Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   MoreHorizontal,
-  Eye,
   ExternalLink,
   Trash2,
   Check,
@@ -20,6 +19,10 @@ import {
   adminListCreators,
   adminListDramas,
   adminRejectDrama,
+  adminSetFeatured,
+  adminSetOfficial,
+  adminSetSortWeight,
+  adminUpdateDrama,
   asRows,
 } from "@velvet/api-client";
 import { Badge, Button, DataTable, Input, Select, Switch, fmtNum, type Column } from "@velvet/ui";
@@ -67,7 +70,7 @@ const PAGE_SIZE_OPTIONS = [10, 20, 50];
 
 function parseSort(raw: string | null): ContentSort {
   if (raw === "latest" || raw === "views" || raw === "unlocks" || raw === "weight") return raw;
-  return "weight";
+  return "latest";
 }
 
 function parseView(searchParams: URLSearchParams): ContentView {
@@ -123,6 +126,93 @@ function toMetric(value?: number | string | null) {
   if (value == null || value === "") return 0;
   const n = typeof value === "number" ? value : Number(value);
   return Number.isFinite(n) ? n : 0;
+}
+
+/** Compact number field for list metrics — commit on blur / Enter. */
+function MetricCountEdit({
+  value,
+  ariaLabel,
+  disabled,
+  onCommit,
+}: {
+  value: number;
+  ariaLabel: string;
+  disabled?: boolean;
+  onCommit: (next: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+  const [focused, setFocused] = useState(false);
+
+  useEffect(() => {
+    if (!focused) setDraft(String(value));
+  }, [value, focused]);
+
+  function commit() {
+    const n = Math.floor(Number(draft));
+    if (!Number.isFinite(n) || n < 0) {
+      setDraft(String(value));
+      return;
+    }
+    if (n !== value) onCommit(n);
+    else setDraft(String(n));
+  }
+
+  return (
+    <Input
+      type="number"
+      min={0}
+      step={1}
+      disabled={disabled}
+      aria-label={ariaLabel}
+      title={ariaLabel}
+      className="h-7 w-[4.75rem] px-1.5 text-right text-xs tabular-nums"
+      value={draft}
+      onFocus={() => setFocused(true)}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        setFocused(false);
+        commit();
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.currentTarget.blur();
+        } else if (e.key === "Escape") {
+          setDraft(String(value));
+          e.currentTarget.blur();
+        }
+      }}
+    />
+  );
+}
+
+function FlagTogglePill({
+  active,
+  tone,
+  disabled,
+  children,
+  onToggle,
+}: {
+  active: boolean;
+  tone: "official" | "featured" | "weight";
+  disabled?: boolean;
+  children: ReactNode;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      aria-pressed={active}
+      className={
+        active
+          ? `content-flag-pill content-flag-pill--${tone}`
+          : "content-flag-pill content-flag-pill--off"
+      }
+      onClick={onToggle}
+    >
+      {children}
+    </button>
+  );
 }
 
 function unlockRate(views?: number | string | null, unlocks?: number | string | null) {
@@ -196,7 +286,7 @@ function buildContentHref(opts: {
 
   if (opts.view === "latest") {
     if (opts.sort && opts.sort !== "latest") qs.set("sort", opts.sort);
-  } else if (opts.sort && opts.sort !== "weight") {
+  } else if (opts.sort && opts.sort !== "latest") {
     qs.set("sort", opts.sort);
   }
 
@@ -399,7 +489,7 @@ function AdminContentInner() {
   const sortFromUrl =
     view === "latest" && !searchParams.get("sort")
       ? "latest"
-      : parseSort(searchParams.get("sort") || (view === "latest" ? "latest" : "weight"));
+      : parseSort(searchParams.get("sort"));
   const pageFromUrl = Math.max(1, Number(searchParams.get("page") || 1) || 1);
   const pageSizeFromUrl = parsePageSize(searchParams.get("pageSize"));
   const modalParam = searchParams.get("modal");
@@ -427,6 +517,7 @@ function AdminContentInner() {
   const [lifecycleConfirm, setLifecycleConfirm] = useState<"offline" | "online" | "delete" | null>(
     null,
   );
+  const [deleteResult, setDeleteResult] = useState<string | null>(null);
   const [rowDelete, setRowDelete] = useState<Drama | null>(null);
   const [rejectRow, setRejectRow] = useState<Drama | null>(null);
   const [rejectReason, setRejectReason] = useState("");
@@ -527,6 +618,20 @@ function AdminContentInner() {
       return asRows<Creator>(result);
     },
   });
+  const dramaCountsQ = useQuery({
+    queryKey: ["admin", "dramas", "counts"],
+    queryFn: async () => {
+      const [all, live] = await Promise.all([
+        adminListDramas({ page: 1, pageSize: 1, status: "ALL" }),
+        adminListDramas({ page: 1, pageSize: 1, status: "LIVE" }),
+      ]);
+      return {
+        total: (all as { total?: number }).total ?? 0,
+        live: (live as { total?: number }).total ?? 0,
+      };
+    },
+    staleTime: 30_000,
+  });
   const dramasQ = useQuery({
     queryKey: ["admin", "dramas", filters, page, pageSize],
     queryFn: async () => {
@@ -576,6 +681,98 @@ function AdminContentInner() {
     onError: (e: Error) => setError(e.message),
   });
 
+  const metricMut = useMutation({
+    mutationFn: (payload: { id: string; likeCount?: number; favoriteCount?: number }) =>
+      adminUpdateDrama(payload.id, {
+        ...(payload.likeCount != null ? { likeCount: payload.likeCount } : {}),
+        ...(payload.favoriteCount != null ? { favoriteCount: payload.favoriteCount } : {}),
+      }),
+    onMutate: async (variables) => {
+      await qc.cancelQueries({ queryKey: ["admin", "dramas"] });
+      const previous = qc.getQueriesData<{ rows: Drama[]; total: number }>({
+        queryKey: ["admin", "dramas"],
+      });
+      qc.setQueriesData<{ rows: Drama[]; total: number }>(
+        { queryKey: ["admin", "dramas"] },
+        (old) => {
+          if (!old) return old;
+          return {
+            ...old,
+            rows: old.rows.map((row) =>
+              String(row.id) === variables.id
+                ? {
+                    ...row,
+                    ...(variables.likeCount != null ? { likeCount: variables.likeCount } : {}),
+                    ...(variables.favoriteCount != null
+                      ? { favoriteCount: variables.favoriteCount }
+                      : {}),
+                  }
+                : row,
+            ),
+          };
+        },
+      );
+      return { previous };
+    },
+    onError: (e: Error, _variables, ctx) => {
+      if (ctx?.previous) {
+        for (const [key, data] of ctx.previous) qc.setQueryData(key, data);
+      }
+      setError(e.message);
+    },
+    onSuccess: () => setError(null),
+    onSettled: async () => {
+      await qc.invalidateQueries({ queryKey: ["admin", "dramas"] });
+    },
+  });
+
+  const lastWeightRef = useRef<Record<string, number>>({});
+
+  type FlagPatch =
+    | { id: string; kind: "official"; value: boolean }
+    | { id: string; kind: "featured"; value: boolean }
+    | { id: string; kind: "weight"; value: number };
+
+  const flagMut = useMutation({
+    mutationFn: async (payload: FlagPatch) => {
+      if (payload.kind === "official") return adminSetOfficial(payload.id, payload.value);
+      if (payload.kind === "featured") return adminSetFeatured(payload.id, payload.value);
+      return adminSetSortWeight(payload.id, payload.value);
+    },
+    onMutate: async (variables) => {
+      await qc.cancelQueries({ queryKey: ["admin", "dramas"] });
+      const previous = qc.getQueriesData<{ rows: Drama[]; total: number }>({
+        queryKey: ["admin", "dramas"],
+      });
+      qc.setQueriesData<{ rows: Drama[]; total: number }>(
+        { queryKey: ["admin", "dramas"] },
+        (old) => {
+          if (!old) return old;
+          return {
+            ...old,
+            rows: old.rows.map((row) => {
+              if (String(row.id) !== variables.id) return row;
+              if (variables.kind === "official") return { ...row, isOfficial: variables.value };
+              if (variables.kind === "featured") return { ...row, isFeatured: variables.value };
+              return { ...row, sortWeight: variables.value };
+            }),
+          };
+        },
+      );
+      return { previous };
+    },
+    onError: (e: Error, _variables, ctx) => {
+      if (ctx?.previous) {
+        for (const [key, data] of ctx.previous) qc.setQueryData(key, data);
+      }
+      setError(e.message);
+    },
+    onSuccess: () => setError(null),
+    onSettled: async () => {
+      await qc.invalidateQueries({ queryKey: ["admin", "dramas"] });
+    },
+  });
+
   const lifecycleMut = useMutation({
     mutationFn: (payload: {
       action: "offline" | "online" | "delete";
@@ -613,22 +810,73 @@ function AdminContentInner() {
       setLifecycleConfirm(null);
       setRowDelete(null);
       setMenuBusyId(null);
-      setSelected((prev) => {
-        const next = new Map(prev);
-        for (const id of variables.ids) next.delete(id);
-        return next;
-      });
+
       const requested = result?.requested ?? variables.ids.length;
       const updated = result?.updated ?? 0;
       const skipped =
         result?.skipped ?? Math.max(0, requested - updated - (result?.failed?.length ?? 0));
       const failed = result?.failed?.length ?? 0;
+      const silentRowToggle =
+        variables.action !== "delete" && variables.ids.length === 1;
+
+      // Single-row online/offline: keep optimistic row state; avoid notice + refetch flash.
+      if (silentRowToggle) {
+        if (failed > 0 || updated < 1) {
+          setNotice(null);
+          setError(
+            failed > 0
+              ? t("batchLifecyclePartial", {
+                  ok: updated,
+                  fail: failed,
+                  detail: result.failed.map((f) => `${f.id}: ${f.error}`).join("; "),
+                })
+              : t("batchLifecycleSkipped", {
+                  action:
+                    variables.action === "offline" ? t("batchOffline") : t("batchOnline"),
+                  n: requested,
+                  ok: updated,
+                  skip: skipped || requested - updated,
+                }),
+          );
+          await qc.invalidateQueries({ queryKey: ["admin", "dramas"] });
+        } else {
+          setError(null);
+        }
+        return;
+      }
+
+      setSelected((prev) => {
+        const next = new Map(prev);
+        for (const id of variables.ids) next.delete(id);
+        return next;
+      });
+
+      // Delete: modal result (no top banner; no「批量」wording).
+      if (variables.action === "delete") {
+        setNotice(null);
+        setError(null);
+        const detail = result.failed?.map((f) => `${f.id}: ${f.error}`).join("; ") ?? "";
+        if (failed > 0) {
+          setDeleteResult(
+            t("deleteLifecyclePartial", { ok: updated, fail: failed, detail }),
+          );
+        } else if (skipped > 0 || updated < requested) {
+          setDeleteResult(
+            t("deleteLifecycleSkipped", {
+              n: requested,
+              ok: updated,
+              skip: skipped || requested - updated,
+            }),
+          );
+        } else {
+          setDeleteResult(t("deleteLifecycleOk", { ok: updated }));
+        }
+        await qc.invalidateQueries({ queryKey: ["admin", "dramas"] });
+        return;
+      }
+
       const actionLabel =
-        variables.action === "offline"
-          ? t("batchOffline")
-          : variables.action === "online"
-            ? t("batchOnline")
-            : t("batchDelete");
+        variables.action === "offline" ? t("batchOffline") : t("batchOnline");
 
       if (failed > 0) {
         setNotice(null);
@@ -657,7 +905,7 @@ function AdminContentInner() {
     },
     onError: (
       e: Error,
-      _variables,
+      variables,
       context?: { previous?: ReturnType<typeof qc.getQueriesData<{ rows: Drama[]; total: number }>> },
     ) => {
       if (context?.previous) {
@@ -669,7 +917,12 @@ function AdminContentInner() {
       setRowDelete(null);
       setMenuBusyId(null);
       setNotice(null);
-      setError(e.message);
+      if (variables?.action === "delete") {
+        setError(null);
+        setDeleteResult(e.message);
+      } else {
+        setError(e.message);
+      }
     },
   });
 
@@ -696,7 +949,14 @@ function AdminContentInner() {
   });
 
   const rows = dramasQ.data?.rows ?? [];
-  const busy = batchMut.isPending || lifecycleMut.isPending || reviewMut.isPending;
+  const busy =
+    batchMut.isPending ||
+    reviewMut.isPending ||
+    metricMut.isPending ||
+    flagMut.isPending ||
+    (lifecycleMut.isPending &&
+      (lifecycleMut.variables?.action === "delete" ||
+        (lifecycleMut.variables?.ids.length ?? 0) > 1));
   const total = dramasQ.data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const pageAllSelected = rows.length > 0 && rows.every((row) => selected.has(String(row.id)));
@@ -761,12 +1021,12 @@ function AdminContentInner() {
       {
         key: "title",
         header: t("colTitle"),
-        className: "min-w-[12rem]",
+        className: "content-title-col",
         cell: (row) => (
-          <div className="min-w-0">
+          <div className="min-w-0 max-w-full">
             <button
               type="button"
-              className="max-w-[18rem] truncate text-left font-medium text-brand hover:underline"
+              className="block w-full truncate text-left font-medium text-brand hover:underline"
               onClick={() => openModal("detail", String(row.id))}
             >
               {row.titleEn || row.titleZh || "—"}
@@ -813,19 +1073,27 @@ function AdminContentInner() {
         key: "likes",
         header: t("colLikes"),
         className: "content-metric-col tabular-nums text-right",
-        cell: (row) => {
-          const n = toMetric(row.likeCount);
-          return <span className={n === 0 ? "text-ink-subtle" : undefined}>{fmtNum(n)}</span>;
-        },
+        cell: (row) => (
+          <MetricCountEdit
+            value={toMetric(row.likeCount)}
+            ariaLabel={t("colLikes")}
+            disabled={busy || metricMut.isPending}
+            onCommit={(likeCount) => metricMut.mutate({ id: String(row.id), likeCount })}
+          />
+        ),
       },
       {
         key: "favorites",
         header: t("colFavorites"),
         className: "content-metric-col tabular-nums text-right",
-        cell: (row) => {
-          const n = toMetric(row.favoriteCount);
-          return <span className={n === 0 ? "text-ink-subtle" : undefined}>{fmtNum(n)}</span>;
-        },
+        cell: (row) => (
+          <MetricCountEdit
+            value={toMetric(row.favoriteCount)}
+            ariaLabel={t("colFavorites")}
+            disabled={busy || metricMut.isPending}
+            onCommit={(favoriteCount) => metricMut.mutate({ id: String(row.id), favoriteCount })}
+          />
+        ),
       },
       {
         key: "views",
@@ -857,24 +1125,53 @@ function AdminContentInner() {
       {
         key: "flags",
         header: t("colHomeFlags"),
-        className: "hidden lg:table-cell min-w-[8rem]",
+        className: "hidden lg:table-cell min-w-[9.5rem]",
         cell: (row) => {
+          const id = String(row.id);
           const weight = row.sortWeight ?? 0;
-          const hasFlags = row.isOfficial || row.isFeatured || weight !== 0;
-          if (!hasFlags) return <span className="text-ink-subtle">—</span>;
+          const weightOn = weight !== 0;
+          const rowBusy = busy || menuBusyId === id;
           return (
             <div className="flex flex-wrap gap-1">
-              {row.isOfficial ? (
-                <span className="content-flag-pill content-flag-pill--official">{t("official")}</span>
-              ) : null}
-              {row.isFeatured ? (
-                <span className="content-flag-pill content-flag-pill--featured">{t("featuredFlag")}</span>
-              ) : null}
-              {weight !== 0 ? (
-                <span className="content-flag-pill content-flag-pill--weight">
-                  {t("weightLabel")} {weight}
-                </span>
-              ) : null}
+              <FlagTogglePill
+                active={!!row.isOfficial}
+                tone="official"
+                disabled={rowBusy}
+                onToggle={() =>
+                  flagMut.mutate({ id, kind: "official", value: !row.isOfficial })
+                }
+              >
+                {t("official")}
+              </FlagTogglePill>
+              <FlagTogglePill
+                active={!!row.isFeatured}
+                tone="featured"
+                disabled={rowBusy}
+                onToggle={() =>
+                  flagMut.mutate({ id, kind: "featured", value: !row.isFeatured })
+                }
+              >
+                {t("featuredFlag")}
+              </FlagTogglePill>
+              <FlagTogglePill
+                active={weightOn}
+                tone="weight"
+                disabled={rowBusy}
+                onToggle={() => {
+                  if (weightOn) {
+                    if (weight > 0) lastWeightRef.current[id] = weight;
+                    flagMut.mutate({ id, kind: "weight", value: 0 });
+                  } else {
+                    flagMut.mutate({
+                      id,
+                      kind: "weight",
+                      value: lastWeightRef.current[id] ?? 1,
+                    });
+                  }
+                }}
+              >
+                {weightOn ? `${t("weightLabel")} ${weight}` : t("weightLabel")}
+              </FlagTogglePill>
             </div>
           );
         },
@@ -905,20 +1202,21 @@ function AdminContentInner() {
           const live = row.status === "LIVE";
           const canToggleLifecycle =
             row.status === "LIVE" || row.status === "OFFLINE" || row.status === "REJECTED";
-          const rowBusy = busy || menuBusyId === String(row.id);
+          const id = String(row.id);
           return (
             <Switch
               size="sm"
               checked={live}
-              disabled={rowBusy || !canToggleLifecycle}
+              disabled={!canToggleLifecycle}
               title={live ? t("rowOffline") : t("rowOnline")}
               aria-label={live ? t("rowOffline") : t("rowOnline")}
               onCheckedChange={(next) => {
-                setMenuBusyId(String(row.id));
+                // Avoid disable-during-pending (steals focus); ignore duplicate clicks.
+                if (lifecycleMut.isPending) return;
                 if (next) {
-                  lifecycleMut.mutate({ action: "online", ids: [String(row.id)] });
+                  lifecycleMut.mutate({ action: "online", ids: [id] });
                 } else {
-                  lifecycleMut.mutate({ action: "offline", ids: [String(row.id)] });
+                  lifecycleMut.mutate({ action: "offline", ids: [id] });
                 }
               }}
             />
@@ -938,12 +1236,12 @@ function AdminContentInner() {
                 size="sm"
                 variant="ghost"
                 disabled={rowBusy}
-                title={t("openDetail")}
-                aria-label={t("openDetail")}
-                className={rowActionClass}
+                title={t("edit")}
+                aria-label={t("edit")}
+                className="h-8 shrink-0 px-2 hover:translate-y-0 hover:shadow-none"
                 onClick={() => openModal("detail", String(row.id))}
               >
-                <Eye className="size-3.5" />
+                {t("edit")}
               </Button>
               {pending ? (
                 <>
@@ -997,6 +1295,10 @@ function AdminContentInner() {
       pageSomeSelected,
       busy,
       menuBusyId,
+      metricMut,
+      flagMut,
+      lifecycleMut.isPending,
+      lifecycleMut.variables,
       isSuperAdmin,
       filters.status,
       filters.sort,
@@ -1037,14 +1339,14 @@ function AdminContentInner() {
   return (
     <AdminShell title={title}>
       {error || dramasQ.error || categoriesQ.error || creatorsQ.error ? (
-        <p className="mb-3 text-body-sm text-danger">
+        <p className="mb-3 shrink-0 text-body-sm text-danger">
           {error ||
             (dramasQ.error as Error)?.message ||
             (categoriesQ.error as Error)?.message ||
             (creatorsQ.error as Error)?.message}
         </p>
       ) : notice ? (
-        <p className="mb-3 text-body-sm text-success">{notice}</p>
+        <p className="mb-3 shrink-0 text-body-sm text-success">{notice}</p>
       ) : null}
 
       <ContentSearchBar
@@ -1055,10 +1357,12 @@ function AdminContentInner() {
         statuses={statuses}
         showAdd={view !== "pending"}
         onAdd={() => router.push("/content/add")}
+        totalDramas={dramaCountsQ.data?.total ?? null}
+        liveDramas={dramaCountsQ.data?.live ?? null}
       />
 
       <DataTable
-        className={`content-table${selectedCount > 0 ? " mb-36" : ""}`}
+        className={`content-table${selectedCount > 0 && total <= 0 ? " mb-36" : ""}`}
         columns={columns}
         rows={rows}
         loading={dramasQ.isFetching && !dramasQ.data}
@@ -1066,7 +1370,9 @@ function AdminContentInner() {
       />
 
       {total > 0 ? (
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-white/45 px-3 py-2 text-caption text-ink-muted">
+        <div
+          className={`mt-3 flex shrink-0 flex-wrap items-center justify-between gap-2 rounded-xl border border-line bg-white/45 px-3 py-2 text-caption text-ink-muted${selectedCount > 0 ? " mb-36" : ""}`}
+        >
           <div className="flex flex-wrap items-center gap-3">
             <span>
               {`${(page - 1) * pageSize + 1}–${Math.min(page * pageSize, total)} / ${total}`}
@@ -1346,6 +1652,19 @@ function AdminContentInner() {
         })}
         busy={lifecycleMut.isPending}
       />
+      <GlassModal
+        open={!!deleteResult}
+        onClose={() => setDeleteResult(null)}
+        title={t("deleteLifecycleTitle")}
+        size="sm"
+      >
+        <p className="text-body-sm text-ink-muted">{deleteResult}</p>
+        <div className="mt-4 flex justify-end">
+          <Button size="sm" variant="secondary" onClick={() => setDeleteResult(null)}>
+            {t("confirm")}
+          </Button>
+        </div>
+      </GlassModal>
       <GlassModal
         open={!!rejectRow}
         onClose={() => {

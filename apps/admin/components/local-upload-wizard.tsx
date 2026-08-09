@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, forwardRef, type DragEvent } from "react";
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, forwardRef, type DragEvent, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   adminCreateOnlineDrama,
@@ -18,6 +18,7 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronUp,
+  CircleDollarSign,
   Cloud,
   HardDrive,
   LoaderCircle,
@@ -62,6 +63,11 @@ import { useUploadQueue } from "@/lib/upload-queue";
 import { VIDEO_ACCEPT, isVideoFile } from "@/lib/video-formats";
 
 type Category = { slug: string; nameZh?: string; nameEn?: string };
+type LockMode = "FREE_FIRST_N" | "VIP_ALL" | "ALL_FREE";
+type CreateLockMode = "INHERIT" | LockMode;
+/** Default paid episode price when lock policy leaves episodes paid. */
+const DEFAULT_PAID_CREDITS = 10;
+
 type DraftRecord = {
   id: string;
   titleZh: string;
@@ -69,7 +75,9 @@ type DraftRecord = {
   titleFr?: string;
   categorySlug: string;
   tags: string[];
-  descriptionZh: string;
+  /** Primary synopsis (English). Legacy drafts may only have descriptionZh. */
+  descriptionEn?: string;
+  descriptionZh?: string;
   coverUrl: string;
   contentType: string;
   completion: string;
@@ -77,12 +85,31 @@ type DraftRecord = {
   /** Staged video count at save time (File objects are not persisted). */
   episodeFileCount?: number;
   updatedAt: string;
-  freeRangeStart?: string;
-  freeRangeEnd?: string;
-  priceCredits?: number;
-  allowPreview?: boolean;
-  previewSeconds?: number;
+  lockMode?: CreateLockMode;
+  freeEpisodes?: number;
+  buyoutCredits?: number;
 };
+
+function episodeFreeByPolicy(episodeNumber: number, mode: LockMode, freeCount: number) {
+  if (mode === "ALL_FREE") return true;
+  if (mode === "VIP_ALL") return false;
+  return episodeNumber <= Math.max(0, Math.floor(freeCount || 0));
+}
+
+function FieldLabel({
+  label,
+  children,
+}: {
+  label: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <label className="block text-[13px] font-medium text-ink-muted">
+      <span className="mb-1.5 block">{label}</span>
+      {children}
+    </label>
+  );
+}
 
 /** Prefer English for draft list labels (viewer primary title). */
 function draftDisplayTitle(draft: DraftRecord) {
@@ -326,7 +353,7 @@ export const LocalUploadWizard = forwardRef<
   const { t } = useI18n();
   const router = useRouter();
   const qc = useQueryClient();
-  const { enqueueJob } = useUploadQueue();
+  const { enqueueJob, enqueueTransferJob } = useUploadQueue();
   const fileRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
 
@@ -337,7 +364,7 @@ export const LocalUploadWizard = forwardRef<
   const [translateBusy, setTranslateBusy] = useState(false);
   const [categorySlug, setCategorySlug] = useState("");
   const [coverUrl, setCoverUrl] = useState("");
-  const [descriptionZh, setDescriptionZh] = useState("");
+  const [descriptionEn, setDescriptionEn] = useState("");
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState("");
   const [contentType, setContentType] = useState<DramaContentType>(DEFAULT_CONTENT_TYPE);
@@ -347,11 +374,10 @@ export const LocalUploadWizard = forwardRef<
   const [drafts, setDrafts] = useState<DraftRecord[]>([]);
   const [showDrafts, setShowDrafts] = useState(false);
   const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
-  const [priceCredits, setPriceCredits] = useState(10);
-  const [allowPreview, setAllowPreview] = useState(false);
-  const [previewSeconds, setPreviewSeconds] = useState(10);
-  const [freeRangeStart, setFreeRangeStart] = useState("1");
-  const [freeRangeEnd, setFreeRangeEnd] = useState("");
+  const [priceCredits] = useState(DEFAULT_PAID_CREDITS);
+  const [lockMode, setLockMode] = useState<CreateLockMode>("INHERIT");
+  const [freeEpisodes, setFreeEpisodes] = useState(3);
+  const [buyoutCredits, setBuyoutCredits] = useState(0);
   const [episodes, setEpisodes] = useState<EpisodeDraft[]>([]);
   /** Page-level online ingest preference (R2 transfer / parse-import); episodes live in `episodes`. */
   const [onlineIngest, setOnlineIngest] = useState<OnlineIngestMeta | null>(null);
@@ -388,6 +414,7 @@ export const LocalUploadWizard = forwardRef<
           payload.titleZh !== undefined ||
           payload.titleFr !== undefined ||
           payload.coverUrl !== undefined ||
+          payload.descriptionEn !== undefined ||
           payload.descriptionZh !== undefined ||
           payload.categorySlug !== undefined ||
           payload.totalEpisodes !== undefined;
@@ -413,8 +440,15 @@ export const LocalUploadWizard = forwardRef<
             !overwrite && prev.trim() ? prev : payload.coverUrl!,
           );
         }
-        if (payload.descriptionZh !== undefined) {
-          setDescriptionZh((prev) =>
+        if (payload.descriptionEn !== undefined) {
+          setDescriptionEn((prev) =>
+            !overwrite && prev.trim()
+              ? prev
+              : payload.descriptionEn!.slice(0, 300),
+          );
+        } else if (payload.descriptionZh !== undefined) {
+          // Legacy fill payloads used descriptionZh for the primary synopsis.
+          setDescriptionEn((prev) =>
             !overwrite && prev.trim()
               ? prev
               : payload.descriptionZh!.slice(0, 300),
@@ -477,9 +511,7 @@ export const LocalUploadWizard = forwardRef<
             setEpisodes((prev) => {
               // Online apply replaces prior link rows so only the latest selection is staged.
               const keptFiles = prev.filter((ep) => ep.kind === "file");
-              const next = [...keptFiles, ...incoming];
-              if (!freeRangeEnd) setFreeRangeEnd(String(next.length));
-              return next;
+              return [...keptFiles, ...incoming];
             });
           } else {
             setEpisodes((prev) => prev.filter((ep) => ep.kind === "file"));
@@ -495,7 +527,7 @@ export const LocalUploadWizard = forwardRef<
         );
       },
     }),
-    [t, freeRangeEnd],
+    [t],
   );
 
   /** Watermark preview: online R2 uses server first-frame; local files use browser capture. */
@@ -679,18 +711,16 @@ export const LocalUploadWizard = forwardRef<
       titleFr: fr || undefined,
       categorySlug,
       tags,
-      descriptionZh,
+      descriptionEn,
       coverUrl,
       contentType,
       completion,
       totalEpisodes,
       episodeFileCount: episodes.length,
       updatedAt: new Date().toISOString(),
-      freeRangeStart,
-      freeRangeEnd,
-      priceCredits,
-      allowPreview,
-      previewSeconds,
+      lockMode,
+      freeEpisodes,
+      buyoutCredits,
     };
     persistDrafts([record, ...drafts.filter((item) => item.id !== id)]);
     setEditingDraftId(id);
@@ -706,15 +736,17 @@ export const LocalUploadWizard = forwardRef<
     setTitleTouched(Boolean(record.titleEn?.trim() || (record.titleZh && record.titleZh !== "未命名剧集")));
     setCategorySlug(record.categorySlug || "");
     setTags(record.tags || []);
-    setDescriptionZh(record.descriptionZh || "");
+    setDescriptionEn(record.descriptionEn || record.descriptionZh || "");
     setCoverUrl(record.coverUrl || "");
     setContentType(normalizeContentType(record.contentType));
     setCompletion(normalizeCompletion(record.completion));
-    setFreeRangeStart(record.freeRangeStart || "1");
-    setFreeRangeEnd(record.freeRangeEnd || "");
-    setPriceCredits(record.priceCredits || 10);
-    setAllowPreview(record.allowPreview ?? false);
-    setPreviewSeconds(record.previewSeconds || 10);
+    setLockMode(record.lockMode || "INHERIT");
+    setFreeEpisodes(
+      Number.isFinite(Number(record.freeEpisodes)) ? Math.max(0, Number(record.freeEpisodes)) : 3,
+    );
+    setBuyoutCredits(
+      Number.isFinite(Number(record.buyoutCredits)) ? Math.max(0, Number(record.buyoutCredits)) : 0,
+    );
     // Videos must be re-picked; keep planned 总集数 if operator had overridden it.
     setEpisodes((prev) => {
       for (const ep of prev) {
@@ -775,7 +807,7 @@ export const LocalUploadWizard = forwardRef<
     if (en.length > 40) return t("dramaTitleTooLong");
     if (titleZh.trim().length > 40) return t("dramaTitleTooLong");
     if (!categorySlug) return t("uploadBlockCategory");
-    if (descriptionZh.trim().length > 300) return t("dramaDescriptionTooLong");
+    if (descriptionEn.trim().length > 300) return t("dramaDescriptionTooLong");
     if (tags.length > MAX_DRAMA_TAGS) return t("dramaTagsTooMany");
     if (episodes.length < 1) return t("uploadBlockFiles");
     const fileEps = episodes.filter((ep) => ep.kind === "file");
@@ -810,7 +842,8 @@ export const LocalUploadWizard = forwardRef<
         });
       }
     }
-    if (fileEps.some((episode) => !episode.isFree) && priceCredits <= 0) {
+    // Paid episode price is a fixed default; policy UI no longer edits priceCredits.
+    if (priceCredits <= 0) {
       return t("policyPriceInvalid");
     }
     // Only validate when the operator manually overrode 总集数 (empty/auto remains allowed).
@@ -823,7 +856,7 @@ export const LocalUploadWizard = forwardRef<
     return null;
   }, [
     categorySlug,
-    descriptionZh,
+    descriptionEn,
     episodes,
     onlineIngest,
     priceCredits,
@@ -857,17 +890,35 @@ export const LocalUploadWizard = forwardRef<
     },
     staleTime: 60_000,
   });
-  const appliedPreviewDefaultRef = useRef(false);
+  const appliedPolicyDefaultRef = useRef(false);
   useEffect(() => {
-    if (!settingsQ.data || appliedPreviewDefaultRef.current || editingDraftId) return;
-    appliedPreviewDefaultRef.current = true;
-    const raw = Number(
-      settingsQ.data.find((item) => item.key === "defaultPreviewSeconds")?.value,
+    if (!settingsQ.data || appliedPolicyDefaultRef.current || editingDraftId) return;
+    appliedPolicyDefaultRef.current = true;
+    const freeRaw = Number(
+      settingsQ.data.find((item) => item.key === "defaultFreeEpisodes")?.value,
     );
-    const n = Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 0;
-    setAllowPreview(n > 0);
-    if (n > 0) setPreviewSeconds(n);
+    if (Number.isFinite(freeRaw)) setFreeEpisodes(Math.max(0, Math.floor(freeRaw)));
   }, [settingsQ.data, editingDraftId]);
+
+  const globalMode = useMemo<LockMode>(() => {
+    const raw = settingsQ.data?.find((s) => s.key === "episodeLockMode")?.value;
+    return raw === "VIP_ALL" || raw === "ALL_FREE" || raw === "FREE_FIRST_N"
+      ? raw
+      : "FREE_FIRST_N";
+  }, [settingsQ.data]);
+  const globalFreeCount = useMemo(() => {
+    const n = Number(settingsQ.data?.find((s) => s.key === "defaultFreeEpisodes")?.value);
+    return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 3;
+  }, [settingsQ.data]);
+  const effectiveMode: LockMode = lockMode === "INHERIT" ? globalMode : lockMode;
+  const freeEpisodeCountFromPolicy = useMemo(() => {
+    if (!episodes.length) return 0;
+    return episodes.reduce(
+      (count, _, index) =>
+        count + (episodeFreeByPolicy(index + 1, effectiveMode, freeEpisodes) ? 1 : 0),
+      0,
+    );
+  }, [episodes, effectiveMode, freeEpisodes]);
   const storageQ = useQuery({
     queryKey: ["admin", "storage-status"],
     queryFn: () => adminStorageStatus(),
@@ -1075,26 +1126,19 @@ export const LocalUploadWizard = forwardRef<
   ]);
 
   function episodeIsFreeForUpload(_episodeNumber: number, indexInBatch: number) {
-    // Free/paid comes only from playback policy range (1-based draft order).
-    if (!freeRangeStart && !freeRangeEnd) return true;
-    const start = Number(freeRangeStart);
-    const end = Number(freeRangeEnd);
-    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end < start) return true;
-    const n = indexInBatch + 1;
-    return n >= start && n <= end;
+    return episodeFreeByPolicy(indexInBatch + 1, effectiveMode, freeEpisodes);
   }
 
-  function freeEpisodeCountFromPolicy() {
-    if (!episodes.length) return 0;
-    if (!freeRangeStart && !freeRangeEnd) return episodes.length;
-    const start = Number(freeRangeStart);
-    const end = Number(freeRangeEnd);
-    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end < start) {
-      return episodes.length;
-    }
-    const lo = Math.max(1, start);
-    const hi = Math.min(episodes.length, end);
-    return Math.max(0, hi - lo + 1);
+  function dramaPolicyPayload() {
+    return {
+      freeEpisodeCount: Math.max(0, Math.floor(freeEpisodes || 0)),
+      lockMode: (lockMode === "INHERIT" ? null : lockMode) as
+        | "FREE_FIRST_N"
+        | "VIP_ALL"
+        | "ALL_FREE"
+        | null,
+      buyoutCredits: buyoutCredits > 0 ? buyoutCredits : null,
+    };
   }
 
   function revokeThumbPreview(url?: string) {
@@ -1220,7 +1264,6 @@ export const LocalUploadWizard = forwardRef<
         durationStatus: "pending" as const,
       }));
     if (!incoming.length) return 0;
-    if (!freeRangeEnd) setFreeRangeEnd(String(episodesRef.current.length + incoming.length));
     setEpisodes((prev) => [...prev, ...incoming]);
     for (const ep of incoming) {
       if (ep.file) void hydrateEpisodeThumb(ep.id, ep.file);
@@ -1358,48 +1401,28 @@ export const LocalUploadWizard = forwardRef<
     setTitleEn("");
     setTitleTouched(false);
     setCoverUrl("");
-    setDescriptionZh("");
+    setDescriptionEn("");
     setTags([]);
     setTagInput("");
     setContentType(DEFAULT_CONTENT_TYPE);
     setCompletion(DEFAULT_COMPLETION);
     setTotalEpisodes(0);
     setTotalEpisodesDirty(false);
-    setFreeRangeStart("1");
-    setFreeRangeEnd("");
-    setPriceCredits(10);
-    setAllowPreview(false);
-    setPreviewSeconds(10);
+    setLockMode("INHERIT");
+    setFreeEpisodes(globalFreeCount);
+    setBuyoutCredits(0);
   }
 
   function prepareEpisodesForSubmit() {
     const total = episodes.length;
     if (!total) return episodes;
 
-    // Empty free range → all free. Otherwise only episodes in [start, end] are free;
-    // everything else is paid (policy is the sole access control after per-card toggle removal).
-    let freeStart = 1;
-    let freeEnd = total;
-    if (freeRangeStart || freeRangeEnd) {
-      freeStart = Number(freeRangeStart);
-      freeEnd = Number(freeRangeEnd);
-      if (
-        !Number.isInteger(freeStart) ||
-        !Number.isInteger(freeEnd) ||
-        freeStart < 1 ||
-        freeEnd < freeStart ||
-        freeEnd > total
-      ) {
-        throw new Error(t("policyRangeInvalid", { total }));
-      }
-    }
-
     const next = episodes.map((episode, index) => {
-      const isFree = index + 1 >= freeStart && index + 1 <= freeEnd;
+      const isFree = episodeFreeByPolicy(index + 1, effectiveMode, freeEpisodes);
       return {
         ...episode,
         isFree,
-        previewSeconds: isFree ? 0 : allowPreview ? previewSeconds : 0,
+        previewSeconds: 0,
       };
     });
 
@@ -1439,6 +1462,7 @@ export const LocalUploadWizard = forwardRef<
           }))
           .filter((ep) => ep.webpageUrl || ep.sourceUrl);
         if (!pageUrl && !transferEps.length) throw new Error(t("ytdlpNeedUrl"));
+        const titleDisplay = englishTitle || titleZhResolved || "—";
         return adminYtdlpTransfer({
           url: pageUrl || transferEps[0].webpageUrl || transferEps[0].sourceUrl || "",
           categorySlug,
@@ -1446,7 +1470,7 @@ export const LocalUploadWizard = forwardRef<
           titleZh: titleZhResolved,
           titleEn: englishTitle,
           coverUrl: coverUrl.trim() || undefined,
-          descriptionZh: descriptionZh.trim() || undefined,
+          descriptionEn: descriptionEn.trim() || undefined,
           maxEpisodes: max,
           formatPreference:
             onlineIngest.formatPreference === "best_hls"
@@ -1454,6 +1478,7 @@ export const LocalUploadWizard = forwardRef<
               : onlineIngest.formatPreference || "best",
           cookiesFile: onlineIngest.cookiesFile,
           authBearer: onlineIngest.authBearer,
+          ...dramaPolicyPayload(),
           watermarkEnabled: watermark.enabled,
           watermarkX: watermark.x,
           watermarkY: watermark.y,
@@ -1462,7 +1487,13 @@ export const LocalUploadWizard = forwardRef<
         }).then((data) => ({
           kind: "transfer" as const,
           id: data.id,
+          jobId: data.jobId,
           n: data.totalEpisodes,
+          title: titleDisplay,
+          episodeTitles: transferEps.map((ep) => ({
+            episodeNumber: ep.episodeNumber,
+            title: ep.title,
+          })),
         }));
       }
 
@@ -1487,34 +1518,21 @@ export const LocalUploadWizard = forwardRef<
       }));
       if (!playable.length) throw new Error(t("onlineNeedEpisodes"));
 
-      const preparedFree = (() => {
-        if (!freeRangeStart && !freeRangeEnd) return playable.length;
-        const start = Number(freeRangeStart);
-        const end = Number(freeRangeEnd);
-        if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end < start) {
-          return playable.length;
-        }
-        return Math.max(0, Math.min(playable.length, end) - Math.max(1, start) + 1);
-      })();
-
+      const policy = dramaPolicyPayload();
       return adminCreateOnlineDrama({
         titleZh: titleZhResolved,
         titleEn: englishTitle,
         titleFr: titleFr.trim() || undefined,
         categorySlug,
         coverUrl: coverUrl.trim() || undefined,
-        descriptionZh: descriptionZh.trim() || undefined,
-        freeEpisodeCount: preparedFree,
-        lockMode: preparedFree >= playable.length ? "ALL_FREE" : "VIP_ALL",
+        descriptionEn: descriptionEn.trim() || undefined,
+        ...policy,
         status: "DRAFT",
         relaxedPlayUrl: false,
-        episodes: playable.map((ep, i) => {
-          const n = i + 1;
-          const start = Number(freeRangeStart) || 1;
-          const end = Number(freeRangeEnd) || playable.length;
-          const isFree = !freeRangeStart && !freeRangeEnd ? true : n >= start && n <= end;
-          return { ...ep, isFree };
-        }),
+        episodes: playable.map((ep) => ({
+          ...ep,
+          isFree: episodeFreeByPolicy(ep.episodeNumber, effectiveMode, freeEpisodes),
+        })),
       }).then((data) => ({
         kind: "create" as const,
         id: data.id,
@@ -1523,13 +1541,24 @@ export const LocalUploadWizard = forwardRef<
     },
     onSuccess: async (data) => {
       setError(null);
+      if (data.kind === "transfer") {
+        enqueueTransferJob({
+          title: data.title,
+          dramaId: data.id,
+          transferJobId: data.jobId,
+          totalEpisodes: data.n,
+          episodeTitles: data.episodeTitles,
+        });
+        setSuccess(t("uploadTaskEnqueuedTransfer", { n: data.n }));
+        resetWizardAfterEnqueue();
+        await qc.invalidateQueries({ queryKey: ["admin", "dramas"] });
+        return;
+      }
       setSuccess(t("uploadTaskEnqueued", { n: data.n }));
       resetWizardAfterEnqueue();
       await qc.invalidateQueries({ queryKey: ["admin", "dramas"] });
       if (data.id) {
-        router.push(
-          contentDetailHref(data.id, data.kind === "transfer" ? "episodes" : "info"),
-        );
+        router.push(contentDetailHref(data.id, "info"));
       }
     },
     onError: (e: Error) => {
@@ -1589,13 +1618,8 @@ export const LocalUploadWizard = forwardRef<
         titleFr: titleFr.trim() || undefined,
         categorySlug,
         coverUrl: coverUrl.trim() || undefined,
-        descriptionZh: descriptionZh.trim() || undefined,
-        freeEpisodeCount: preparedEpisodes.every((episode) => episode.isFree)
-          ? preparedEpisodes.length
-          : 0,
-        lockMode: (preparedEpisodes.every((episode) => episode.isFree)
-          ? "ALL_FREE"
-          : "VIP_ALL") as "ALL_FREE" | "VIP_ALL",
+        descriptionEn: descriptionEn.trim() || undefined,
+        ...dramaPolicyPayload(),
         status: "DRAFT" as const,
         sourceTags,
         ...(totalEpisodesDirty ? { totalEpisodes } : {}),
@@ -2338,18 +2362,18 @@ export const LocalUploadWizard = forwardRef<
 
                 <label className="upload-field">
                   <span>
-                    {t("onlineDescZh")}
+                    {t("onlineDescEn")}
                     <em className="float-right not-italic text-ink-subtle">
-                      {descriptionZh.length}/300
+                      {descriptionEn.length}/300
                     </em>
                   </span>
                   <textarea
                     className="content-textarea upload-info-desc"
                     rows={3}
                     maxLength={300}
-                    value={descriptionZh}
+                    value={descriptionEn}
                     disabled={busy}
-                    onChange={(e) => setDescriptionZh(e.target.value)}
+                    onChange={(e) => setDescriptionEn(e.target.value)}
                   />
                 </label>
               </div>
@@ -2370,68 +2394,75 @@ export const LocalUploadWizard = forwardRef<
             </div>
           </section>
 
-      <section className="upload-panel space-y-3">
+      <section className="upload-panel space-y-5">
             <div className="upload-panel__head">
               <div>
-                <h2>{t("uploadSectionPolicy")}</h2>
-                <p>{t("uploadSectionPolicyHint")}</p>
+                <h2>{t("playbackPolicyTitle")}</h2>
+                <p>
+                  {t("policyGlobalHint", {
+                    mode:
+                      globalMode === "VIP_ALL"
+                        ? t("lockModeVipAll")
+                        : globalMode === "ALL_FREE"
+                          ? t("lockModeAllFree")
+                          : t("lockModeFreeFirstN"),
+                    n: globalFreeCount,
+                  })}
+                </p>
               </div>
             </div>
-            <div className="policy-mode-grid" aria-label={t("uploadSectionPolicy")}>
-              <div className="policy-mode-card">
-                <div className="policy-mode-card__body">
-                  <strong>{t("policyAllFree")}</strong>
-                  <small>{t("policyModeHint")}</small>
-                  <div className="policy-range-grid">
-                    <label className="upload-field">
-                      <span>{t("policyRangeStart")}</span>
-                      <Input type="number" min={1} max={episodes.length || undefined} value={freeRangeStart} disabled={busy || !episodes.length} onChange={(e) => setFreeRangeStart(e.target.value)} />
-                    </label>
-                    <label className="upload-field">
-                      <span>{t("policyRangeEnd")}</span>
-                      <Input type="number" min={1} max={episodes.length || undefined} value={freeRangeEnd} disabled={busy || !episodes.length} onChange={(e) => setFreeRangeEnd(e.target.value)} />
-                    </label>
-                  </div>
+            <FieldLabel label={t("lockMode")}>
+              <Select
+                value={lockMode}
+                disabled={busy}
+                onChange={(e) => setLockMode(e.target.value as CreateLockMode)}
+              >
+                <option value="INHERIT">{t("lockModeInherit")}</option>
+                <option value="FREE_FIRST_N">{t("lockModeFreeFirstN")}</option>
+                <option value="VIP_ALL">{t("lockModeVipAll")}</option>
+                <option value="ALL_FREE">{t("lockModeAllFree")}</option>
+              </Select>
+            </FieldLabel>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <FieldLabel label={t("freeEpisodes")}>
+                <Input
+                  type="number"
+                  min={0}
+                  value={freeEpisodes}
+                  disabled={busy || effectiveMode === "VIP_ALL" || effectiveMode === "ALL_FREE"}
+                  onChange={(e) => setFreeEpisodes(Number(e.target.value))}
+                />
+              </FieldLabel>
+              <FieldLabel label={t("buyoutCreditsLabel")}>
+                <div className="relative">
+                  <CircleDollarSign className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-ink-subtle" />
+                  <Input
+                    type="number"
+                    min={0}
+                    className="pl-9"
+                    value={buyoutCredits}
+                    disabled={busy}
+                    onChange={(e) => setBuyoutCredits(Number(e.target.value))}
+                  />
                 </div>
-              </div>
-              <div className="policy-mode-card">
-                <div className="policy-mode-card__body">
-                  <strong>{t("policyPartialFree")}</strong>
-                  <small>{t("policyMemberHint")}</small>
-                  <label className="upload-field">
-                    <span>{t("priceCreditsPerEpisode")}</span>
-                    <Input type="number" min={1} value={priceCredits} disabled={busy} onChange={(e) => setPriceCredits(Number(e.target.value) || 0)} />
-                  </label>
-                  <div className="policy-preview-options">
-                    <div className="policy-preview-choices" role="radiogroup" aria-label={t("policyAllowPreview")}>
-                      <label className="policy-preview-toggle">
-                        <input type="radio" name="member-preview-policy" checked={!allowPreview} disabled={busy} onChange={() => setAllowPreview(false)} />
-                        <span>{t("policyPreviewDisabled")}</span>
-                      </label>
-                      <label className="policy-preview-toggle">
-                        <input type="radio" name="member-preview-policy" checked={allowPreview} disabled={busy} onChange={() => setAllowPreview(true)} />
-                        <span>{t("policyAllowPreview")}</span>
-                      </label>
-                    </div>
-                    {allowPreview ? (
-                      <label className="upload-field">
-                        <span>{t("policyPreviewSeconds")}</span>
-                        <Input type="number" min={1} value={previewSeconds} disabled={busy} onChange={(e) => setPreviewSeconds(Math.max(1, Number(e.target.value) || 10))} />
-                      </label>
-                    ) : null}
-                  </div>
-                </div>
-              </div>
+              </FieldLabel>
             </div>
             {episodes.length > 0 ? (
-              <div className="policy-preview is-partial">
+              <div
+                className={cn(
+                  "policy-preview",
+                  freeEpisodeCountFromPolicy >= episodes.length ? "is-free" : "is-partial",
+                )}
+              >
                 <span className="policy-preview__dot" aria-hidden />
                 <p>
-                  {t("policyPreviewPartial", {
-                    total: episodes.length,
-                    free: freeEpisodeCountFromPolicy(),
-                    price: priceCredits,
-                  })}
+                  {freeEpisodeCountFromPolicy >= episodes.length
+                    ? t("policyPreviewAllFree", { total: episodes.length })
+                    : t("policyPreviewPartial", {
+                        total: episodes.length,
+                        free: freeEpisodeCountFromPolicy,
+                        price: priceCredits,
+                      })}
                 </p>
               </div>
             ) : null}

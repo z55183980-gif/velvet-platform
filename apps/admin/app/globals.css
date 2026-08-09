@@ -362,6 +362,39 @@
     line-height: 1.55;
   }
 
+  /* Drama edit 基础信息: cover left, locale titles right */
+  .content-info-layout {
+    display: grid;
+    gap: 0.85rem 1rem;
+    align-items: start;
+  }
+
+  @media (min-width: 640px) {
+    .content-info-layout {
+      /* Wide enough for icon+label pair ("上传图片" / "选视频帧") on one line */
+      grid-template-columns: 15.5rem minmax(0, 1fr);
+    }
+  }
+
+  .content-info-layout__cover {
+    max-width: 15.5rem;
+  }
+
+  .content-info-layout__cover .drama-cover-field {
+    max-width: 15.5rem;
+    gap: 0.45rem;
+  }
+
+  .content-info-layout__cover .drama-cover-field__btn {
+    white-space: nowrap;
+  }
+
+  .content-info-layout__titles {
+    display: grid;
+    gap: 0.7rem;
+    min-width: 0;
+  }
+
   .content-summary-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -513,20 +546,6 @@
     font-size: 0.75rem;
   }
 
-  .content-tip-card {
-    display: flex;
-    gap: 0.7rem;
-    border: 1px solid color-mix(in srgb, var(--color-brand) 18%, transparent);
-    border-radius: 1rem;
-    background: var(--color-brand-soft);
-    padding: 1rem;
-    color: var(--color-brand-strong);
-  }
-
-  .content-tip-card svg { flex: 0 0 auto; }
-  .content-tip-card h3 { font-size: 0.8rem; font-weight: 700; }
-  .content-tip-card p { margin-top: 0.25rem; font-size: 0.7rem; line-height: 1.6; }
-
   .content-batch-toolbar {
     display: flex;
     align-items: center;
@@ -552,23 +571,34 @@
     box-shadow: var(--shadow-1);
   }
 
+  .content-episode-table th {
+    padding-block: 0.4rem;
+    padding-inline: 0.55rem;
+  }
+
+  .content-episode-table td {
+    padding-block: 0.35rem;
+    padding-inline: 0.55rem;
+    vertical-align: middle;
+  }
+
   .content-ep-thumb {
     display: flex;
     align-items: center;
-    gap: 0.55rem;
-    min-width: 10.5rem;
+    gap: 0.4rem;
+    min-width: 0;
   }
 
   .content-ep-thumb__preview {
     display: flex;
-    width: 2.75rem;
-    height: 3.75rem;
+    width: 2rem;
+    height: 2.75rem;
     flex: 0 0 auto;
     align-items: center;
     justify-content: center;
     overflow: hidden;
     border: 1px solid var(--color-line);
-    border-radius: 0.55rem;
+    border-radius: 0.4rem;
     background: var(--color-surface-2);
   }
 
@@ -582,22 +612,24 @@
     display: flex;
     min-width: 0;
     flex: 1;
-    flex-direction: column;
-    gap: 0.28rem;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 0.22rem;
   }
 
   .content-ep-thumb__btn {
     display: inline-flex;
     align-items: center;
-    gap: 0.28rem;
+    gap: 0.22rem;
     border: 1px solid var(--color-line);
-    border-radius: 0.45rem;
+    border-radius: 0.4rem;
     background: #fff;
-    padding: 0.22rem 0.4rem;
+    padding: 0.16rem 0.35rem;
     color: var(--color-ink-muted);
-    font-size: 0.68rem;
+    font-size: 0.65rem;
     font-weight: 600;
-    line-height: 1.2;
+    line-height: 1.15;
+    white-space: nowrap;
     transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
   }
 
@@ -676,6 +708,7 @@
   }
 
   .drama-cover-field__preview {
+    position: relative;
     display: flex;
     aspect-ratio: 3 / 4;
     width: 100%;
@@ -695,6 +728,51 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
+  }
+
+  .drama-cover-field__clear {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    margin: auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    border: 0;
+    border-radius: 999px;
+    background: color-mix(in srgb, #0f172a 72%, transparent);
+    color: #fff;
+    cursor: pointer;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s ease;
+  }
+
+  .drama-cover-field__preview:hover .drama-cover-field__clear:not(:disabled),
+  .drama-cover-field__preview:focus-within .drama-cover-field__clear:not(:disabled) {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .drama-cover-field__clear:hover:not(:disabled),
+  .drama-cover-field__clear:focus-visible:not(:disabled) {
+    background: color-mix(in srgb, #0f172a 88%, transparent);
+    outline: 2px solid color-mix(in srgb, #fff 55%, transparent);
+    outline-offset: 1px;
+  }
+
+  .drama-cover-field__clear:disabled {
+    cursor: not-allowed;
+  }
+
+  /* Touch / no-hover: keep clear reachable without relying on hover */
+  @media (hover: none) {
+    .drama-cover-field__clear:not(:disabled) {
+      opacity: 0.92;
+      pointer-events: auto;
+    }
   }
 
   .drama-cover-field__empty {
@@ -736,11 +814,6 @@
   .drama-cover-field__btn:disabled {
     opacity: 0.45;
     cursor: not-allowed;
-  }
-
-  .drama-cover-field__btn--ghost {
-    grid-column: 1 / -1;
-    color: var(--color-ink-muted);
   }
 
   .drama-cover-field__hint {
@@ -1052,11 +1125,10 @@
     max-height: min(62dvh, 46rem);
   }
 
-  /* Content list: same hug behavior so few rows don’t leave a glass “empty belly”. */
+  /* Content list: fill remaining main height; rows scroll inside the card. */
   .admin-main > .content-table.admin-fill {
-    flex: 0 1 auto;
+    flex: 1 1 auto;
     min-height: 0;
-    max-height: min(68dvh, 48rem);
   }
 
   /*
@@ -1079,6 +1151,13 @@
     width: 1%;
     white-space: nowrap;
     padding-inline: 0.4rem;
+  }
+
+  /* Cap title so leftover table width does not inflate the first text column. */
+  .content-table th.content-title-col,
+  .content-table td.content-title-col {
+    width: 16rem;
+    max-width: 16rem;
   }
 
   /* Kill marketing lift on dense row-action icon buttons. */
@@ -1113,6 +1192,31 @@
     line-height: 1.25;
     letter-spacing: 0;
     box-shadow: none;
+  }
+  .content-table button.content-flag-pill {
+    cursor: pointer;
+    transition:
+      background-color 0.15s ease,
+      border-color 0.15s ease,
+      color 0.15s ease;
+  }
+  .content-table button.content-flag-pill:hover:not(:disabled) {
+    filter: brightness(0.97);
+  }
+  .content-table button.content-flag-pill:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+  .content-table .content-flag-pill--off {
+    background-color: transparent;
+    color: #94a3b8;
+    border-style: dashed;
+    border-color: #cbd5e1;
+  }
+  .content-table .content-flag-pill--off:hover:not(:disabled) {
+    color: #64748b;
+    border-color: #94a3b8;
+    filter: none;
   }
   .content-table .content-status-pill--live {
     background-color: #ebf7f2;

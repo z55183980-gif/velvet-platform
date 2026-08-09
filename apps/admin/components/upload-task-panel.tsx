@@ -69,11 +69,13 @@ function jobInProgress(job: UploadJob) {
 function JobCard({ job }: { job: UploadJob }) {
   const { t } = useI18n();
   const { cancelJob, retryFailed, retryEpisode } = useUploadQueue();
+  const isTransfer = job.kind === "ytdlp-transfer";
   const done = job.episodes.filter((ep) => ep.status === "done").length;
   const total = job.episodes.length;
   const failed = job.episodes.filter((ep) => ep.status === "error").length;
   const inProgress = jobInProgress(job);
-  const canRetry = job.episodes.some((ep) => ep.status === "error" || ep.status === "cancelled");
+  const canRetry =
+    !isTransfer && job.episodes.some((ep) => ep.status === "error" || ep.status === "cancelled");
   /** null = follow default (expand only while in progress). */
   const [userExpanded, setUserExpanded] = useState<boolean | null>(null);
   const expanded = userExpanded ?? inProgress;
@@ -88,7 +90,9 @@ function JobCard({ job }: { job: UploadJob }) {
       : job.status === "queued"
         ? t("uploadTaskQueued")
         : job.status === "running"
-          ? t("uploadTaskRunning")
+          ? isTransfer
+            ? t("ytdlpTransferProgress")
+            : t("uploadTaskRunning")
           : job.status === "completed"
             ? job.publishStatus === "published"
               ? t("uploadTaskPublishPublished")
@@ -96,7 +100,9 @@ function JobCard({ job }: { job: UploadJob }) {
                 ? t("uploadTaskPublishFailed")
                 : t("uploadTaskCompleted")
             : job.status === "failed"
-              ? t("uploadTaskFailed")
+              ? isTransfer
+                ? t("ytdlpTransferFailed")
+                : t("uploadTaskFailed")
               : t("uploadTaskCancelled");
 
   const statusTone =
@@ -123,7 +129,11 @@ function JobCard({ job }: { job: UploadJob }) {
           <div className="min-w-0 flex-1 text-left">
             <p className="truncate font-medium text-ink">{job.title}</p>
             <p className="mt-0.5 text-caption text-ink-muted">
-              {job.mode === "append" ? t("uploadTaskModeAppend") : t("uploadTaskModeNew")}
+              {isTransfer
+                ? t("uploadTaskModeTransfer")
+                : job.mode === "append"
+                  ? t("uploadTaskModeAppend")
+                  : t("uploadTaskModeNew")}
               {job.publishWhenReady ? ` · ${t("uploadTaskWillPublish")}` : ""}
               {" · "}
               {t("uploadProgressLabel", { done, total })}
@@ -138,8 +148,8 @@ function JobCard({ job }: { job: UploadJob }) {
             variant="ghost"
             className="shrink-0"
             onClick={() => cancelJob(job.id)}
-            title={t("uploadTaskCancel")}
-            aria-label={t("uploadTaskCancel")}
+            title={isTransfer ? t("uploadTaskStopTracking") : t("uploadTaskCancel")}
+            aria-label={isTransfer ? t("uploadTaskStopTracking") : t("uploadTaskCancel")}
           >
             <X className="h-3.5 w-3.5" />
           </Button>
@@ -169,7 +179,9 @@ function JobCard({ job }: { job: UploadJob }) {
                     {ep.title || ep.fileName}
                   </p>
                   <p className="truncate text-caption text-ink-subtle">
-                    {ep.fileName} · {fmtSize(ep.fileSize)}
+                    {isTransfer
+                      ? t("uploadTaskTransferEpHint")
+                      : `${ep.fileName} · ${fmtSize(ep.fileSize)}`}
                     {ep.error ? ` · ${ep.error}` : ""}
                   </p>
                 </div>
@@ -180,14 +192,16 @@ function JobCard({ job }: { job: UploadJob }) {
                   {ep.status === "pending"
                     ? t("uploadTaskEpPending")
                     : ep.status === "uploading"
-                      ? t("uploadTaskEpUploading")
+                      ? isTransfer
+                        ? t("uploadTaskEpTransferring")
+                        : t("uploadTaskEpUploading")
                       : ep.status === "done"
                         ? t("uploadTaskEpDone")
                         : ep.status === "error"
                           ? t("uploadTaskEpError")
                           : t("uploadTaskEpCancelled")}
                 </span>
-                {ep.status === "error" || ep.status === "cancelled" ? (
+                {!isTransfer && (ep.status === "error" || ep.status === "cancelled") ? (
                   <Button
                     size="sm"
                     variant="ghost"
@@ -241,7 +255,8 @@ function JobCard({ job }: { job: UploadJob }) {
 
 export function UploadTaskPanel() {
   const { t } = useI18n();
-  const { jobs, panelOpen, setPanelOpen, activeCount, clearFinished } = useUploadQueue();
+  const { jobs, panelOpen, setPanelOpen, activeCount, browserActiveCount, clearFinished } =
+    useUploadQueue();
   const hasJobs = jobs.length > 0;
 
   if (!hasJobs && !panelOpen) return null;
@@ -308,7 +323,9 @@ export function UploadTaskPanel() {
           {activeCount > 0 ? (
             <footer className="upload-task-panel__foot">
               <ChevronUp className="h-3.5 w-3.5 text-ink-subtle" />
-              {t("uploadTaskKeepTabHint")}
+              {browserActiveCount > 0
+                ? t("uploadTaskKeepTabHint")
+                : t("ytdlpTransferAsyncHint")}
             </footer>
           ) : null}
         </section>

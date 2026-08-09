@@ -1527,7 +1527,8 @@ export async function adminCreateOnlineDrama(body: {
   categorySlug: string;
   coverUrl?: string;
   freeEpisodeCount?: number;
-  lockMode?: "FREE_FIRST_N" | "VIP_ALL" | "ALL_FREE";
+  lockMode?: "FREE_FIRST_N" | "VIP_ALL" | "ALL_FREE" | "INHERIT" | null;
+  buyoutCredits?: number | null;
   status?: "DRAFT";
   externalRef?: string;
   /** Align with yt-dlp import: accept CDN/signed URLs without media extension. */
@@ -1563,7 +1564,8 @@ export async function adminCreateUploadDrama(body: {
   categorySlug: string;
   coverUrl?: string;
   freeEpisodeCount?: number;
-  lockMode?: "FREE_FIRST_N" | "VIP_ALL" | "ALL_FREE";
+  lockMode?: "FREE_FIRST_N" | "VIP_ALL" | "ALL_FREE" | "INHERIT" | null;
+  buyoutCredits?: number | null;
   status?: "DRAFT";
   sourceTags?: string[];
   /** Announced/planned total (> uploaded inventory) for consumer placeholders. */
@@ -1592,6 +1594,7 @@ export async function adminCreateUploadDramaWithFiles(
     titleFr?: string;
     slug?: string;
     descriptionZh?: string;
+    descriptionEn?: string;
     categorySlug: string;
     coverUrl?: string;
     freeEpisodeCount?: number;
@@ -1607,6 +1610,7 @@ export async function adminCreateUploadDramaWithFiles(
   if (meta.titleZh) form.append("titleZh", meta.titleZh);
   if (meta.titleFr) form.append("titleFr", meta.titleFr);
   if (meta.slug) form.append("slug", meta.slug);
+  if (meta.descriptionEn) form.append("descriptionEn", meta.descriptionEn);
   if (meta.descriptionZh) form.append("descriptionZh", meta.descriptionZh);
   form.append("categorySlug", meta.categorySlug);
   if (meta.coverUrl) form.append("coverUrl", meta.coverUrl);
@@ -1885,11 +1889,15 @@ export async function adminYtdlpTransfer(body: {
   titleZh?: string;
   titleEn?: string;
   coverUrl?: string;
+  descriptionEn?: string;
   descriptionZh?: string;
   maxEpisodes?: number;
   formatPreference?: "best_hls" | "best_mp4" | "best";
   cookiesFile?: string;
   authBearer?: string;
+  freeEpisodeCount?: number;
+  lockMode?: "FREE_FIRST_N" | "VIP_ALL" | "ALL_FREE" | "INHERIT" | null;
+  buyoutCredits?: number | null;
   watermarkEnabled?: boolean;
   watermarkX?: number;
   watermarkY?: number;

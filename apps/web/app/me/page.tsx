@@ -15,7 +15,7 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import { useAuth } from "@/components/auth-context";
+import { useAuth, type AuthUser } from "@/components/auth-context";
 import { useLocale } from "@/lib/i18n";
 import { LanguageSwitcher } from "@/components/language-switcher";
 import { NotificationsModal } from "@/components/notifications-modal";
@@ -41,6 +41,38 @@ import { pickTitleText } from "@/lib/languages";
 import { SafeImage } from "@/components/safe-image";
 
 type DesktopTab = "favorites" | "history" | "likes" | "orders";
+const ACCOUNT_SNAPSHOT_TTL_MS = 30_000;
+
+type AccountCacheValue = {
+  favorites?: any[];
+  favGroups?: string[];
+  history?: any[];
+  likes?: any[];
+  orders?: any[];
+  transactions?: any[];
+};
+
+type AccountSnapshot = {
+  userKey: string;
+  savedAt: number;
+  desktopTab: DesktopTab;
+  mobileTab: MobileMeTab;
+  favorites: any[];
+  favGroups: string[];
+  favGroup: string;
+  history: any[];
+  likes: any[];
+  orders: any[];
+  transactions: any[];
+  cache: Map<string, AccountCacheValue>;
+  scrollY: number;
+};
+
+let accountSnapshot: AccountSnapshot | null = null;
+
+function accountUserKey(user: AuthUser | null) {
+  return user?.email || user?.phone || user?.username || user?.label || "";
+}
 
 type BillingFeedItem =
   | { kind: "order"; at: number; key: string; order: any }
@@ -71,21 +103,32 @@ function mergeBillingFeed(orders: any[], transactions: any[]): BillingFeedItem[]
 export default function AccountPage() {
   const { user, ready, openLogin, openVip, openRecharge, balance, logout, applySession } = useAuth();
   const { t, locale } = useLocale();
+  const userKey = accountUserKey(user);
+  const initialSnapshotRef = useRef(
+    accountSnapshot && accountSnapshot.userKey === userKey ? accountSnapshot : null,
+  );
+  const initialSnapshot = initialSnapshotRef.current;
 
   const [nickname, setNickname] = useState("");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveErr, setSaveErr] = useState<string | null>(null);
   const [avatarBusy, setAvatarBusy] = useState(false);
-  const [desktopTab, setDesktopTab] = useState<DesktopTab>("favorites");
-  const [mobileTab, setMobileTab] = useState<MobileMeTab>("history");
-  const [favorites, setFavorites] = useState<any[]>([]);
-  const [favGroups, setFavGroups] = useState<string[]>([]);
-  const [favGroup, setFavGroup] = useState("");
-  const [history, setHistory] = useState<any[]>([]);
-  const [likes, setLikes] = useState<any[]>([]);
-  const [orders, setOrders] = useState<any[]>([]);
-  const [transactions, setTransactions] = useState<any[]>([]);
+  const [desktopTab, setDesktopTab] = useState<DesktopTab>(
+    () => initialSnapshot?.desktopTab ?? "favorites",
+  );
+  const [mobileTab, setMobileTab] = useState<MobileMeTab>(
+    () => initialSnapshot?.mobileTab ?? "history",
+  );
+  const [favorites, setFavorites] = useState<any[]>(() => initialSnapshot?.favorites ?? []);
+  const [favGroups, setFavGroups] = useState<string[]>(() => initialSnapshot?.favGroups ?? []);
+  const [favGroup, setFavGroup] = useState(() => initialSnapshot?.favGroup ?? "");
+  const [history, setHistory] = useState<any[]>(() => initialSnapshot?.history ?? []);
+  const [likes, setLikes] = useState<any[]>(() => initialSnapshot?.likes ?? []);
+  const [orders, setOrders] = useState<any[]>(() => initialSnapshot?.orders ?? []);
+  const [transactions, setTransactions] = useState<any[]>(
+    () => initialSnapshot?.transactions ?? [],
+  );
   const [initialLoading, setInitialLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
@@ -100,19 +143,63 @@ export default function AccountPage() {
   const [notifOpen, setNotifOpen] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const nicknameRef = useRef<HTMLDivElement>(null);
-  const cacheRef = useRef<
-    Map<
-      string,
-      {
-        favorites?: any[];
-        favGroups?: string[];
-        history?: any[];
-        likes?: any[];
-        orders?: any[];
-        transactions?: any[];
-      }
-    >
-  >(new Map());
+  const cacheRef = useRef<Map<string, AccountCacheValue>>(initialSnapshot?.cache ?? new Map());
+  const refreshedAtRef = useRef(initialSnapshot?.savedAt ?? 0);
+  const latestSnapshotRef = useRef<Omit<AccountSnapshot, "savedAt" | "cache" | "scrollY">>({
+    userKey,
+    desktopTab,
+    mobileTab,
+    favorites,
+    favGroups,
+    favGroup,
+    history,
+    likes,
+    orders,
+    transactions,
+  });
+  latestSnapshotRef.current = {
+    userKey,
+    desktopTab,
+    mobileTab,
+    favorites,
+    favGroups,
+    favGroup,
+    history,
+    likes,
+    orders,
+    transactions,
+  };
+
+  useEffect(() => {
+    const restored = initialSnapshotRef.current;
+    if (!restored) return;
+    let secondFrame = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => window.scrollTo(0, restored.scrollY));
+    });
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      if (secondFrame) window.cancelAnimationFrame(secondFrame);
+    };
+  }, []);
+
+  useEffect(
+    () => () => {
+      const latest = latestSnapshotRef.current;
+      if (!latest.userKey) return;
+      accountSnapshot = {
+        ...latest,
+        savedAt: refreshedAtRef.current,
+        cache: cacheRef.current,
+        scrollY: window.scrollY,
+      };
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (ready && !user) accountSnapshot = null;
+  }, [ready, user]);
 
   useEffect(() => {
     if (user?.nickname) setNickname(user.nickname);
@@ -193,21 +280,27 @@ export default function AccountPage() {
     if (!user) return;
     let cancelled = false;
     const run = async () => {
+      const restored = initialSnapshotRef.current;
+      const snapshotIsFresh =
+        !!restored && Date.now() - restored.savedAt < ACCOUNT_SNAPSHOT_TTL_MS;
       const needsSkeleton =
+        !restored &&
         favorites.length === 0 &&
         history.length === 0 &&
         likes.length === 0 &&
         orders.length === 0;
       if (needsSkeleton) setInitialLoading(true);
-      else setRefreshing(true);
+      else if (!snapshotIsFresh) setRefreshing(true);
       try {
+        const options = snapshotIsFresh ? undefined : { force: true };
         await Promise.all([
-          loadKind("favorites"),
-          loadKind("history"),
-          loadKind("likes"),
-          loadKind("orders"),
-          loadKind("transactions"),
+          loadKind("favorites", options),
+          loadKind("history", options),
+          loadKind("likes", options),
+          loadKind("orders", options),
+          loadKind("transactions", options),
         ]);
+        if (!snapshotIsFresh) refreshedAtRef.current = Date.now();
       } finally {
         if (!cancelled) {
           setInitialLoading(false);

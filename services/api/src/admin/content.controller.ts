@@ -194,6 +194,9 @@ class DramaUpdateDto {
   lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE' | 'INHERIT' | null;
   @IsOptional() @Type(() => Number) @IsNumber() sortWeight?: number;
   @IsOptional() buyoutCredits?: number | string | null;
+  /** Absolute display counters — admin can set for ops (does not rewrite like/favorite rows). */
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) likeCount?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) favoriteCount?: number;
   @IsOptional()
   @Transform(({ value }) => value === true || value === 'true' || value === 1)
   @IsBoolean()
@@ -308,8 +311,9 @@ class CreateOnlineDramaDto {
   @IsNotEmpty() @IsString() categorySlug!: string;
   @IsOptional() @IsString() coverUrl?: string;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) freeEpisodeCount?: number;
-  @IsOptional() @IsIn(['FREE_FIRST_N', 'VIP_ALL', 'ALL_FREE'])
-  lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE';
+  @IsOptional() @IsIn(['FREE_FIRST_N', 'VIP_ALL', 'ALL_FREE', 'INHERIT'])
+  lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE' | 'INHERIT' | null;
+  @IsOptional() buyoutCredits?: number | string | null;
   @IsOptional() @IsIn(['DRAFT'])
   status?: 'DRAFT';
   @IsOptional() @IsString() externalRef?: string;
@@ -332,8 +336,9 @@ class CreateLocalUploadDramaDto {
   @IsNotEmpty() @IsString() categorySlug!: string;
   @IsOptional() @IsString() coverUrl?: string;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) freeEpisodeCount?: number;
-  @IsOptional() @IsIn(['FREE_FIRST_N', 'VIP_ALL', 'ALL_FREE'])
-  lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE';
+  @IsOptional() @IsIn(['FREE_FIRST_N', 'VIP_ALL', 'ALL_FREE', 'INHERIT'])
+  lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE' | 'INHERIT' | null;
+  @IsOptional() buyoutCredits?: number | string | null;
   @IsOptional() @IsIn(['DRAFT'])
   status?: 'DRAFT';
   @IsOptional() @IsArray() @IsString({ each: true }) sourceTags?: string[];
@@ -430,10 +435,15 @@ class YtdlpTransferDto extends YtdlpAuthFields {
   @IsOptional() @IsString() titleZh?: string;
   @IsOptional() @IsString() titleEn?: string;
   @IsOptional() @IsString() coverUrl?: string;
+  @IsOptional() @IsString() descriptionEn?: string;
   @IsOptional() @IsString() descriptionZh?: string;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(1) maxEpisodes?: number;
   @IsOptional() @IsIn(['best_hls', 'best_mp4', 'best'])
   formatPreference?: 'best_hls' | 'best_mp4' | 'best';
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) freeEpisodeCount?: number;
+  @IsOptional() @IsIn(['FREE_FIRST_N', 'VIP_ALL', 'ALL_FREE', 'INHERIT'])
+  lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE' | 'INHERIT' | null;
+  @IsOptional() buyoutCredits?: number | string | null;
   /** Explicit episode list — skips playlist probe; honors AI/manual selection. */
   @IsOptional()
   @IsArray()
@@ -787,6 +797,7 @@ export class ContentController {
       titleFr?: string;
       slug?: string;
       descriptionZh?: string;
+      descriptionEn?: string;
       categorySlug?: string;
       coverUrl?: string;
       freeEpisodeCount?: string | number;
@@ -808,6 +819,7 @@ export class ContentController {
           titleFr: body.titleFr,
           slug: body.slug,
           descriptionZh: body.descriptionZh,
+          descriptionEn: body.descriptionEn,
           categorySlug: body.categorySlug || '',
           coverUrl: body.coverUrl,
           freeEpisodeCount:
@@ -1024,12 +1036,16 @@ export class ContentController {
           titleZh: dto.titleZh,
           titleEn: dto.titleEn,
           coverUrl: dto.coverUrl,
+          descriptionEn: dto.descriptionEn,
           descriptionZh: dto.descriptionZh,
           maxEpisodes: dto.maxEpisodes,
           formatPreference: dto.formatPreference,
           cookiesFile: dto.cookiesFile,
           authBearer: dto.authBearer,
           episodes: dto.episodes,
+          freeEpisodeCount: dto.freeEpisodeCount,
+          lockMode: dto.lockMode,
+          buyoutCredits: dto.buyoutCredits,
           watermarkEnabled: wm?.watermarkEnabled,
           watermarkX: wm?.watermarkX,
           watermarkY: wm?.watermarkY,

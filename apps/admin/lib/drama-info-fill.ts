@@ -40,6 +40,9 @@ export type DramaInfoFillPayload = {
   titleEn?: string;
   titleFr?: string;
   coverUrl?: string;
+  /** Primary synopsis — English (matches create form / titleEn). */
+  descriptionEn?: string;
+  /** Optional Chinese synopsis; probe only sets this when description is CJK. */
   descriptionZh?: string;
   totalEpisodes?: number;
   /** Category is set on the main form — popup must not override unless explicit. */
@@ -140,7 +143,13 @@ export function dramaInfoFromYtdlpProbe(
       payload.titleZh = titleZh || (hasCjk ? raw : undefined);
     }
     payload.coverUrl = cover || undefined;
-    payload.descriptionZh = desc || undefined;
+    // Primary description is English (same rule as titleEn). CJK also fills zh.
+    if (desc) {
+      payload.descriptionEn = desc;
+      if (/[\u4e00-\u9fff]/.test(desc)) {
+        payload.descriptionZh = desc;
+      }
+    }
     payload.totalEpisodes = selected.length || undefined;
     if (extras?.overwriteMeta) payload.overwriteMeta = true;
   }

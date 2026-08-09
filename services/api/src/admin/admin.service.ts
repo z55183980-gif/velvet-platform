@@ -20,7 +20,11 @@ import { AuditService } from '../common/audit.service';
 import { UploadService } from '../upload/upload.service';
 import { ContentReadinessService } from '../common/content-readiness.service';
 import { PlatformSettingsService } from '../common/platform-settings.service';
-import { LockAccessService } from '../common/lock-access.service';
+import {
+  isLockAccessMode,
+  LockAccessService,
+  type LockAccessMode,
+} from '../common/lock-access.service';
 import { mergeDramaSourceTags } from '../dramas/drama-tags';
 
 export interface LocalImportOptions {
@@ -65,7 +69,9 @@ export interface CreateOnlineDramaInput {
   categorySlug: string;
   coverUrl?: string;
   freeEpisodeCount?: number;
-  lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE';
+  /** null / INHERIT = follow global episodeLockMode */
+  lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE' | 'INHERIT' | null;
+  buyoutCredits?: number | string | null;
   /** Ignored — online dramas always create as DRAFT (rights gate). */
   status?: 'DRAFT';
   /** 外部来源去重键，如 ytdlp:{extractor}:{id}；缺省时按分集 URL 生成 manual:… */
@@ -86,7 +92,9 @@ export interface CreateLocalUploadDramaInput {
   categorySlug: string;
   coverUrl?: string;
   freeEpisodeCount?: number;
-  lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE';
+  /** null / INHERIT = follow global episodeLockMode */
+  lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE' | 'INHERIT' | null;
+  buyoutCredits?: number | string | null;
   /** Ignored — upload shells always create as DRAFT. */
   status?: 'DRAFT';
   sourceTags?: string[];
@@ -96,6 +104,22 @@ export interface CreateLocalUploadDramaInput {
   externalRef?: string;
   /** Announced/planned total; kept ahead of uploaded count for consumer placeholders. */
   totalEpisodes?: number;
+}
+
+/** Normalize create-time lockMode: INHERIT/null → null (follow global). */
+function normalizeCreateLockMode(
+  raw: CreateOnlineDramaInput['lockMode'] | CreateLocalUploadDramaInput['lockMode'],
+): LockAccessMode | null {
+  if (raw === null || raw === undefined || raw === 'INHERIT') return null;
+  if (isLockAccessMode(raw)) return raw;
+  return 'FREE_FIRST_N';
+}
+
+function normalizeCreateBuyoutCredits(raw: unknown): bigint | null {
+  if (raw === undefined || raw === null || raw === '') return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return BigInt(Math.floor(n));
 }
 
 @Injectable()
@@ -1267,6 +1291,20 @@ export class AdminService {
       }
     }
     if (dto.sortWeight != null) data.sortWeight = Math.floor(Number(dto.sortWeight));
+    if (dto.likeCount != null) {
+      const n = Math.floor(Number(dto.likeCount));
+      if (!Number.isFinite(n) || n < 0) {
+        throw new BizException(BizCode.BAD_REQUEST, 'likeCount must be a non-negative integer');
+      }
+      data.likeCount = BigInt(n);
+    }
+    if (dto.favoriteCount != null) {
+      const n = Math.floor(Number(dto.favoriteCount));
+      if (!Number.isFinite(n) || n < 0) {
+        throw new BizException(BizCode.BAD_REQUEST, 'favoriteCount must be a non-negative integer');
+      }
+      data.favoriteCount = BigInt(n);
+    }
     if (dto.isFeatured != null) data.isFeatured = !!dto.isFeatured;
     if (dto.isOfficial != null) data.isOfficial = !!dto.isOfficial;
     if (dto.sourceTags !== undefined) {
@@ -1297,7 +1335,9 @@ export class AdminService {
       action: 'drama.update',
       targetType: 'drama',
       targetId: id,
-      payload: data,
+      payload: Object.fromEntries(
+        Object.entries(data).map(([k, v]) => [k, typeof v === 'bigint' ? v.toString() : v]),
+      ),
     });
     return { id: drama.id.toString() };
   }
@@ -1471,7 +1511,12 @@ export class AdminService {
     }
 
     const freeEpisodeCount = Math.max(0, Math.floor(Number(dto.freeEpisodeCount ?? 3)));
-    const lockMode = dto.lockMode || 'FREE_FIRST_N';
+    const lockMode = normalizeCreateLockMode(dto.lockMode);
+    const buyoutCredits = normalizeCreateBuyoutCredits(dto.buyoutCredits);
+    const policy = await this.lockAccess.resolveForDrama({
+      lockMode,
+      freeEpisodeCount,
+    });
     // 外部资源必须先完成来源和权利审核，禁止创建时直接上线。
     const status = 'DRAFT' as const;
 
@@ -1489,6 +1534,7 @@ export class AdminService {
           coverUrl: dto.coverUrl?.trim() || null,
           freeEpisodeCount,
           lockMode,
+          buyoutCredits,
           isOfficial: true,
           sourceType: 'ONLINE',
           externalRef,
@@ -1504,9 +1550,10 @@ export class AdminService {
       });
 
       for (const ep of converted) {
-        const isFree =
-          lockMode === 'ALL_FREE' ||
-          (lockMode !== 'VIP_ALL' && ep.episodeNumber <= freeEpisodeCount);
+        const isFree = this.lockAccess.isFree(
+          { isFree: false, episodeNumber: ep.episodeNumber },
+          { mode: policy.mode, freeCount: policy.freeCount },
+        );
         await tx.episode.create({
           data: {
             dramaId: created.id,
@@ -1625,7 +1672,8 @@ export class AdminService {
     }
 
     const freeEpisodeCount = Math.max(0, Math.floor(Number(dto.freeEpisodeCount ?? 3)));
-    const lockMode = dto.lockMode || 'FREE_FIRST_N';
+    const lockMode = normalizeCreateLockMode(dto.lockMode);
+    const buyoutCredits = normalizeCreateBuyoutCredits(dto.buyoutCredits);
     // 创建时一律草稿；上架走就绪校验。ONLINE 另需提交审核 → 人工审核通过。
     const status = 'DRAFT' as const;
     const announcedTotal = Math.max(0, Math.floor(Number(dto.totalEpisodes ?? 0)));
@@ -1647,6 +1695,7 @@ export class AdminService {
         coverUrl: dto.coverUrl?.trim() || null,
         freeEpisodeCount,
         lockMode,
+        buyoutCredits,
         isOfficial: true,
         sourceType,
         externalRef,

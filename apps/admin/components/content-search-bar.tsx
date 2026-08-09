@@ -33,6 +33,9 @@ type ContentSearchBarProps = {
   statuses: string[];
   showAdd?: boolean;
   onAdd?: () => void;
+  /** Global catalog totals (unfiltered), not the current list page total. */
+  totalDramas?: number | null;
+  liveDramas?: number | null;
 };
 
 const DEBOUNCE_MS = 300;
@@ -57,6 +60,8 @@ export function ContentSearchBar({
   statuses,
   showAdd = true,
   onAdd,
+  totalDramas = null,
+  liveDramas = null,
 }: ContentSearchBarProps) {
   const { t } = useI18n();
   const panelId = useId();
@@ -184,10 +189,14 @@ export function ContentSearchBar({
     });
   }
 
+  const totalLabel =
+    totalDramas == null ? "—" : totalDramas.toLocaleString();
+  const liveLabel = liveDramas == null ? "—" : liveDramas.toLocaleString();
+
   return (
-    <div ref={rootRef} className="mb-4 space-y-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-[16rem] flex-1">
+    <div ref={rootRef} className="mb-4 shrink-0 space-y-2.5">
+      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-2.5 rounded-2xl border border-white/60 bg-white/40 px-3 py-2.5 backdrop-blur-md sm:gap-x-3 sm:px-3.5 sm:py-3">
+        <div className="relative w-full min-w-0 max-w-[22rem] shrink-0 sm:w-[22rem]">
           <Search
             className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-ink-subtle"
             aria-hidden
@@ -202,7 +211,7 @@ export function ContentSearchBar({
           {qDraft ? (
             <button
               type="button"
-              className="absolute right-2 top-1/2 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-ink-subtle hover:bg-white/60 hover:text-ink"
+              className="absolute right-2 top-1/2 inline-flex size-7 -translate-y-1/2 items-center justify-center rounded-md text-ink-subtle hover:bg-white/60 hover:text-ink"
               onClick={clearKeyword}
               aria-label={t("close")}
             >
@@ -211,41 +220,7 @@ export function ContentSearchBar({
           ) : null}
         </div>
 
-        <div
-          className="inline-flex h-9 max-w-full items-center overflow-x-auto rounded-xl border border-white/70 bg-white/55 p-0.5 shadow-[inset_0_1px_2px_rgba(15,20,25,0.04)] backdrop-blur-md"
-          role="group"
-          aria-label={t("sortBy")}
-        >
-          {(
-            [
-              ["weight", t("sortByWeight")],
-              ["latest", t("sortByLatest")],
-              ["views", t("sortByViews")],
-              ["unlocks", t("sortByUnlocks")],
-            ] as const
-          ).map(([key, label]) => {
-            const active = value.sort === key;
-            return (
-              <button
-                key={key}
-                type="button"
-                className={`h-8 shrink-0 rounded-md px-2.5 text-body-sm font-medium transition sm:px-3 ${
-                  active
-                    ? "bg-brand text-white shadow-brand"
-                    : "text-ink-muted hover:bg-white/55 hover:text-ink"
-                }`}
-                aria-pressed={active}
-                onClick={() => {
-                  if (!active) patch({ sort: key });
-                }}
-              >
-                {label}
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="relative">
+        <div className="relative shrink-0">
           <Button
             size="sm"
             variant={panelOpen || activeFilterCount > 0 ? "secondary" : "ghost"}
@@ -266,7 +241,7 @@ export function ContentSearchBar({
           {panelOpen ? (
             <div
               id={panelId}
-              className="absolute right-0 z-30 mt-2 w-[min(22rem,calc(100vw-2rem))] rounded-2xl border border-white/70 bg-white/90 p-3 shadow-lg backdrop-blur-xl"
+              className="absolute left-0 z-30 mt-2 w-[min(22rem,calc(100vw-2rem))] rounded-2xl border border-white/70 bg-white/90 p-3 shadow-lg backdrop-blur-xl"
               role="dialog"
               aria-label={t("filter")}
             >
@@ -398,8 +373,70 @@ export function ContentSearchBar({
           ) : null}
         </div>
 
+        <div
+          className="inline-flex h-10 max-w-full items-center rounded-xl border border-white/70 bg-white/55 p-0.5 shadow-[inset_0_1px_2px_rgba(15,20,25,0.04)] backdrop-blur-md"
+          role="group"
+          aria-label={t("sortBy")}
+        >
+          {(
+            [
+              ["latest", t("sortByLatest")],
+              ["weight", t("sortByWeight")],
+              ["views", t("sortByViews")],
+              ["unlocks", t("sortByUnlocks")],
+            ] as const
+          ).map(([key, label]) => {
+            const active = value.sort === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                className={`flex h-9 shrink-0 items-center rounded-md px-2.5 text-body-sm font-medium leading-none transition sm:px-3 ${
+                  active
+                    ? "bg-brand text-white shadow-none"
+                    : "text-ink-muted hover:bg-white/55 hover:text-ink"
+                }`}
+                aria-pressed={active}
+                onClick={() => {
+                  if (!active) patch({ sort: key });
+                }}
+              >
+                {label}
+              </button>
+            );
+          })}
+        </div>
+
+        <div
+          className="inline-flex h-10 shrink-0 items-stretch gap-px overflow-hidden rounded-xl border border-white/70 bg-white/55 shadow-[inset_0_1px_2px_rgba(15,20,25,0.04)] backdrop-blur-md"
+          aria-label={`${t("dramaTotalCount")} ${totalLabel}, ${t("dramaLiveCount")} ${liveLabel}`}
+        >
+          <div className="flex min-w-[4.25rem] flex-col justify-center gap-0.5 px-2.5 sm:min-w-[4.75rem] sm:px-3">
+            <span className="text-[10px] font-medium leading-none tracking-wide text-ink-subtle">
+              {t("dramaTotalCount")}
+            </span>
+            <span className="text-sm font-semibold tabular-nums leading-none text-ink">
+              {totalLabel}
+            </span>
+          </div>
+          <div className="w-px self-stretch bg-line/60" aria-hidden />
+          <div className="flex min-w-[4.25rem] flex-col justify-center gap-0.5 px-2.5 sm:min-w-[4.75rem] sm:px-3">
+            <span className="text-[10px] font-medium leading-none tracking-wide text-ink-subtle">
+              {t("dramaLiveCount")}
+            </span>
+            <span className="text-sm font-semibold tabular-nums leading-none text-ink">
+              {liveLabel}
+            </span>
+          </div>
+        </div>
+
         {showAdd && onAdd ? (
-          <Button size="sm" variant="secondary" className="h-10" onClick={onAdd}>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="ml-auto h-10 shrink-0"
+            onClick={onAdd}
+          >
             <Plus className="size-4" />
             {t("contentAdd")}
           </Button>

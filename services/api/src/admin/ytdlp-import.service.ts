@@ -55,7 +55,12 @@ export type YtdlpTransferOptions = YtdlpImportOptions & {
   /** When set, skip yt-dlp playlist probe and transfer these episodes only. */
   episodes?: YtdlpTransferEpisodeInput[];
   coverUrl?: string;
+  /** Primary synopsis (English). Legacy clients may send descriptionZh only. */
+  descriptionEn?: string;
   descriptionZh?: string;
+  freeEpisodeCount?: number;
+  lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE' | 'INHERIT' | null;
+  buyoutCredits?: number | string | null;
   watermarkEnabled?: boolean;
   watermarkX?: number;
   watermarkY?: number;
@@ -711,12 +716,15 @@ export class YtdlpImportService implements OnModuleInit {
       throw new BizException(BizCode.BAD_REQUEST, '英文标题必填');
     }
     const titleZh = (opts.titleZh || '').trim() || undefined;
+    const probeDesc = (probe.description || '').trim() || undefined;
     const created = await this.admin.createOnlineDrama(
       {
         titleEn,
         titleZh,
-        descriptionZh: probe.description || undefined,
-        descriptionEn: probe.description || undefined,
+        descriptionEn: probeDesc,
+        // Only put CJK probe text into zh; do not duplicate English into both fields.
+        descriptionZh:
+          probeDesc && /[\u4e00-\u9fff]/.test(probeDesc) ? probeDesc : undefined,
         categorySlug,
         coverUrl: probe.coverUrl,
         lockMode: 'FREE_FIRST_N',
@@ -873,7 +881,23 @@ export class YtdlpImportService implements OnModuleInit {
     let probeId: string;
     let kind: 'single' | 'playlist';
     let coverUrl = opts.coverUrl?.trim() || undefined;
-    let description = opts.descriptionZh?.trim() || undefined;
+    let descriptionEn: string | undefined;
+    let descriptionZh: string | undefined;
+    if (opts.descriptionEn?.trim() && opts.descriptionZh?.trim()) {
+      // Both provided explicitly — keep zh separately (do not wipe).
+      descriptionZh = opts.descriptionZh.trim();
+      descriptionEn = opts.descriptionEn.trim();
+    } else if (opts.descriptionEn?.trim()) {
+      descriptionEn = opts.descriptionEn.trim();
+    } else if (opts.descriptionZh?.trim()) {
+      // Legacy: single field was named descriptionZh but held primary (EN) synopsis.
+      const legacy = opts.descriptionZh.trim();
+      if (/[\u4e00-\u9fff]/.test(legacy)) {
+        descriptionZh = legacy;
+      } else {
+        descriptionEn = legacy;
+      }
+    }
     let probeTitle: string | undefined;
     let refUrl = pageUrl;
 
@@ -914,7 +938,13 @@ export class YtdlpImportService implements OnModuleInit {
       probeId = probe.id;
       kind = probe.kind;
       coverUrl = coverUrl || probe.coverUrl;
-      description = description || probe.description || undefined;
+      const probeDesc = probe.description || undefined;
+      if (!descriptionEn && !descriptionZh && probeDesc) {
+        descriptionEn = probeDesc;
+        if (/[\u4e00-\u9fff]/.test(probeDesc)) {
+          descriptionZh = probeDesc;
+        }
+      }
       probeTitle = probe.title;
       refUrl = probe.webpageUrl || pageUrl;
     }
@@ -938,16 +968,27 @@ export class YtdlpImportService implements OnModuleInit {
     }
     const titleZh = (opts.titleZh || '').trim() || undefined;
     const sourceType = target === 'r2' ? 'R2' : 'LOCAL';
+    const freeEpisodeCount =
+      opts.freeEpisodeCount != null
+        ? Math.max(0, Math.floor(Number(opts.freeEpisodeCount)))
+        : selected.length;
+    const lockMode =
+      opts.lockMode === undefined
+        ? 'ALL_FREE'
+        : opts.lockMode === null || opts.lockMode === 'INHERIT'
+          ? null
+          : opts.lockMode;
     const drama = await this.admin.createLocalUploadDrama(
       {
         titleEn,
         titleZh,
-        descriptionZh: description,
-        descriptionEn: description,
+        descriptionEn,
+        descriptionZh,
         categorySlug,
         coverUrl,
-        lockMode: 'ALL_FREE',
-        freeEpisodeCount: selected.length,
+        lockMode,
+        freeEpisodeCount,
+        buyoutCredits: opts.buyoutCredits,
         status: 'DRAFT',
         sourceType,
         sourceTags: ['ytdlp', 'transfer', target, extractor, `ytdlp:${probeId}`],
@@ -1163,6 +1204,12 @@ export class YtdlpImportService implements OnModuleInit {
             actorId,
           );
 
+          // Default episode poster: ffmpeg first frame → permanent covers/ asset.
+          const thumbnailUrl = await this.autoEpisodeThumbnailFromVideo(
+            relativePath,
+            `ep-${created.id}`,
+          );
+
           await this.prisma.episode.update({
             where: { id: BigInt(created.id) },
             data: {
@@ -1176,6 +1223,7 @@ export class YtdlpImportService implements OnModuleInit {
               playlistIndex: ep.playlistIndex ?? null,
               resolvedAt: new Date(),
               ...(ep.durationSec != null ? { durationSec: ep.durationSec } : {}),
+              ...(thumbnailUrl ? { thumbnailUrl } : {}),
             },
           });
 
@@ -1344,6 +1392,46 @@ export class YtdlpImportService implements OnModuleInit {
   private parseFailures(raw: unknown): YtdlpEpisodeFailure[] {
     if (!Array.isArray(raw)) return [];
     return raw.filter(Boolean) as YtdlpEpisodeFailure[];
+  }
+
+  /**
+   * Capture a permanent episode poster from a local video.
+   * Failures are soft — transfer continues without a thumbnail.
+   */
+  private async autoEpisodeThumbnailFromVideo(
+    inputRel: string,
+    label: string,
+  ): Promise<string | null> {
+    try {
+      const frame = await this.upload.extractFirstFrame(inputRel);
+      const frameAbs = this.upload.resolveAbs(frame.relativePath);
+      if (!fs.existsSync(frameAbs)) return null;
+      const buffer = fs.readFileSync(frameAbs);
+      const saved = await this.upload.saveImage(
+        {
+          fieldname: 'file',
+          originalname: `${label}.jpg`,
+          encoding: '7bit',
+          mimetype: 'image/jpeg',
+          size: buffer.length,
+          buffer,
+          destination: '',
+          filename: '',
+          path: '',
+          stream: undefined as any,
+        } as Express.Multer.File,
+        'thumbnail',
+      );
+      try {
+        fs.unlinkSync(frameAbs);
+      } catch {
+        /* tmp frame cleanup is best-effort */
+      }
+      return saved.url;
+    } catch (e: any) {
+      this.logger.warn(`auto episode thumbnail failed (${label}): ${e?.message || e}`);
+      return null;
+    }
   }
 
   private signLocalMedia(filename: string): string {

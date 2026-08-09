@@ -40,7 +40,7 @@ export function OnlineDramaForm({
   const { t } = useI18n();
   const [titleZh, setTitleZh] = useState("");
   const [coverUrl, setCoverUrl] = useState("");
-  const [descriptionZh, setDescriptionZh] = useState("");
+  const [descriptionEn, setDescriptionEn] = useState("");
   const [bulk, setBulk] = useState("");
   const [episodes, setEpisodes] = useState<EpisodeRow[]>([emptyEpisode(1)]);
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +57,7 @@ export function OnlineDramaForm({
     (Boolean(
       titleZh.trim() ||
         coverUrl.trim() ||
-        descriptionZh.trim() ||
+        descriptionEn.trim() ||
         bulk.trim(),
     ) ||
       episodes.length > 1 ||
@@ -104,17 +104,18 @@ export function OnlineDramaForm({
       return;
     }
     const title = titleZh.trim().slice(0, 40);
-    if (!title && !coverUrl.trim() && !descriptionZh.trim()) {
+    if (!title && !coverUrl.trim() && !descriptionEn.trim()) {
       setError(t("ytdlpFillNeedMeta"));
       return;
     }
     const hasCjk = /[\u4e00-\u9fff]/.test(title);
     const all = collectEpisodes();
+    const desc = descriptionEn.trim().slice(0, 300);
     onFillDramaInfo({
       titleEn: title || undefined,
       titleZh: hasCjk ? title : undefined,
       coverUrl: coverUrl.trim() || undefined,
-      descriptionZh: descriptionZh.trim().slice(0, 300) || undefined,
+      descriptionEn: desc || undefined,
       totalEpisodes: all.length || undefined,
       overwriteMeta,
     });
@@ -180,12 +181,12 @@ export function OnlineDramaForm({
           />
         </div>
         <label className="text-caption text-ink-muted md:col-span-2">
-          {t("onlineDescZh")}
+          {t("onlineDescEn")}
           <textarea
             className="mt-1 min-h-20 w-full rounded-md border border-line bg-surface px-3 py-2 text-body-sm"
-            value={descriptionZh}
+            value={descriptionEn}
             onChange={(e) => {
-              setDescriptionZh(e.target.value);
+              setDescriptionEn(e.target.value);
               setFilled(false);
               setApplied(false);
             }}

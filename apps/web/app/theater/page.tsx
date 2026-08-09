@@ -13,28 +13,54 @@ import { DataErrorState } from "@/components/data-error-state";
 type SortMode = "hot" | "latest" | "hottest";
 type CacheKey = string;
 
+type TheaterSnapshot = {
+  categories: Category[];
+  cat: string;
+  sort: SortMode;
+  query: string;
+  q: string;
+  rows: Drama[];
+  cache: Map<CacheKey, Drama[]>;
+  scrollY: number;
+};
+
+let theaterSnapshot: TheaterSnapshot | null = null;
+
 function cacheKey(cat: string, sort: SortMode, q: string): CacheKey {
   return `${cat || "__all__"}|${sort}|${q}`;
 }
 
 export default function TheaterPage() {
   const { locale, t } = useLocale();
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [cat, setCat] = useState<string>("");
-  const [sort, setSort] = useState<SortMode>("hot");
-  const [query, setQuery] = useState("");
-  const [q, setQ] = useState("");
-  const [rows, setRows] = useState<Drama[]>([]);
-  const [initialLoading, setInitialLoading] = useState(true);
+  const initialSnapshotRef = useRef(theaterSnapshot);
+  const initialSnapshot = initialSnapshotRef.current;
+  const [categories, setCategories] = useState<Category[]>(() => initialSnapshot?.categories ?? []);
+  const [cat, setCat] = useState<string>(() => initialSnapshot?.cat ?? "");
+  const [sort, setSort] = useState<SortMode>(() => initialSnapshot?.sort ?? "hot");
+  const [query, setQuery] = useState(() => initialSnapshot?.query ?? "");
+  const [q, setQ] = useState(() => initialSnapshot?.q ?? "");
+  const [rows, setRows] = useState<Drama[]>(() => initialSnapshot?.rows ?? []);
+  const [initialLoading, setInitialLoading] = useState(() => !initialSnapshot);
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
-  const [urlReady, setUrlReady] = useState(false);
-  const cacheRef = useRef<Map<CacheKey, Drama[]>>(new Map());
-  const hasContentRef = useRef(false);
+  const [urlReady, setUrlReady] = useState(() => !!initialSnapshot);
+  const cacheRef = useRef<Map<CacheKey, Drama[]>>(initialSnapshot?.cache ?? new Map());
+  const hasContentRef = useRef(!!initialSnapshot?.rows.length);
+  const latestSnapshotRef = useRef<Omit<TheaterSnapshot, "cache" | "scrollY">>({
+    categories,
+    cat,
+    sort,
+    query,
+    q,
+    rows,
+  });
+  latestSnapshotRef.current = { categories, cat, sort, query, q, rows };
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    const hasRouteState = params.has("cat") || params.has("sort") || params.has("q");
+    if (initialSnapshotRef.current && !hasRouteState) return;
     const nextSort = params.get("sort");
     setCat(params.get("cat") || "");
     setSort(nextSort === "latest" || nextSort === "hottest" ? nextSort : "hot");
@@ -42,6 +68,30 @@ export default function TheaterPage() {
     setQ(params.get("q")?.trim() || "");
     setUrlReady(true);
   }, []);
+
+  useEffect(() => {
+    const restored = initialSnapshotRef.current;
+    if (!restored) return;
+    let secondFrame = 0;
+    const firstFrame = window.requestAnimationFrame(() => {
+      secondFrame = window.requestAnimationFrame(() => window.scrollTo(0, restored.scrollY));
+    });
+    return () => {
+      window.cancelAnimationFrame(firstFrame);
+      if (secondFrame) window.cancelAnimationFrame(secondFrame);
+    };
+  }, []);
+
+  useEffect(
+    () => () => {
+      theaterSnapshot = {
+        ...latestSnapshotRef.current,
+        cache: cacheRef.current,
+        scrollY: window.scrollY,
+      };
+    },
+    [],
+  );
 
   useEffect(() => {
     const trimmed = query.trim();
