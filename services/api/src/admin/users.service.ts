@@ -194,6 +194,61 @@ export class AdminUsersService {
     return { cleared: cnt.count };
   }
 
+  /**
+   * Hard-delete user + related rows (sessions/favorites/likes/history/notifications/
+   * unlocks/wallet/redeem). Blocked when orders or a creator profile exist.
+   */
+  async deleteUser(id: string, actorId?: bigint) {
+    const userId = BigInt(id);
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId, deletedAt: null },
+      select: { id: true, email: true, phone: true, nickname: true },
+    });
+    if (!user) throw new BizException(BizCode.NOT_FOUND, 'user.notFound');
+
+    const [orderCount, creator] = await Promise.all([
+      this.prisma.order.count({ where: { userId } }),
+      this.prisma.creator.findUnique({ where: { userId }, select: { id: true } }),
+    ]);
+    if (orderCount > 0) {
+      throw new BizException(BizCode.CONFLICT, 'user.hasOrders', undefined, { count: orderCount });
+    }
+    if (creator) {
+      throw new BizException(BizCode.CONFLICT, 'user.isCreator');
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.session.deleteMany({ where: { userId } });
+      await tx.notification.deleteMany({ where: { userId } });
+      await tx.like.deleteMany({ where: { userId } });
+      await tx.favorite.deleteMany({ where: { userId } });
+      await tx.watchHistory.deleteMany({ where: { userId } });
+      await tx.userUnlock.deleteMany({ where: { userId } });
+      await tx.userDramaUnlock.deleteMany({ where: { userId } });
+      await tx.redeemRedemption.deleteMany({ where: { userId } });
+      await tx.redeemCode.updateMany({
+        where: { usedByUserId: userId },
+        data: { usedByUserId: null },
+      });
+      await tx.walletTransaction.deleteMany({ where: { walletUserId: userId } });
+      await tx.wallet.deleteMany({ where: { userId } });
+      await tx.user.delete({ where: { id: userId } });
+    });
+
+    await this.audit.write({
+      actorId,
+      action: 'user.delete',
+      targetType: 'user',
+      targetId: id,
+      payload: {
+        email: user.email,
+        phone: user.phone,
+        nickname: user.nickname,
+      },
+    });
+    return { ok: true, id };
+  }
+
   async resetPassword(id: string, password: string, actorId?: bigint) {
     const userId = BigInt(id);
     const pwd = String(password || '');

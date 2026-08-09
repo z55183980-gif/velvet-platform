@@ -75,17 +75,13 @@ export function DramaCard({
                 {drama.rating.toFixed(1)}
               </div>
             )}
-            <div className="absolute bottom-2.5 left-2.5">
-              {isFree ? (
-                <Badge variant="free">
-                  {t("card.firstEpisodesFree", { n: drama.freeCount })}
-                </Badge>
-              ) : drama.pricePerEp > 0 ? (
+            {drama.pricePerEp > 0 && !isFree ? (
+              <div className="absolute bottom-2.5 left-2.5">
                 <span className="text-caption font-medium text-white/90">
                   {formatCredits(drama.pricePerEp, t("card.credits"))}
                 </span>
-              ) : null}
-            </div>
+              </div>
+            ) : null}
           </>
         )}
       </div>

@@ -254,6 +254,8 @@ class EpisodeUpdateDto {
   isFree?: boolean;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) priceCredits?: number;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) priceVnd?: number;
+  /** Trailer/preview length for paid episodes; free episodes force 0 server-side. */
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) previewSeconds?: number;
   @IsOptional() @IsString() thumbnailUrl?: string;
   @IsOptional() @IsString() sourceUrl?: string;
   @IsOptional() @IsString() hlsUrl?: string;

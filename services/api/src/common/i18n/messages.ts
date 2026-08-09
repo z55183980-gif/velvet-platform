@@ -87,6 +87,9 @@ const en = {
   'creator.kycRequiredForWithdraw': 'KYC must be approved before withdrawing',
   'creator.bankAccountRequired': 'Bank account is required for withdrawal',
   'user.notFound': 'User not found',
+  'user.hasOrders':
+    'This user has {count} related order(s) and cannot be deleted. Ban or suspend instead.',
+  'user.isCreator': 'This user has a creator profile and cannot be deleted.',
   'kyc.alreadyProcessed': 'KYC already processed',
   'wallet.updateFailed': 'Wallet update failed, please try again',
   'wallet.insufficientBalance': 'Insufficient balance',
@@ -197,6 +200,8 @@ const zh: Record<MessageKey, string> = {
   'creator.kycRequiredForWithdraw': '提现前需完成并通过 KYC 审核',
   'creator.bankAccountRequired': '提现需要填写银行账户信息',
   'user.notFound': '用户不存在',
+  'user.hasOrders': '该用户有 {count} 笔关联订单，无法删除，请改为封禁或暂停。',
+  'user.isCreator': '该用户已开通创作者身份，无法删除。',
   'kyc.alreadyProcessed': 'KYC 已处理',
   'wallet.updateFailed': '钱包更新失败，请重试',
   'wallet.insufficientBalance': '余额不足',
@@ -304,6 +309,9 @@ const vi: Record<MessageKey, string> = {
   'creator.kycRequiredForWithdraw': 'Cần duyệt KYC trước khi rút tiền',
   'creator.bankAccountRequired': 'Cần thông tin tài khoản ngân hàng để rút tiền',
   'user.notFound': 'Không tìm thấy người dùng',
+  'user.hasOrders':
+    'Người dùng có {count} đơn hàng liên quan, không thể xóa. Hãy khóa hoặc tạm dừng thay vì xóa.',
+  'user.isCreator': 'Người dùng đã có hồ sơ nhà sáng tạo, không thể xóa.',
   'kyc.alreadyProcessed': 'KYC đã được xử lý',
   'wallet.updateFailed': 'Cập nhật ví thất bại, vui lòng thử lại',
   'wallet.insufficientBalance': 'Số dư không đủ',
@@ -412,6 +420,9 @@ const fr: Record<MessageKey, string> = {
   'creator.kycRequiredForWithdraw': 'Le KYC doit être approuvé avant un retrait',
   'creator.bankAccountRequired': 'Un compte bancaire est requis pour le retrait',
   'user.notFound': 'Utilisateur introuvable',
+  'user.hasOrders':
+    'Cet utilisateur a {count} commande(s) liée(s) et ne peut pas être supprimé. Suspendez ou bannissez-le plutôt.',
+  'user.isCreator': 'Cet utilisateur a un profil créateur et ne peut pas être supprimé.',
   'kyc.alreadyProcessed': 'KYC déjà traité',
   'wallet.updateFailed': 'Échec de la mise à jour du portefeuille, réessayez',
   'wallet.insufficientBalance': 'Solde insuffisant',
@@ -521,6 +532,9 @@ const ru: Record<MessageKey, string> = {
   'creator.kycRequiredForWithdraw': 'Для вывода средств требуется одобренный KYC',
   'creator.bankAccountRequired': 'Для вывода требуется банковский счёт',
   'user.notFound': 'Пользователь не найден',
+  'user.hasOrders':
+    'У пользователя есть {count} связанных заказ(ов), удаление невозможно. Заблокируйте или приостановите аккаунт.',
+  'user.isCreator': 'У пользователя есть профиль автора, удаление невозможно.',
   'kyc.alreadyProcessed': 'KYC уже обработан',
   'wallet.updateFailed': 'Не удалось обновить кошелёк, попробуйте снова',
   'wallet.insufficientBalance': 'Недостаточно средств',

@@ -131,6 +131,7 @@ export class ContentService {
             isFree: true,
             priceCredits: true,
             priceVnd: true,
+            previewSeconds: true,
             hlsUrl: true,
             originalUrl: true,
             thumbnailUrl: true,

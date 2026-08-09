@@ -91,4 +91,10 @@ export class UsersController {
   async setUserVip(@Param('id') id: string, @Body() dto: SetUserVipDto, @Req() req: any) {
     return ok(await this.users.setVip(id, dto, getActor(req)));
   }
+
+  @Post('users/:id/delete')
+  @AdminRoles('SUPER_ADMIN')
+  async deleteUser(@Param('id') id: string, @Req() req: any) {
+    return ok(await this.users.deleteUser(id, getActor(req)));
+  }
 }

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  adminDeleteUser,
   adminForceLogout,
   adminGetUser,
   adminListUsers,
@@ -13,7 +14,7 @@ import {
   asRows,
 } from "@velvet/api-client";
 import { AdminShell } from "@/components/admin-shell";
-import { GlassModal } from "@/components/glass-modal";
+import { ConfirmModal, GlassModal } from "@/components/glass-modal";
 import { useI18n, statusLabel } from "@/lib/i18n";
 import { useLocationSearchParams } from "@/lib/use-location-search";
 import { Badge, Button, cn, DataTable, Input, Select, StatCard, fmtDate, fmtNum, type Column } from "@velvet/ui";
@@ -737,6 +738,21 @@ export default function AdminUsersPage() {
     pageSize: initialPageSize,
   });
   const [modal, setModal] = useState<ModalState>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; label: string } | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const qc = useQueryClient();
+
+  const deleteMut = useMutation({
+    mutationFn: (id: string) => adminDeleteUser(id),
+    onSuccess: async () => {
+      setDeleteError(null);
+      setDeleteTarget(null);
+      await qc.invalidateQueries({ queryKey: ["admin", "users"] });
+    },
+    onError: (e: Error) => {
+      setDeleteError(e.message);
+    },
+  });
 
   useEffect(() => {
     const nextStatus = searchParams.get("status") || "ALL";
@@ -961,6 +977,22 @@ export default function AdminUsersPage() {
             >
               {t("edit")}
             </button>
+            <span className="text-ink-subtle/40" aria-hidden>
+              |
+            </span>
+            <button
+              type="button"
+              className="rounded-lg px-2 py-1 text-body-sm font-medium text-danger transition hover:bg-danger/10"
+              onClick={() => {
+                setDeleteError(null);
+                setDeleteTarget({
+                  id: String(r.id),
+                  label: r.nickname || r.email || r.phone || String(r.id),
+                });
+              }}
+            >
+              {t("delete")}
+            </button>
           </div>
         ),
       },
@@ -1100,6 +1132,28 @@ export default function AdminUsersPage() {
       {modal?.mode === "edit" ? (
         <UserEditModal userId={modal.id} onClose={() => setModal(null)} t={t} locale={locale} />
       ) : null}
+
+      <ConfirmModal
+        open={!!deleteTarget}
+        onClose={() => {
+          if (deleteMut.isPending) return;
+          setDeleteTarget(null);
+          setDeleteError(null);
+        }}
+        onConfirm={() => {
+          if (!deleteTarget) return;
+          deleteMut.mutate(deleteTarget.id);
+        }}
+        title={
+          deleteTarget
+            ? `${t("delete")} · ${deleteTarget.label} (ID ${deleteTarget.id})`
+            : t("delete")
+        }
+        message={deleteError || t("confirmDeleteUser")}
+        confirmLabel={t("delete")}
+        confirmVariant="danger"
+        busy={deleteMut.isPending}
+      />
     </AdminShell>
   );
 }

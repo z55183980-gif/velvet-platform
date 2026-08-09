@@ -959,6 +959,13 @@ export async function adminSetUserVip(
   return adminRequest(`/admin/users/${id}/vip`, { method: "POST", body: JSON.stringify(body) });
 }
 
+export async function adminDeleteUser(id: string) {
+  return adminRequest<{ ok: boolean; id: string }>(`/admin/users/${id}/delete`, {
+    method: "POST",
+    body: "{}",
+  });
+}
+
 export type AdminOrderUser = {
   id?: string | number;
   email?: string | null;
