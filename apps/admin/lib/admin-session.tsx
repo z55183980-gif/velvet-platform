@@ -48,8 +48,8 @@ export function AdminSessionProvider({ children }: { children: ReactNode }) {
   }, [queryClient]);
 
   const refresh = useCallback(async () => {
-    const token = getAdminToken();
-    if (!token) {
+    const tokenAtStart = getAdminToken();
+    if (!tokenAtStart) {
       memoryAdmin = null;
       setAdmin(null);
       clearCachedQueries();
@@ -60,6 +60,8 @@ export function AdminSessionProvider({ children }: { children: ReactNode }) {
     setRefreshing(true);
     try {
       const me = await adminMe();
+      // Late response must not overwrite a newer login/logout.
+      if (getAdminToken() !== tokenAtStart) return;
       // Identity change (or re-login): drop cached privileged queries.
       if (!memoryAdmin || memoryAdmin.id !== me.id || memoryAdmin.role !== me.role) {
         clearCachedQueries();
@@ -68,6 +70,8 @@ export function AdminSessionProvider({ children }: { children: ReactNode }) {
       setAdmin(me);
       setReady(true);
     } catch {
+      // Late failure must not clear a token that changed while this request was in flight.
+      if (getAdminToken() !== tokenAtStart) return;
       memoryAdmin = null;
       setAdmin(null);
       clearAdminToken();

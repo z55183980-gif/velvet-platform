@@ -1,11 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { OrderType, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { fetchStripePaidCountsForDay } from '../payments/stripe-reconcile';
 import { isFinanceOpsFrozen } from '../common/ledger-units';
+import { PlatformSettingsService } from '../common/platform-settings.service';
 
 const PROVIDERS = ['STRIPE'];
-const T7_MS = 7 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function productionMode(): boolean {
   const env = (
@@ -23,7 +25,10 @@ function productionMode(): boolean {
 export class ReconcileService {
   private readonly logger = new Logger(ReconcileService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly platformSettings: PlatformSettingsService,
+  ) {}
 
   /** 每日 02:00 对账 */
   @Cron(CronExpression.EVERY_DAY_AT_2AM)
@@ -49,33 +54,75 @@ export class ReconcileService {
     }
   }
 
-  /** 每小时：T+7 将 pendingVnd → availableVnd（USD cents；财务冻结时跳过） */
+  /** 每小时：按商业规则窗口将 pendingVnd → availableVnd（USD cents；财务冻结时跳过） */
   @Cron(CronExpression.EVERY_HOUR)
   async settleT7Earnings() {
     if (isFinanceOpsFrozen()) {
       this.logger.warn('[settle-t7] skipped: FINANCE_OPS_FROZEN (USD ledger reconciliation)');
       return;
     }
-    const cutoff = new Date(Date.now() - T7_MS);
+    const days = await this.platformSettings.getCreatorSettleDays();
+    const cutoff = new Date(Date.now() - days * DAY_MS);
     await this.settleEligible(cutoff, 200);
   }
 
-  /** 手动触发 T+7（开发/运维；可传 days 覆盖冷却天数，默认 7） */
-  async settleNow(days = 7) {
+  /**
+   * 手动触发结算（开发/运维）。
+   * 未传 days 时使用商业规则 `creatorSettleDays`（默认 7）。
+   */
+  async settleNow(days?: number) {
+    const windowDays =
+      days == null
+        ? await this.platformSettings.getCreatorSettleDays()
+        : Math.max(0, Math.floor(Number(days)));
+    const safeDays = Number.isFinite(windowDays) ? windowDays : 7;
     if (isFinanceOpsFrozen()) {
-      return { eligible: 0, settled: 0, days, financeOpsFrozen: true };
+      return { eligible: 0, settled: 0, days: safeDays, financeOpsFrozen: true };
     }
-    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-    const before = await this.prisma.order.count({
-      where: {
-        orderType: { in: ['EPISODE_UNLOCK', 'DRAMA_BUYOUT'] },
-        paymentStatus: 'PAID',
-        earningSettled: false,
-        paidAt: { lte: cutoff },
-      },
-    });
+    const cutoff = new Date(Date.now() - safeDays * DAY_MS);
+    const settleWhere = this.settleEligibleWhere(cutoff);
+    const before = await this.prisma.order.count({ where: settleWhere });
     const settled = await this.settleEligible(cutoff, 500);
-    return { eligible: before, settled, days, financeOpsFrozen: false };
+    return { eligible: before, settled, days: safeDays, financeOpsFrozen: false };
+  }
+
+  /**
+   * DB prefilter for T+7 pending→available.
+   * ledgerDirty / non-USD-cent history are rejected in JS (`isSettleSafeOrder`) —
+   * JSON path filters are not portable enough across Prisma/PG versions.
+   */
+  private settleEligibleWhere(cutoff: Date): Prisma.OrderWhereInput {
+    return {
+      orderType: { in: [OrderType.EPISODE_UNLOCK, OrderType.DRAMA_BUYOUT] },
+      paymentStatus: 'PAID',
+      earningSettled: false,
+      creatorId: { not: null },
+      paidAt: { lte: cutoff },
+      creatorIncomeVnd: { gt: 0 },
+      // Non-USD payCurrency must never enter withdrawable after unfreeze.
+      payCurrency: 'USD',
+      NOT: { meta: { path: ['ledgerDirty'], equals: true } },
+    };
+  }
+
+  private isSettleSafeOrder(order: {
+    payCurrency: string | null;
+    meta: unknown;
+  }): boolean {
+    if (String(order.payCurrency || '').toUpperCase() !== 'USD') return false;
+    if (!order.meta || typeof order.meta !== 'object') return true;
+    const meta = order.meta as {
+      ledgerDirty?: boolean;
+      ledgerMinorUnit?: string;
+    };
+    if (meta.ledgerDirty === true) return false;
+    if (
+      meta.ledgerMinorUnit != null &&
+      String(meta.ledgerMinorUnit).toUpperCase() !== 'USD_CENTS'
+    ) {
+      return false;
+    }
+    return true;
   }
 
   /**
@@ -85,15 +132,7 @@ export class ReconcileService {
   private async settleEligible(cutoff: Date, take: number): Promise<number> {
     if (isFinanceOpsFrozen()) return 0;
     const orders = await this.prisma.order.findMany({
-      where: {
-        // Buyout income must settle on the same USD-cents ledger as episode unlocks.
-        orderType: { in: ['EPISODE_UNLOCK', 'DRAMA_BUYOUT'] },
-        paymentStatus: 'PAID',
-        earningSettled: false,
-        creatorId: { not: null },
-        paidAt: { lte: cutoff },
-        creatorIncomeVnd: { gt: 0 },
-      },
+      where: this.settleEligibleWhere(cutoff),
       take,
       orderBy: { paidAt: 'asc' },
     });
@@ -103,6 +142,13 @@ export class ReconcileService {
     let settled = 0;
     for (const order of orders) {
       if (!order.creatorId || !order.paidAt) continue;
+      // Defense in depth: JSON filters vary by Prisma/PG; re-check in JS.
+      if (!this.isSettleSafeOrder(order)) {
+        this.logger.warn(
+          `[settle-t7] order ${order.orderNo} skipped: dirty/non-USD ledger`,
+        );
+        continue;
+      }
       try {
         const didSettle = await this.prisma.$transaction(async (tx) => {
           const claimed = await tx.order.updateMany({

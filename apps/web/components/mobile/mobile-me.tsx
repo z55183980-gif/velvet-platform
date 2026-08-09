@@ -28,6 +28,8 @@ import { LanguageSwitcher } from "@/components/language-switcher";
 import { cn, formatAmount, mediaUrl } from "@/lib/utils";
 import { isPwaStandalone, openPwaInstallGuide } from "@/lib/pwa";
 import { SafeImage } from "@/components/safe-image";
+import { useToast } from "@/components/toast";
+import { isDramaUnavailable } from "@/lib/drama-availability";
 import { useDocumentScrollLock } from "@/hooks/use-document-scroll-lock";
 
 export type MobileMeTab = "history" | "favorites" | "liked";
@@ -152,6 +154,7 @@ export function MobileMe(props: Props) {
   } = props;
 
   const { resolved, setTheme } = useTheme();
+  const toast = useToast();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -636,9 +639,15 @@ export function MobileMe(props: Props) {
                   const d = row.drama;
                   const slug = d?.slug || row.dramaId;
                   const label = progressLabel(row, t);
-                  return (
-                    <Link key={row.id} href={`/drama/${slug}/play`} className="group min-w-0">
-                      <div className="relative aspect-[2/3] overflow-hidden rounded-lg bg-surface-2">
+                  const unavailable = isDramaUnavailable(d);
+                  const body = (
+                    <>
+                      <div
+                        className={cn(
+                          "relative aspect-[2/3] overflow-hidden rounded-lg bg-surface-2",
+                          unavailable && "opacity-55",
+                        )}
+                      >
                         {d?.coverUrl ? (
                           <SafeImage
                             src={d.coverUrl}
@@ -647,6 +656,11 @@ export function MobileMe(props: Props) {
                             fallbackLabel={t("common.imageUnavailable")}
                           />
                         ) : null}
+                        {unavailable ? (
+                          <span className="absolute bottom-1.5 left-1.5 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                            {t("account.dramaOffline")}
+                          </span>
+                        ) : null}
                       </div>
                       <p className="mt-1.5 line-clamp-2 text-[13px] leading-snug text-ink">
                         {titleOf(d)}
@@ -654,6 +668,23 @@ export function MobileMe(props: Props) {
                       {label ? (
                         <p className="mt-0.5 text-[11px] text-ink-subtle">{label}</p>
                       ) : null}
+                    </>
+                  );
+                  if (unavailable) {
+                    return (
+                      <button
+                        key={row.id}
+                        type="button"
+                        className="group min-w-0 text-left"
+                        onClick={() => toast.tip(t("account.dramaOffline"))}
+                      >
+                        {body}
+                      </button>
+                    );
+                  }
+                  return (
+                    <Link key={row.id} href={`/drama/${slug}/play`} className="group min-w-0">
+                      {body}
                     </Link>
                   );
                 })}
@@ -681,6 +712,7 @@ export function MobileMe(props: Props) {
                   const slug = d.slug || d.id;
                   const dramaId = String(row.dramaId ?? d.id);
                   const isSelected = selected.has(dramaId);
+                  const unavailable = isDramaUnavailable(d);
                   return (
                     <div key={row.id || slug} className="relative min-w-0">
                       {editing && (
@@ -698,30 +730,65 @@ export function MobileMe(props: Props) {
                           <Check className="h-3.5 w-3.5" />
                         </button>
                       )}
-                      <Link
-                        href={editing ? "#" : `/drama/${slug}`}
-                        onClick={(e) => {
-                          if (editing) {
-                            e.preventDefault();
-                            toggleSelect(dramaId);
-                          }
-                        }}
-                        className="block"
-                      >
-                        <div className="relative aspect-[2/3] overflow-hidden rounded-lg bg-surface-2">
-                          {d.coverUrl ? (
-                            <SafeImage
-                              src={d.coverUrl}
-                              alt={titleOf(d)}
-                              className="absolute inset-0 h-full w-full object-cover"
-                              fallbackLabel={t("common.imageUnavailable")}
-                            />
-                          ) : null}
-                        </div>
-                        <p className="mt-1.5 line-clamp-2 text-[13px] leading-snug text-ink">
-                          {titleOf(d)}
-                        </p>
-                      </Link>
+                      {editing || !unavailable ? (
+                        <Link
+                          href={editing ? "#" : `/drama/${slug}`}
+                          onClick={(e) => {
+                            if (editing) {
+                              e.preventDefault();
+                              toggleSelect(dramaId);
+                            }
+                          }}
+                          className="block"
+                        >
+                          <div
+                            className={cn(
+                              "relative aspect-[2/3] overflow-hidden rounded-lg bg-surface-2",
+                              unavailable && "opacity-55",
+                            )}
+                          >
+                            {d.coverUrl ? (
+                              <SafeImage
+                                src={d.coverUrl}
+                                alt={titleOf(d)}
+                                className="absolute inset-0 h-full w-full object-cover"
+                                fallbackLabel={t("common.imageUnavailable")}
+                              />
+                            ) : null}
+                            {unavailable ? (
+                              <span className="absolute bottom-1.5 left-1.5 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                                {t("account.dramaOffline")}
+                              </span>
+                            ) : null}
+                          </div>
+                          <p className="mt-1.5 line-clamp-2 text-[13px] leading-snug text-ink">
+                            {titleOf(d)}
+                          </p>
+                        </Link>
+                      ) : (
+                        <button
+                          type="button"
+                          className="block w-full text-left"
+                          onClick={() => toast.tip(t("account.dramaOffline"))}
+                        >
+                          <div className="relative aspect-[2/3] overflow-hidden rounded-lg bg-surface-2 opacity-55">
+                            {d.coverUrl ? (
+                              <SafeImage
+                                src={d.coverUrl}
+                                alt={titleOf(d)}
+                                className="absolute inset-0 h-full w-full object-cover"
+                                fallbackLabel={t("common.imageUnavailable")}
+                              />
+                            ) : null}
+                            <span className="absolute bottom-1.5 left-1.5 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                              {t("account.dramaOffline")}
+                            </span>
+                          </div>
+                          <p className="mt-1.5 line-clamp-2 text-[13px] leading-snug text-ink">
+                            {titleOf(d)}
+                          </p>
+                        </button>
+                      )}
                     </div>
                   );
                 })}
@@ -750,6 +817,7 @@ export function MobileMe(props: Props) {
                   const slug = d.slug || d.id;
                   const dramaId = String(row.dramaId ?? d.id);
                   const isSelected = selected.has(dramaId);
+                  const unavailable = isDramaUnavailable(d);
                   return (
                     <div key={row.id || slug} className="relative min-w-0">
                       {editing && (
@@ -767,30 +835,65 @@ export function MobileMe(props: Props) {
                           <Check className="h-3.5 w-3.5" />
                         </button>
                       )}
-                      <Link
-                        href={editing ? "#" : `/drama/${slug}`}
-                        onClick={(e) => {
-                          if (editing) {
-                            e.preventDefault();
-                            toggleSelect(dramaId);
-                          }
-                        }}
-                        className="block"
-                      >
-                        <div className="relative aspect-[2/3] overflow-hidden rounded-lg bg-surface-2">
-                          {d.coverUrl ? (
-                            <SafeImage
-                              src={d.coverUrl}
-                              alt={titleOf(d)}
-                              className="absolute inset-0 h-full w-full object-cover"
-                              fallbackLabel={t("common.imageUnavailable")}
-                            />
-                          ) : null}
-                        </div>
-                        <p className="mt-1.5 line-clamp-2 text-[13px] leading-snug text-ink">
-                          {titleOf(d)}
-                        </p>
-                      </Link>
+                      {editing || !unavailable ? (
+                        <Link
+                          href={editing ? "#" : `/drama/${slug}`}
+                          onClick={(e) => {
+                            if (editing) {
+                              e.preventDefault();
+                              toggleSelect(dramaId);
+                            }
+                          }}
+                          className="block"
+                        >
+                          <div
+                            className={cn(
+                              "relative aspect-[2/3] overflow-hidden rounded-lg bg-surface-2",
+                              unavailable && "opacity-55",
+                            )}
+                          >
+                            {d.coverUrl ? (
+                              <SafeImage
+                                src={d.coverUrl}
+                                alt={titleOf(d)}
+                                className="absolute inset-0 h-full w-full object-cover"
+                                fallbackLabel={t("common.imageUnavailable")}
+                              />
+                            ) : null}
+                            {unavailable ? (
+                              <span className="absolute bottom-1.5 left-1.5 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                                {t("account.dramaOffline")}
+                              </span>
+                            ) : null}
+                          </div>
+                          <p className="mt-1.5 line-clamp-2 text-[13px] leading-snug text-ink">
+                            {titleOf(d)}
+                          </p>
+                        </Link>
+                      ) : (
+                        <button
+                          type="button"
+                          className="block w-full text-left"
+                          onClick={() => toast.tip(t("account.dramaOffline"))}
+                        >
+                          <div className="relative aspect-[2/3] overflow-hidden rounded-lg bg-surface-2 opacity-55">
+                            {d.coverUrl ? (
+                              <SafeImage
+                                src={d.coverUrl}
+                                alt={titleOf(d)}
+                                className="absolute inset-0 h-full w-full object-cover"
+                                fallbackLabel={t("common.imageUnavailable")}
+                              />
+                            ) : null}
+                            <span className="absolute bottom-1.5 left-1.5 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                              {t("account.dramaOffline")}
+                            </span>
+                          </div>
+                          <p className="mt-1.5 line-clamp-2 text-[13px] leading-snug text-ink">
+                            {titleOf(d)}
+                          </p>
+                        </button>
+                      )}
                     </div>
                   );
                 })}

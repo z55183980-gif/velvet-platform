@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from "react";
 
-type ToastKind = "error" | "success" | "info";
+type ToastKind = "error" | "success" | "info" | "tip";
 
 type ToastItem = {
   id: number;
@@ -18,9 +18,11 @@ type ToastItem = {
 };
 
 type ToastApi = {
-  push: (message: string, kind?: ToastKind) => void;
+  push: (message: string, kind?: ToastKind, durationMs?: number) => void;
   error: (message: string) => void;
   success: (message: string) => void;
+  /** Lightweight centered tip (default 2s). */
+  tip: (message: string, durationMs?: number) => void;
 };
 
 const ToastContext = createContext<ToastApi | null>(null);
@@ -35,12 +37,18 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const push = useCallback(
-    (message: string, kind: ToastKind = "info") => {
+    (message: string, kind: ToastKind = "info", durationMs?: number) => {
       const text = String(message || "").trim();
       if (!text) return;
       const id = ++seq;
-      setItems((prev) => [...prev.slice(-4), { id, kind, message: text }]);
-      window.setTimeout(() => dismiss(id), kind === "error" ? 6000 : 3500);
+      setItems((prev) => {
+        const next = kind === "tip" ? prev.filter((t) => t.kind !== "tip") : prev;
+        return [...next.slice(-4), { id, kind, message: text }];
+      });
+      const ms =
+        durationMs ??
+        (kind === "error" ? 6000 : kind === "tip" ? 2000 : 3500);
+      window.setTimeout(() => dismiss(id), ms);
     },
     [dismiss],
   );
@@ -50,9 +58,13 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       push,
       error: (m) => push(m, "error"),
       success: (m) => push(m, "success"),
+      tip: (m, durationMs) => push(m, "tip", durationMs ?? 2000),
     }),
     [push],
   );
+
+  const tips = items.filter((t) => t.kind === "tip");
+  const banners = items.filter((t) => t.kind !== "tip");
 
   return (
     <ToastContext.Provider value={api}>
@@ -61,7 +73,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         className="pointer-events-none fixed inset-x-0 bottom-4 z-[100] flex flex-col items-center gap-2 px-4"
         aria-live="polite"
       >
-        {items.map((t) => (
+        {banners.map((t) => (
           <div
             key={t.id}
             className={`pointer-events-auto max-w-md rounded-xl border px-4 py-3 text-body-sm shadow-3 ${
@@ -77,6 +89,22 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           </div>
         ))}
       </div>
+      {tips.length > 0 ? (
+        <div
+          className="pointer-events-none fixed inset-0 z-[110] flex items-center justify-center px-6"
+          aria-live="polite"
+        >
+          {tips.map((t) => (
+            <div
+              key={t.id}
+              className="rounded-full bg-black/75 px-4 py-2.5 text-[13px] font-medium text-white shadow-lg"
+              role="status"
+            >
+              {t.message}
+            </div>
+          ))}
+        </div>
+      ) : null}
     </ToastContext.Provider>
   );
 }
@@ -88,6 +116,7 @@ export function useToast(): ToastApi {
       push: () => {},
       error: () => {},
       success: () => {},
+      tip: () => {},
     };
   }
   return ctx;

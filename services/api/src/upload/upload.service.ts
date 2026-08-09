@@ -234,8 +234,10 @@ export class UploadService implements OnModuleInit {
   }
 
   /**
-   * True when a media relative path is owned by the calling user or already
-   * bound to the given episode (blocks cross-tenant path injection).
+   * True when a media relative path is owned by the calling user.
+   * uploads/ always requires `{userId}-` basename prefix — already-bound foreign
+   * paths are rejected (bind-then-transcode privilege escalation).
+   * hls/import may pass only when already bound to this episode.
    */
   assertCallerOwnsMediaPath(
     userId: bigint,
@@ -251,7 +253,6 @@ export class UploadService implements OnModuleInit {
     const epHls = String(episode.hlsUrl || '')
       .replace(/\\/g, '/')
       .replace(/^\/+/, '');
-    if (rel && (rel === epOrig || rel === epHls)) return;
 
     if (rel.startsWith('uploads/')) {
       const base = path.basename(rel);
@@ -259,8 +260,22 @@ export class UploadService implements OnModuleInit {
       throw new BizException(BizCode.FORBIDDEN, 'upload.mediaNotOwned');
     }
 
-    // hls/import (or other) paths must already be bound to this episode.
+    // Non-uploads paths: allow only when already bound to this episode.
+    if (rel && (rel === epOrig || rel === epHls)) return;
+
     throw new BizException(BizCode.FORBIDDEN, 'upload.mediaNotOwned');
+  }
+
+  /** Bind-time ownership check for creator episode create/update (uploads/ prefix). */
+  assertCallerOwnsUploadPath(userId: bigint, relativePath: string): void {
+    const rel = String(relativePath || '')
+      .replace(/\\/g, '/')
+      .replace(/^\/+/, '');
+    if (!rel.startsWith('uploads/')) return;
+    const base = path.basename(rel);
+    if (!base.startsWith(`${userId.toString()}-`)) {
+      throw new BizException(BizCode.FORBIDDEN, 'upload.mediaNotOwned');
+    }
   }
 
   /**
@@ -954,7 +969,19 @@ export class UploadService implements OnModuleInit {
       await this.persistFinishedJob(job);
 
       if (pushedToR2) {
-        this.cleanupLocalAfterR2({ inputRel: job.inputRel, outDir });
+        let ownerUserId: bigint | null = null;
+        if (job.episodeId) {
+          const epOwner = await this.prisma.episode.findUnique({
+            where: { id: BigInt(job.episodeId) },
+            select: { drama: { select: { creator: { select: { userId: true } } } } },
+          });
+          ownerUserId = epOwner?.drama?.creator?.userId ?? null;
+        }
+        this.cleanupLocalAfterR2({
+          inputRel: job.inputRel,
+          outDir,
+          ownerUserId,
+        });
       }
     } catch (e: any) {
       job.status = 'failed';
@@ -972,8 +999,16 @@ export class UploadService implements OnModuleInit {
     }
   }
 
-  /** After HLS is on velvet-media, remove local staging copies. */
-  private cleanupLocalAfterR2(opts: { inputRel?: string; outDir?: string }) {
+  /**
+   * After HLS is on velvet-media, remove local staging copies.
+   * Never delete an uploads/ source unless basename is owned by ownerUserId
+   * (`{userId}-…`) — blocks cross-tenant deletion after bind-then-transcode.
+   */
+  private cleanupLocalAfterR2(opts: {
+    inputRel?: string;
+    outDir?: string;
+    ownerUserId?: bigint | null;
+  }) {
     if (opts.outDir) {
       try {
         if (fs.existsSync(opts.outDir)) {
@@ -986,6 +1021,14 @@ export class UploadService implements OnModuleInit {
     }
     const rel = opts.inputRel?.replace(/\\/g, '/');
     if (rel && (rel.startsWith('uploads/') || rel.startsWith('uploads\\'))) {
+      const base = path.basename(rel);
+      const owner = opts.ownerUserId != null ? opts.ownerUserId.toString() : '';
+      if (!owner || !base.startsWith(`${owner}-`)) {
+        this.logger.warn(
+          `skip cleanup of non-owned upload ${rel} (ownerUserId=${owner || 'none'})`,
+        );
+        return;
+      }
       try {
         const abs = this.resolveAbs(rel);
         if (fs.existsSync(abs) && abs.includes(`${path.sep}uploads${path.sep}`)) {

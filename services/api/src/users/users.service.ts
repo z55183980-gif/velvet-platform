@@ -75,6 +75,7 @@ export class UsersService {
               titleZh: r.drama.titleZh,
               titleFr: r.drama.titleFr,
               coverUrl: r.drama.coverUrl,
+              status: r.drama.status,
               creator: r.drama.creator,
             }
           : null,
@@ -269,6 +270,7 @@ export class UsersService {
               titleZh: true,
               titleFr: true,
               coverUrl: true,
+              status: true,
               totalEpisodes: true,
             },
           })
@@ -305,6 +307,7 @@ export class UsersService {
                 titleZh: d.titleZh,
                 titleFr: d.titleFr,
                 coverUrl: d.coverUrl,
+                status: d.status,
                 totalEpisodes,
               }
             : null,
@@ -348,6 +351,7 @@ export class UsersService {
               titleZh: r.drama.titleZh,
               titleFr: r.drama.titleFr,
               coverUrl: r.drama.coverUrl,
+              status: r.drama.status,
               creator: r.drama.creator,
             }
           : null,

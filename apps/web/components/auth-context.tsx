@@ -170,9 +170,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   /** Guards late getSession/getWallet responses after account switch. */
   const sessionGenRef = useRef(0);
   const userPrincipalRef = useRef("guest");
+  /** Monotonic revalidate seq — newer visibility revalidate wins over late ones. */
+  const revalidateSeqRef = useRef(0);
 
   const bumpSessionEpoch = useCallback((nextPrincipal: string) => {
     if (nextPrincipal === userPrincipalRef.current) return sessionGenRef.current;
+    userPrincipalRef.current = nextPrincipal;
+    sessionGenRef.current += 1;
+    setSessionEpoch(sessionGenRef.current);
+    return sessionGenRef.current;
+  }, []);
+
+  /** Force epoch bump even when principal string is unchanged (login race / token swap). */
+  const forceSessionEpoch = useCallback((nextPrincipal: string) => {
     userPrincipalRef.current = nextPrincipal;
     sessionGenRef.current += 1;
     setSessionEpoch(sessionGenRef.current);
@@ -189,18 +199,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const applySession = useCallback(
     async (s?: any, fallback?: string) => {
       const genAtStart = sessionGenRef.current;
+      const seqAtStart = revalidateSeqRef.current;
       const session = s || (await getSession());
       if (genAtStart !== sessionGenRef.current) return false;
+      if (seqAtStart !== revalidateSeqRef.current) return false;
       if (session && (session.phone || session.email || session.username || session.id)) {
         const mapped = toUser(session, fallback);
-        bumpSessionEpoch(principalKey(mapped));
+        // Always bump on successful apply so late revalidate cannot overwrite new token/user.
+        forceSessionEpoch(principalKey(mapped));
         setUser((prev) => (prev && usersEqual(prev, mapped) ? prev : mapped));
         await refreshWallet();
         return true;
       }
       return false;
     },
-    [refreshWallet, bumpSessionEpoch],
+    [refreshWallet, forceSessionEpoch],
   );
 
   useEffect(() => {
@@ -266,15 +279,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!ready) return;
     const revalidate = () => {
       const genAtStart = sessionGenRef.current;
+      const seq = ++revalidateSeqRef.current;
       void getSession().then((s) => {
+        // Drop if a newer revalidate started, or login/logout bumped epoch.
+        if (seq !== revalidateSeqRef.current) return;
         if (genAtStart !== sessionGenRef.current) return;
         if (s && (s.phone || s.email || s.username || s.id)) {
           const mapped = toUser(s);
           bumpSessionEpoch(principalKey(mapped));
+          if (seq !== revalidateSeqRef.current) return;
           setUser((prev) => (prev && usersEqual(prev, mapped) ? prev : mapped));
           void refreshWallet();
         } else {
           bumpSessionEpoch("guest");
+          if (seq !== revalidateSeqRef.current) return;
           setUser(null);
           setBalance(null);
         }
@@ -369,12 +387,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(async () => {
+    // Invalidate in-flight session/wallet writes before awaiting logout network.
+    forceSessionEpoch("guest");
+    revalidateSeqRef.current += 1;
     await apiLogout();
-    bumpSessionEpoch("guest");
     setUser(null);
     setBalance(null);
     setUnlocked(new Set());
-  }, [bumpSessionEpoch]);
+  }, [forceSessionEpoch]);
 
   const unlock = useCallback(
     async (episodeId: string | number) => {

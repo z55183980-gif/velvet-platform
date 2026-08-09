@@ -84,6 +84,13 @@ const DEFAULT_KEYS: {
     labelZh: '提现个税税率',
     type: 'number',
   },
+  {
+    key: 'creatorSettleDays',
+    value: 7,
+    labelEn: 'Creator earnings settle window (days)',
+    labelZh: '创作者收益结算窗口（天）',
+    type: 'number',
+  },
   // —— 播放策略 ——
   {
     key: 'episodeLockMode',
@@ -208,6 +215,13 @@ export class SettingsService implements OnModuleInit {
       }
       if (key === 'defaultPriceCredits' && n < 1) {
         throw new BizException(BizCode.BAD_REQUEST, 'defaultPriceCredits must be >= 1');
+      }
+      value = n;
+    }
+    if (key === 'creatorSettleDays') {
+      const n = Math.floor(Number(value));
+      if (!Number.isFinite(n) || n < 0 || n > 365) {
+        throw new BizException(BizCode.BAD_REQUEST, 'creatorSettleDays must be 0–365');
       }
       value = n;
     }

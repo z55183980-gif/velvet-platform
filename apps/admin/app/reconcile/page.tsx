@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   adminDownloadCsv,
   adminListReconciliations,
+  adminListSettings,
   adminRerunReconcile,
   adminSettleT7,
   asRows,
@@ -52,6 +53,24 @@ export default function AdminReconcilePage() {
     queryFn: async () => asRows<Row>(await adminListReconciliations(1, 50)),
     enabled: tab === "reconcile",
   });
+
+  const settleSettingsQ = useQuery({
+    queryKey: ["admin", "settings", "creatorSettleDays"],
+    queryFn: async () => {
+      const result = (await adminListSettings()) as {
+        items?: Array<{ key: string; value: unknown }>;
+      };
+      const raw = result.items?.find((item) => item.key === "creatorSettleDays")?.value;
+      const n = Math.floor(Number(raw));
+      return Number.isFinite(n) ? Math.min(365, Math.max(0, n)) : 7;
+    },
+    enabled: tab === "settle",
+  });
+
+  useEffect(() => {
+    if (settleSettingsQ.data == null) return;
+    setSettleDays(settleSettingsQ.data);
+  }, [settleSettingsQ.data]);
 
   const rerunMut = useMutation({
     mutationFn: () => adminRerunReconcile(days),

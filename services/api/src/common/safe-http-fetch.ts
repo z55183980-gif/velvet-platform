@@ -52,6 +52,32 @@ export function hostAllowedForMediaFetch(
   });
 }
 
+/** Block localhost / cloud metadata hostnames even when DNS looks public. */
+export function isBlockedHostname(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/\.$/, '');
+  if (!host || host === 'localhost' || host.endsWith('.localhost')) return true;
+  if (host === 'metadata.google.internal') return true;
+  if (host === 'metadata' || host.endsWith('.metadata.google.internal')) return true;
+  return false;
+}
+
+async function resolveAndAssertPublic(hostname: string): Promise<void> {
+  if (isBlockedHostname(hostname)) {
+    throw new BizException(BizCode.FORBIDDEN, 'fetch.hostDenied');
+  }
+  let addresses: string[];
+  try {
+    addresses = isIP(hostname)
+      ? [hostname]
+      : (await dns.lookup(hostname, { all: true, verbatim: true })).map((e) => e.address);
+  } catch {
+    throw new BizException(BizCode.FORBIDDEN, 'fetch.dnsFailed');
+  }
+  if (!addresses.length || addresses.some((a) => isPrivateOrReservedIp(a))) {
+    throw new BizException(BizCode.FORBIDDEN, 'fetch.privateIpDenied');
+  }
+}
+
 export async function assertSafeHttpUrl(
   url: string,
   opts: { allowHosts: string[] },
@@ -69,17 +95,25 @@ export async function assertSafeHttpUrl(
   if (!hostAllowedForMediaFetch(hostname, opts.allowHosts)) {
     throw new BizException(BizCode.FORBIDDEN, 'fetch.hostDenied');
   }
-  let addresses: string[];
+  await resolveAndAssertPublic(hostname);
+  return parsed;
+}
+
+/**
+ * SSRF-safe URL for public page fetches (yt-dlp AI import): no host allowlist,
+ * but every hop must be http(s) and resolve only to non-private addresses.
+ */
+export async function assertSafePublicHttpUrl(url: string): Promise<URL> {
+  let parsed: URL;
   try {
-    addresses = isIP(hostname)
-      ? [hostname]
-      : (await dns.lookup(hostname, { all: true, verbatim: true })).map((e) => e.address);
+    parsed = new URL(url);
   } catch {
-    throw new BizException(BizCode.FORBIDDEN, 'fetch.dnsFailed');
+    throw new BizException(BizCode.FORBIDDEN, 'fetch.invalidUrl');
   }
-  if (!addresses.length || addresses.some((a) => isPrivateOrReservedIp(a))) {
-    throw new BizException(BizCode.FORBIDDEN, 'fetch.privateIpDenied');
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new BizException(BizCode.FORBIDDEN, 'fetch.protocolDenied');
   }
+  await resolveAndAssertPublic(parsed.hostname.toLowerCase().replace(/\.$/, ''));
   return parsed;
 }
 
@@ -145,6 +179,65 @@ export async function safeFetchText(
         throw new BizException(BizCode.FORBIDDEN, 'fetch.notM3u8');
       }
       return text;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw new BizException(BizCode.FORBIDDEN, 'fetch.tooManyRedirects');
+}
+
+export type SafePublicTextFetchOpts = {
+  timeoutMs?: number;
+  maxBytes?: number;
+  maxRedirects?: number;
+  fetchImpl?: typeof fetch;
+  headers?: Record<string, string>;
+};
+
+/**
+ * SSRF-safe public HTML/text fetch: private-IP block on every redirect hop,
+ * manual redirects only, timeout + body size caps. No host allowlist (for
+ * yt-dlp page extract against arbitrary public drama sites).
+ */
+export async function safeFetchPublicText(
+  url: string,
+  opts: SafePublicTextFetchOpts = {},
+): Promise<{ text: string; finalUrl: string; status: number }> {
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES;
+  const maxRedirects = opts.maxRedirects ?? DEFAULT_MAX_REDIRECTS;
+  const fetchFn = opts.fetchImpl || fetch;
+
+  let current = url;
+  for (let hop = 0; hop <= maxRedirects; hop++) {
+    await assertSafePublicHttpUrl(current);
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), timeoutMs);
+    try {
+      const res = await fetchFn(current, {
+        method: 'GET',
+        redirect: 'manual',
+        signal: ac.signal,
+        headers: {
+          'User-Agent': 'VelvetSafeFetch/1.0',
+          Accept: 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
+          ...(opts.headers || {}),
+        },
+      });
+      if ([301, 302, 303, 307, 308].includes(res.status)) {
+        const loc = res.headers.get('location');
+        if (!loc) throw new BizException(BizCode.FORBIDDEN, 'fetch.redirectMissing');
+        current = new URL(loc, current).toString();
+        continue;
+      }
+      if (!res.ok) {
+        return { text: '', finalUrl: current, status: res.status };
+      }
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.length > maxBytes) {
+        throw new BizException(BizCode.FORBIDDEN, 'fetch.bodyTooLarge');
+      }
+      return { text: buf.toString('utf8'), finalUrl: current, status: res.status };
     } finally {
       clearTimeout(timer);
     }

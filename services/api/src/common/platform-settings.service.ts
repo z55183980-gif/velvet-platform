@@ -12,7 +12,12 @@ const PUBLIC_KEYS = [
   'minWithdrawVnd',
 ] as const;
 
-const COMMERCIAL_KEYS = ['revenueShareDefault', 'minWithdrawVnd', 'pitRate'] as const;
+const COMMERCIAL_KEYS = [
+  'revenueShareDefault',
+  'minWithdrawVnd',
+  'pitRate',
+  'creatorSettleDays',
+] as const;
 
 @Injectable()
 export class PlatformSettingsService {
@@ -63,10 +68,12 @@ export class PlatformSettingsService {
     const map = await this.loadMap(COMMERCIAL_KEYS);
     const share = this.asNumber(map, 'revenueShareDefault', 0.7);
     const pit = this.asNumber(map, 'pitRate', 0.05);
+    const settleDays = Math.floor(this.asNumber(map, 'creatorSettleDays', 7));
     return {
       revenueShareDefault: Math.min(1, Math.max(0, share)),
       minWithdrawVnd: Math.max(0, Math.floor(this.asNumber(map, 'minWithdrawVnd', 100000))),
       pitRate: Math.min(1, Math.max(0, pit)),
+      creatorSettleDays: Math.min(365, Math.max(0, Number.isFinite(settleDays) ? settleDays : 7)),
     };
   }
 
@@ -83,5 +90,10 @@ export class PlatformSettingsService {
     if (!map.has('pitRate')) return envFallback;
     const pit = this.asNumber(map, 'pitRate', envFallback);
     return Math.min(1, Math.max(0, pit));
+  }
+
+  /** Days before pending creator earnings become available (default T+7). */
+  async getCreatorSettleDays() {
+    return (await this.getCommercialConfig()).creatorSettleDays;
   }
 }

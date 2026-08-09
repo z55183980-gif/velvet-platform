@@ -114,6 +114,7 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
   const loadMoreLock = useRef(false);
   /** Bumps on filter change so stale page-1/page-N responses cannot mix. */
   const listGenerationRef = useRef(0);
+  const loadMoreAbortRef = useRef<AbortController | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef({
     rows,
@@ -240,6 +241,12 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
 
   useEffect(() => {
     if (!urlReady) return;
+    // Filter change: cancel in-flight page-N and release pagination lock.
+    loadMoreAbortRef.current?.abort();
+    loadMoreAbortRef.current = null;
+    loadMoreLock.current = false;
+    setLoadingMore(false);
+
     const key = cacheKey(cat, sort, q);
     const cached = cacheRef.current.get(key);
     const ac = new AbortController();
@@ -332,7 +339,10 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
     const nextPage = cur.page + 1;
     const key = cacheKey(cur.cat, cur.sort, cur.q);
     const generation = listGenerationRef.current;
+    loadMoreAbortRef.current?.abort();
     const ac = new AbortController();
+    loadMoreAbortRef.current = ac;
+    const timer = window.setTimeout(() => ac.abort(), 15_000);
     try {
       const h = await loadHome(nextPage, THEATER_PAGE_SIZE, {
         category: cur.cat || undefined,
@@ -360,6 +370,8 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
     } catch {
       // Keep grid; scroll again to retry.
     } finally {
+      window.clearTimeout(timer);
+      if (loadMoreAbortRef.current === ac) loadMoreAbortRef.current = null;
       loadMoreLock.current = false;
       setLoadingMore(false);
     }

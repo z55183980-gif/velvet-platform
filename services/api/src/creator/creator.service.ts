@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import * as path from 'path';
 import { PrismaService } from '../prisma/prisma.service';
 import { BizException, BizCode } from '../common/biz.exception';
 import { toBigInt, genOrderNo } from '../common/money.util';
@@ -499,6 +500,26 @@ export class CreatorService {
           '片源必须是 http(s) 地址，或 uploads/、hls/ 下的已上传文件',
         );
       }
+      // Reject cross-tenant uploads/ bind before the row exists (bind-then-transcode).
+      if (source) {
+        const norm = source.replace(/\\/g, '/').replace(/^\/+/, '');
+        if (norm.startsWith('uploads/')) {
+          const base = path.basename(norm);
+          if (!base.startsWith(`${userId.toString()}-`)) {
+            throw new BizException(BizCode.FORBIDDEN, 'upload.mediaNotOwned');
+          }
+        }
+      }
+      const originalUrlRaw = String(dto.originalUrl || '').trim() || source;
+      if (originalUrlRaw) {
+        const normOrig = originalUrlRaw.replace(/\\/g, '/').replace(/^\/+/, '');
+        if (normOrig.startsWith('uploads/')) {
+          const base = path.basename(normOrig);
+          if (!base.startsWith(`${userId.toString()}-`)) {
+            throw new BizException(BizCode.FORBIDDEN, 'upload.mediaNotOwned');
+          }
+        }
+      }
 
       const ep = await this.prisma.$transaction(async (tx) => {
         const created = await tx.episode.create({
@@ -510,7 +531,7 @@ export class CreatorService {
             priceVnd: isFree ? 0n : priceVnd,
             priceCredits: isFree ? 0n : priceCredits,
             hlsUrl: source,
-            originalUrl: String(dto.originalUrl || '').trim() || source,
+            originalUrl: originalUrlRaw,
             thumbnailUrl: String(dto.thumbnailUrl || '').trim() || null,
             uploadStatus: source ? 'COMPLETED' : 'PENDING',
             transcodeStatus: sourceIsHls ? 'COMPLETED' : 'PENDING',

@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  assertSafePublicHttpUrl,
   hostAllowedForMediaFetch,
   isPrivateOrReservedIp,
   mediaFetchAllowHosts,
+  safeFetchPublicText,
   safeFetchText,
 } from '../src/common/safe-http-fetch';
 import { BizException } from '../src/common/biz.exception';
@@ -74,4 +76,45 @@ test('safeFetchText accepts public allowlisted IP with m3u8 body', async () => {
     fetchImpl,
   });
   assert.match(text, /#EXTM3U/);
+});
+
+test('assertSafePublicHttpUrl blocks loopback and metadata hosts', async () => {
+  await assert.rejects(
+    () => assertSafePublicHttpUrl('http://127.0.0.1/secret'),
+    (e: any) => e instanceof BizException && e.message === 'fetch.privateIpDenied',
+  );
+  await assert.rejects(
+    () => assertSafePublicHttpUrl('http://metadata.google.internal/'),
+    (e: any) => e instanceof BizException && e.message === 'fetch.hostDenied',
+  );
+});
+
+test('safeFetchPublicText refuses private IP on redirect hop', async () => {
+  let calls = 0;
+  const fetchImpl = (async (input: RequestInfo | URL) => {
+    calls += 1;
+    const url = String(input);
+    if (url.startsWith('https://8.8.8.8/')) {
+      return {
+        ok: false,
+        status: 302,
+        headers: {
+          get: (h: string) =>
+            h.toLowerCase() === 'location' ? 'http://127.0.0.1/secret' : null,
+        },
+        arrayBuffer: async () => Buffer.alloc(0),
+      } as any;
+    }
+    throw new Error(`should not fetch private hop: ${url}`);
+  }) as typeof fetch;
+
+  await assert.rejects(
+    () =>
+      safeFetchPublicText('https://8.8.8.8/start', {
+        fetchImpl,
+        maxRedirects: 3,
+      }),
+    (e: any) => e instanceof BizException && e.message === 'fetch.privateIpDenied',
+  );
+  assert.equal(calls, 1);
 });

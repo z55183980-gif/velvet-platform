@@ -69,3 +69,12 @@ test('assertCallerOwnsMediaPath rejects cross-tenant uploads and unbound hls', (
     (e: any) => e instanceof BizException && e.message === 'upload.mediaNotOwned',
   );
 });
+
+test('assertCallerOwnsMediaPath rejects already-bound foreign uploads path', () => {
+  const svc = new UploadService({} as any, {} as any, {} as any);
+  const ep = { originalUrl: 'uploads/42-stolen.mp4', hlsUrl: null };
+  assert.throws(
+    () => svc.assertCallerOwnsMediaPath(9n, 'uploads/42-stolen.mp4', ep),
+    (e: any) => e instanceof BizException && e.message === 'upload.mediaNotOwned',
+  );
+});

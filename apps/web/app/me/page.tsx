@@ -39,6 +39,8 @@ import {
 import { cn, formatAmount, mediaUrl } from "@/lib/utils";
 import { pickTitleText } from "@/lib/languages";
 import { SafeImage } from "@/components/safe-image";
+import { useToast } from "@/components/toast";
+import { isDramaUnavailable } from "@/lib/drama-availability";
 
 type DesktopTab = "favorites" | "history" | "likes" | "orders";
 const ACCOUNT_SNAPSHOT_TTL_MS = 30_000;
@@ -105,6 +107,7 @@ function mergeBillingFeed(orders: any[], transactions: any[]): BillingFeedItem[]
 export default function AccountPage() {
   const { user, ready, openLogin, openVip, openRecharge, balance, logout, applySession } = useAuth();
   const { t, locale } = useLocale();
+  const toast = useToast();
   const userKey = accountUserKey(user);
   const initialSnapshotRef = useRef(
     accountSnapshot && accountSnapshot.userKey === userKey ? accountSnapshot : null,
@@ -553,7 +556,7 @@ export default function AccountPage() {
         onRemoveLike={async (dramaId) => {
           await removeLike(dramaId);
           setLikes((prev) => prev.filter((r) => String(r.dramaId ?? r.drama?.id) !== String(dramaId)));
-          cacheRef.current.delete("likes|");
+          if (userKey) cacheRef.current.delete(`${userKey}|likes|`);
         }}
         onClearHistory={async () => {
           await clearWatchHistory();
@@ -930,29 +933,55 @@ export default function AccountPage() {
                       const slug = d.slug || d.id;
                       const dramaId = String(row.dramaId ?? d.id);
                       const editing = editId === dramaId;
+                      const unavailable = isDramaUnavailable(d);
+                      const coverInner = (
+                        <>
+                          <div
+                            className={cn(
+                              "relative aspect-[2/3] overflow-hidden rounded-lg bg-surface-2",
+                              unavailable && "opacity-55",
+                            )}
+                          >
+                            {d.coverUrl ? (
+                              <SafeImage
+                                src={d.coverUrl}
+                                alt={titleOf(d)}
+                                className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+                                fallbackLabel={t("common.imageUnavailable")}
+                              />
+                            ) : null}
+                            {unavailable ? (
+                              <span className="absolute bottom-1.5 left-1.5 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                                {t("account.dramaOffline")}
+                              </span>
+                            ) : null}
+                          </div>
+                          <p className="mt-2 line-clamp-2 text-sm leading-snug text-ink">
+                            {titleOf(d)}
+                          </p>
+                          {(row.group || row.note) && (
+                            <p className="mt-0.5 truncate text-xs text-ink-muted">
+                              {row.group ? `[${row.group}] ` : ""}
+                              {row.note || ""}
+                            </p>
+                          )}
+                        </>
+                      );
                       return (
                         <div key={row.id || slug} className="group relative min-w-0">
-                          <Link href={`/drama/${slug}`} className="block">
-                            <div className="relative aspect-[2/3] overflow-hidden rounded-lg bg-surface-2">
-                              {d.coverUrl ? (
-                                <SafeImage
-                                  src={d.coverUrl}
-                                  alt={titleOf(d)}
-                                  className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
-                                  fallbackLabel={t("common.imageUnavailable")}
-                                />
-                              ) : null}
-                            </div>
-                            <p className="mt-2 line-clamp-2 text-sm leading-snug text-ink">
-                              {titleOf(d)}
-                            </p>
-                            {(row.group || row.note) && (
-                              <p className="mt-0.5 truncate text-xs text-ink-muted">
-                                {row.group ? `[${row.group}] ` : ""}
-                                {row.note || ""}
-                              </p>
-                            )}
-                          </Link>
+                          {unavailable ? (
+                            <button
+                              type="button"
+                              className="block w-full text-left"
+                              onClick={() => toast.tip(t("account.dramaOffline"))}
+                            >
+                              {coverInner}
+                            </button>
+                          ) : (
+                            <Link href={`/drama/${slug}`} className="block">
+                              {coverInner}
+                            </Link>
+                          )}
                           <div className="pointer-events-none absolute right-1.5 top-1.5 flex gap-1 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
                             <button
                               type="button"
@@ -1067,13 +1096,15 @@ export default function AccountPage() {
                       const timeLabel = row.progressSec
                         ? `${Math.floor(row.progressSec / 60)}:${String(row.progressSec % 60).padStart(2, "0")}`
                         : null;
-                      return (
-                        <Link
-                          key={row.id}
-                          href={`/drama/${slug}/play`}
-                          className="group min-w-0"
-                        >
-                          <div className="relative aspect-[2/3] overflow-hidden rounded-lg bg-surface-2">
+                      const unavailable = isDramaUnavailable(d);
+                      const body = (
+                        <>
+                          <div
+                            className={cn(
+                              "relative aspect-[2/3] overflow-hidden rounded-lg bg-surface-2",
+                              unavailable && "opacity-55",
+                            )}
+                          >
                             {d?.coverUrl ? (
                               <SafeImage
                                 src={d.coverUrl}
@@ -1081,6 +1112,11 @@ export default function AccountPage() {
                                 className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
                                 fallbackLabel={t("common.imageUnavailable")}
                               />
+                            ) : null}
+                            {unavailable ? (
+                              <span className="absolute bottom-1.5 left-1.5 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                                {t("account.dramaOffline")}
+                              </span>
                             ) : null}
                           </div>
                           <p className="mt-2 line-clamp-2 text-sm leading-snug text-ink">
@@ -1091,6 +1127,27 @@ export default function AccountPage() {
                               {[progress, timeLabel].filter(Boolean).join(" · ")}
                             </p>
                           )}
+                        </>
+                      );
+                      if (unavailable) {
+                        return (
+                          <button
+                            key={row.id}
+                            type="button"
+                            className="group min-w-0 text-left"
+                            onClick={() => toast.tip(t("account.dramaOffline"))}
+                          >
+                            {body}
+                          </button>
+                        );
+                      }
+                      return (
+                        <Link
+                          key={row.id}
+                          href={`/drama/${slug}/play`}
+                          className="group min-w-0"
+                        >
+                          {body}
                         </Link>
                       );
                     })}
@@ -1121,23 +1178,49 @@ export default function AccountPage() {
                       const d = row.drama || row;
                       const slug = d.slug || d.id;
                       const dramaId = String(row.dramaId ?? d.id);
+                      const unavailable = isDramaUnavailable(d);
+                      const coverInner = (
+                        <>
+                          <div
+                            className={cn(
+                              "relative aspect-[2/3] overflow-hidden rounded-lg bg-surface-2",
+                              unavailable && "opacity-55",
+                            )}
+                          >
+                            {d.coverUrl ? (
+                              <SafeImage
+                                src={d.coverUrl}
+                                alt={titleOf(d)}
+                                className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
+                                fallbackLabel={t("common.imageUnavailable")}
+                              />
+                            ) : null}
+                            {unavailable ? (
+                              <span className="absolute bottom-1.5 left-1.5 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                                {t("account.dramaOffline")}
+                              </span>
+                            ) : null}
+                          </div>
+                          <p className="mt-2 line-clamp-2 text-sm leading-snug text-ink">
+                            {titleOf(d)}
+                          </p>
+                        </>
+                      );
                       return (
                         <div key={row.id || slug} className="group relative min-w-0">
-                          <Link href={`/drama/${slug}`} className="block">
-                            <div className="relative aspect-[2/3] overflow-hidden rounded-lg bg-surface-2">
-                              {d.coverUrl ? (
-                                <SafeImage
-                                  src={d.coverUrl}
-                                  alt={titleOf(d)}
-                                  className="absolute inset-0 h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.03]"
-                                  fallbackLabel={t("common.imageUnavailable")}
-                                />
-                              ) : null}
-                            </div>
-                            <p className="mt-2 line-clamp-2 text-sm leading-snug text-ink">
-                              {titleOf(d)}
-                            </p>
-                          </Link>
+                          {unavailable ? (
+                            <button
+                              type="button"
+                              className="block w-full text-left"
+                              onClick={() => toast.tip(t("account.dramaOffline"))}
+                            >
+                              {coverInner}
+                            </button>
+                          ) : (
+                            <Link href={`/drama/${slug}`} className="block">
+                              {coverInner}
+                            </Link>
+                          )}
                           <button
                             type="button"
                             title={t("account.tabLiked")}
@@ -1148,7 +1231,7 @@ export default function AccountPage() {
                                   (r) => String(r.dramaId ?? r.drama?.id) !== dramaId,
                                 ),
                               );
-                              cacheRef.current.delete("likes|");
+                              if (userKey) cacheRef.current.delete(`${userKey}|likes|`);
                             }}
                             className="absolute right-1.5 top-1.5 grid h-7 w-7 place-items-center rounded-full bg-black/65 text-white opacity-0 backdrop-blur-sm transition-opacity hover:bg-red-500/90 group-hover:opacity-100 group-focus-within:opacity-100"
                           >

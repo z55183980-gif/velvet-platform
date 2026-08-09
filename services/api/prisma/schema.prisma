@@ -564,7 +564,7 @@ model Order {
   refundStatus     String?
   /// 申请退款的观众留言（用户侧）
   refundNote       String?
-  /** 创作者收益是否已从 pending 解冻到 available（T+7） */
+  /** 创作者收益是否已从 pending 解冻到 available（按商业规则 creatorSettleDays，默认 T+7） */
   earningSettled   Boolean       @default(false)
   /// 扩展元数据（卡密批次、VIP 天数快照等）
   meta             Json?

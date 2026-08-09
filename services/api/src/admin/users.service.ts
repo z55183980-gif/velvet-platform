@@ -75,46 +75,54 @@ export class AdminUsersService {
       username ||
       'user';
 
-    const user = await this.prisma.user.create({
-      data: {
-        email,
-        username,
-        nickname,
-        phone,
-        locale,
-        passwordHash: this.hashPassword(password),
-      },
-      select: {
-        id: true,
-        uuid: true,
-        email: true,
-        username: true,
-        nickname: true,
-        phone: true,
-        locale: true,
-        status: true,
-        createdAt: true,
-      },
-    });
+    const user = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.user.create({
+        data: {
+          email,
+          username,
+          nickname,
+          phone,
+          locale,
+          passwordHash: this.hashPassword(password),
+        },
+        select: {
+          id: true,
+          uuid: true,
+          email: true,
+          username: true,
+          nickname: true,
+          phone: true,
+          locale: true,
+          status: true,
+          createdAt: true,
+        },
+      });
 
-    await this.prisma.wallet.upsert({
-      where: { userId: user.id },
-      create: { userId: user.id },
-      update: {},
-    });
+      await tx.wallet.upsert({
+        where: { userId: created.id },
+        create: { userId: created.id },
+        update: {},
+      });
 
-    await this.audit.write({
-      actorId,
-      action: 'user.create',
-      targetType: 'user',
-      targetId: user.id.toString(),
-      payload: {
-        email: user.email,
-        username: user.username,
-        nickname: user.nickname,
-        phone: user.phone,
-        locale: user.locale,
-      },
+      await tx.auditLog.create({
+        data: {
+          actorId: actorId == null ? null : BigInt(actorId as any),
+          actorType: 'admin',
+          action: 'user.create',
+          targetType: 'user',
+          targetId: created.id.toString(),
+          payload: {
+            email: created.email,
+            username: created.username,
+            nickname: created.nickname,
+            phone: created.phone,
+            locale: created.locale,
+          } as any,
+          result: 'ok',
+        },
+      });
+
+      return created;
     });
 
     return {

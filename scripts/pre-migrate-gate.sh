@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Fail-closed pre-migrate gate (dual wallet columns + DB timezone).
+# Fail-closed pre-migrate gate (dual wallet / txn columns + DB timezone).
 # Does NOT rewrite applied Prisma migration SQL — run before `prisma migrate deploy`.
+#
+# Compares ALL columns that schema_reconcile / finance migrations may DROP or RENAME
+# (not only balance*). Any mismatch ⇒ refuse migrate (silent data loss risk).
 #
 # Usage:
 #   bash scripts/pre-migrate-gate.sh
@@ -15,7 +18,8 @@ if [[ -z "${DATABASE_URL:-}" ]]; then
 fi
 
 if ! command -v psql >/dev/null 2>&1; then
-  echo "FAIL: psql not found in PATH (install client tools before migrate)"
+  echo "FAIL: psql not found in PATH (install postgresql-client before migrate)"
+  echo "Handbook: docs/11-生产部署手册.md requires gate + psql on the migrate host."
   exit 1
 fi
 
@@ -33,52 +37,86 @@ if [[ "${TZ_ROW}" != "UTC" && "${TZ_ROW}" != "Etc/UTC" && "${TZ_ROW}" != "utc" ]
   fi
 fi
 
-# 2) Dual wallet columns with inconsistent data → refuse migrate.
-MISMATCH="$(psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "
+# 2) Dual / rename-risk columns: values must agree before DROP/RENAME can proceed.
+# Covers wallets balance*/total* and wallet_transactions amount* pairs from
+# migrations/20260810013000_schema_reconcile_p0 (do not edit applied SQL).
+GATE_OUT="$(psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -Atc "
 DO \$\$
 DECLARE
-  has_vnd boolean;
-  has_credits boolean;
-  mismatch bigint := 0;
+  mismatch bigint;
+  col_a text;
+  col_b text;
+  tbl text;
+  pairs text[][] := ARRAY[
+    ARRAY['wallets', 'balanceVnd', 'balanceCredits'],
+    ARRAY['wallets', 'totalRecharged', 'totalRechargedCredits'],
+    ARRAY['wallets', 'totalSpent', 'totalSpentCredits'],
+    ARRAY['wallet_transactions', 'amountVnd', 'amountCredits']
+  ];
+  i int;
+  has_a boolean;
+  has_b boolean;
 BEGIN
-  SELECT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema='public' AND table_name='wallets' AND column_name='balanceVnd'
-  ) INTO has_vnd;
-  SELECT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema='public' AND table_name='wallets' AND column_name='balanceCredits'
-  ) INTO has_credits;
+  FOR i IN 1 .. array_length(pairs, 1) LOOP
+    tbl := pairs[i][1];
+    col_a := pairs[i][2];
+    col_b := pairs[i][3];
 
-  IF has_vnd AND has_credits THEN
-    EXECUTE 'SELECT COUNT(*) FROM wallets WHERE \"balanceVnd\" IS DISTINCT FROM \"balanceCredits\"' INTO mismatch;
-    IF mismatch > 0 THEN
-      RAISE EXCEPTION 'GATE_DUAL_WALLET_MISMATCH count=%', mismatch;
+    SELECT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema='public' AND table_name=tbl AND column_name=col_a
+    ) INTO has_a;
+    SELECT EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema='public' AND table_name=tbl AND column_name=col_b
+    ) INTO has_b;
+
+    IF has_a AND has_b THEN
+      EXECUTE format(
+        'SELECT COUNT(*) FROM %I WHERE %I IS DISTINCT FROM %I',
+        tbl, col_a, col_b
+      ) INTO mismatch;
+      IF mismatch > 0 THEN
+        RAISE EXCEPTION 'GATE_DUAL_COL_MISMATCH table=% % vs % count=%',
+          tbl, col_a, col_b, mismatch;
+      END IF;
+      RAISE NOTICE 'dual ok %.% == %.% (mismatch=0)', tbl, col_a, tbl, col_b;
+    ELSIF has_a AND NOT has_b THEN
+      RAISE NOTICE 'legacy-only %.% present (credits rename not applied yet)', tbl, col_a;
+    ELSIF has_b AND NOT has_a THEN
+      RAISE NOTICE 'credits-only %.% present — OK', tbl, col_b;
+    ELSE
+      RAISE NOTICE 'neither %.% nor %.% — skip', tbl, col_a, tbl, col_b;
     END IF;
-    RAISE NOTICE 'dual wallet columns present but values agree (mismatch=0)';
-  ELSE
-    RAISE NOTICE 'single wallet column set — OK';
-  END IF;
+  END LOOP;
 END \$\$;
 SELECT 'ok';
 ")"
 
-echo "wallet_gate=${MISMATCH}"
+echo "column_gate=${GATE_OUT}"
 
-# 3) Optional: also fail if dual columns still exist (destructive DROP pending).
-# Comment: informational only — prod may already be credits-only.
+# 3) Informational column presence (destructive DROP pending?).
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "
 SELECT
-  EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema='public' AND table_name='wallets' AND column_name='balanceVnd'
-  ) AS has_legacy_balance_vnd,
-  EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema='public' AND table_name='wallets' AND column_name='balanceCredits'
-  ) AS has_balance_credits;
+  c.table_name,
+  c.column_name,
+  c.data_type
+FROM information_schema.columns c
+WHERE c.table_schema = 'public'
+  AND (
+    (c.table_name = 'wallets' AND c.column_name IN (
+      'balanceVnd','balanceCredits','totalRecharged','totalRechargedCredits',
+      'totalSpent','totalSpentCredits'
+    ))
+    OR
+    (c.table_name = 'wallet_transactions' AND c.column_name IN (
+      'amountVnd','amountCredits'
+    ))
+  )
+ORDER BY c.table_name, c.column_name;
 "
 
 echo "SUCCESS: pre-migrate gate passed"
 echo "Next: bash scripts/dr-backup-checklist.sh && npx prisma migrate deploy"
 echo "Rehearsal SQL: scripts/finance-migrate-rehearsal.sql"
+echo "REQUIREMENT: migrate host must have psql; never skip this gate in prod."

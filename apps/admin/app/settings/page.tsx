@@ -48,7 +48,12 @@ const GENERAL_KEYS = [
   "maintenanceMessage",
 ] as const;
 
-const COMMERCIAL_KEYS = ["revenueShareDefault", "minWithdrawVnd", "pitRate"] as const;
+const COMMERCIAL_KEYS = [
+  "revenueShareDefault",
+  "minWithdrawVnd",
+  "pitRate",
+  "creatorSettleDays",
+] as const;
 
 function parseTab(raw: string | null): Tab {
   if (raw === "payments" || raw === "policy" || raw === "commercial") return raw;
@@ -93,6 +98,7 @@ export default function AdminSettingsPage() {
   const [revenueSharePercent, setRevenueSharePercent] = useState("70");
   const [minWithdrawVnd, setMinWithdrawVnd] = useState("1000");
   const [pitRatePercent, setPitRatePercent] = useState("5");
+  const [creatorSettleDays, setCreatorSettleDays] = useState("7");
 
   const [lockMode, setLockMode] = useState<LockMode>("FREE_FIRST_N");
   const [allFree, setAllFree] = useState(false);
@@ -138,6 +144,10 @@ export default function AdminSettingsPage() {
     setRevenueSharePercent(toPercentInput(settingValue(settingsQ.data, "revenueShareDefault"), 70));
     setMinWithdrawVnd(String(settingValue(settingsQ.data, "minWithdrawVnd") ?? 1000));
     setPitRatePercent(toPercentInput(settingValue(settingsQ.data, "pitRate"), 5));
+    const settleRaw = Number(settingValue(settingsQ.data, "creatorSettleDays"));
+    setCreatorSettleDays(
+      Number.isFinite(settleRaw) ? String(Math.min(365, Math.max(0, Math.floor(settleRaw)))) : "7",
+    );
 
     const mode = parseLockMode(settingValue(settingsQ.data, "episodeLockMode"));
     setLockMode(mode);
@@ -191,12 +201,17 @@ export default function AdminSettingsPage() {
       const share = fromPercentInput(revenueSharePercent);
       const pit = fromPercentInput(pitRatePercent);
       const min = Math.floor(Number(minWithdrawVnd));
+      const settleDays = Math.floor(Number(creatorSettleDays));
       if (!Number.isFinite(share)) throw new Error(t("settingsRevenueShareInvalid"));
       if (!Number.isFinite(pit)) throw new Error(t("settingsPitRateInvalid"));
       if (!Number.isFinite(min) || min < 0) throw new Error(t("settingsMinWithdrawInvalid"));
+      if (!Number.isFinite(settleDays) || settleDays < 0 || settleDays > 365) {
+        throw new Error(t("settingsCreatorSettleDaysInvalid"));
+      }
       await adminUpdateSetting("revenueShareDefault", share);
       await adminUpdateSetting("minWithdrawVnd", min);
       await adminUpdateSetting("pitRate", pit);
+      await adminUpdateSetting("creatorSettleDays", settleDays);
     },
     onSuccess: () => {
       setError(null);
@@ -518,7 +533,7 @@ export default function AdminSettingsPage() {
             <p className="text-body-sm text-ink-muted">{t("loading")}</p>
           ) : (
             <>
-              <div className="grid gap-3 sm:grid-cols-3">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <label className="upload-field">
                   <span>{t("settingsRevenueShare")}</span>
                   <Input
@@ -561,6 +576,21 @@ export default function AdminSettingsPage() {
                   />
                   <small className="text-caption text-ink-subtle">{t("settingsPitRateHint")}</small>
                 </label>
+                <label className="upload-field">
+                  <span>{t("settingsCreatorSettleDays")}</span>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={365}
+                    step={1}
+                    value={creatorSettleDays}
+                    disabled={commercialMut.isPending}
+                    onChange={(e) => setCreatorSettleDays(e.target.value)}
+                  />
+                  <small className="text-caption text-ink-subtle">
+                    {t("settingsCreatorSettleDaysHint")}
+                  </small>
+                </label>
               </div>
 
               <div className="policy-preview is-partial">
@@ -570,6 +600,7 @@ export default function AdminSettingsPage() {
                     share: revenueSharePercent || "0",
                     min: minWithdrawVnd || "0",
                     pit: pitRatePercent || "0",
+                    days: creatorSettleDays || "0",
                   })}
                 </p>
               </div>

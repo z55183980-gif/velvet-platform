@@ -361,10 +361,12 @@ export function DramaDetail({
     [playCacheKey, readCachedPlayUrl, writeCachedPlayUrl],
   );
 
-  // Account switch: drop signed URLs + playback state bound to the previous principal.
+  // Account switch: drop signed URLs + warm player + playback state bound to prior principal.
   useEffect(() => {
     playUrlCacheRef.current.clear();
     playUrlInflightRef.current.clear();
+    warmNextRef.current?.destroy();
+    warmNextRef.current = null;
     setPlayUrl(null);
     setPreviewLimit(0);
     setPlayErr(null);
@@ -722,6 +724,7 @@ export function DramaDetail({
     const video = videoRef.current;
     if (!video) return;
 
+    const warmPrincipal = authCacheKey;
     const warmNext = async () => {
       if (shouldSkipWatchWarmNetwork()) return;
       const next = findNextUnlockedEpisode(data.episodes, selected, isUnlocked);
@@ -734,6 +737,8 @@ export function DramaDetail({
       warmNextRef.current = null;
 
       const entry = await ensureCachedPlayUrl(episodeId);
+      // Account switch while awaiting: never attach prior principal's signed URL.
+      if (warmPrincipal !== authCacheKey) return;
       if (!entry?.playUrl || entry.previewOnly) return;
       // Ref.current is mutated across await; avoid TS control-flow narrowing to null.
       const alreadyWarm = warmNextRef.current as {
@@ -786,7 +791,7 @@ export function DramaDetail({
 
       try {
         const mod = await preloadHlsJs();
-        if (destroyed || !mod) {
+        if (destroyed || warmPrincipal !== authCacheKey || !mod) {
           destroy();
           return;
         }
@@ -803,7 +808,7 @@ export function DramaDetail({
           startFragPrefetch: true,
           capLevelToPlayerSize: true,
         });
-        if (destroyed) {
+        if (destroyed || warmPrincipal !== authCacheKey) {
           instance.destroy();
           return;
         }
@@ -836,6 +841,7 @@ export function DramaDetail({
     canGuestWatch,
     isUnlocked,
     ensureCachedPlayUrl,
+    authCacheKey,
   ]);
   useEffect(() => {
     const video = videoRef.current;
@@ -1065,7 +1071,11 @@ export function DramaDetail({
     if (!pendingLandscapeFs || !watching || !isMobile) return;
     if (!landscapeMode || !playUrl) return;
     const episodeId = selected?.id ? String(selected.id) : "";
-    const allowed = !!(user || (episodeId && canGuestWatch(episodeId)));
+    const allowed = !!(
+      user ||
+      selectedTrialAvailable ||
+      (episodeId && canGuestWatch(episodeId))
+    );
     if (!playerReady || !allowed) return;
     setPendingLandscapeFs(false);
     void enterLandscapeImmersive();
@@ -1077,6 +1087,7 @@ export function DramaDetail({
     playUrl,
     playerReady,
     selected?.id,
+    selectedTrialAvailable,
     user,
     canGuestWatch,
     enterLandscapeImmersive,
@@ -1142,7 +1153,11 @@ export function DramaDetail({
   useEffect(() => {
     const video = videoRef.current;
     const episodeId = selected?.id ? String(selected.id) : "";
-    const allowed = !!(user || (episodeId && canGuestWatch(episodeId)));
+    const allowed = !!(
+      user ||
+      selectedTrialAvailable ||
+      (episodeId && canGuestWatch(episodeId))
+    );
     if (!video || !playUrl || !playerReady || !watching || !allowed) return;
 
     const onMeta = () => {
@@ -1214,6 +1229,7 @@ export function DramaDetail({
     user,
     watching,
     selected?.id,
+    selectedTrialAvailable,
     canGuestWatch,
   ]);
 
@@ -2058,14 +2074,14 @@ export function DramaDetail({
               {showWatchMetaChrome ? (
                 <div className="relative px-3.5 pb-1">
                   <div className="pointer-events-none max-w-[calc(100%-4.75rem)]">
-                    <button
-                      type="button"
+                    <Link
+                      href={`/drama/${id}`}
                       className="pointer-events-auto inline-flex min-h-11 max-w-full items-center gap-0.5 text-[15px] font-semibold leading-snug text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.65)]"
-                      onClick={() => setDrawerOpen(true)}
+                      onClick={(e) => e.stopPropagation()}
                     >
                       <span className="truncate">{title}</span>
                       <ChevronRight className="h-[18px] w-[18px] shrink-0 opacity-90" strokeWidth={2.4} />
-                    </button>
+                    </Link>
                     <button
                       type="button"
                       className="pointer-events-auto flex min-h-11 w-full items-center text-left text-[12px] leading-[17px] text-white/88 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]"

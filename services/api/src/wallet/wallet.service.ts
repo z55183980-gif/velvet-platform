@@ -8,7 +8,10 @@ import { VipPlansService } from '../vip/vip-plans.service';
 import { StructuredLogger } from '../common/structured-logger.service';
 import { LockAccessService } from '../common/lock-access.service';
 import { PlatformSettingsService } from '../common/platform-settings.service';
-import { createStripeCheckoutSession } from '../payments/stripe-checkout';
+import {
+  createStripeCheckoutSession,
+  retrieveStripeCheckoutSession,
+} from '../payments/stripe-checkout';
 import {
   isFinanceOpsFrozen,
   isMoneyInBlocked,
@@ -121,9 +124,6 @@ export class WalletService {
     const idem =
       dto.idempotencyKey ||
       `topup:${userId}:pkg${pkg.id}:${currency}:${Date.now()}:${Math.random().toString(36).slice(2, 7)}`;
-    const existing = await this.prisma.order.findUnique({ where: { idempotencyKey: idem } });
-    if (existing) return this.orderView(existing);
-
     const amountVnd = usdToCents(payAmount);
     const requested = String(dto.paymentMethod || 'STRIPE').toUpperCase();
     const method = (
@@ -134,6 +134,34 @@ export class WalletService {
     }
     if (process.env.NODE_ENV === 'production' && requested && requested !== 'STRIPE') {
       throw new BizException(BizCode.BAD_REQUEST, 'Only STRIPE is supported');
+    }
+
+    const existing = await this.prisma.order.findUnique({ where: { idempotencyKey: idem } });
+    if (existing) {
+      const base: any = {
+        ...this.orderView(existing),
+        credits: credits.toString(),
+        packageId: pkg.id.toString(),
+        packageName: pkg.name,
+        basePriceUsd: pkg.basePrice.toString(),
+      };
+      if (
+        existing.paymentStatus === 'PENDING' &&
+        existing.paymentMethod === 'STRIPE' &&
+        dto.createCheckout !== false
+      ) {
+        await this.recoverOrAttachStripeCheckout(base, {
+          orderId: existing.id,
+          orderNo: existing.orderNo,
+          externalRef: existing.externalRef,
+          userId,
+          productName: String(pkg.name || 'Velvet credits'),
+          payAmountMajor: payAmount.toString(),
+          currency,
+          orderType: 'TOPUP',
+        });
+      }
+      return base;
     }
 
     await this.ensureWallet(userId);
@@ -171,8 +199,10 @@ export class WalletService {
     }
 
     if (method === 'STRIPE' && dto.createCheckout !== false) {
-      await this.attachStripeCheckout(base, {
+      await this.recoverOrAttachStripeCheckout(base, {
+        orderId: order.id,
         orderNo: order.orderNo,
+        externalRef: order.externalRef,
         userId,
         productName: String(pkg.name || 'Velvet credits'),
         payAmountMajor: payAmount.toString(),
@@ -205,9 +235,6 @@ export class WalletService {
     const idem =
       dto.idempotencyKey ||
       `vip:${userId}:plan${plan.id}:${currency}:${Date.now()}:${Math.random().toString(36).slice(2, 7)}`;
-    const existing = await this.prisma.order.findUnique({ where: { idempotencyKey: idem } });
-    if (existing) return this.orderView(existing);
-
     const amountVnd = usdToCents(payAmount);
     const requested = String(dto.paymentMethod || 'STRIPE').toUpperCase();
     const method = (
@@ -218,6 +245,34 @@ export class WalletService {
     }
     if (process.env.NODE_ENV === 'production' && requested && requested !== 'STRIPE') {
       throw new BizException(BizCode.BAD_REQUEST, 'Only STRIPE is supported');
+    }
+
+    const existing = await this.prisma.order.findUnique({ where: { idempotencyKey: idem } });
+    if (existing) {
+      const base: any = {
+        ...this.orderView(existing),
+        vipPlanId: plan.id.toString(),
+        planName: plan.name,
+        durationDays: plan.durationDays,
+        basePriceUsd: plan.basePrice.toString(),
+      };
+      if (
+        existing.paymentStatus === 'PENDING' &&
+        existing.paymentMethod === 'STRIPE' &&
+        dto.createCheckout !== false
+      ) {
+        await this.recoverOrAttachStripeCheckout(base, {
+          orderId: existing.id,
+          orderNo: existing.orderNo,
+          externalRef: existing.externalRef,
+          userId,
+          productName: String(plan.name || `VIP ${plan.durationDays}d`),
+          payAmountMajor: payAmount.toString(),
+          currency,
+          orderType: 'VIP_SUB',
+        });
+      }
+      return base;
     }
 
     const order = await this.prisma.order.create({
@@ -255,8 +310,10 @@ export class WalletService {
     }
 
     if (method === 'STRIPE' && dto.createCheckout !== false) {
-      await this.attachStripeCheckout(base, {
+      await this.recoverOrAttachStripeCheckout(base, {
+        orderId: order.id,
         orderNo: order.orderNo,
+        externalRef: order.externalRef,
         userId,
         productName: String(plan.name || `VIP ${plan.durationDays}d`),
         payAmountMajor: payAmount.toString(),
@@ -1247,10 +1304,17 @@ export class WalletService {
     return ledger;
   }
 
-  private async attachStripeCheckout(
+  /**
+   * Create or recover Stripe Checkout for a PENDING order.
+   * Persists session id on order.externalRef so lost create responses can be retried
+   * under the same idempotency key without returning a dead PENDING shell.
+   */
+  private async recoverOrAttachStripeCheckout(
     base: Record<string, any>,
     opts: {
+      orderId: bigint;
       orderNo: string;
+      externalRef?: string | null;
       userId: bigint;
       productName: string;
       payAmountMajor: string;
@@ -1258,6 +1322,16 @@ export class WalletService {
       orderType: string;
     },
   ) {
+    if (opts.externalRef) {
+      const existingSession = await retrieveStripeCheckoutSession(opts.externalRef);
+      if (existingSession) {
+        base.checkoutUrl = existingSession.checkoutUrl;
+        base.checkout_url = existingSession.checkoutUrl;
+        base.stripeSessionId = existingSession.sessionId;
+        return;
+      }
+    }
+
     const user = await this.prisma.user.findUnique({
       where: { id: opts.userId },
       select: { email: true },
@@ -1270,6 +1344,10 @@ export class WalletService {
       currency: opts.currency,
       customerEmail: user?.email,
       metadata: { orderType: opts.orderType },
+    });
+    await this.prisma.order.update({
+      where: { id: opts.orderId },
+      data: { externalRef: session.sessionId },
     });
     base.checkoutUrl = session.checkoutUrl;
     base.checkout_url = session.checkoutUrl;

@@ -2,12 +2,11 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { execFile } from 'child_process';
 import { createHash } from 'crypto';
-import { promises as dns } from 'dns';
-import { isIP } from 'net';
 import * as fs from 'fs';
 import * as path from 'path';
 import { promisify } from 'util';
 import { BizCode, BizException } from '../common/biz.exception';
+import { assertSafePublicHttpUrl } from '../common/safe-http-fetch';
 import { VIDEO_EXT } from './local-import.util';
 import { isProductionEnv } from '../common/security-config';
 import {
@@ -718,63 +717,24 @@ export class YtdlpProvider implements OnModuleInit {
   private async requireHttpUrl(url: string) {
     const u = String(url || '').trim();
     if (!u) throw new BizException(BizCode.BAD_REQUEST, '请填写公开视频页链接');
-    let parsed: URL;
+    // First-hop SSRF check (shared with safe-http-fetch). yt-dlp binary may still
+    // follow its own redirects; AI HTML fetch uses safeFetchPublicText per-hop.
     try {
-      parsed = new URL(u);
-    } catch {
-      throw new BizException(BizCode.BAD_REQUEST, '无效链接');
-    }
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      throw new BizException(BizCode.BAD_REQUEST, '仅支持 http/https 公开链接');
-    }
-    const hostname = parsed.hostname.toLowerCase().replace(/\.$/, '');
-    if (hostname === 'localhost' || hostname.endsWith('.localhost') || hostname === 'metadata.google.internal') {
-      throw new BizException(BizCode.BAD_REQUEST, '不允许访问本机或内部网络地址');
-    }
-    let addresses: string[];
-    try {
-      addresses = isIP(hostname)
-        ? [hostname]
-        : (await dns.lookup(hostname, { all: true, verbatim: true })).map((entry) => entry.address);
-    } catch {
-      throw new BizException(BizCode.BAD_REQUEST, '链接域名无法解析');
-    }
-    if (!addresses.length || addresses.some((address) => this.isPrivateAddress(address))) {
-      throw new BizException(BizCode.BAD_REQUEST, '不允许访问私网、回环或保留地址');
+      await assertSafePublicHttpUrl(u);
+    } catch (e: any) {
+      const msg = String(e?.message || '');
+      if (msg === 'fetch.invalidUrl') {
+        throw new BizException(BizCode.BAD_REQUEST, '无效链接');
+      }
+      if (msg === 'fetch.protocolDenied') {
+        throw new BizException(BizCode.BAD_REQUEST, '仅支持 http/https 公开链接');
+      }
+      if (msg === 'fetch.dnsFailed') {
+        throw new BizException(BizCode.BAD_REQUEST, '链接域名无法解析');
+      }
+      throw new BizException(BizCode.BAD_REQUEST, '不允许访问本机、私网或内部网络地址');
     }
     return u;
-  }
-
-  private isPrivateAddress(address: string): boolean {
-    const normalized = address.toLowerCase().split('%')[0];
-    if (normalized.startsWith('::ffff:')) {
-      return this.isPrivateAddress(normalized.slice('::ffff:'.length));
-    }
-    if (isIP(normalized) === 6) {
-      return (
-        normalized === '::' ||
-        normalized === '::1' ||
-        normalized.startsWith('fc') ||
-        normalized.startsWith('fd') ||
-        /^fe[89ab]/.test(normalized)
-      );
-    }
-    const octets = normalized.split('.').map(Number);
-    if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
-      return true;
-    }
-    const [a, b] = octets;
-    return (
-      a === 0 ||
-      a === 10 ||
-      a === 127 ||
-      (a === 100 && b >= 64 && b <= 127) ||
-      (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168) ||
-      (a === 198 && (b === 18 || b === 19)) ||
-      a >= 224
-    );
   }
 
   private pickThumb(raw: any): string | undefined {

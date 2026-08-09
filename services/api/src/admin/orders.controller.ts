@@ -178,8 +178,11 @@ export class OrdersController {
   @Post('settle-t7')
   @AdminRoles('SUPER_ADMIN')
   async settleT7(@Query('days') days?: string) {
-    const parsed = days == null || days === '' ? 7 : parseInt(days, 10);
-    const d = Number.isFinite(parsed) ? Math.max(0, parsed) : 7;
+    if (days == null || days === '') {
+      return ok(await this.reconcile.settleNow());
+    }
+    const parsed = parseInt(days, 10);
+    const d = Number.isFinite(parsed) ? Math.max(0, parsed) : undefined;
     return ok(await this.reconcile.settleNow(d));
   }
 }

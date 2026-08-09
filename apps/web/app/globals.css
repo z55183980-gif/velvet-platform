@@ -176,8 +176,25 @@ html[data-theme="light"] {
   color: var(--color-ink);
 }
 
-/* Theater/Me only: keep tab labels above the Home Screen gesture area. */
+/* Primary tabs: keep labels above the Home Screen gesture area. */
 @media (display-mode: standalone) {
+  /*
+    The immersive home shell is fixed and leaves no in-flow body height.
+    Keep the standalone layout viewport full-height so bottom: 0 stays at the
+    physical screen edge instead of inheriting WebKit's top safe-area offset.
+  */
+  html,
+  body {
+    min-height: 100vh;
+  }
+
+  /* Feed controls clear the same 48px + safe-area height as the shared tab. */
+  .feed-immersive {
+    --mobile-tab-chrome-height: calc(
+      3rem + var(--mobile-tab-safe-bottom)
+    );
+  }
+
   .standalone-safe-bottom-tab {
     padding-bottom: var(--mobile-tab-safe-bottom);
   }

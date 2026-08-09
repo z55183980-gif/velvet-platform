@@ -159,3 +159,29 @@ export async function createStripeCheckoutSession(
   }
   return { checkoutUrl, sessionId };
 }
+
+/** Retrieve an open Checkout Session URL; null if missing/expired/unusable. */
+export async function retrieveStripeCheckoutSession(
+  sessionId: string,
+): Promise<StripeCheckoutResult | null> {
+  const id = String(sessionId || '').trim();
+  if (!id.startsWith('cs_')) return null;
+  const key = (process.env.STRIPE_SECRET_KEY || '').trim();
+  if (!key || key.startsWith('CHANGE_ME')) return null;
+  try {
+    const res = await fetch(`https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(id)}`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${key}` },
+    });
+    const json = (await res.json().catch(() => null)) as Record<string, any> | null;
+    if (!res.ok || !json) return null;
+    const status = String(json.status || '').toLowerCase();
+    const checkoutUrl = String(json.url || '').trim();
+    const sid = String(json.id || id).trim();
+    if (!checkoutUrl || !sid) return null;
+    if (status && status !== 'open') return null;
+    return { checkoutUrl, sessionId: sid };
+  } catch {
+    return null;
+  }
+}

@@ -33,7 +33,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 function AppShellInner({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const onDrama = isDramaPath(pathname);
-  const onStandaloneSafeTab = pathname === "/theater" || pathname === "/me";
+  const onStandaloneSafeTab =
+    pathname === "/" || pathname === "/theater" || pathname === "/me";
   const { locked: lockMobileHome } = useMobileFeedLock();
   const { mobile: isMobile, ready: mobileReady } = useIsMobile();
 
@@ -79,7 +80,10 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
               !onDrama &&
               isMobile &&
               "pb-[var(--mobile-tab-chrome-height)]",
-            isMobile && onStandaloneSafeTab && "standalone-safe-tab-content",
+            isMobile &&
+              onStandaloneSafeTab &&
+              !lockMobileHome &&
+              "standalone-safe-tab-content",
             onDrama && isMobile && "bg-base",
             lockMobileHome &&
               isMobile &&

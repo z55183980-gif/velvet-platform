@@ -31,6 +31,7 @@ import {
   inferCategorySlug,
   sanitizeCategorySlug,
 } from './drama-category-infer.util';
+import { safeFetchPublicText } from '../common/safe-http-fetch';
 
 export type YtdlpImportOptions = {
   url: string;
@@ -230,31 +231,35 @@ export class YtdlpImportService implements OnModuleInit {
 
     for (const candidate of candidates) {
       const headers = this.provider.buildPageFetchHeaders(candidate, auth);
-      let pageRes: Response;
+      let rawHtml: string;
+      let fetchedFrom = candidate;
       try {
-        pageRes = await fetch(candidate, {
-          method: 'GET',
+        // SSRF-safe: private-IP check on every redirect hop (no redirect:'follow').
+        const page = await safeFetchPublicText(candidate, {
           headers,
-          redirect: 'follow',
+          timeoutMs: 12_000,
+          maxBytes: 4 * 1024 * 1024,
+          maxRedirects: 3,
         });
+        if (page.status < 200 || page.status >= 300 || !page.text) {
+          fetchErrors.push(`${candidate}: HTTP ${page.status || 'empty'}`);
+          continue;
+        }
+        rawHtml = page.text;
+        fetchedFrom = page.finalUrl;
       } catch (e: unknown) {
         fetchErrors.push(
           `${candidate}: ${e instanceof Error ? e.message : String(e)}`,
         );
         continue;
       }
-      if (!pageRes.ok) {
-        fetchErrors.push(`${candidate}: HTTP ${pageRes.status}`);
-        continue;
-      }
       fetchedOk += 1;
-      const rawHtml = await pageRes.text();
       if (rawHtml.length > bestHtml.length) {
         bestHtml = rawHtml;
-        bestHtmlUrl = candidate;
+        bestHtmlUrl = fetchedFrom;
       }
 
-      for (const ep of extractEpisodeLinksFromHtml(rawHtml, candidate)) {
+      for (const ep of extractEpisodeLinksFromHtml(rawHtml, fetchedFrom)) {
         if (!episodeMap.has(ep.episodeNumber)) episodeMap.set(ep.episodeNumber, ep);
       }
 

@@ -199,6 +199,7 @@ function HomeInner({
   const loadMoreLock = useRef(false);
   /** Bumps on filter/key change so stale page-1 revalidate cannot wipe page-2. */
   const listGenerationRef = useRef(0);
+  const loadMoreAbortRef = useRef<AbortController | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef({
     hot,
@@ -295,6 +296,12 @@ function HomeInner({
       setRefreshing(false);
       return;
     }
+
+    // Filter change: cancel in-flight page-N and release pagination lock.
+    loadMoreAbortRef.current?.abort();
+    loadMoreAbortRef.current = null;
+    loadMoreLock.current = false;
+    setLoadingMore(false);
 
     const cached = cacheRef.current.get(key);
     const ac = new AbortController();
@@ -447,7 +454,10 @@ function HomeInner({
     const nextPage = cur.page + 1;
     const generation = listGenerationRef.current;
     const requestKey = key;
+    loadMoreAbortRef.current?.abort();
     const ac = new AbortController();
+    loadMoreAbortRef.current = ac;
+    const timer = window.setTimeout(() => ac.abort(), 15_000);
     try {
       const h = await loadHome(nextPage, HOME_PAGE_SIZE, {
         category: filtered ? category : undefined,
@@ -488,6 +498,8 @@ function HomeInner({
     } catch {
       // Keep existing grid; user can scroll again to retry.
     } finally {
+      window.clearTimeout(timer);
+      if (loadMoreAbortRef.current === ac) loadMoreAbortRef.current = null;
       loadMoreLock.current = false;
       setLoadingMore(false);
     }
