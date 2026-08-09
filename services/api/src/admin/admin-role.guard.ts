@@ -40,8 +40,9 @@ export class AdminRoleGuard implements CanActivate {
 
     throw new BizException(
       BizCode.FORBIDDEN,
-      `Yêu cầu quyền: ${required.join('|')}`,
+      'admin.roleRequired',
       HttpStatus.FORBIDDEN,
+      { roles: required.join('|') },
     );
   }
 }

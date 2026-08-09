@@ -126,7 +126,7 @@ export class PackagesService {
   async getActive(id: bigint) {
     const row = await this.prisma.topupPackage.findUnique({ where: { id } });
     if (!row || !row.active) {
-      throw new BizException(BizCode.NOT_FOUND, 'Gói nạp không tồn tại hoặc đã tắt');
+      throw new BizException(BizCode.NOT_FOUND, 'topupPackage.notFoundOrDisabled');
     }
     return row;
   }
@@ -162,7 +162,7 @@ export class PackagesService {
 
   async update(id: bigint, dto: Partial<TopupPackageInput>, actorId?: bigint | null) {
     const prev = await this.prisma.topupPackage.findUnique({ where: { id } });
-    if (!prev) throw new BizException(BizCode.NOT_FOUND, 'Gói nạp không tồn tại');
+    if (!prev) throw new BizException(BizCode.NOT_FOUND, 'topupPackage.notFound');
 
     const data: Prisma.TopupPackageUpdateInput = {};
     if (dto.name !== undefined) {
@@ -208,7 +208,7 @@ export class PackagesService {
 
   async remove(id: bigint, actorId?: bigint | null) {
     const prev = await this.prisma.topupPackage.findUnique({ where: { id } });
-    if (!prev) throw new BizException(BizCode.NOT_FOUND, 'Gói nạp không tồn tại');
+    if (!prev) throw new BizException(BizCode.NOT_FOUND, 'topupPackage.notFound');
 
     const orderCount = await this.prisma.order.count({ where: { packageId: id } });
     if (orderCount > 0) {

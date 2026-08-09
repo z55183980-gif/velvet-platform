@@ -61,7 +61,7 @@ export default function DesignSystemPage() {
           {typeScale.map((row) => (
             <div key={row.label} className="flex items-baseline gap-4 border-b border-line pb-4 last:border-0 last:pb-0">
               <span className="w-24 flex-none text-caption uppercase text-ink-subtle">{row.label}</span>
-              <span className={`flex-1 text-ink ${row.cls}`}>Phim ngắn Việt Nam</span>
+              <span className={`flex-1 text-ink ${row.cls}`}>Velvet Short Dramas</span>
               <span className="w-16 flex-none text-right text-caption text-ink-subtle">{row.px}</span>
             </div>
           ))}
@@ -96,14 +96,14 @@ export default function DesignSystemPage() {
         <div className="mt-4 flex flex-wrap items-center gap-4 rounded-lg border border-line bg-surface p-6">
           <Badge variant="default">Default</Badge>
           <Badge variant="vip">VIP</Badge>
-          <Badge variant="free">Miễn phí</Badge>
+          <Badge variant="free">Free</Badge>
           <Badge variant="hot">Hot</Badge>
         </div>
 
         <div className="mt-4 rounded-lg border border-line bg-surface p-6">
           <input
             className="h-11 w-full max-w-sm rounded-md border border-line bg-surface-2 px-4 text-body text-ink outline-none placeholder:text-ink-subtle"
-            placeholder="Email của bạn..."
+            placeholder="Your email..."
           />
         </div>
 
@@ -116,8 +116,8 @@ export default function DesignSystemPage() {
         <h2 className="mb-6 text-h3 font-semibold text-ink">{t("ds.states")}</h2>
         <div className="rounded-lg border border-line bg-surface p-6">
           <p className="text-body text-ink-muted">
-            Mọi phần tử tương tác có 5 trạng thái: default / hover / active / focus-visible / disabled.
-            Focus ring (viền màu brand) hiện khi duyệt bằng bàn phím — thử Tab qua các nút bên trên.
+            Every interactive element has five states: default / hover / active / focus-visible / disabled.
+            The focus ring (brand outline) appears for keyboard navigation — try Tab through the buttons above.
           </p>
         </div>
       </section>

@@ -1,13 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { X, Loader2, Check, Crown, Clapperboard, MonitorPlay } from "lucide-react";
+import { X, Loader2, Crown, Clapperboard, MonitorPlay } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { useAuth } from "@/components/auth-context";
 import {
   getVipPlans,
   vipSubOrder,
-  simulatePay,
   type VipPlanQuote,
 } from "@/lib/api";
 import { buttonVariants } from "@/components/ui/button";
@@ -16,7 +15,6 @@ import { track } from "@/lib/track";
 import { useDialogFocus } from "@/hooks/use-dialog-focus";
 
 const PAY_CURRENCY = "USD";
-type PayMethod = "STRIPE" | "SIMULATE";
 
 function benefitIcon(text: string) {
   const lower = text.toLowerCase();
@@ -28,15 +26,12 @@ function benefitIcon(text: string) {
 
 export function VipModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { t, locale } = useLocale();
-  const { user, openLogin, applySession } = useAuth();
-  const isDev = process.env.NODE_ENV === "development";
+  const { user, openLogin } = useAuth();
 
   const [plans, setPlans] = useState<VipPlanQuote[]>([]);
   const [planId, setPlanId] = useState<string | null>(null);
-  const [method, setMethod] = useState<PayMethod>("STRIPE");
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [done, setDone] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [planLoadError, setPlanLoadError] = useState(false);
   const [planReloadKey, setPlanReloadKey] = useState(0);
@@ -47,9 +42,7 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
   useEffect(() => {
     if (!open) return;
     setErr(null);
-    setDone(false);
-    setMethod(isDev ? "SIMULATE" : "STRIPE");
-  }, [open, isDev]);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -89,18 +82,9 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
     setBusy(true);
     setErr(null);
     try {
-      const wantSimulate = isDev && method === "SIMULATE";
       const r: any = await vipSubOrder(selected.id, PAY_CURRENCY, "STRIPE", {
-        createCheckout: !wantSimulate,
+        createCheckout: true,
       });
-      if (wantSimulate && r?.orderNo) {
-        await simulatePay(r.orderNo);
-        await applySession();
-        track("vip_sub", { method, currency: PAY_CURRENCY, planId: selected.id, payAmount });
-        setDone(true);
-        setTimeout(() => onClose(), 1400);
-        return;
-      }
       const checkoutUrl = String(r?.checkoutUrl || r?.checkout_url || "").trim();
       if (checkoutUrl) {
         track("vip_sub", {
@@ -168,15 +152,7 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
           )}
         </div>
 
-        {done ? (
-          <div className="flex flex-col items-center px-6 py-12 text-center animate-[rise-in_0.4s_var(--ease-out)_both]">
-            <span className="grid h-16 w-16 place-items-center rounded-full bg-success/15 text-success">
-              <Check className="h-8 w-8" />
-            </span>
-            <p className="mt-5 text-h3 font-semibold text-ink">{t("vip.success")}</p>
-          </div>
-        ) : (
-          <div className="space-y-6 px-6 pb-6">
+        <div className="space-y-6 px-6 pb-6">
             <div>
               <label className="text-caption uppercase text-ink-subtle">{t("vip.plans")}</label>
               {loading ? (
@@ -266,38 +242,6 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
               )}
             </div>
 
-            {isDev ? (
-              <div>
-                <label className="text-caption uppercase text-ink-subtle">{t("recharge.method")}</label>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setMethod("SIMULATE")}
-                    className={cn(
-                      "rounded-full px-4 py-2 text-body-sm font-medium transition-colors",
-                      method === "SIMULATE"
-                        ? "bg-brand text-white"
-                        : "bg-surface-2 text-ink-muted hover:text-ink",
-                    )}
-                  >
-                    {t("recharge.simulate")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setMethod("STRIPE")}
-                    className={cn(
-                      "rounded-full px-4 py-2 text-body-sm font-medium transition-colors",
-                      method === "STRIPE"
-                        ? "bg-brand text-white"
-                        : "bg-surface-2 text-ink-muted hover:text-ink",
-                    )}
-                  >
-                    Stripe
-                  </button>
-                </div>
-              </div>
-            ) : null}
-
             {selected && (
               <div className="flex items-center justify-between gap-4 rounded-xl bg-surface-2 px-5 py-4">
                 <div className="flex items-center gap-2 text-ink-muted">
@@ -333,7 +277,6 @@ export function VipModal({ open, onClose }: { open: boolean; onClose: () => void
             </button>
             {err && <p className="text-body-sm text-danger">{err}</p>}
           </div>
-        )}
       </div>
     </div>
   );

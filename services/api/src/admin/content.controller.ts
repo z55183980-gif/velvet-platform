@@ -1129,7 +1129,9 @@ export class ContentController {
   async batchDramaLifecycle(@Body() dto: BatchDramaLifecycleDto, @Req() req: any) {
     // Hard-delete is SUPER_ADMIN only; offline/online remain SUPER_ADMIN | OPS.
     if (dto.action === 'delete' && req?.adminRole !== 'SUPER_ADMIN') {
-      throw new BizException(BizCode.FORBIDDEN, 'Yêu cầu quyền: SUPER_ADMIN');
+      throw new BizException(BizCode.FORBIDDEN, 'admin.roleRequired', undefined, {
+        roles: 'SUPER_ADMIN',
+      });
     }
     return ok(
       await this.admin.batchLifecycle(dto.action, dto.ids, dto.reason, getActor(req)),

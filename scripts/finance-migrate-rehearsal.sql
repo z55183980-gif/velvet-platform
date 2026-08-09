@@ -31,6 +31,8 @@ SELECT
 
 \echo '=== 2) If BOTH wallet columns exist: compare before DROP ==='
 DO $$
+DECLARE
+  mismatch bigint := 0;
 BEGIN
   IF EXISTS (
     SELECT 1 FROM information_schema.columns
@@ -39,14 +41,19 @@ BEGIN
     SELECT 1 FROM information_schema.columns
     WHERE table_schema = 'public' AND table_name = 'wallets' AND column_name = 'balanceCredits'
   ) THEN
-    RAISE NOTICE 'BOTH balanceVnd and balanceCredits present — MUST compare/merge before DROP';
-    -- Manual compare (run when both exist):
-    -- SELECT COUNT(*) FILTER (WHERE "balanceVnd" IS DISTINCT FROM "balanceCredits") AS mismatch
-    -- FROM wallets;
+    EXECUTE 'SELECT COUNT(*) FROM wallets WHERE "balanceVnd" IS DISTINCT FROM "balanceCredits"'
+      INTO mismatch;
+    IF mismatch > 0 THEN
+      RAISE EXCEPTION 'BOTH wallet columns disagree — mismatch=%; run scripts/pre-migrate-gate.sh and merge before DROP', mismatch;
+    END IF;
+    RAISE NOTICE 'BOTH balanceVnd and balanceCredits present — values agree (mismatch=0)';
   ELSE
     RAISE NOTICE 'Single wallet column set — drop-both path not applicable on this snapshot';
   END IF;
 END $$;
+
+\echo '=== 2b) Session timezone (UTC required for residual timestamp risk) ==='
+SHOW timezone;
 
 \echo '=== 3) Finance totals checksum (*Vnd columns = USD cents) ==='
 SELECT

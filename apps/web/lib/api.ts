@@ -811,10 +811,16 @@ export async function redeemCode(code: string) {
 }
 
 export async function unlockDrama(dramaId: string | number) {
-  return request<any>("/orders/unlock-drama", {
-    method: "POST",
-    body: JSON.stringify({ dramaId }),
-  });
+  try {
+    return await request<any>("/orders/unlock-drama", {
+      method: "POST",
+      body: JSON.stringify({ dramaId }),
+    });
+  } catch (e) {
+    if (e instanceof ApiError) throw e;
+    if (process.env.NODE_ENV === "production") throw e;
+    return { unlocked: true, alreadyUnlocked: false, mock: true };
+  }
 }
 
 // 开发态：模拟支付成功（替代真实渠道）
@@ -1006,6 +1012,22 @@ export async function requestRefund(orderNo: string, note?: string) {
   return request<any>(`/orders/${orderNo}/refund-request`, {
     method: "POST",
     body: JSON.stringify({ note: note || "" }),
+  });
+}
+
+export type FeedbackCategory = "feedback" | "complaint" | "suggestion";
+
+export async function submitFeedback(opts: {
+  category: FeedbackCategory;
+  body: string;
+  contactEmail?: string;
+  locale?: string;
+  captchaId?: string;
+  captchaCode?: string;
+}) {
+  return request<{ id: string; createdAt: string }>("/feedback", {
+    method: "POST",
+    body: JSON.stringify(opts),
   });
 }
 

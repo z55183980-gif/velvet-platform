@@ -120,3 +120,26 @@ export function financeFreezePayload() {
       'GMV/share/withdraw frozen until historical amountVnd rows are reconciled to USD cents',
   };
 }
+
+/**
+ * Money-in gate.
+ * - Finance frozen ⇒ block Stripe topup + VIP (money-out already blocked).
+ * - Missing USD_CENTS_PER_CREDIT ⇒ block topup only (credits would be unspendable
+ *   via unlock/buyout 503); VIP does not need the credit FX rate.
+ */
+export function isMoneyInBlocked(opts?: {
+  usdCentsPerCredit?: number | null;
+  /** When true (TOPUP), also fail closed without FX. */
+  requireFx?: boolean;
+}): { blocked: boolean; reason: 'finance_frozen' | 'fx_missing' | null } {
+  if (isFinanceOpsFrozen()) {
+    return { blocked: true, reason: 'finance_frozen' };
+  }
+  if (opts?.requireFx) {
+    const rate = resolveUsdCentsPerCredit(opts?.usdCentsPerCredit ?? null);
+    if (rate == null) {
+      return { blocked: true, reason: 'fx_missing' };
+    }
+  }
+  return { blocked: false, reason: null };
+}

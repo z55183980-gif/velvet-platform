@@ -24,6 +24,15 @@ class ResetUserPasswordDto {
   @IsNotEmpty() @IsString() @MinLength(6) password!: string;
 }
 
+class CreateUserDto {
+  @IsNotEmpty() @IsString() email!: string;
+  @IsNotEmpty() @IsString() @MinLength(6) password!: string;
+  @IsOptional() @IsString() username?: string;
+  @IsOptional() @IsString() nickname?: string;
+  @IsOptional() @IsString() phone?: string;
+  @IsOptional() @IsString() locale?: string;
+}
+
 @Controller('v1/admin')
 @UseGuards(AdminGuard, AdminRoleGuard)
 export class UsersController {
@@ -53,6 +62,12 @@ export class UsersController {
       page: page ? Number(page) : 1,
       pageSize: pageSize ? Number(pageSize) : 20,
     }));
+  }
+
+  @Post('users')
+  @AdminRoles('SUPER_ADMIN')
+  async createUser(@Body() dto: CreateUserDto, @Req() req: any) {
+    return ok(await this.users.create(dto, getActor(req)));
   }
 
   @Get('users/:id')

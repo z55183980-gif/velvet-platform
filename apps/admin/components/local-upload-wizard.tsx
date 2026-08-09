@@ -59,6 +59,8 @@ import type {
   OnlineSourcePackage,
 } from "@/lib/drama-info-fill";
 import {
+  calcBuyoutCredits,
+  freeCountWhenInheriting,
   freeThruWhenInheriting,
   parseLockMode,
   resolveCustomFreePolicy,
@@ -91,6 +93,7 @@ type DraftRecord = {
   freeRangeEnd?: string;
   allFree?: boolean;
   priceCredits?: number;
+  buyoutDiscountPercent?: number;
   allowPreview?: boolean;
   previewSeconds?: number;
   inheritGlobal?: boolean;
@@ -360,6 +363,7 @@ export const LocalUploadWizard = forwardRef<
   const [showDrafts, setShowDrafts] = useState(false);
   const [editingDraftId, setEditingDraftId] = useState<string | null>(null);
   const [priceCredits, setPriceCredits] = useState(10);
+  const [buyoutDiscountPercent, setBuyoutDiscountPercent] = useState(70);
   const [allowPreview, setAllowPreview] = useState(false);
   const [previewSeconds, setPreviewSeconds] = useState(10);
   const [freeRangeStart, setFreeRangeStart] = useState("1");
@@ -746,6 +750,7 @@ export const LocalUploadWizard = forwardRef<
       freeRangeEnd,
       allFree,
       priceCredits,
+      buyoutDiscountPercent,
       allowPreview,
       previewSeconds,
       inheritGlobal,
@@ -772,6 +777,11 @@ export const LocalUploadWizard = forwardRef<
     setFreeRangeEnd(record.freeRangeEnd || "");
     setAllFree(record.allFree ?? false);
     setPriceCredits(record.priceCredits || 10);
+    setBuyoutDiscountPercent(
+      record.buyoutDiscountPercent != null
+        ? Math.min(100, Math.max(0, Math.floor(Number(record.buyoutDiscountPercent) || 0)))
+        : 70,
+    );
     setAllowPreview(record.allowPreview ?? false);
     setPreviewSeconds(record.previewSeconds || 10);
     setInheritGlobal(record.inheritGlobal ?? true);
@@ -927,6 +937,16 @@ export const LocalUploadWizard = forwardRef<
     const n = Number.isFinite(raw) ? Math.max(0, Math.floor(raw)) : 0;
     setAllowPreview(n > 0);
     if (n > 0) setPreviewSeconds(n);
+    const priceRaw = Number(
+      settingsQ.data.find((item) => item.key === "defaultPriceCredits")?.value,
+    );
+    if (Number.isFinite(priceRaw) && priceRaw >= 1) setPriceCredits(Math.floor(priceRaw));
+    const discountRaw = Number(
+      settingsQ.data.find((item) => item.key === "defaultBuyoutDiscountPercent")?.value,
+    );
+    if (Number.isFinite(discountRaw)) {
+      setBuyoutDiscountPercent(Math.min(100, Math.max(0, Math.floor(discountRaw))));
+    }
   }, [settingsQ.data, editingDraftId]);
 
   const globalMode = useMemo(() => {
@@ -1149,19 +1169,32 @@ export const LocalUploadWizard = forwardRef<
   ]);
 
   function resolvePolicyForTotal(total: number) {
+    const discount = Math.min(100, Math.max(0, Math.floor(Number(buyoutDiscountPercent) || 0)));
     if (inheritGlobal) {
       const freeThru = freeThruWhenInheriting({
         total,
         globalMode,
         globalFreeCount,
       });
+      const freeForBuyout = freeCountWhenInheriting({
+        total,
+        globalMode,
+        globalFreeCount,
+      });
+      const credits = Math.max(1, priceCredits || 10);
       return {
         createLockMode: null as null,
         freeThru,
         // Always stamp global freeCount when Follow Global (matches API resolveForDrama).
         freeCount: stampFreeCountWhenInheriting(globalFreeCount),
         previewSec: globalPreviewSeconds > 0 ? globalPreviewSeconds : 0,
-        credits: Math.max(1, priceCredits || 10),
+        credits,
+        buyoutCredits: calcBuyoutCredits({
+          episodeTotal: total,
+          freeCount: freeForBuyout,
+          priceCredits: credits,
+          discountPercent: discount,
+        }),
       };
     }
 
@@ -1171,12 +1204,25 @@ export const LocalUploadWizard = forwardRef<
     } catch {
       throw new Error(t("policyRangeInvalid", { total: total || 1 }));
     }
+    const credits = Math.max(1, priceCredits || 10);
+    const freeForBuyout =
+      custom.lockMode === "ALL_FREE"
+        ? total
+        : custom.lockMode === "VIP_ALL"
+          ? 0
+          : Math.min(total, custom.freeCount);
     return {
       createLockMode: custom.lockMode,
       freeThru: custom.lockMode === "ALL_FREE" ? Number.POSITIVE_INFINITY : custom.freeThru,
       freeCount: custom.freeCount,
       previewSec: allowPreview ? Math.max(1, Math.floor(Number(previewSeconds) || 10)) : 0,
-      credits: Math.max(1, priceCredits || 10),
+      credits,
+      buyoutCredits: calcBuyoutCredits({
+        episodeTotal: total,
+        freeCount: freeForBuyout,
+        priceCredits: credits,
+        discountPercent: discount,
+      }),
     };
   }
 
@@ -1570,6 +1616,7 @@ export const LocalUploadWizard = forwardRef<
     setFreeRangeEnd("");
     setAllFree(false);
     setPriceCredits(10);
+    setBuyoutDiscountPercent(70);
     setAllowPreview(false);
     setPreviewSeconds(10);
     setInheritGlobal(true);
@@ -1660,6 +1707,13 @@ export const LocalUploadWizard = forwardRef<
               return "ALL_FREE";
             }
           })(),
+          buyoutCredits: (() => {
+            try {
+              return resolvePolicyForTotal(transferEps.length || max || 0).buyoutCredits;
+            } catch {
+              return null;
+            }
+          })(),
           watermarkEnabled: watermark.enabled,
           watermarkX: watermark.x,
           watermarkY: watermark.y,
@@ -1732,6 +1786,7 @@ export const LocalUploadWizard = forwardRef<
         descriptionEn: descriptionEn.trim() || undefined,
         freeEpisodeCount: policy.freeCount,
         lockMode: policy.createLockMode ?? undefined,
+        buyoutCredits: policy.buyoutCredits,
         status: "DRAFT",
         relaxedPlayUrl: false,
         episodes: playable.map((ep, i) => {
@@ -1828,6 +1883,7 @@ export const LocalUploadWizard = forwardRef<
         descriptionEn: descriptionEn.trim() || undefined,
         freeEpisodeCount: policy.freeCount,
         lockMode: (policy.createLockMode ?? null) as "ALL_FREE" | "VIP_ALL" | "FREE_FIRST_N" | null,
+        buyoutCredits: policy.buyoutCredits,
         status: "DRAFT" as const,
         sourceTags,
         ...(totalEpisodesDirty ? { totalEpisodes } : {}),
@@ -2618,6 +2674,8 @@ export const LocalUploadWizard = forwardRef<
               onFreeRangeEndChange={setFreeRangeEnd}
               priceCredits={priceCredits}
               onPriceCreditsChange={setPriceCredits}
+              buyoutDiscountPercent={buyoutDiscountPercent}
+              onBuyoutDiscountPercentChange={setBuyoutDiscountPercent}
               allowPreview={allowPreview}
               onAllowPreviewChange={setAllowPreview}
               previewSeconds={previewSeconds}

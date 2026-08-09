@@ -79,7 +79,10 @@ import {
   type DramaContentType,
 } from "@/lib/drama-tags";
 import {
+  calcBuyoutCredits,
+  freeCountWhenInheriting,
   freeThruWhenInheriting,
+  inferBuyoutDiscountPercent,
   parseLockMode,
   resolveCustomFreePolicy,
   stampFreeCountWhenInheriting,
@@ -274,6 +277,7 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
   const [reason, setReason] = useState("");
   const [weight, setWeight] = useState(0);
   const [priceCredits, setPriceCredits] = useState(10);
+  const [buyoutDiscountPercent, setBuyoutDiscountPercent] = useState(70);
   const [allowPreview, setAllowPreview] = useState(false);
   const [previewSeconds, setPreviewSeconds] = useState(10);
   const [freeRangeStart, setFreeRangeStart] = useState("1");
@@ -341,6 +345,14 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
     const n = Number(settingsQ.data?.find((s) => s.key === "defaultPreviewSeconds")?.value);
     return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
   }, [settingsQ.data]);
+  const globalPriceCredits = useMemo(() => {
+    const n = Number(settingsQ.data?.find((s) => s.key === "defaultPriceCredits")?.value);
+    return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 10;
+  }, [settingsQ.data]);
+  const globalBuyoutDiscountPercent = useMemo(() => {
+    const n = Number(settingsQ.data?.find((s) => s.key === "defaultBuyoutDiscountPercent")?.value);
+    return Number.isFinite(n) ? Math.min(100, Math.max(0, Math.floor(n))) : 70;
+  }, [settingsQ.data]);
 
   useEffect(() => {
     setTab(initialTab ?? "overview");
@@ -394,7 +406,23 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
       setFreeRangeEnd(String(Math.max(1, freeCount)));
     }
     const paid = eps.find((ep) => !ep.isFree);
-    setPriceCredits(Math.max(1, Number(paid?.priceCredits) || 10));
+    const unitPrice = Math.max(1, Number(paid?.priceCredits) || globalPriceCredits || 10);
+    setPriceCredits(unitPrice);
+    const freeForInfer =
+      lock == null
+        ? freeCountWhenInheriting({ total, globalMode, globalFreeCount })
+        : lock === "ALL_FREE"
+          ? total
+          : lock === "VIP_ALL"
+            ? 0
+            : Math.min(total, freeCount);
+    const inferred = inferBuyoutDiscountPercent({
+      episodeTotal: total,
+      freeCount: freeForInfer,
+      priceCredits: unitPrice,
+      buyoutCredits: detailQ.data.buyoutCredits != null ? Number(detailQ.data.buyoutCredits) : null,
+    });
+    setBuyoutDiscountPercent(inferred ?? globalBuyoutDiscountPercent);
     const previewSec = Math.max(0, Math.floor(Number(paid?.previewSeconds) || 0));
     if (previewSec > 0) {
       setAllowPreview(true);
@@ -406,7 +434,14 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
       setAllowPreview(false);
       setPreviewSeconds(10);
     }
-  }, [detailQ.data, globalMode, globalFreeCount, globalPreviewSeconds]);
+  }, [
+    detailQ.data,
+    globalMode,
+    globalFreeCount,
+    globalPreviewSeconds,
+    globalPriceCredits,
+    globalBuyoutDiscountPercent,
+  ]);
 
   const isDirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(savedDraft), [draft, savedDraft]);
   useEffect(() => onDirtyChange?.(isDirty), [isDirty, onDirtyChange]);
@@ -551,24 +586,39 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
 
   async function savePlaybackPolicy() {
     const total = episodes.length;
+    const discount = Math.min(100, Math.max(0, Math.floor(Number(buyoutDiscountPercent) || 0)));
+    if (!Number.isFinite(discount) || discount < 0 || discount > 100) {
+      throw new Error(t("buyoutDiscountInvalid"));
+    }
 
     if (inheritGlobal) {
-      // Stamp global freeCount (not episode total) so Follow Global stays consistent with API resolve.
-      await adminUpdateDrama(id, {
-        freeEpisodeCount: stampFreeCountWhenInheriting(globalFreeCount),
-        lockMode: null,
-        buyoutCredits: null,
-      });
-      if (!total) return;
       const freeThru = freeThruWhenInheriting({
         total,
         globalMode,
         globalFreeCount,
       });
+      const freeCountForBuyout = freeCountWhenInheriting({
+        total,
+        globalMode,
+        globalFreeCount,
+      });
+      const credits = Math.max(1, priceCredits || globalPriceCredits || 10);
+      const buyoutCredits = calcBuyoutCredits({
+        episodeTotal: total,
+        freeCount: freeCountForBuyout,
+        priceCredits: credits,
+        discountPercent: discount,
+      });
+      await adminUpdateDrama(id, {
+        freeEpisodeCount: stampFreeCountWhenInheriting(globalFreeCount),
+        lockMode: null,
+        buyoutCredits,
+      });
+      if (!total) return;
       await applyEpisodeAccessFields({
         freeThru,
         allFree: globalMode === "ALL_FREE",
-        credits: Math.max(1, priceCredits || 10),
+        credits,
         previewSec: globalPreviewSeconds > 0 ? globalPreviewSeconds : 0,
       });
       return;
@@ -585,18 +635,27 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
       throw new Error(t("policyPriceInvalid"));
     }
     const previewSec = allowPreview ? Math.max(1, Math.floor(Number(previewSeconds) || 10)) : 0;
+    const credits = Math.max(1, priceCredits);
+    const freeForBuyout =
+      lockMode === "ALL_FREE" ? total : lockMode === "VIP_ALL" ? 0 : Math.min(total, freeCount);
+    const buyoutCredits = calcBuyoutCredits({
+      episodeTotal: total,
+      freeCount: freeForBuyout,
+      priceCredits: credits,
+      discountPercent: discount,
+    });
 
     await adminUpdateDrama(id, {
       freeEpisodeCount: freeCount,
       lockMode,
-      buyoutCredits: null,
+      buyoutCredits,
     });
 
     if (!total) return;
     await applyEpisodeAccessFields({
       freeThru: lockMode === "ALL_FREE" ? total : freeThru,
       allFree: lockMode === "ALL_FREE",
-      credits: Math.max(1, priceCredits),
+      credits,
       previewSec,
     });
   }
@@ -1353,6 +1412,8 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
             onFreeRangeEndChange={setFreeRangeEnd}
             priceCredits={priceCredits}
             onPriceCreditsChange={setPriceCredits}
+            buyoutDiscountPercent={buyoutDiscountPercent}
+            onBuyoutDiscountPercentChange={setBuyoutDiscountPercent}
             allowPreview={allowPreview}
             onAllowPreviewChange={setAllowPreview}
             previewSeconds={previewSeconds}

@@ -20,6 +20,7 @@ import { ExchangeModule } from './exchange/exchange.module';
 import { UploadModule } from './upload/upload.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { EventsModule } from './events/events.module';
+import { FeedbackModule } from './feedback/feedback.module';
 import { HealthController } from './health.controller';
 import { SiteConfigController } from './site-config.controller';
 
@@ -44,6 +45,7 @@ import { SiteConfigController } from './site-config.controller';
     UploadModule,
     NotificationsModule,
     EventsModule,
+    FeedbackModule,
   ],
   controllers: [HealthController, SiteConfigController],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

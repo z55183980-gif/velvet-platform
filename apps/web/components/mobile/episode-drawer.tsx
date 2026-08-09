@@ -5,6 +5,7 @@ import { AudioLines, ChevronRight, Crown, Star } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { useTheme } from "@/components/theme-provider";
 import type { Episode } from "@/lib/mock-data";
+import { episodeRequiresMembership } from "@/lib/episode-membership";
 import { buildEpisodeSlots, filterSlotsByRange } from "@/lib/episode-slots";
 import { cn, mediaUrl } from "@/lib/utils";
 import { SafeImage } from "@/components/safe-image";
@@ -235,6 +236,7 @@ export function EpisodeDrawer({
                   }
                   const ep = slot.episode;
                   const canPlay = isUnlocked(ep);
+                  const memberBadge = episodeRequiresMembership(ep);
                   const active = selectedNo === ep.no;
                   return (
                     <li key={slot.no}>
@@ -251,7 +253,7 @@ export function EpisodeDrawer({
                         )}
                         title={canPlay ? undefined : t("vip.open")}
                       >
-                        {!canPlay && (
+                        {memberBadge && (
                           <span
                             className={cn(
                               "absolute left-0 top-0 flex h-4 w-5 items-center justify-center rounded-br-lg rounded-tl-lg",

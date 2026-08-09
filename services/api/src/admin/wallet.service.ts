@@ -165,7 +165,7 @@ export class AdminWalletService {
     }
     const delta = toBigInt(input.deltaCredits);
     if (delta === 0n) {
-      throw new BizException(BizCode.BAD_REQUEST, 'deltaCredits không được = 0');
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.deltaCreditsNonZero');
     }
 
     const user = await this.prisma.user.findUnique({ where: { id: BigInt(userId) } });
@@ -185,7 +185,7 @@ export class AdminWalletService {
           amountCredits: delta,
           creatorIncomeVnd: 0n,
           platformFeeVnd: 0n,
-          payCurrency: 'VND',
+          payCurrency: 'USD',
           payAmount: new Prisma.Decimal(0),
           fxRate: new Prisma.Decimal(1),
           fxSource: 'admin-adjust',
@@ -201,7 +201,7 @@ export class AdminWalletService {
         if (!wallet) {
           // 自动建空钱包
           if (delta < 0n) {
-            throw new BizException(BizCode.INSUFFICIENT_BALANCE, 'Ví rỗng, không thể trừ');
+            throw new BizException(BizCode.INSUFFICIENT_BALANCE, 'wallet.emptyCannotDebit');
           }
           const newBalance = delta;
           await tx.wallet.create({

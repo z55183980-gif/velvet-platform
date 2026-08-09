@@ -106,6 +106,20 @@ const DEFAULT_KEYS: {
     labelZh: '默认试看秒数（付费集）',
     type: 'number',
   },
+  {
+    key: 'defaultPriceCredits',
+    value: 10,
+    labelEn: 'Default credits per paid episode',
+    labelZh: '默认单集积分价',
+    type: 'number',
+  },
+  {
+    key: 'defaultBuyoutDiscountPercent',
+    value: 70,
+    labelEn: 'Full-drama buyout discount (1–100%, 0=off)',
+    labelZh: '全集买断折扣（1–100%，0=关闭）',
+    type: 'number',
+  },
 ];
 
 const ALLOWED_KEYS = new Set(DEFAULT_KEYS.map((d) => d.key));
@@ -185,11 +199,25 @@ export class SettingsService implements OnModuleInit {
     if (
       key === 'defaultFreeEpisodes' ||
       key === 'defaultPreviewSeconds' ||
-      key === 'minWithdrawVnd'
+      key === 'minWithdrawVnd' ||
+      key === 'defaultPriceCredits'
     ) {
       const n = Math.floor(Number(value));
       if (!Number.isFinite(n) || n < 0) {
         throw new BizException(BizCode.BAD_REQUEST, `${key} must be >= 0`);
+      }
+      if (key === 'defaultPriceCredits' && n < 1) {
+        throw new BizException(BizCode.BAD_REQUEST, 'defaultPriceCredits must be >= 1');
+      }
+      value = n;
+    }
+    if (key === 'defaultBuyoutDiscountPercent') {
+      const n = Math.floor(Number(value));
+      if (!Number.isFinite(n) || n < 0 || n > 100) {
+        throw new BizException(
+          BizCode.BAD_REQUEST,
+          'defaultBuyoutDiscountPercent must be 0–100 (0 disables buyout)',
+        );
       }
       value = n;
     }
@@ -228,29 +256,62 @@ export class SettingsService implements OnModuleInit {
       payload: { prev: prev?.value ?? null, next: row.value },
     });
 
-    if (key === 'episodeLockMode' || key === 'defaultFreeEpisodes') {
+    if (
+      key === 'episodeLockMode' ||
+      key === 'defaultFreeEpisodes' ||
+      key === 'defaultPriceCredits' ||
+      key === 'defaultBuyoutDiscountPercent'
+    ) {
       await this.cascadeGlobalLockToInheritingDramas();
     }
 
     return { key: row.key, value: row.value, updatedAt: row.updatedAt };
   }
 
-  /** Keep denormalized freeEpisodeCount + episode.isFree in sync for Follow Global dramas. */
+  /** Keep denormalized freeEpisodeCount + buyoutCredits + episode.isFree in sync for Follow Global dramas. */
   private async cascadeGlobalLockToInheritingDramas() {
     const global = await this.lockAccess.getGlobalPolicy();
+    const pricing = await this.prisma.systemSetting.findMany({
+      where: { key: { in: ['defaultPriceCredits', 'defaultBuyoutDiscountPercent'] } },
+    });
+    const priceMap = new Map(pricing.map((r) => [r.key, r.value]));
+    const priceCredits = Math.max(1, Math.floor(Number(priceMap.get('defaultPriceCredits')) || 10));
+    const discountPercent = Math.min(
+      100,
+      Math.max(0, Math.floor(Number(priceMap.get('defaultBuyoutDiscountPercent')) || 0)),
+    );
+
     const inheriting = await this.prisma.drama.findMany({
       where: { lockMode: null },
-      select: { id: true },
+      select: {
+        id: true,
+        _count: { select: { episodes: true } },
+      },
     });
     if (!inheriting.length) return;
 
-    await this.prisma.drama.updateMany({
-      where: { lockMode: null },
-      data: { freeEpisodeCount: global.freeCount },
-    });
+    for (const drama of inheriting) {
+      const total = drama._count.episodes;
+      const freeCount =
+        global.mode === 'ALL_FREE'
+          ? total
+          : global.mode === 'VIP_ALL'
+            ? 0
+            : Math.min(total, Math.max(0, global.freeCount));
+      const paid = Math.max(0, total - freeCount);
+      let buyoutCredits: bigint | null = null;
+      if (discountPercent >= 1 && paid > 0 && priceCredits > 0) {
+        buyoutCredits = BigInt(Math.max(1, Math.ceil((paid * priceCredits * discountPercent) / 100)));
+      }
 
-    for (const { id } of inheriting) {
-      await this.lockAccess.syncEpisodeAccessFlags(id);
+      await this.prisma.drama.update({
+        where: { id: drama.id },
+        data: {
+          freeEpisodeCount: global.freeCount,
+          buyoutCredits,
+        },
+      });
+      await this.lockAccess.syncEpisodeAccessFlags(drama.id);
     }
   }
 }

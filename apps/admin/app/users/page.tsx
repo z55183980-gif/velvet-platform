@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  adminCreateUser,
   adminDeleteUser,
   adminForceLogout,
   adminGetUser,
@@ -18,6 +19,7 @@ import { ConfirmModal, GlassModal } from "@/components/glass-modal";
 import { useI18n, statusLabel } from "@/lib/i18n";
 import { useLocationSearchParams } from "@/lib/use-location-search";
 import { Badge, Button, cn, DataTable, Input, Select, StatCard, fmtDate, fmtNum, type Column } from "@velvet/ui";
+import { Plus } from "lucide-react";
 
 function statusTone(status?: string): "success" | "warning" | "danger" | "default" {
   if (status === "ACTIVE") return "success";
@@ -187,6 +189,152 @@ function modalTitle(title: string, subtitle?: string) {
       <div>{title}</div>
       {subtitle ? <p className="mt-0.5 text-caption font-normal text-ink-subtle">{subtitle}</p> : null}
     </div>
+  );
+}
+
+function CreateUserModal({
+  onClose,
+  t,
+}: {
+  onClose: () => void;
+  t: ReturnType<typeof useI18n>["t"];
+}) {
+  const qc = useQueryClient();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [nickname, setNickname] = useState("");
+  const [username, setUsername] = useState("");
+  const [phone, setPhone] = useState("");
+  const [locale, setLocale] = useState("en");
+  const [error, setError] = useState<string | null>(null);
+
+  const createMut = useMutation({
+    mutationFn: () =>
+      adminCreateUser({
+        email: email.trim(),
+        password,
+        nickname: nickname.trim() || undefined,
+        username: username.trim() || undefined,
+        phone: phone.trim() || undefined,
+        locale,
+      }),
+    onSuccess: async () => {
+      setError(null);
+      await qc.invalidateQueries({ queryKey: ["admin", "users"] });
+      onClose();
+    },
+    onError: (e: Error) => setError(e.message),
+  });
+
+  const submit = () => {
+    if (password.length < 6) {
+      setError(t("passwordTooShort"));
+      return;
+    }
+    setError(null);
+    createMut.mutate();
+  };
+
+  return (
+    <GlassModal
+      open
+      onClose={() => {
+        if (!createMut.isPending) onClose();
+      }}
+      title={modalTitle(t("createUser"), t("createUserHint"))}
+      size="md"
+    >
+      <form
+        className="space-y-4"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (!createMut.isPending) submit();
+        }}
+      >
+        {error ? <p className="text-body-sm text-danger">{error}</p> : null}
+
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="block text-caption font-medium text-ink-subtle sm:col-span-2">
+            {t("fieldEmail")}
+            <Input
+              className="mt-1.5"
+              type="email"
+              autoComplete="off"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+            />
+          </label>
+          <label className="block text-caption font-medium text-ink-subtle sm:col-span-2">
+            {t("newPassword")}
+            <Input
+              className="mt-1.5"
+              type="text"
+              autoComplete="off"
+              spellCheck={false}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              minLength={6}
+            />
+          </label>
+          <label className="block text-caption font-medium text-ink-subtle">
+            {t("fieldNickname")}
+            <span className="ml-1 font-normal text-ink-subtle/70">({t("optional")})</span>
+            <Input
+              className="mt-1.5"
+              value={nickname}
+              onChange={(e) => setNickname(e.target.value)}
+              maxLength={64}
+            />
+          </label>
+          <label className="block text-caption font-medium text-ink-subtle">
+            {t("loginAccount")}
+            <span className="ml-1 font-normal text-ink-subtle/70">({t("optional")})</span>
+            <Input
+              className="mt-1.5"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder={t("usernameHint")}
+              maxLength={24}
+            />
+          </label>
+          <label className="block text-caption font-medium text-ink-subtle">
+            {t("fieldPhone")}
+            <span className="ml-1 font-normal text-ink-subtle/70">({t("optional")})</span>
+            <Input
+              className="mt-1.5"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              maxLength={32}
+            />
+          </label>
+          <label className="block text-caption font-medium text-ink-subtle">
+            {t("colLocale")}
+            <Select className="mt-1.5" value={locale} onChange={(e) => setLocale(e.target.value)}>
+              <option value="zh">{t("localeZh")}</option>
+              <option value="en">{t("localeEn")}</option>
+              <option value="fr">{t("localeFr")}</option>
+            </Select>
+          </label>
+        </div>
+
+        <div className="flex justify-end gap-2 pt-1">
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            disabled={createMut.isPending}
+            onClick={onClose}
+          >
+            {t("cancel")}
+          </Button>
+          <Button type="submit" size="sm" disabled={createMut.isPending}>
+            {createMut.isPending ? t("loading") : t("createUser")}
+          </Button>
+        </div>
+      </form>
+    </GlassModal>
   );
 }
 
@@ -738,6 +886,7 @@ export default function AdminUsersPage() {
     pageSize: initialPageSize,
   });
   const [modal, setModal] = useState<ModalState>(null);
+  const [createOpen, setCreateOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; label: string } | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const qc = useQueryClient();
@@ -1006,6 +1155,17 @@ export default function AdminUsersPage() {
     <AdminShell title={title}>
       {error ? <p className="mb-3 text-body-sm text-danger">{(error as Error).message}</p> : null}
 
+      <div className="mb-4 flex flex-wrap items-center justify-end gap-2">
+        <Button
+          size="sm"
+          className="cursor-pointer hover:-translate-y-0.5 hover:shadow-md active:translate-y-0 active:scale-[0.97]"
+          onClick={() => setCreateOpen(true)}
+        >
+          <Plus className="h-4 w-4" />
+          {t("createUser")}
+        </Button>
+      </div>
+
       <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-white/45 p-3">
         <Input
           className="w-full sm:w-64"
@@ -1119,6 +1279,8 @@ export default function AdminUsersPage() {
           </div>
         ) : null}
       </div>
+
+      {createOpen ? <CreateUserModal onClose={() => setCreateOpen(false)} t={t} /> : null}
 
       {modal?.mode === "detail" ? (
         <UserDetailModal

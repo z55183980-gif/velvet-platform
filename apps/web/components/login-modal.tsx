@@ -362,8 +362,9 @@ export function LoginModal({
 
   const showGoogle = mode !== "forgot" && step === "form";
 
+  // Above theater (70), episode drawer (80), VIP/recharge (80), unlock sheet (100).
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-3 sm:p-4">
+    <div className="fixed inset-0 z-[110] flex items-center justify-center p-3 sm:p-4">
       <div className="absolute inset-0 bg-black/75 backdrop-blur-sm" onClick={onClose} aria-hidden />
       <div
         ref={dialogRef}

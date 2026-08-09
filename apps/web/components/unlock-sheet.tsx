@@ -5,11 +5,101 @@ import { X, Loader2, Check, Lock, Coins, Crown } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { useAuth } from "@/components/auth-context";
 import { useDocumentScrollLock } from "@/hooks/use-document-scroll-lock";
+import { getVipPlans } from "@/lib/api";
 import { buttonVariants } from "./ui/button";
-import { cn, formatAmount, formatCredits } from "@/lib/utils";
+import { cn, formatAmount, formatCredits, formatUsd } from "@/lib/utils";
 import type { Episode } from "@/lib/mock-data";
 
 type Status = "idle" | "processing" | "success" | "error" | "insufficient";
+
+const VIP_PAY_CURRENCY = "USD";
+
+function lowestVipPayAmount(plans: { payAmount?: string; basePrice?: string }[]): number | null {
+  let min: number | null = null;
+  for (const plan of plans) {
+    const amount = Number(plan.payAmount ?? plan.basePrice);
+    if (!Number.isFinite(amount) || amount <= 0) continue;
+    if (min == null || amount < min) min = amount;
+  }
+  return min;
+}
+
+function VipPriceMark({ value }: { value: string }) {
+  const match = value.match(/^(\D*)([\d,]+)(\.\d+)?$/);
+  if (!match) {
+    return (
+      <span className="shrink-0 text-[13px] font-extrabold tabular-nums tracking-tight text-[#1F1608]">
+        {value}
+      </span>
+    );
+  }
+  const [, currency, whole, fraction = ""] = match;
+  return (
+    <span className="inline-flex shrink-0 items-baseline font-extrabold tabular-nums tracking-tight text-[#1F1608]">
+      {currency ? (
+        <span className="mr-px text-[10px] font-bold leading-none">{currency}</span>
+      ) : null}
+      <span className="text-[13px] leading-none">{whole}</span>
+      {fraction ? <span className="text-[10px] leading-none">{fraction}</span> : null}
+    </span>
+  );
+}
+
+function VipCtaButton({
+  label,
+  hint,
+  price,
+  onClick,
+  disabled,
+  className,
+}: {
+  label: string;
+  hint: string;
+  price?: string | null;
+  onClick: () => void;
+  disabled?: boolean;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={cn(
+        "group relative flex w-full items-center justify-center gap-2.5 overflow-hidden rounded-md px-5 py-3",
+        "bg-[linear-gradient(145deg,oklch(0.9_0.1_90)_0%,oklch(0.82_0.13_85)_42%,oklch(0.72_0.12_78)_100%)]",
+        "text-[#2A1E05]",
+        "shadow-[0_8px_22px_oklch(0.78_0.12_85_/_0.32),inset_0_1px_0_oklch(1_0_0_/_0.38)]",
+        "ring-1 ring-inset ring-[oklch(1_0_0_/_0.22)]",
+        "transition-[transform,filter,box-shadow] duration-200 ease-out",
+        "hover:brightness-[1.04] hover:shadow-[0_10px_28px_oklch(0.78_0.12_85_/_0.42)]",
+        "active:translate-y-px disabled:pointer-events-none disabled:opacity-50",
+        className,
+      )}
+    >
+      <span
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,oklch(1_0_0_/_0.28)_0%,transparent_45%)]"
+      />
+      <span
+        aria-hidden
+        className="pointer-events-none absolute -left-6 top-1/2 h-16 w-16 -translate-y-1/2 rounded-full bg-[oklch(1_0_0_/_0.18)] blur-xl transition-opacity group-hover:opacity-90"
+      />
+      <span className="relative inline-flex items-center gap-2 font-semibold tracking-wide">
+        <span className="grid h-6 w-6 place-items-center rounded-full bg-[#2A1E05]/14 shadow-[inset_0_0_0_1px_oklch(0.35_0.04_75_/_0.18)]">
+          <Crown className="h-3.5 w-3.5" strokeWidth={2.35} />
+        </span>
+        {label}
+      </span>
+      <span className="relative inline-flex max-w-[62%] items-baseline gap-1.5 truncate rounded-full bg-[oklch(0.97_0.02_90_/_0.92)] px-2.5 py-1 shadow-[inset_0_0_0_1px_oklch(0.55_0.08_80_/_0.16)]">
+        {price ? <VipPriceMark value={price} /> : null}
+        <span className="truncate text-[11px] font-medium leading-none tracking-[0.02em] text-[#5A4010]/80">
+          {hint}
+        </span>
+      </span>
+    </button>
+  );
+}
 
 export function UnlockSheet({
   open,
@@ -35,6 +125,7 @@ export function UnlockSheet({
   const [status, setStatus] = useState<Status>("idle");
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const [mode, setMode] = useState<"episode" | "drama">("episode");
+  const [vipFromPrice, setVipFromPrice] = useState<number | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const statusRef = useRef(status);
@@ -47,6 +138,8 @@ export function UnlockSheet({
   const showBuyout = !!(buyoutCredits && buyoutCredits > 0 && onBuyDrama);
   /** Only surface recharge after user tries unlock (or server returns 4100). */
   const showRechargeGate = status === "insufficient";
+  const vipHint = t("vip.openHint");
+  const vipPriceLabel = vipFromPrice != null ? formatUsd(vipFromPrice) : null;
 
   useDocumentScrollLock(open);
 
@@ -68,6 +161,22 @@ export function UnlockSheet({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
+
+  useEffect(() => {
+    if (!open || vipActive) return;
+    let cancelled = false;
+    void getVipPlans(VIP_PAY_CURRENCY)
+      .then((plans) => {
+        if (cancelled) return;
+        setVipFromPrice(lowestVipPayAmount(plans));
+      })
+      .catch(() => {
+        if (!cancelled) setVipFromPrice(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, vipActive]);
 
   if (!open || !episode) return null;
 
@@ -233,13 +342,13 @@ export function UnlockSheet({
               {t("unlock.goRecharge")}
             </button>
             {!vipActive ? (
-              <button
+              <VipCtaButton
+                className="mt-3"
                 onClick={goVip}
-                className={cn(buttonVariants({ variant: "gold", size: "lg" }), "mt-3 w-full")}
-              >
-                <Crown className="h-4 w-4" />
-                {t("vip.open")}
-              </button>
+                label={t("vip.open")}
+                hint={vipHint}
+                price={vipPriceLabel}
+              />
             ) : null}
             <button
               onClick={dismissInsufficient}
@@ -350,14 +459,13 @@ export function UnlockSheet({
                     )}
                   </button>
                   {!vipActive ? (
-                    <button
+                    <VipCtaButton
                       onClick={goVip}
                       disabled={status === "processing"}
-                      className={cn(buttonVariants({ variant: "gold", size: "lg" }), "w-full")}
-                    >
-                      <Crown className="h-4 w-4" />
-                      {t("vip.open")}
-                    </button>
+                      label={t("vip.open")}
+                      hint={vipHint}
+                      price={vipPriceLabel}
+                    />
                   ) : null}
                 </>
               )}

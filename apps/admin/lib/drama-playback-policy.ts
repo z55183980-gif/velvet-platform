@@ -142,3 +142,41 @@ export function resolveGlobalFreeRangePolicy(
   }
   return { freeCount: freeEnd, lockMode: "FREE_FIRST_N" };
 }
+
+/**
+ * Full-drama buyout credits from paid episode count × unit price × discount%.
+ * `discountPercent` 0 → disabled (null); 1–100 → ceil(paid * price * pct / 100), min 1.
+ */
+export function calcBuyoutCredits(opts: {
+  episodeTotal: number;
+  freeCount: number;
+  priceCredits: number;
+  discountPercent: number;
+}): number | null {
+  const discount = Math.floor(Number(opts.discountPercent) || 0);
+  if (discount < 1 || discount > 100) return null;
+  const total = Math.max(0, Math.floor(Number(opts.episodeTotal) || 0));
+  const free = Math.min(total, Math.max(0, Math.floor(Number(opts.freeCount) || 0)));
+  const price = Math.max(0, Math.floor(Number(opts.priceCredits) || 0));
+  const paid = Math.max(0, total - free);
+  if (paid <= 0 || price <= 0) return null;
+  return Math.max(1, Math.ceil((paid * price * discount) / 100));
+}
+
+/** Infer discount % from stored buyout credits (best-effort for edit UI). */
+export function inferBuyoutDiscountPercent(opts: {
+  episodeTotal: number;
+  freeCount: number;
+  priceCredits: number;
+  buyoutCredits: number | null | undefined;
+}): number | null {
+  const buyout = Math.floor(Number(opts.buyoutCredits) || 0);
+  if (buyout <= 0) return null;
+  const total = Math.max(0, Math.floor(Number(opts.episodeTotal) || 0));
+  const free = Math.min(total, Math.max(0, Math.floor(Number(opts.freeCount) || 0)));
+  const price = Math.max(0, Math.floor(Number(opts.priceCredits) || 0));
+  const paid = Math.max(0, total - free);
+  if (paid <= 0 || price <= 0) return null;
+  const full = paid * price;
+  return Math.min(100, Math.max(1, Math.round((buyout * 100) / full)));
+}

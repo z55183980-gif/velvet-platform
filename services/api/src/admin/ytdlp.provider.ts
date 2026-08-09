@@ -9,9 +9,12 @@ import * as path from 'path';
 import { promisify } from 'util';
 import { BizCode, BizException } from '../common/biz.exception';
 import { VIDEO_EXT } from './local-import.util';
+import { isProductionEnv } from '../common/security-config';
 import {
   defaultYtdlpBinDir,
   ensureYtdlpBinary,
+  expectedYtdlpSha256,
+  verifyYtdlpSha256,
   ytdlpLocalFileName,
 } from './ytdlp-bootstrap.util';
 
@@ -121,10 +124,57 @@ export class YtdlpProvider implements OnModuleInit {
     return this.ensurePromise;
   }
 
+  /** When SHA is configured (or production), never exec a binary that fails verify. */
+  private shaRequired(): boolean {
+    if ((process.env.YTDLP_SHA256 || '').trim()) return true;
+    return isProductionEnv();
+  }
+
+  private resolveExpectedSha(): string | null {
+    const fromEnv = (process.env.YTDLP_SHA256 || '').trim().toLowerCase();
+    if (fromEnv) return fromEnv;
+    if (isProductionEnv()) return null; // requireSha handled by bootstrap; fail closed here
+    try {
+      return expectedYtdlpSha256();
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Verify on-disk binary SHA before any exec.
+   * PATH-style names (no readable file) are rejected when SHA is required.
+   */
+  private assertBinShaOrSkip(bin: string): boolean {
+    const required = this.shaRequired();
+    const expected = this.resolveExpectedSha();
+    if (!required && !expected) return true;
+    if (required && !expected) {
+      this.lastError = 'YTDLP_SHA256 required — refusing unverified yt-dlp';
+      return false;
+    }
+    try {
+      if (!fs.existsSync(bin) || !fs.statSync(bin).isFile()) {
+        if (required) {
+          this.lastError = `yt-dlp candidate not a verifiable file: ${bin}`;
+          return false;
+        }
+        return true; // dev PATH lookup without SHA
+      }
+      verifyYtdlpSha256(bin, expected!);
+      return true;
+    } catch (e: any) {
+      this.lastError = e?.message || String(e);
+      this.logger.warn(`yt-dlp SHA reject ${bin}: ${this.lastError}`);
+      return false;
+    }
+  }
+
   private async probeCandidate(
     bin: string,
     source: YtdlpBinSource,
   ): Promise<string | null> {
+    if (!this.assertBinShaOrSkip(bin)) return null;
     try {
       const { stdout } = await execFileAsync(bin, ['--version'], {
         timeout: 8_000,
@@ -151,14 +201,38 @@ export class YtdlpProvider implements OnModuleInit {
 
     const envBin = this.config.get<string>('YTDLP_BIN')?.trim();
     const bundled = this.bundledBinPath();
+
+    // Verify-or-install bundled path first (checksum inside ensureYtdlpBinary).
+    // Never probe/exec candidates before this when a bundled file or auto-install applies.
+    if (fs.existsSync(bundled) || this.autoInstall()) {
+      try {
+        const dir = path.dirname(bundled);
+        const dest = await ensureYtdlpBinary({
+          binDir: dir,
+          timeoutMs: Math.max(this.timeoutMs(), 120_000),
+        });
+        const ok = await this.probeCandidate(dest, fs.existsSync(bundled) ? 'bundled' : 'auto_download');
+        if (ok) return ok;
+        this.lastError = this.lastError || 'verified binary failed --version';
+      } catch (e: any) {
+        this.lastError = e?.message || String(e);
+        this.logger.warn(`yt-dlp verify/install failed: ${this.lastError}`);
+      }
+    }
+
+    // Env absolute path may be used if it passes SHA (probeCandidate enforces).
+    // PATH bare names are skipped when SHA is required — cannot verify content safely.
     const candidates: Array<{ bin: string; source: YtdlpBinSource }> = [
       ...(envBin ? [{ bin: envBin, source: 'env' as const }] : []),
-      { bin: bundled, source: 'bundled' },
-      { bin: 'yt-dlp', source: 'path' },
-      { bin: 'yt-dlp.exe', source: 'path' },
-      { bin: '/usr/local/bin/yt-dlp', source: 'path' },
-      { bin: '/usr/bin/yt-dlp', source: 'path' },
-      { bin: '/opt/homebrew/bin/yt-dlp', source: 'path' },
+      ...(!this.shaRequired()
+        ? ([
+            { bin: 'yt-dlp', source: 'path' as const },
+            { bin: 'yt-dlp.exe', source: 'path' as const },
+            { bin: '/usr/local/bin/yt-dlp', source: 'path' as const },
+            { bin: '/usr/bin/yt-dlp', source: 'path' as const },
+            { bin: '/opt/homebrew/bin/yt-dlp', source: 'path' as const },
+          ] as const)
+        : []),
     ];
 
     for (const c of candidates) {
@@ -166,26 +240,10 @@ export class YtdlpProvider implements OnModuleInit {
       if (ok) return ok;
     }
 
-    if (this.autoInstall()) {
-      try {
-        const dir = path.dirname(bundled);
-        const dest = await ensureYtdlpBinary({
-          binDir: dir,
-          timeoutMs: Math.max(this.timeoutMs(), 120_000),
-        });
-        const ok = await this.probeCandidate(dest, 'auto_download');
-        if (ok) return ok;
-        this.lastError = 'downloaded binary failed --version';
-      } catch (e: any) {
-        this.lastError = e?.message || String(e);
-        this.logger.warn(`yt-dlp auto-install failed: ${this.lastError}`);
-      }
-    }
-
     this.binPath = null;
     this.binSource = null;
     this.logger.warn(
-      'yt-dlp not available — set YTDLP_BIN, preinstall in image, or enable YTDLP_AUTO_INSTALL',
+      'yt-dlp not available — set YTDLP_BIN + YTDLP_SHA256, preinstall verified binary, or enable YTDLP_AUTO_INSTALL',
     );
     return null;
   }

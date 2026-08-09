@@ -26,7 +26,7 @@ import { VerticalPager } from "@/components/mobile/vertical-pager";
 import { UnlockSheet } from "@/components/unlock-sheet";
 import { FeedEpisodeBar } from "@/components/mobile/feed-episode-bar";
 import { useMobileFeedLock } from "@/components/mobile/mobile-feed-lock";
-import { getPlayUrl, loadDramaDetail, loadFeed, checkFavorite, addFavorite, removeFavorite, checkLike, addLike, removeLike, reportProgress, type DramaDetailPayload } from "@/lib/api";
+import { getPlayUrl, loadDramaDetail, loadFeed, checkFavorite, addFavorite, removeFavorite, checkLike, addLike, removeLike, reportProgress, unlockDrama, type DramaDetailPayload } from "@/lib/api";
 import type { Drama, Episode } from "@/lib/mock-data";
 import { categories, episodeIsLandscape } from "@/lib/mock-data";
 import { pickContentText, pickTitleText, type Locale } from "@/lib/languages";
@@ -86,10 +86,14 @@ const playUrlInflight = new Map<string, Promise<string | null>>();
 /** Guest / user+VIP / in-session unlocks — detail.episodes[].unlocked is auth-scoped. */
 let detailCacheScope = "guest";
 
-function feedAuthScope(user: AuthUser | null, unlockedCount: number): string {
-  if (!user) return `guest:u${unlockedCount}`;
-  const id = user.username || user.email || user.phone || "user";
-  return `${id}:vip=${user.isVip ? 1 : 0}:u${unlockedCount}`;
+function feedAuthScope(
+  user: AuthUser | null,
+  unlockedCount: number,
+  sessionEpoch: number,
+): string {
+  if (!user) return `guest:e${sessionEpoch}:u${unlockedCount}`;
+  const id = user.id || user.username || user.email || user.phone || "user";
+  return `${id}:e${sessionEpoch}:vip=${user.isVip ? 1 : 0}:u${unlockedCount}`;
 }
 
 function syncDetailCacheScope(scope: string) {
@@ -149,11 +153,16 @@ function trimDetailCache() {
   }
 }
 
+function playUrlCacheKey(episodeId: string, scope = detailCacheScope): string {
+  return `${scope}:${episodeId}`;
+}
+
 function getCachedPlayUrl(episodeId: string): string | null {
-  const hit = playUrlCache.get(episodeId);
+  const key = playUrlCacheKey(episodeId);
+  const hit = playUrlCache.get(key);
   if (!hit) return null;
   if (hit.expiresAtMs - Date.now() < PLAY_URL_REFRESH_MS) {
-    playUrlCache.delete(episodeId);
+    playUrlCache.delete(key);
     return null;
   }
   return hit.playUrl;
@@ -178,21 +187,25 @@ async function ensurePlayUrl(episodeId: string, signal?: AbortSignal): Promise<s
   if (cached) return cached;
   if (signal?.aborted) return null;
 
-  const existing = playUrlInflight.get(episodeId);
+  const scopeAtStart = detailCacheScope;
+  const inflightKey = playUrlCacheKey(episodeId, scopeAtStart);
+  const existing = playUrlInflight.get(inflightKey);
   if (existing) {
     const url = await existing;
-    if (signal?.aborted) return null;
+    if (signal?.aborted || scopeAtStart !== detailCacheScope) return null;
     return url;
   }
 
   // No AbortSignal on the network call: one in-flight fill is shared so a swipe-in
   // can reuse a neighbor prefetch without inheriting its cancellation.
+  // Late writes must still match the scope captured at start (account switch).
   const task = (async () => {
     try {
       const r = await getPlayUrl(episodeId);
       if (!r?.playUrl) return null;
+      if (scopeAtStart !== detailCacheScope) return null;
       const expiresAtMs = Date.parse(r.expiresAt);
-      playUrlCache.set(episodeId, {
+      playUrlCache.set(playUrlCacheKey(episodeId, scopeAtStart), {
         playUrl: r.playUrl,
         expiresAtMs: Number.isFinite(expiresAtMs) ? expiresAtMs : Date.now() + 60 * 60_000,
       });
@@ -201,13 +214,13 @@ async function ensurePlayUrl(episodeId: string, signal?: AbortSignal): Promise<s
     } catch {
       return null;
     } finally {
-      playUrlInflight.delete(episodeId);
+      playUrlInflight.delete(inflightKey);
     }
   })();
 
-  playUrlInflight.set(episodeId, task);
+  playUrlInflight.set(inflightKey, task);
   const url = await task;
-  if (signal?.aborted) return null;
+  if (signal?.aborted || scopeAtStart !== detailCacheScope) return null;
   return url;
 }
 
@@ -306,8 +319,8 @@ export function VerticalFeed({
   } | null;
 }) {
   const { t } = useLocale();
-  const { user, unlocked } = useAuth();
-  const authScope = feedAuthScope(user, unlocked.size);
+  const { user, unlocked, sessionEpoch } = useAuth();
+  const authScope = feedAuthScope(user, unlocked.size, sessionEpoch);
   const { setLocked } = useMobileFeedLock();
   const restoredHomeFeed = source === "home" ? homeFeedSnapshot : null;
   const [index, setIndex] = useState(() =>
@@ -562,9 +575,9 @@ function FeedPage({
   registerTogglePlay: (fn: (() => void) | null) => void;
 }) {
   const { locale, t } = useLocale();
-  const { user, unlocked, ready: authReady, openLogin, unlock } = useAuth();
+  const { user, unlocked, ready: authReady, openLogin, unlock, refreshWallet, sessionEpoch } = useAuth();
   const [unlockOpen, setUnlockOpen] = useState(false);
-  const authScope = feedAuthScope(user, unlocked.size);
+  const authScope = feedAuthScope(user, unlocked.size, sessionEpoch);
   const { ready: guestReady, canWatch: canGuestWatch, markWatched: markGuestWatched } =
     useGuestWatchQuota();
   const [episode, setEpisode] = useState<Episode | null>(
@@ -794,7 +807,11 @@ function FeedPage({
       })
       .catch((e) => {
         if (ac.signal.aborted) return;
-        if (active) setPlayErr(e?.message || t("player.error"));
+        // Never paint raw API/ops messages (e.g. yt-dlp) on the player.
+        if (active) {
+          if (e?.status === 401) setPlayErr(t("errors.loginRequired"));
+          else setPlayErr(t("player.error"));
+        }
         setLoading(false);
       });
     return () => ac.abort();
@@ -874,9 +891,56 @@ function FeedPage({
     const r = await unlock(ep.id);
     if (r.ok) {
       setEpisode((prev) => (prev ? { ...prev, unlocked: true } : prev));
+      const cached = detailCache.get(drama.id);
+      if (cached) {
+        const episodes = cached.detail.episodes.map((row) =>
+          String(row.id) === String(ep.id) ? { ...row, unlocked: true } : row,
+        );
+        detailCache.set(drama.id, {
+          detail: { ...cached.detail, episodes },
+          episode: cached.episode && String(cached.episode.id) === String(ep.id)
+            ? { ...cached.episode, unlocked: true }
+            : cached.episode,
+        });
+      }
     }
     return r;
   }
+
+  async function handleBuyDrama() {
+    const dramaId = drama.numericId || drama.id;
+    if (!dramaId) return { ok: false, error: "missing_id" };
+    try {
+      const r = await unlockDrama(dramaId);
+      setEpisode((prev) => (prev ? { ...prev, unlocked: true } : prev));
+      const cached = detailCache.get(drama.id);
+      if (cached) {
+        const episodes = cached.detail.episodes.map((row) => ({ ...row, unlocked: true }));
+        const detail = { ...cached.detail, episodes, dramaUnlocked: true };
+        detailCache.set(drama.id, {
+          detail,
+          episode: episode ? { ...episode, unlocked: true } : pickEpisode(detail),
+        });
+      }
+      await refreshWallet();
+      return { ok: true, alreadyUnlocked: !!r?.alreadyUnlocked };
+    } catch (e: any) {
+      return {
+        ok: false,
+        error: e?.message || "fail",
+        code: typeof e?.status === "number" ? e.status : undefined,
+      };
+    }
+  }
+
+  const buyoutCreditsNum = (() => {
+    const cached = detailCache.get(drama.id)?.detail;
+    const raw = cached?.buyoutCredits ?? cached?.drama.buyoutCredits ?? drama.buyoutCredits;
+    const n = Number(raw);
+    const unlockedAll = !!cached?.dramaUnlocked;
+    if (unlockedAll) return null;
+    return Number.isFinite(n) && n > 0 ? n : null;
+  })();
 
   useEffect(() => {
     if (!active) return;
@@ -1090,6 +1154,8 @@ function FeedPage({
         episode={episode}
         onClose={() => setUnlockOpen(false)}
         onConfirmed={handleUnlockConfirm}
+        buyoutCredits={buyoutCreditsNum}
+        onBuyDrama={buyoutCreditsNum != null ? handleBuyDrama : undefined}
         vipActive={!!user?.isVip}
       />
     </div>

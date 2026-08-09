@@ -751,7 +751,7 @@ export default function AdminDashboardPage() {
       },
       { key: "orders", header: t("orderCount"), cell: (r) => String(r.orderCount ?? 0) },
       { key: "credits", header: t("colCredits"), cell: (r) => fmtNum(r.credits), className: "tabular-nums" },
-      { key: "vnd", header: "VND", cell: (r) => fmtNum(r.amountVnd), className: "tabular-nums" },
+      { key: "vnd", header: "USD", cell: (r) => fmtNum(r.amountVnd), className: "tabular-nums" },
     ],
     [t],
   );

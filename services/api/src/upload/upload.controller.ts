@@ -111,7 +111,7 @@ export class UploadController {
       rel.includes('..') ||
       !(rel.startsWith('uploads/') || rel.startsWith('hls/') || rel.startsWith('import/'))
     ) {
-      throw new BizException(BizCode.BAD_REQUEST, 'relativePath không hợp lệ');
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.relativePathInvalid');
     }
     // Touch path under storage roots (throws on traversal).
     this.upload.resolveAbs(rel);
@@ -127,6 +127,8 @@ export class UploadController {
     if (ep.drama.status !== 'DRAFT' && ep.drama.status !== 'REJECTED') {
       throw new BizException(BizCode.CONFLICT, '审核中或已上线的作品不能启动转码');
     }
+    // Reject cross-tenant media paths (knowing another creator's uploads/ path is not enough).
+    this.upload.assertCallerOwnsMediaPath(user.userId, rel, ep);
     await this.prisma.episode.update({
       where: { id: ep.id },
       data: {
@@ -164,7 +166,7 @@ export class UploadController {
       limits: { fileSize: 5 * 1024 * 1024 },
       fileFilter: (_req, file, cb) => {
         const ok = ['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype);
-        cb(ok ? null : new Error(`mime không hợp lệ: ${file.mimetype}`), ok);
+        cb(ok ? null : new Error(`Invalid mime: ${file.mimetype}`), ok);
       },
     }),
   )
@@ -190,7 +192,7 @@ export class UploadController {
       limits: { fileSize: 2 * 1024 * 1024 },
       fileFilter: (_req, file, cb) => {
         const ok = ['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype);
-        cb(ok ? null : new Error(`mime không hợp lệ: ${file.mimetype}`), ok);
+        cb(ok ? null : new Error(`Invalid mime: ${file.mimetype}`), ok);
       },
     }),
   )

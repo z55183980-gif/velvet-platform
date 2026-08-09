@@ -1039,7 +1039,7 @@ export class AdminService {
       where: { id: BigInt(id) },
       select: { id: true, status: true },
     });
-    if (!drama) throw new BizException(BizCode.NOT_FOUND, 'Drama không tồn tại');
+    if (!drama) throw new BizException(BizCode.NOT_FOUND, 'drama.notFound');
     if (drama.status !== 'LIVE') {
       throw new BizException(BizCode.BAD_REQUEST, 'validation.bannerDramaNotLive');
     }
@@ -1090,7 +1090,7 @@ export class AdminService {
     const startAt = new Date(dto.startAt);
     const endAt = new Date(dto.endAt);
     if (Number.isNaN(startAt.getTime()) || Number.isNaN(endAt.getTime())) {
-      throw new BizException(BizCode.BAD_REQUEST, 'startAt/endAt không hợp lệ');
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.startEndInvalid');
     }
     if (endAt <= startAt) {
       throw new BizException(BizCode.BAD_REQUEST, 'validation.endAfterStart');
@@ -1146,14 +1146,14 @@ export class AdminService {
     if (dto.focusZoom != null) data.focusZoom = this.clampBannerZoom(dto.focusZoom, 100);
     if (dto.isActive != null) data.isActive = !!dto.isActive;
     if (data.startAt && Number.isNaN(data.startAt.getTime())) {
-      throw new BizException(BizCode.BAD_REQUEST, 'startAt không hợp lệ');
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.startAtInvalid');
     }
     if (data.endAt && Number.isNaN(data.endAt.getTime())) {
-      throw new BizException(BizCode.BAD_REQUEST, 'endAt không hợp lệ');
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.endAtInvalid');
     }
     if (data.startAt || data.endAt) {
       const existing = await this.prisma.banner.findUnique({ where: { id: BigInt(id) } });
-      if (!existing) throw new BizException(BizCode.NOT_FOUND, 'Banner không tồn tại');
+      if (!existing) throw new BizException(BizCode.NOT_FOUND, 'banner.notFound');
       const start = data.startAt ?? existing.startAt;
       const end = data.endAt ?? existing.endAt;
       if (end <= start) {
@@ -1241,10 +1241,7 @@ export class AdminService {
   async deleteCategory(slug: string, actorId?: bigint) {
     const cnt = await this.prisma.drama.count({ where: { categorySlug: slug } });
     if (cnt > 0) {
-      throw new BizException(
-        BizCode.CONFLICT,
-        `Không thể xoá: có ${cnt} phim đang dùng danh mục này`,
-      );
+      throw new BizException(BizCode.CONFLICT, 'category.hasDramas', undefined, { count: cnt });
     }
     await this.prisma.category.delete({ where: { slug } });
     await this.audit.write({
@@ -1762,10 +1759,9 @@ export class AdminService {
     const dramaId = BigInt(id);
     const cnt = await this.prisma.order.count({ where: { dramaId } });
     if (cnt > 0) {
-      throw new BizException(
-        BizCode.CONFLICT,
-        `Không thể xoá: có ${cnt} đơn hàng liên quan. Hãy OFFLINE thay vì xoá.`,
-      );
+      throw new BizException(BizCode.CONFLICT, 'drama.hasOrdersCannotDelete', undefined, {
+        count: cnt,
+      });
     }
     const drama = await this.prisma.drama.findUnique({
       where: { id: dramaId },

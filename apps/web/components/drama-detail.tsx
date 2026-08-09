@@ -46,7 +46,9 @@ import {
   checkLike,
   addLike,
   removeLike,
+  unlockDrama,
 } from "@/lib/api";
+import { guestNeedsLoginForEpisode } from "@/lib/episode-membership";
 import { categoryName, episodeIsLandscape, type Drama, type Episode } from "@/lib/mock-data";
 import { useGuestWatchQuota } from "@/lib/use-guest-watch-quota";
 import { canGoBackInApp } from "@/lib/nav-history";
@@ -192,7 +194,7 @@ export function DramaDetail({
 }) {
   const router = useRouter();
   const { locale, t } = useLocale();
-  const { user, openLogin, unlock, ready: authReady } = useAuth();
+  const { user, openLogin, unlock, refreshWallet, ready: authReady, sessionEpoch } = useAuth();
   const { ready: guestReady, canWatch: canGuestWatch, markWatched: markGuestWatched } = useGuestWatchQuota();
   const { mobile: isMobile, ready: mobileReady } = useIsMobile();
   const [pendingLandscapeFs, setPendingLandscapeFs] = useState(autoLandscapeFs);
@@ -281,9 +283,10 @@ export function DramaDetail({
   const playUrlInflightRef = useRef(new Map<string, Promise<PlayUrlCacheEntry | null>>());
   const warmNextRef = useRef<{ episodeId: string; destroy: () => void } | null>(null);
   const nextWarmArmedRef = useRef(false);
-  /** Bound signed play URLs to account — guest/B must not reuse A's paid URL. */
-  const authCacheKey =
-    user?.email || user?.phone || user?.username || user?.label || (authReady ? "guest" : "pending");
+  /** Bound signed play URLs to account + session epoch — guest/B must not reuse A's paid URL. */
+  const authCacheKey = `${
+    user?.id || user?.email || user?.phone || user?.username || user?.label || (authReady ? "guest" : "pending")
+  }:e${sessionEpoch}`;
 
   const playCacheKey = useCallback(
     (episodeId: string) => `${authCacheKey}:${episodeId}`,
@@ -644,8 +647,9 @@ export function DramaDetail({
       })
       .catch((e) => {
         if (ac.signal.aborted) return;
+        // Never paint raw API/ops messages (e.g. yt-dlp) on the player.
         if (e?.status === 401) setPlayErr(t("errors.loginRequired"));
-        else setPlayErr(e?.message || t("player.error"));
+        else setPlayErr(t("player.error"));
       });
     return () => ac.abort();
   }, [
@@ -840,12 +844,18 @@ export function DramaDetail({
       if (video.currentTime < previewLimit) return;
       video.pause();
       video.currentTime = previewLimit;
+      if (!authReady) return;
+      // Guests → login; logged-in non-VIP → unlock sheet.
+      if (!user) {
+        openLogin();
+        return;
+      }
       setUnlockTarget(selected);
       setUnlockOpen(true);
     };
     video.addEventListener("timeupdate", onTimeUpdate);
     return () => video.removeEventListener("timeupdate", onTimeUpdate);
-  }, [playUrl, previewLimit, selected, isUnlocked]);
+  }, [playUrl, previewLimit, selected, isUnlocked, authReady, user, openLogin]);
 
   useEffect(() => {
     if (!data?.drama.categorySlug) return;
@@ -1314,9 +1324,10 @@ export function DramaDetail({
     }
   };
 
-  /** Locked episode tap → unlock sheet (pay per-episode with credits, or upgrade to VIP). */
+  /** Locked episode tap → login (guest) or unlock sheet (logged-in non-VIP). */
   function openUnlockGate(ep?: Episode) {
     if (!authReady) return;
+    setDrawerOpen(false);
     if (!user) {
       openLogin();
       return;
@@ -1338,12 +1349,38 @@ export function DramaDetail({
     return r;
   }
 
+  async function handleBuyDrama() {
+    const dramaId = data?.drama.numericId || id;
+    if (!dramaId) return { ok: false, error: "missing_id" };
+    try {
+      const r = await unlockDrama(dramaId);
+      setData((prev) => (prev ? { ...prev, dramaUnlocked: true } : prev));
+      setUnlockedNos(new Set((data?.episodes ?? []).map((ep) => ep.no)));
+      await refreshWallet();
+      return { ok: true, alreadyUnlocked: !!r?.alreadyUnlocked };
+    } catch (e: any) {
+      return {
+        ok: false,
+        error: e?.message || "fail",
+        code: typeof e?.status === "number" ? e.status : undefined,
+      };
+    }
+  }
+
+  const buyoutCreditsNum = (() => {
+    const raw = data?.buyoutCredits ?? data?.drama.buyoutCredits;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  })();
+
   const unlockSheetEl = (
     <UnlockSheet
       open={unlockOpen}
       episode={unlockTarget}
       onClose={() => setUnlockOpen(false)}
       onConfirmed={handleUnlockConfirm}
+      buyoutCredits={data?.dramaUnlocked ? null : buyoutCreditsNum}
+      onBuyDrama={data?.dramaUnlocked ? undefined : handleBuyDrama}
       vipActive={!!user?.isVip}
     />
   );
@@ -1369,19 +1406,24 @@ export function DramaDetail({
   function playNext() {
     if (!selected || !data) return;
     const idx = data.episodes.findIndex((e) => e.no === selected.no);
-    for (let i = idx + 1; i < data.episodes.length; i++) {
-      const ep = data.episodes[i];
-      if (isUnlocked(ep)) {
-        setSelected(ep);
-        return;
-      }
+    const next = idx >= 0 ? data.episodes[idx + 1] : undefined;
+    if (!next) return;
+    // Immediate next — guests hitting member-priced must open login (not skip / no-op).
+    if (guestNeedsLoginForEpisode(next, { user, isUnlocked: isUnlocked(next) })) {
+      openUnlockGate(next);
+      return;
     }
+    if (isUnlocked(next) || (next.previewSeconds || 0) > 0) {
+      setSelected(next);
+      return;
+    }
+    openUnlockGate(next);
   }
 
   const hasNext = (() => {
     if (!selected || !data) return false;
     const idx = data.episodes.findIndex((e) => e.no === selected.no);
-    return data.episodes.slice(idx + 1).some((e) => isUnlocked(e));
+    return idx >= 0 && idx + 1 < data.episodes.length;
   })();
 
   // session 未就绪时不要误显示「请登录」（V3-01）
@@ -1392,6 +1434,10 @@ export function DramaDetail({
   const playLoading = !authReady || !guestReady || (canPlay && !playUrl && !playErr);
 
   const selectEpisode = (ep: Episode) => {
+    if (guestNeedsLoginForEpisode(ep, { user, isUnlocked: isUnlocked(ep) })) {
+      openUnlockGate(ep);
+      return;
+    }
     if (isUnlocked(ep) || (ep.previewSeconds || 0) > 0) {
       setSelected(ep);
       setDrawerOpen(false);

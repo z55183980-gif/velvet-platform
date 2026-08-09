@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 
-/** 任意数值输入 → BigInt（VND 整数）。Number 在 9e15 内精度安全。 */
+/** 任意数值输入 → BigInt（USD cents 整数；历史列名仍为 *Vnd）。Number 在 9e15 内精度安全。 */
 export function toBigInt(v: number | string | bigint): bigint {
   if (typeof v === 'bigint') return v;
   return BigInt(Math.trunc(Number(v)));

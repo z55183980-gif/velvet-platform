@@ -34,6 +34,8 @@ const POLICY_KEYS = new Set([
   "episodeLockMode",
   "defaultFreeEpisodes",
   "defaultPreviewSeconds",
+  "defaultPriceCredits",
+  "defaultBuyoutDiscountPercent",
 ]);
 
 const GENERAL_KEYS = [
@@ -89,7 +91,7 @@ export default function AdminSettingsPage() {
   const [maintenanceMessage, setMaintenanceMessage] = useState("");
 
   const [revenueSharePercent, setRevenueSharePercent] = useState("70");
-  const [minWithdrawVnd, setMinWithdrawVnd] = useState("100000");
+  const [minWithdrawVnd, setMinWithdrawVnd] = useState("1000");
   const [pitRatePercent, setPitRatePercent] = useState("5");
 
   const [lockMode, setLockMode] = useState<LockMode>("FREE_FIRST_N");
@@ -97,6 +99,7 @@ export default function AdminSettingsPage() {
   const [freeRangeStart, setFreeRangeStart] = useState("1");
   const [freeRangeEnd, setFreeRangeEnd] = useState("3");
   const [priceCredits, setPriceCredits] = useState(10);
+  const [buyoutDiscountPercent, setBuyoutDiscountPercent] = useState(70);
   const [allowPreview, setAllowPreview] = useState(false);
   const [previewSeconds, setPreviewSeconds] = useState(10);
   const [error, setError] = useState<string | null>(null);
@@ -133,7 +136,7 @@ export default function AdminSettingsPage() {
     setMaintenanceMessage(String(settingValue(settingsQ.data, "maintenanceMessage") ?? ""));
 
     setRevenueSharePercent(toPercentInput(settingValue(settingsQ.data, "revenueShareDefault"), 70));
-    setMinWithdrawVnd(String(settingValue(settingsQ.data, "minWithdrawVnd") ?? 100000));
+    setMinWithdrawVnd(String(settingValue(settingsQ.data, "minWithdrawVnd") ?? 1000));
     setPitRatePercent(toPercentInput(settingValue(settingsQ.data, "pitRate"), 5));
 
     const mode = parseLockMode(settingValue(settingsQ.data, "episodeLockMode"));
@@ -157,6 +160,12 @@ export default function AdminSettingsPage() {
     const previewN = Number.isFinite(previewRaw) ? Math.max(0, Math.floor(previewRaw)) : 0;
     setAllowPreview(previewN > 0);
     setPreviewSeconds(previewN > 0 ? previewN : 10);
+    const priceRaw = Number(settingValue(settingsQ.data, "defaultPriceCredits"));
+    setPriceCredits(Number.isFinite(priceRaw) && priceRaw >= 1 ? Math.floor(priceRaw) : 10);
+    const discountRaw = Number(settingValue(settingsQ.data, "defaultBuyoutDiscountPercent"));
+    setBuyoutDiscountPercent(
+      Number.isFinite(discountRaw) ? Math.min(100, Math.max(0, Math.floor(discountRaw))) : 70,
+    );
   }, [settingsQ.data]);
 
   const generalMut = useMutation({
@@ -210,6 +219,10 @@ export default function AdminSettingsPage() {
       if (nextMode !== "ALL_FREE" && freeCount > 0 && priceCredits <= 0) {
         throw new Error(t("policyPriceInvalid"));
       }
+      const discount = Math.floor(Number(buyoutDiscountPercent));
+      if (!Number.isFinite(discount) || discount < 0 || discount > 100) {
+        throw new Error(t("buyoutDiscountInvalid"));
+      }
       const previewN =
         nextMode !== "ALL_FREE" && allowPreview
           ? Math.max(1, Math.floor(Number(previewSeconds) || 10))
@@ -220,6 +233,8 @@ export default function AdminSettingsPage() {
       await adminUpdateSetting("episodeLockMode", nextMode);
       await adminUpdateSetting("defaultFreeEpisodes", freeCount);
       await adminUpdateSetting("defaultPreviewSeconds", previewN);
+      await adminUpdateSetting("defaultPriceCredits", Math.max(1, Math.floor(priceCredits || 10)));
+      await adminUpdateSetting("defaultBuyoutDiscountPercent", discount);
       setLockMode(nextMode);
     },
     onSuccess: () => {
@@ -590,6 +605,8 @@ export default function AdminSettingsPage() {
             onFreeRangeEndChange={setFreeRangeEnd}
             priceCredits={priceCredits}
             onPriceCreditsChange={setPriceCredits}
+            buyoutDiscountPercent={buyoutDiscountPercent}
+            onBuyoutDiscountPercentChange={setBuyoutDiscountPercent}
             allowPreview={allowPreview}
             onAllowPreviewChange={setAllowPreview}
             previewSeconds={previewSeconds}

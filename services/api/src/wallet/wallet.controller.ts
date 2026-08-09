@@ -95,7 +95,7 @@ export class WalletController {
       return ok({ alreadyRequested: true, orderNo });
     }
     if (order.refundStatus === 'APPROVED') {
-      throw new BizException(BizCode.CONFLICT, 'Đơn đã được xử lý');
+      throw new BizException(BizCode.CONFLICT, 'request.alreadyProcessed');
     }
     const updated = await this.prisma.order.update({
       where: { id: order.id },

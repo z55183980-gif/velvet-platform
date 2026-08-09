@@ -11,6 +11,7 @@ import { PlatformSettingsService } from '../common/platform-settings.service';
 import { createStripeCheckoutSession } from '../payments/stripe-checkout';
 import {
   isFinanceOpsFrozen,
+  isMoneyInBlocked,
   resolveUsdCentsPerCredit,
   splitWalletCreditsLedger,
   usdCentsToPayAmountMajor,
@@ -76,6 +77,27 @@ export class WalletService {
   }
 
   // ============ 充值下单（USD 标价；积分以套餐为准）============
+  /** Block Stripe money-in while freeze; TOPUP also requires FX. */
+  private assertMoneyInAllowed(opts?: { requireFx?: boolean }) {
+    const gate = isMoneyInBlocked({
+      usdCentsPerCredit: resolveUsdCentsPerCredit(null),
+      requireFx: opts?.requireFx,
+    });
+    if (!gate.blocked) return;
+    if (gate.reason === 'fx_missing') {
+      throw new BizException(
+        BizCode.BAD_REQUEST,
+        'ledger.usdCentsPerCreditRequired',
+        HttpStatus.SERVICE_UNAVAILABLE,
+      );
+    }
+    throw new BizException(
+      BizCode.BAD_REQUEST,
+      'finance.opsFrozen',
+      HttpStatus.SERVICE_UNAVAILABLE,
+    );
+  }
+
   async createTopupOrder(
     dto: {
       packageId: number | string;
@@ -86,6 +108,7 @@ export class WalletService {
     },
     userId: bigint,
   ) {
+    this.assertMoneyInAllowed({ requireFx: true });
     const currency = PAY_CURRENCY;
     const pkg = await this.packages.getActive(toBigInt(dto.packageId));
     const payAmount = new Prisma.Decimal(pkg.basePrice.toString()).toDecimalPlaces(
@@ -93,7 +116,7 @@ export class WalletService {
       Prisma.Decimal.ROUND_HALF_UP,
     );
     const credits = pkg.credits;
-    if (credits <= 0n) throw new BizException(BizCode.BAD_REQUEST, 'Gói nạp không hợp lệ');
+    if (credits <= 0n) throw new BizException(BizCode.BAD_REQUEST, 'topupPackage.invalid');
 
     const idem =
       dto.idempotencyKey ||
@@ -171,6 +194,7 @@ export class WalletService {
     },
     userId: bigint,
   ) {
+    this.assertMoneyInAllowed({ requireFx: false });
     const currency = PAY_CURRENCY;
     const plan = await this.vipPlans.getActive(toBigInt(dto.vipPlanId));
     const payAmount = new Prisma.Decimal(plan.basePrice.toString()).toDecimalPlaces(
@@ -262,10 +286,10 @@ export class WalletService {
     }
 
     const drama = await this.prisma.drama.findUnique({ where: { id: dramaId } });
-    if (!drama) throw new BizException(BizCode.NOT_FOUND, 'Phim không tồn tại');
+    if (!drama) throw new BizException(BizCode.NOT_FOUND, 'drama.notFound');
     const buyout = drama.buyoutCredits ?? 0n;
     if (buyout <= 0n) {
-      throw new BizException(BizCode.BAD_REQUEST, 'Phim này không hỗ trợ mua cả bộ');
+      throw new BizException(BizCode.BAD_REQUEST, 'drama.buyoutUnsupported');
     }
 
     await this.ensureWallet(userId);
@@ -343,10 +367,10 @@ export class WalletService {
           buyout,
           order.id,
           'UNLOCK',
-          `Mua cả bộ #${dramaId}`,
+          `Buy full drama #${dramaId}`,
         );
         if (!okCharge) {
-          throw new BizException(BizCode.INSUFFICIENT_BALANCE, 'Số dư credits không đủ để mua cả bộ');
+          throw new BizException(BizCode.INSUFFICIENT_BALANCE, 'wallet.insufficientForBuyout');
         }
 
         await tx.order.update({
@@ -504,9 +528,9 @@ export class WalletService {
           episode.priceCredits,
           order.id,
           'UNLOCK',
-          `Mở tập ${episode.episodeNumber}`,
+          `Unlock episode ${episode.episodeNumber}`,
         );
-        if (!charged) throw new BizException(BizCode.INSUFFICIENT_BALANCE, 'Số dư không đủ để mở tập này');
+        if (!charged) throw new BizException(BizCode.INSUFFICIENT_BALANCE, 'wallet.insufficientForUnlock');
 
         const paidAt = new Date();
         // Preserve create-time payAmount (USD major) / fx metadata — do not overwrite
@@ -644,13 +668,10 @@ export class WalletService {
     // 充值单禁止用户自助退款（防刷积分）；仅允许解锁单自助退
     if (order.orderType === 'TOPUP') {
       this.log.warn({ event: 'wallet.refund.topup_blocked', orderNo, userId });
-      throw new BizException(
-        BizCode.FORBIDDEN,
-        'Đơn nạp không hỗ trợ tự hoàn tiền, vui lòng liên hệ quản trị',
-      );
+      throw new BizException(BizCode.FORBIDDEN, 'order.topupSelfRefundForbidden');
     }
     if (order.orderType !== 'EPISODE_UNLOCK') {
-      throw new BizException(BizCode.FORBIDDEN, 'Loại đơn này không hỗ trợ hoàn tiền');
+      throw new BizException(BizCode.FORBIDDEN, 'order.typeNoRefund');
     }
     if (order.paymentStatus === 'REFUNDED') {
       return { refunded: true, alreadyRefunded: true, orderNo };
@@ -697,7 +718,7 @@ export class WalletService {
               amountCredits: order.amountCredits,
               orderId: order.id,
               balanceAfter: newBalance,
-              remark: reason || 'Hoàn tiền',
+              remark: reason || 'Refund',
             },
           });
           credited = true;
@@ -705,7 +726,7 @@ export class WalletService {
         }
       }
       if (!credited) {
-        throw new BizException(BizCode.CONFLICT, 'Hoàn tiền thất bại, vui lòng thử lại');
+        throw new BizException(BizCode.CONFLICT, 'wallet.refundFailed');
       }
 
       if (order.orderType === 'EPISODE_UNLOCK' && order.creatorId) {
@@ -785,7 +806,7 @@ export class WalletService {
     const order = await this.prisma.order.findUnique({ where: { orderNo } });
     if (!order) throw new BizException(BizCode.NOT_FOUND, 'order.notFound');
     if (order.orderType !== 'TOPUP') {
-      throw new BizException(BizCode.FORBIDDEN, 'Chỉ dùng cho đơn nạp');
+      throw new BizException(BizCode.FORBIDDEN, 'order.topupOnly');
     }
     if (order.paymentStatus === 'REFUNDED') {
       return { refunded: true, alreadyRefunded: true, orderNo };
@@ -834,14 +855,14 @@ export class WalletService {
               orderId: order.id,
               balanceAfter: newBalance,
               remark:
-                (reason || 'Hoàn nạp') +
+                (reason || 'Top-up refund') +
                 (newBalance < 0n ? ' (debt/negative balance)' : ''),
             },
           });
           break;
         }
         if (attempt === WALLET_RETRY - 1) {
-          throw new BizException(BizCode.CONFLICT, 'Ví đang bận, thử lại');
+          throw new BizException(BizCode.CONFLICT, 'wallet.busy');
         }
       }
       return { refunded: true, alreadyRefunded: false, orderNo };
@@ -1061,7 +1082,7 @@ export class WalletService {
       durationDays = Number((order.meta as any).durationDays) || 0;
     }
     if (durationDays < 1) {
-      throw new BizException(BizCode.BAD_REQUEST, 'VIP plan duration không hợp lệ');
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.vipDurationInvalid');
     }
 
     const user = await tx.user.findUnique({
@@ -1112,7 +1133,7 @@ export class WalletService {
             amountCredits: credits,
             orderId: order.id,
             balanceAfter: credits,
-            remark: 'Nạp tiền',
+            remark: 'Top-up',
           },
         });
         finalBalance = credits;
@@ -1136,7 +1157,7 @@ export class WalletService {
             amountCredits: credits,
             orderId: order.id,
             balanceAfter: newBalance,
-            remark: 'Nạp tiền',
+            remark: 'Top-up',
           },
         });
         finalBalance = newBalance;
@@ -1173,7 +1194,7 @@ export class WalletService {
 
   /**
    * Accrue creator pending income in **USD cents** (legacy *Vnd columns).
-   * No-ops while FINANCE_OPS_FROZEN — stops mixing credits/VND into withdrawable balances.
+   * No-ops while FINANCE_OPS_FROZEN — stops mixing credits/legacy units into withdrawable balances.
    */
   private async creditCreator(
     tx: Prisma.TransactionClient,

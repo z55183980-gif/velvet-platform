@@ -70,20 +70,20 @@ class CreateEpisodeDto {
 class SubmitKycDto {
   @IsNotEmpty()
   @IsString()
-  @Matches(/^\d{9}$|^\d{12}$/, { message: 'cccdNumber phải là 9 hoặc 12 chữ số' })
+  @Matches(/^\d{9}$|^\d{12}$/, { message: 'validation.cccdNumber' })
   cccdNumber!: string;
 
   @IsNotEmpty()
   @IsString()
   @Matches(/^(https?:\/\/|\/api\/v1\/media\/|docs\/)/i, {
-    message: 'cccdFrontUrl phải là https://、/api/v1/media/ 或 docs/',
+    message: 'validation.cccdFrontUrl',
   })
   cccdFrontUrl!: string;
 
   @IsNotEmpty()
   @IsString()
   @Matches(/^(https?:\/\/|\/api\/v1\/media\/|docs\/)/i, {
-    message: 'cccdBackUrl phải là https://、/api/v1/media/ 或 docs/',
+    message: 'validation.cccdBackUrl',
   })
   cccdBackUrl!: string;
 

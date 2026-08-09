@@ -86,7 +86,7 @@ export class RedeemService implements OnModuleInit {
   /** 观众兑换卡密 */
   async redeem(userId: bigint, rawCode: string) {
     const code = normalizeRedeemCode(rawCode);
-    if (!code) throw new BizException(BizCode.BAD_REQUEST, 'Mã không hợp lệ');
+    if (!code) throw new BizException(BizCode.BAD_REQUEST, 'code.invalid');
 
     return this.prisma.$transaction(async (tx) => {
       const codeHash = hashRedeemCode(code, this.pepper);
@@ -100,11 +100,11 @@ export class RedeemService implements OnModuleInit {
           });
         }
       }
-      if (!row) throw new BizException(BizCode.NOT_FOUND, 'Mã không tồn tại');
-      if (row.status === 'VOID') throw new BizException(BizCode.FORBIDDEN, 'Mã đã bị vô hiệu');
+      if (!row) throw new BizException(BizCode.NOT_FOUND, 'code.notFound');
+      if (row.status === 'VOID') throw new BizException(BizCode.FORBIDDEN, 'code.voided');
       if (row.status === 'USED') throw new BizException(BizCode.CONFLICT, 'code.alreadyUsed');
       if (row.expiresAt && row.expiresAt.getTime() < Date.now()) {
-        throw new BizException(BizCode.FORBIDDEN, 'Mã đã hết hạn');
+        throw new BizException(BizCode.FORBIDDEN, 'code.expired');
       }
 
       const claimed = await tx.redeemCode.updateMany({
@@ -121,7 +121,7 @@ export class RedeemService implements OnModuleInit {
 
       if (row.type === 'VIP') {
         const days = row.vipDays ?? 0;
-        if (days < 1) throw new BizException(BizCode.BAD_REQUEST, 'VIP days không hợp lệ');
+        if (days < 1) throw new BizException(BizCode.BAD_REQUEST, 'validation.vipDaysInvalid');
         const user = await tx.user.findUnique({ where: { id: userId }, select: { vipExpireAt: true } });
         vipExpireAt = VipPlansService.computeExpireAt(user?.vipExpireAt, days);
         await tx.user.update({ where: { id: userId }, data: { vipExpireAt } });
@@ -149,7 +149,7 @@ export class RedeemService implements OnModuleInit {
         orderId = order.id;
       } else {
         const credits = row.creditsAmount ?? 0n;
-        if (credits <= 0n) throw new BizException(BizCode.BAD_REQUEST, 'Credits không hợp lệ');
+        if (credits <= 0n) throw new BizException(BizCode.BAD_REQUEST, 'validation.creditsInvalid');
         creditsGranted = credits;
 
         const order = await tx.order.create({
@@ -174,7 +174,7 @@ export class RedeemService implements OnModuleInit {
         });
         orderId = order.id;
 
-        await this.creditWallet(tx, userId, credits, order.id, 'Đổi mã thưởng');
+        await this.creditWallet(tx, userId, credits, order.id, 'Redeem bonus');
       }
 
       await tx.redeemRedemption.create({
@@ -266,11 +266,11 @@ export class RedeemService implements OnModuleInit {
   ) {
     const quantity = Math.floor(Number(dto.quantity));
     if (!Number.isFinite(quantity) || quantity < 1 || quantity > 5000) {
-      throw new BizException(BizCode.BAD_REQUEST, 'quantity phải trong 1..5000');
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.quantityRange');
     }
     const type = dto.type as RedeemCodeType;
     if (type !== 'VIP' && type !== 'CREDITS') {
-      throw new BizException(BizCode.BAD_REQUEST, 'type phải là VIP hoặc CREDITS');
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.redeemType');
     }
 
     let vipDays: number | null = null;
@@ -278,16 +278,17 @@ export class RedeemService implements OnModuleInit {
     if (type === 'VIP') {
       vipDays = Math.floor(Number(dto.vipDays));
       if (!Number.isFinite(vipDays) || vipDays < 1) {
-        throw new BizException(BizCode.BAD_REQUEST, 'vipDays phải >= 1');
+        throw new BizException(BizCode.BAD_REQUEST, 'validation.vipDaysMin');
       }
     } else {
       creditsAmount = toBigInt(dto.creditsAmount ?? 0);
-      if (creditsAmount <= 0n) throw new BizException(BizCode.BAD_REQUEST, 'creditsAmount phải > 0');
+      if (creditsAmount <= 0n)
+        throw new BizException(BizCode.BAD_REQUEST, 'validation.creditsAmountPositive');
     }
 
     const expiresAt = dto.expiresAt ? new Date(dto.expiresAt) : null;
     if (expiresAt && Number.isNaN(expiresAt.getTime())) {
-      throw new BizException(BizCode.BAD_REQUEST, 'expiresAt không hợp lệ');
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.expiresAtInvalid');
     }
 
     const codes: string[] = [];

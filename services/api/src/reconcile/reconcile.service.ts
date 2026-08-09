@@ -4,7 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { fetchStripePaidCountsForDay } from '../payments/stripe-reconcile';
 import { isFinanceOpsFrozen } from '../common/ledger-units';
 
-const PROVIDERS = ['STRIPE', 'WECHAT', 'ALIPAY', 'MOMO', 'ZALOPAY', 'VIETQR', 'BANK_TRANSFER'];
+const PROVIDERS = ['STRIPE'];
 const T7_MS = 7 * 24 * 60 * 60 * 1000;
 
 function productionMode(): boolean {

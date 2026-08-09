@@ -96,7 +96,7 @@ export class UsersController {
       limits: { fileSize: 2 * 1024 * 1024 },
       fileFilter: (_req, file, cb) => {
         const okMime = ['image/jpeg', 'image/png', 'image/webp'].includes(file.mimetype);
-        cb(okMime ? null : new Error(`mime không hợp lệ: ${file.mimetype}`), okMime);
+        cb(okMime ? null : new Error(`Invalid mime: ${file.mimetype}`), okMime);
       },
     }),
   )

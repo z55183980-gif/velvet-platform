@@ -203,8 +203,70 @@ export class UploadService implements OnModuleInit {
   }
 
   /**
+   * Collect every uploads/ basename referenced by episodes (full pagination).
+   * Fail-closed: if the scan throws, callers must not delete media.
+   */
+  async collectReferencedUploadBasenames(opts?: {
+    pageSize?: number;
+  }): Promise<Set<string>> {
+    const referenced = new Set<string>();
+    const pageSize = Math.max(1, Math.floor(opts?.pageSize ?? 5_000));
+    let cursor: bigint | undefined;
+    for (;;) {
+      const rows = await this.prisma.episode.findMany({
+        select: { id: true, originalUrl: true, hlsUrl: true },
+        take: pageSize,
+        orderBy: { id: 'asc' },
+        ...(cursor != null ? { skip: 1, cursor: { id: cursor } } : {}),
+      });
+      if (rows.length === 0) break;
+      for (const r of rows) {
+        for (const u of [r.originalUrl, r.hlsUrl]) {
+          if (!u) continue;
+          const norm = u.replace(/\\/g, '/');
+          if (norm.startsWith('uploads/')) referenced.add(path.basename(norm));
+        }
+      }
+      cursor = rows[rows.length - 1].id;
+      if (rows.length < pageSize) break;
+    }
+    return referenced;
+  }
+
+  /**
+   * True when a media relative path is owned by the calling user or already
+   * bound to the given episode (blocks cross-tenant path injection).
+   */
+  assertCallerOwnsMediaPath(
+    userId: bigint,
+    relativePath: string,
+    episode: { originalUrl: string | null; hlsUrl: string | null },
+  ): void {
+    const rel = String(relativePath || '')
+      .replace(/\\/g, '/')
+      .replace(/^\/+/, '');
+    const epOrig = String(episode.originalUrl || '')
+      .replace(/\\/g, '/')
+      .replace(/^\/+/, '');
+    const epHls = String(episode.hlsUrl || '')
+      .replace(/\\/g, '/')
+      .replace(/^\/+/, '');
+    if (rel && (rel === epOrig || rel === epHls)) return;
+
+    if (rel.startsWith('uploads/')) {
+      const base = path.basename(rel);
+      if (base.startsWith(`${userId.toString()}-`)) return;
+      throw new BizException(BizCode.FORBIDDEN, 'upload.mediaNotOwned');
+    }
+
+    // hls/import (or other) paths must already be bound to this episode.
+    throw new BizException(BizCode.FORBIDDEN, 'upload.mediaNotOwned');
+  }
+
+  /**
    * Delete uploads/ files not referenced by any episode and older than TTL.
    * Also purges stale .multipart staging files (always safe — never final media).
+   * Never deletes based on a partial episode ref set — full paginated scan required.
    */
   async cleanupOrphanUploads(opts?: {
     ttlHours?: number;
@@ -214,17 +276,14 @@ export class UploadService implements OnModuleInit {
     let removed = 0;
     let freedBytes = 0;
 
-    const referenced = new Set<string>();
-    const rows = await this.prisma.episode.findMany({
-      select: { originalUrl: true, hlsUrl: true },
-      take: 50_000,
-    });
-    for (const r of rows) {
-      for (const u of [r.originalUrl, r.hlsUrl]) {
-        if (!u) continue;
-        const norm = u.replace(/\\/g, '/');
-        if (norm.startsWith('uploads/')) referenced.add(path.basename(norm));
-      }
+    let referenced: Set<string>;
+    try {
+      referenced = await this.collectReferencedUploadBasenames();
+    } catch (e) {
+      this.logger.error(
+        `orphan upload GC aborted — episode ref scan failed: ${(e as Error)?.message || e}`,
+      );
+      return { removed: 0, freedBytes: 0 };
     }
 
     const dir = this.getUploadDir();

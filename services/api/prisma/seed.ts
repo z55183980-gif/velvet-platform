@@ -174,6 +174,8 @@ async function main() {
     'episodeLockMode',
     'defaultFreeEpisodes',
     'defaultPreviewSeconds',
+    'defaultPriceCredits',
+    'defaultBuyoutDiscountPercent',
     'paymentGateways.stripe',
   ];
   await prisma.systemSetting.deleteMany({
@@ -188,11 +190,13 @@ async function main() {
     { key: 'maintenanceMode', value: false },
     { key: 'maintenanceMessage', value: '' },
     { key: 'revenueShareDefault', value: 0.7 },
-    { key: 'minWithdrawVnd', value: 100000 },
+    { key: 'minWithdrawVnd', value: 1000 },
     { key: 'pitRate', value: 0.05 },
     { key: 'episodeLockMode', value: 'FREE_FIRST_N' },
     { key: 'defaultFreeEpisodes', value: 3 },
     { key: 'defaultPreviewSeconds', value: 0 },
+    { key: 'defaultPriceCredits', value: 10 },
+    { key: 'defaultBuyoutDiscountPercent', value: 70 },
   ];
   for (const item of settingDefaults) {
     await prisma.systemSetting.upsert({

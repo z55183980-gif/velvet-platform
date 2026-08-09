@@ -175,7 +175,7 @@ export class VipPlansService {
   async getActive(id: bigint) {
     const row = await this.prisma.vipPlan.findUnique({ where: { id } });
     if (!row || !row.active) {
-      throw new BizException(BizCode.NOT_FOUND, 'Gói VIP không tồn tại hoặc đã tắt');
+      throw new BizException(BizCode.NOT_FOUND, 'vipPlan.notFoundOrDisabled');
     }
     return row;
   }
@@ -233,7 +233,7 @@ export class VipPlansService {
 
   async update(id: bigint, dto: Partial<VipPlanInput>, actorId?: bigint | null) {
     const prev = await this.prisma.vipPlan.findUnique({ where: { id } });
-    if (!prev) throw new BizException(BizCode.NOT_FOUND, 'Gói VIP không tồn tại');
+    if (!prev) throw new BizException(BizCode.NOT_FOUND, 'vipPlan.notFound');
 
     const data: Prisma.VipPlanUpdateInput = {};
     if (dto.nameEn !== undefined || dto.name !== undefined) {
@@ -294,7 +294,7 @@ export class VipPlansService {
 
   async remove(id: bigint, actorId?: bigint | null) {
     const prev = await this.prisma.vipPlan.findUnique({ where: { id } });
-    if (!prev) throw new BizException(BizCode.NOT_FOUND, 'Gói VIP không tồn tại');
+    if (!prev) throw new BizException(BizCode.NOT_FOUND, 'vipPlan.notFound');
 
     const orderCount = await this.prisma.order.count({ where: { vipPlanId: id } });
     if (orderCount > 0) {

@@ -942,6 +942,30 @@ export async function adminListUsers(params: Record<string, string | number | un
   return adminRequest(`/admin/users${toQuery(params)}`);
 }
 
+export async function adminCreateUser(body: {
+  email: string;
+  password: string;
+  username?: string;
+  nickname?: string;
+  phone?: string;
+  locale?: string;
+}) {
+  return adminRequest<{
+    id: string;
+    uuid?: string;
+    email?: string | null;
+    username?: string | null;
+    nickname?: string | null;
+    phone?: string | null;
+    locale?: string;
+    status?: string;
+    createdAt?: string;
+  }>(`/admin/users`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export async function adminGetUser(id: string) {
   return adminRequest(`/admin/users/${id}`);
 }

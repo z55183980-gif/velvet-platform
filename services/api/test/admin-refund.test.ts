@@ -81,7 +81,7 @@ test('approve does not revoke locally when Stripe refund is pending', async () =
   }
 });
 
-test('historical stripeRefundId is retrieved; failed status blocks local revoke', async () => {
+test('historical failed stripeRefundId is cleared and a new refund can be created', async () => {
   const prev = process.env.STRIPE_SECRET_KEY;
   process.env.STRIPE_SECRET_KEY = 'sk_test_dummy';
   const order = {
@@ -100,14 +100,31 @@ test('historical stripeRefundId is retrieved; failed status blocks local revoke'
   };
   try {
     const { service, walletCalls } = makeService(order);
-    const fetchImpl = (async (url: any) => {
-      assert.match(String(url), /\/v1\/refunds\/re_hist/);
+    let step = 0;
+    const fetchImpl = (async (url: any, init?: any) => {
+      step += 1;
+      if (step === 1) {
+        assert.match(String(url), /\/v1\/refunds\/re_hist/);
+        assert.equal(init?.method || 'GET', 'GET');
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: 're_hist',
+            status: 'failed',
+            amount: 999,
+            currency: 'usd',
+          }),
+        } as any;
+      }
+      assert.match(String(url), /\/v1\/refunds$/);
+      assert.equal(init?.method, 'POST');
       return {
         ok: true,
         status: 200,
         json: async () => ({
-          id: 're_hist',
-          status: 'failed',
+          id: 're_retry',
+          status: 'succeeded',
           amount: 999,
           currency: 'usd',
         }),
@@ -115,9 +132,55 @@ test('historical stripeRefundId is retrieved; failed status blocks local revoke'
     }) as typeof fetch;
 
     const result = await service.approve('VIP-1', 1n, { fetchImpl });
-    assert.equal((result as any).pendingProvider, true);
-    assert.equal((result as any).stripeRefundStatus, 'failed');
+    assert.equal(result.refunded, true);
+    assert.deepEqual(walletCalls, ['vip:VIP-1']);
+    assert.equal((order.meta as any).stripeRefundId, 're_retry');
+    assert.equal((order.meta as any).stripeRefundStaleCleared, 're_hist');
+  } finally {
+    if (prev === undefined) delete process.env.STRIPE_SECRET_KEY;
+    else process.env.STRIPE_SECRET_KEY = prev;
+  }
+});
+
+test('historical succeeded partial refund never full-revokes entitlements', async () => {
+  const prev = process.env.STRIPE_SECRET_KEY;
+  process.env.STRIPE_SECRET_KEY = 'sk_test_dummy';
+  const order = {
+    id: 5n,
+    orderNo: 'TOP-HIST-P',
+    userId: 9n,
+    paymentMethod: 'STRIPE',
+    paymentStatus: 'PAID',
+    refundStatus: 'REQUESTED',
+    orderType: 'TOPUP',
+    externalRef: 'pi_hist_partial',
+    amountVnd: 1000n,
+    amountCredits: 100n,
+    payCurrency: 'USD',
+    meta: { stripeRefundId: 're_partial_hist' },
+  };
+  try {
+    const { service, walletCalls } = makeService(order);
+    const fetchImpl = (async (url: any) => {
+      assert.match(String(url), /\/v1\/refunds\/re_partial_hist/);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: 're_partial_hist',
+          status: 'succeeded',
+          amount: 100,
+          currency: 'usd',
+        }),
+      } as any;
+    }) as typeof fetch;
+
+    await assert.rejects(
+      () => service.approve('TOP-HIST-P', 1n, { fetchImpl }),
+      (e: any) => e instanceof BizException && e.message === 'stripe.partialRefundUnsupported',
+    );
     assert.equal(walletCalls.length, 0);
+    assert.equal((order.meta as any).partialRefundPending, true);
   } finally {
     if (prev === undefined) delete process.env.STRIPE_SECRET_KEY;
     else process.env.STRIPE_SECRET_KEY = prev;

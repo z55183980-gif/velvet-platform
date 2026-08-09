@@ -155,7 +155,7 @@ export class UsersService {
       });
     } catch (e: any) {
       if (e?.code === 'P2025') {
-        throw new BizException(BizCode.NOT_FOUND, 'Chưa yêu thích phim này');
+        throw new BizException(BizCode.NOT_FOUND, 'favorite.notFound');
       }
       throw e;
     }

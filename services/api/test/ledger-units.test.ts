@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   creditsToUsdCents,
   isFinanceOpsFrozen,
+  isMoneyInBlocked,
   resolveUsdCentsPerCredit,
   splitWalletCreditsLedger,
   usdCentsToPayAmountMajor,
@@ -87,4 +88,42 @@ test('splitWalletCreditsLedger freezes creator income without settleable debt', 
   assert.equal(live.creatorIncomeUsdCents, 7n);
   assert.equal(live.platformFeeUsdCents, 3n);
   assert.equal(live.deferredCreatorIncomeUsdCents, null);
+});
+
+test('isMoneyInBlocked: freeze blocks all; missing FX blocks topup only', () => {
+  const prevF = process.env.FINANCE_OPS_FROZEN;
+  const prevFx = process.env.USD_CENTS_PER_CREDIT;
+  try {
+    process.env.FINANCE_OPS_FROZEN = '1';
+    delete process.env.USD_CENTS_PER_CREDIT;
+    assert.deepEqual(isMoneyInBlocked({ requireFx: true }), {
+      blocked: true,
+      reason: 'finance_frozen',
+    });
+    assert.deepEqual(isMoneyInBlocked({ requireFx: false }), {
+      blocked: true,
+      reason: 'finance_frozen',
+    });
+
+    process.env.FINANCE_OPS_FROZEN = '0';
+    assert.deepEqual(isMoneyInBlocked({ requireFx: true }), {
+      blocked: true,
+      reason: 'fx_missing',
+    });
+    assert.deepEqual(isMoneyInBlocked({ requireFx: false }), {
+      blocked: false,
+      reason: null,
+    });
+
+    process.env.USD_CENTS_PER_CREDIT = '1';
+    assert.deepEqual(isMoneyInBlocked({ requireFx: true }), {
+      blocked: false,
+      reason: null,
+    });
+  } finally {
+    if (prevF === undefined) delete process.env.FINANCE_OPS_FROZEN;
+    else process.env.FINANCE_OPS_FROZEN = prevF;
+    if (prevFx === undefined) delete process.env.USD_CENTS_PER_CREDIT;
+    else process.env.USD_CENTS_PER_CREDIT = prevFx;
+  }
 });

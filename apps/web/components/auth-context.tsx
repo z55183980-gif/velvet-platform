@@ -5,6 +5,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -55,6 +56,11 @@ interface AuthValue {
   balance: number | null;
   unlocked: Set<string>;
   ready: boolean;
+  /**
+   * Monotonic session generation — bumps on login/logout/identity change.
+   * Consumers key signed-URL caches and abort late wallet/session writes with this.
+   */
+  sessionEpoch: number;
   loginOpen: boolean;
   openLogin: (mode?: AuthMode) => void;
   closeLogin: () => void;
@@ -146,9 +152,9 @@ function usersEqual(a: AuthUser | null, b: AuthUser | null): boolean {
   );
 }
 
-function nextUser(prev: AuthUser | null, s: any, fallback?: string): AuthUser {
-  const next = toUser(s, fallback);
-  return prev && usersEqual(prev, next) ? prev : next;
+function principalKey(u: AuthUser | null | undefined): string {
+  if (!u) return "guest";
+  return String(u.id || u.email || u.phone || u.username || u.label || "user");
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -156,37 +162,58 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [balance, setBalance] = useState<number | null>(null);
   const [unlocked, setUnlocked] = useState<Set<string>>(new Set());
   const [ready, setReady] = useState(false);
+  const [sessionEpoch, setSessionEpoch] = useState(0);
   const [loginOpen, setLoginOpen] = useState(false);
   const [loginInitialMode, setLoginInitialMode] = useState<AuthMode>("login");
   const [rechargeOpen, setRechargeOpen] = useState(false);
   const [vipOpen, setVipOpen] = useState(false);
+  /** Guards late getSession/getWallet responses after account switch. */
+  const sessionGenRef = useRef(0);
+  const userPrincipalRef = useRef("guest");
+
+  const bumpSessionEpoch = useCallback((nextPrincipal: string) => {
+    if (nextPrincipal === userPrincipalRef.current) return sessionGenRef.current;
+    userPrincipalRef.current = nextPrincipal;
+    sessionGenRef.current += 1;
+    setSessionEpoch(sessionGenRef.current);
+    return sessionGenRef.current;
+  }, []);
 
   const refreshWallet = useCallback(async () => {
+    const gen = sessionGenRef.current;
     const w = await getWallet();
+    if (gen !== sessionGenRef.current) return;
     setBalance(w ? Number(w.balanceCredits) : null);
   }, []);
 
   const applySession = useCallback(
     async (s?: any, fallback?: string) => {
+      const genAtStart = sessionGenRef.current;
       const session = s || (await getSession());
+      if (genAtStart !== sessionGenRef.current) return false;
       if (session && (session.phone || session.email || session.username || session.id)) {
-        setUser((prev) => nextUser(prev, session, fallback));
+        const mapped = toUser(session, fallback);
+        bumpSessionEpoch(principalKey(mapped));
+        setUser((prev) => (prev && usersEqual(prev, mapped) ? prev : mapped));
         await refreshWallet();
         return true;
       }
       return false;
     },
-    [refreshWallet],
+    [refreshWallet, bumpSessionEpoch],
   );
 
   useEffect(() => {
     let cancelled = false;
+    const genAtStart = sessionGenRef.current;
     (async () => {
       try {
         const s = await getSession();
-        if (cancelled) return;
+        if (cancelled || genAtStart !== sessionGenRef.current) return;
         if (s && (s.phone || s.email || s.username || s.id)) {
-          setUser((prev) => nextUser(prev, s));
+          const mapped = toUser(s);
+          bumpSessionEpoch(principalKey(mapped));
+          setUser((prev) => (prev && usersEqual(prev, mapped) ? prev : mapped));
           void refreshWallet();
         }
       } finally {
@@ -196,7 +223,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [refreshWallet]);
+  }, [refreshWallet, bumpSessionEpoch]);
 
   // Full-page Google OAuth return (mobile / popup-blocked fallback)
   useEffect(() => {
@@ -238,12 +265,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!ready) return;
     const revalidate = () => {
+      const genAtStart = sessionGenRef.current;
       void getSession().then((s) => {
+        if (genAtStart !== sessionGenRef.current) return;
         if (s && (s.phone || s.email || s.username || s.id)) {
-          setUser((prev) => nextUser(prev, s));
+          const mapped = toUser(s);
+          bumpSessionEpoch(principalKey(mapped));
+          setUser((prev) => (prev && usersEqual(prev, mapped) ? prev : mapped));
           void refreshWallet();
         } else {
+          bumpSessionEpoch("guest");
           setUser(null);
+          setBalance(null);
         }
       });
     };
@@ -256,7 +289,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.removeEventListener("focus", revalidate);
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [ready, refreshWallet]);
+  }, [ready, refreshWallet, bumpSessionEpoch]);
 
   const openLogin = useCallback((mode: AuthMode = "login") => {
     setLoginInitialMode(mode);
@@ -337,10 +370,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     await apiLogout();
+    bumpSessionEpoch("guest");
     setUser(null);
     setBalance(null);
     setUnlocked(new Set());
-  }, []);
+  }, [bumpSessionEpoch]);
 
   const unlock = useCallback(
     async (episodeId: string | number) => {
@@ -348,8 +382,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setLoginOpen(true);
         return { ok: false, alreadyUnlocked: false, error: "need_login" };
       }
+      const gen = sessionGenRef.current;
       try {
         const r = await apiUnlock(episodeId);
+        if (gen !== sessionGenRef.current) {
+          return { ok: false, alreadyUnlocked: false, error: "stale_session" };
+        }
         setUnlocked((prev) => new Set(prev).add(String(episodeId)));
         await refreshWallet();
         track("unlock", {
@@ -381,6 +419,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         balance,
         unlocked,
         ready,
+        sessionEpoch,
         loginOpen,
         openLogin,
         closeLogin,

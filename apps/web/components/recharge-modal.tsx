@@ -1,13 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { X, Loader2, Check, Coins } from "lucide-react";
+import { X, Loader2, Coins } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { useAuth } from "@/components/auth-context";
 import {
   getTopupPackages,
   topupOrder,
-  simulatePay,
   type TopupPackageQuote,
 } from "@/lib/api";
 import { buttonVariants } from "@/components/ui/button";
@@ -16,8 +15,6 @@ import { track } from "@/lib/track";
 import { useDialogFocus } from "@/hooks/use-dialog-focus";
 
 const PAY_CURRENCY = "USD";
-
-type PayMethod = "STRIPE" | "SIMULATE";
 
 function packageParts(p: TopupPackageQuote) {
   const total = Number(p.credits) || 0;
@@ -28,14 +25,11 @@ function packageParts(p: TopupPackageQuote) {
 
 export function RechargeModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { t } = useLocale();
-  const { user, openLogin, refreshWallet } = useAuth();
-  const isDev = process.env.NODE_ENV === "development";
+  const { user, openLogin } = useAuth();
 
   const [packages, setPackages] = useState<TopupPackageQuote[]>([]);
   const [packageId, setPackageId] = useState<string | null>(null);
-  const [method, setMethod] = useState<PayMethod>("STRIPE");
   const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [payHint, setPayHint] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -48,10 +42,8 @@ export function RechargeModal({ open, onClose }: { open: boolean; onClose: () =>
   useEffect(() => {
     if (!open) return;
     setErr(null);
-    setDone(false);
     setPayHint(null);
-    setMethod(isDev ? "SIMULATE" : "STRIPE");
-  }, [open, isDev]);
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -93,24 +85,9 @@ export function RechargeModal({ open, onClose }: { open: boolean; onClose: () =>
     setErr(null);
     setPayHint(null);
     try {
-      const wantSimulate = isDev && method === "SIMULATE";
       const r: any = await topupOrder(selected.id, PAY_CURRENCY, "STRIPE", {
-        createCheckout: !wantSimulate,
+        createCheckout: true,
       });
-      if (wantSimulate && r?.orderNo) {
-        await simulatePay(r.orderNo);
-        await refreshWallet();
-        track("recharge", {
-          method,
-          currency: PAY_CURRENCY,
-          packageId: selected.id,
-          credits,
-          payAmount,
-        });
-        setDone(true);
-        setTimeout(() => onClose(), 1200);
-        return;
-      }
       const checkoutUrl = String(r?.checkoutUrl || r?.checkout_url || "").trim();
       if (checkoutUrl) {
         track("recharge", {
@@ -162,15 +139,7 @@ export function RechargeModal({ open, onClose }: { open: boolean; onClose: () =>
           <h2 id="recharge-dialog-title" className="mt-1 text-h3 font-bold text-ink">{t("recharge.subtitle")}</h2>
         </div>
 
-        {done ? (
-          <div className="flex flex-col items-center px-6 py-12 text-center animate-[rise-in_0.4s_var(--ease-out)_both]">
-            <span className="grid h-16 w-16 place-items-center rounded-full bg-success/15 text-success">
-              <Check className="h-8 w-8" />
-            </span>
-            <p className="mt-5 text-h3 font-semibold text-ink">{t("recharge.success")}</p>
-          </div>
-        ) : (
-          <div className="space-y-6 px-6 pb-6">
+        <div className="space-y-6 px-6 pb-6">
             <div>
               <label className="text-caption uppercase text-ink-subtle">{t("recharge.package")}</label>
               {loading ? (
@@ -242,38 +211,6 @@ export function RechargeModal({ open, onClose }: { open: boolean; onClose: () =>
               )}
             </div>
 
-            {isDev ? (
-              <div>
-                <label className="text-caption uppercase text-ink-subtle">{t("recharge.method")}</label>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setMethod("SIMULATE")}
-                    className={cn(
-                      "rounded-full px-4 py-2 text-body-sm font-medium transition-colors",
-                      method === "SIMULATE"
-                        ? "bg-brand text-white"
-                        : "bg-surface-2 text-ink-muted hover:text-ink",
-                    )}
-                  >
-                    {t("recharge.simulate")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setMethod("STRIPE")}
-                    className={cn(
-                      "rounded-full px-4 py-2 text-body-sm font-medium transition-colors",
-                      method === "STRIPE"
-                        ? "bg-brand text-white"
-                        : "bg-surface-2 text-ink-muted hover:text-ink",
-                    )}
-                  >
-                    Stripe
-                  </button>
-                </div>
-              </div>
-            ) : null}
-
             {selected && (
               <div className="flex items-center justify-between gap-4 rounded-xl bg-surface-2 px-5 py-4">
                 <div className="flex items-center gap-2 text-ink-muted">
@@ -307,7 +244,6 @@ export function RechargeModal({ open, onClose }: { open: boolean; onClose: () =>
             {payHint && <p className="text-body-sm text-ink-muted">{payHint}</p>}
             {err && <p className="text-body-sm text-danger">{err}</p>}
           </div>
-        )}
       </div>
     </div>
   );

@@ -6,6 +6,8 @@ import { AuditService } from '../common/audit.service';
 import { VipPlansService } from '../vip/vip-plans.service';
 
 const MIN_PASSWORD_LEN = 6;
+const USERNAME_RE = /^[a-zA-Z0-9_]{3,24}$/;
+const LOCALES = new Set(['en', 'zh', 'fr']);
 
 @Injectable()
 export class AdminUsersService {
@@ -13,6 +15,113 @@ export class AdminUsersService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
   ) {}
+
+  async create(
+    dto: {
+      email: string;
+      password: string;
+      username?: string;
+      nickname?: string;
+      phone?: string;
+      locale?: string;
+    },
+    actorId?: bigint,
+  ) {
+    const email = this.normalizeEmail(dto.email);
+    if (!email) {
+      throw new BizException(BizCode.BAD_REQUEST, 'auth.invalidEmail');
+    }
+
+    const password = String(dto.password || '');
+    if (password.length < MIN_PASSWORD_LEN) {
+      throw new BizException(BizCode.BAD_REQUEST, 'auth.passwordMinLength', undefined, {
+        min: MIN_PASSWORD_LEN,
+      });
+    }
+
+    const byEmail = await this.prisma.user.findUnique({ where: { email } });
+    if (byEmail) {
+      throw new BizException(BizCode.CONFLICT, 'auth.emailAlreadyRegistered');
+    }
+
+    const usernameRaw = String(dto.username || '').trim();
+    let username = this.normalizeUsername(usernameRaw);
+    if (usernameRaw && !username) {
+      throw new BizException(BizCode.BAD_REQUEST, 'auth.usernameRules');
+    }
+    if (!username) {
+      username = await this.allocateUsernameFromEmail(email);
+    } else {
+      const taken = await this.prisma.user.findUnique({ where: { username } });
+      if (taken) {
+        throw new BizException(BizCode.CONFLICT, 'auth.usernameTaken');
+      }
+    }
+
+    const phoneRaw = String(dto.phone || '').trim();
+    const phone = phoneRaw || null;
+    if (phone) {
+      const byPhone = await this.prisma.user.findUnique({ where: { phone } });
+      if (byPhone) {
+        throw new BizException(BizCode.CONFLICT, 'Phone already in use');
+      }
+    }
+
+    const localeRaw = String(dto.locale || 'en').trim().toLowerCase();
+    const locale = LOCALES.has(localeRaw) ? localeRaw : 'en';
+    const nickname =
+      String(dto.nickname || '').trim() ||
+      this.nicknameFromEmail(email) ||
+      username ||
+      'user';
+
+    const user = await this.prisma.user.create({
+      data: {
+        email,
+        username,
+        nickname,
+        phone,
+        locale,
+        passwordHash: this.hashPassword(password),
+      },
+      select: {
+        id: true,
+        uuid: true,
+        email: true,
+        username: true,
+        nickname: true,
+        phone: true,
+        locale: true,
+        status: true,
+        createdAt: true,
+      },
+    });
+
+    await this.prisma.wallet.upsert({
+      where: { userId: user.id },
+      create: { userId: user.id },
+      update: {},
+    });
+
+    await this.audit.write({
+      actorId,
+      action: 'user.create',
+      targetType: 'user',
+      targetId: user.id.toString(),
+      payload: {
+        email: user.email,
+        username: user.username,
+        nickname: user.nickname,
+        phone: user.phone,
+        locale: user.locale,
+      },
+    });
+
+    return {
+      ...user,
+      id: user.id.toString(),
+    };
+  }
 
   async list(filter: {
     q?: string;
@@ -285,6 +394,49 @@ export class AdminUsersService {
     return `${salt}:${hash}`;
   }
 
+  private normalizeEmail(email: string): string | null {
+    const e = String(email || '')
+      .trim()
+      .toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return null;
+    return e;
+  }
+
+  private normalizeUsername(raw: string): string | null {
+    const u = String(raw || '')
+      .trim()
+      .toLowerCase();
+    if (!USERNAME_RE.test(u)) return null;
+    return u;
+  }
+
+  private nicknameFromEmail(email: string): string {
+    const local = String(email || '').split('@')[0] || '';
+    return local.trim().slice(0, 32) || 'user';
+  }
+
+  private async allocateUsernameFromEmail(email: string): Promise<string> {
+    const local = String(email.split('@')[0] || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9_]/g, '_')
+      .replace(/_+/g, '_')
+      .replace(/^_|_$/g, '');
+    let base = local.slice(0, 18);
+    if (base.length < 3) base = `u_${base || 'user'}`.slice(0, 18);
+    if (!USERNAME_RE.test(base)) base = `user_${crypto.randomBytes(3).toString('hex')}`;
+
+    for (let i = 0; i < 12; i++) {
+      const candidate =
+        i === 0
+          ? base
+          : `${base.slice(0, 18)}_${(Math.floor(Math.random() * 9000) + 1000).toString()}`.slice(0, 24);
+      if (!USERNAME_RE.test(candidate)) continue;
+      const taken = await this.prisma.user.findUnique({ where: { username: candidate } });
+      if (!taken) return candidate;
+    }
+    return `user_${crypto.randomBytes(6).toString('hex')}`.slice(0, 24);
+  }
+
   async setVip(
     id: string,
     dto: { vipExpireAt?: string | null; extendDays?: number },
@@ -298,7 +450,7 @@ export class AdminUsersService {
     if (dto.extendDays != null) {
       const days = Math.floor(Number(dto.extendDays));
       if (!Number.isFinite(days) || days < 1) {
-        throw new BizException(BizCode.BAD_REQUEST, 'extendDays không hợp lệ');
+        throw new BizException(BizCode.BAD_REQUEST, 'validation.extendDaysInvalid');
       }
       vipExpireAt = VipPlansService.computeExpireAt(user.vipExpireAt, days);
     } else if (dto.vipExpireAt === null || dto.vipExpireAt === '') {
@@ -306,11 +458,11 @@ export class AdminUsersService {
     } else if (dto.vipExpireAt != null) {
       const d = new Date(dto.vipExpireAt);
       if (Number.isNaN(d.getTime())) {
-        throw new BizException(BizCode.BAD_REQUEST, 'vipExpireAt không hợp lệ');
+        throw new BizException(BizCode.BAD_REQUEST, 'validation.vipExpireAtInvalid');
       }
       vipExpireAt = d;
     } else {
-      throw new BizException(BizCode.BAD_REQUEST, 'Cần vipExpireAt hoặc extendDays');
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.vipExtendRequired');
     }
 
     const updated = await this.prisma.user.update({

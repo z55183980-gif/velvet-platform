@@ -31,7 +31,7 @@ export class AdminsService {
       throw new BizException(BizCode.BAD_REQUEST, 'role 不合法');
     }
     const admin = await this.prisma.adminUser.findUnique({ where: { id: BigInt(adminId) } });
-    if (!admin) throw new BizException(BizCode.NOT_FOUND, 'Admin không tồn tại');
+    if (!admin) throw new BizException(BizCode.NOT_FOUND, 'admin.notFound');
     if (admin.role === role) {
       return { id: admin.id.toString(), role: admin.role };
     }

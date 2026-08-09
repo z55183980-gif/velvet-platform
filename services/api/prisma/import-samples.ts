@@ -251,7 +251,7 @@ async function main() {
       });
     }
     console.log(
-      `[import-samples] ${def.titleZh} → ${videos.length} tập (free ${def.freeCount}), cover=${coverFile || '无'}`,
+      `[import-samples] ${def.titleZh} → ${videos.length} episodes (free ${def.freeCount}), cover=${coverFile || '无'}`,
     );
   }
   console.log('[import-samples] done');

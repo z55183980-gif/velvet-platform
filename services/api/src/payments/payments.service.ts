@@ -506,7 +506,7 @@ export class PaymentsService {
     const p = PAYMENT_PROVIDERS[provider];
     if (!p) {
       this.log.warn({ event: 'webhook.provider.unknown', provider });
-      throw new BizException(BizCode.BAD_REQUEST, 'Kênh thanh toán không hỗ trợ');
+      throw new BizException(BizCode.BAD_REQUEST, 'payment.channelUnsupported');
     }
     const parsed: ParsedWebhook | null = p.parse(payload);
     if (!parsed) {
@@ -582,8 +582,8 @@ export class PaymentsService {
       { method: 'MOMO', label: 'MoMo', region: 'VN' },
       { method: 'ZALOPAY', label: 'ZaloPay', region: 'VN' },
       { method: 'VIETQR', label: 'VietQR', region: 'VN' },
-      { method: 'BANK_TRANSFER', label: 'Chuyển khoản ngân hàng', region: 'VN' },
-      { method: 'STRIPE', label: 'Thẻ quốc tế (Stripe)', region: 'VN' },
+      { method: 'BANK_TRANSFER', label: 'Bank transfer', region: 'VN' },
+      { method: 'STRIPE', label: 'International card (Stripe)', region: 'VN' },
       { method: 'WECHAT', label: '微信支付', region: 'CN' },
       { method: 'ALIPAY', label: '支付宝', region: 'CN' },
     ];
@@ -618,10 +618,10 @@ export class PaymentsService {
         orderNo,
         method,
       });
-      throw new BizException(
-        BizCode.FORBIDDEN,
-        `Đơn hàng paymentMethod=${method} không chấp nhận webhook ${provider}`,
-      );
+      throw new BizException(BizCode.FORBIDDEN, 'payment.webhookMethodMismatch', undefined, {
+        method,
+        provider,
+      });
     }
     if (method && method !== expected) {
       this.log.warn({
@@ -631,10 +631,10 @@ export class PaymentsService {
         method,
         expected,
       });
-      throw new BizException(
-        BizCode.FORBIDDEN,
-        `Provider ${provider} không khớp paymentMethod=${method}`,
-      );
+      throw new BizException(BizCode.FORBIDDEN, 'payment.providerMethodMismatch', undefined, {
+        provider,
+        method,
+      });
     }
   }
 }

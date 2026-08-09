@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
-import { Sun, Moon, Crown } from "lucide-react";
+import { Sun, Moon, Crown, CircleHelp } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { useAuth } from "@/components/auth-context";
 import { useTheme } from "@/components/theme-provider";
@@ -44,6 +44,7 @@ export function Navbar() {
     { href: "/?sort=hot", label: t("nav.hot"), match: () => searchParams.get("sort") === "hot" },
   ];
   const creatorActive = pathname.startsWith("/creator");
+  const helpActive = pathname.startsWith("/help");
 
   useEffect(() => {
     // Overlay scroll styling only matters at md+
@@ -81,6 +82,24 @@ export function Navbar() {
           ),
       )}
     >
+      <Link
+        href="/help"
+        className={cn(
+          "absolute right-4 top-1/2 z-10 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-full transition-colors",
+          isHomeOverlay
+            ? helpActive
+              ? "bg-white/15 text-white"
+              : "text-white/70 hover:bg-white/10 hover:text-white"
+            : helpActive
+              ? "bg-surface-2 text-ink"
+              : "text-ink-muted hover:bg-surface-2 hover:text-ink",
+        )}
+        aria-label={t("nav.help")}
+        title={t("nav.help")}
+      >
+        <CircleHelp className="h-4 w-4" />
+      </Link>
+
       <div className="mx-auto flex h-16 max-w-[1280px] items-center gap-6 px-10">
         <Link
           href="/"

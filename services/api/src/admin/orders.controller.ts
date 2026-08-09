@@ -160,7 +160,7 @@ export class OrdersController {
     for (let i = 0; i < d; i++) {
       const date = new Date();
       date.setDate(date.getDate() - i);
-      const providers = ['STRIPE', 'WECHAT', 'ALIPAY', 'MOMO', 'ZALOPAY', 'VIETQR', 'BANK_TRANSFER'];
+      const providers = ['STRIPE'];
       for (const p of providers) {
         const r: any = await this.reconcile.reconcileProvider(p, date);
         results.push({

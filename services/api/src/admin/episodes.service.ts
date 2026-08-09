@@ -694,7 +694,9 @@ export class AdminEpisodesService {
     const validIds = new Set(episodes.map((e) => e.id.toString()));
     for (const id of ids) {
       if (!validIds.has(id)) {
-        throw new BizException(BizCode.BAD_REQUEST, `Tập không thuộc drama: ${id}`);
+        throw new BizException(BizCode.BAD_REQUEST, 'episode.notInDrama', undefined, {
+          id: String(id),
+        });
       }
     }
     if (ids.length !== episodes.length) {

@@ -134,7 +134,7 @@ export class AdminOpsService {
     if (dto.freeEpisodeCount != null) {
       const n = Math.floor(Number(dto.freeEpisodeCount));
       if (!Number.isFinite(n) || n < 0) {
-        throw new BizException(BizCode.BAD_REQUEST, 'freeEpisodeCount không hợp lệ');
+        throw new BizException(BizCode.BAD_REQUEST, 'validation.freeEpisodeCountInvalid');
       }
       data.freeEpisodeCount = n;
     }
@@ -154,7 +154,7 @@ export class AdminOpsService {
       ) {
         data.lockMode = dto.lockMode;
       } else {
-        throw new BizException(BizCode.BAD_REQUEST, 'lockMode không hợp lệ');
+        throw new BizException(BizCode.BAD_REQUEST, 'validation.lockModeInvalid');
       }
     }
     if (dto.buyoutCredits !== undefined) {
@@ -162,7 +162,7 @@ export class AdminOpsService {
         data.buyoutCredits = null;
       } else {
         const c = toBigInt(dto.buyoutCredits);
-        if (c < 0n) throw new BizException(BizCode.BAD_REQUEST, 'buyoutCredits không hợp lệ');
+        if (c < 0n) throw new BizException(BizCode.BAD_REQUEST, 'validation.buyoutCreditsInvalid');
         data.buyoutCredits = c;
       }
     }
@@ -171,7 +171,7 @@ export class AdminOpsService {
     if (dto.sortWeight !== undefined) {
       const w = Math.floor(Number(dto.sortWeight));
       if (!Number.isFinite(w)) {
-        throw new BizException(BizCode.BAD_REQUEST, 'sortWeight không hợp lệ');
+        throw new BizException(BizCode.BAD_REQUEST, 'validation.sortWeightInvalid');
       }
       data.sortWeight = w;
     }
@@ -186,7 +186,7 @@ export class AdminOpsService {
       }
       if (dto.priceCredits != null) {
         const price = toBigInt(dto.priceCredits);
-        if (price < 0n) throw new BizException(BizCode.BAD_REQUEST, 'priceCredits không hợp lệ');
+        if (price < 0n) throw new BizException(BizCode.BAD_REQUEST, 'validation.priceCreditsInvalid');
         // 仅更新付费集（非 isFree）；免费集保持 0；同步 priceVnd 以免分成漂移
         const r = await tx.episode.updateMany({
           where: { dramaId: { in: ids }, isFree: false },

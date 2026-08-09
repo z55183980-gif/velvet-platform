@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { Crown, Play } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import type { Episode } from "@/lib/mock-data";
+import { episodeRequiresMembership } from "@/lib/episode-membership";
 import { buildEpisodeSlots, filterSlotsByRange } from "@/lib/episode-slots";
 import { pickTitleText } from "@/lib/languages";
 import { cn } from "@/lib/utils";
@@ -47,6 +48,8 @@ export function EpisodeList({
   const epTitle = (ep: Episode) => pickTitleText(locale, ep.titleEn, ep.titleZh);
   const unlocked = (ep: Episode) =>
     isUnlocked?.(ep) ?? !!(ep.isFree || ep.unlocked);
+  /** Crown = member pricing; click/play uses `unlocked` (VIP/purchase/free). */
+  const showMemberBadge = (ep: Episode) => episodeRequiresMembership(ep);
   const comingSoon = t("detail.episodeComingSoon");
 
   const total = Math.max(episodesCount ?? 0, episodes.length);
@@ -130,7 +133,7 @@ export function EpisodeList({
                     )}
                     title={unlocked(slot.episode) ? undefined : t("vip.open")}
                   >
-                    {!unlocked(slot.episode) && <VipLockBadge />}
+                    {showMemberBadge(slot.episode) && <VipLockBadge />}
                     {slot.no}
                   </button>
                 )}
@@ -213,7 +216,7 @@ export function EpisodeList({
                     )}
                     title={unlocked(slot.episode) ? undefined : t("vip.open")}
                   >
-                    {!unlocked(slot.episode) && <VipLockBadge />}
+                    {showMemberBadge(slot.episode) && <VipLockBadge />}
                     {slot.no}
                   </button>
                 )}
@@ -260,7 +263,7 @@ export function EpisodeList({
                     )}
                     title={unlocked(slot.episode) ? undefined : t("vip.open")}
                   >
-                    {!unlocked(slot.episode) && <VipLockBadge />}
+                    {showMemberBadge(slot.episode) && <VipLockBadge />}
                     <span className="opacity-90">{t("detail.episodeLabel", { n: slot.no })}</span>
                   </button>
                 )}
@@ -321,13 +324,13 @@ export function EpisodeList({
                 >
                   <span className="text-h4 font-semibold tabular-nums">{ep.no}</span>
                   <span className="inline-flex items-center gap-1 text-caption opacity-80">
-                    {canPlay ? (
-                      <Play className="h-3 w-3" />
-                    ) : (
+                    {showMemberBadge(ep) ? (
                       <>
                         <Crown className="h-3 w-3 text-gold" />
-                        {t("vip.open")}
+                        {!canPlay ? t("vip.open") : null}
                       </>
+                    ) : (
+                      <Play className="h-3 w-3" />
                     )}
                   </span>
                 </button>
@@ -386,10 +389,10 @@ export function EpisodeList({
                         : t("vip.open")}
                     </p>
                   </div>
-                  {canPlay ? (
-                    <Play className="h-4 w-4 text-ink-muted" />
-                  ) : (
+                  {showMemberBadge(ep) ? (
                     <Crown className="h-4 w-4 text-gold" />
+                  ) : (
+                    <Play className="h-4 w-4 text-ink-muted" />
                   )}
                 </button>
               </li>

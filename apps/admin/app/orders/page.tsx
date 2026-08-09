@@ -28,17 +28,6 @@ const PAGE_SIZE_OPTIONS = [20, 40, 50] as const;
 
 const PAY_STATUSES = ["ALL", "PENDING", "PAID", "FAILED", "REFUNDED", "CANCELLED"] as const;
 const ORDER_TYPES = ["ALL", "TOPUP", "VIP_SUB", "EPISODE_UNLOCK", "DRAMA_BUYOUT"] as const;
-const PAY_METHODS = [
-  "ALL",
-  "STRIPE",
-  "BANK_TRANSFER",
-  "VIETQR",
-  "ALIPAY",
-  "WECHAT",
-  "MOMO",
-  "ZALOPAY",
-  "WALLET",
-] as const;
 
 function paginationItems(page: number, total: number): Array<number | "ellipsis"> {
   if (total <= 7) return Array.from({ length: total }, (_, index) => index + 1);
@@ -139,7 +128,6 @@ export default function AdminOrdersPage() {
   const [pageSize, setPageSize] = useState<number>(20);
   const [status, setStatus] = useState("ALL");
   const [type, setType] = useState("ALL");
-  const [method, setMethod] = useState("ALL");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [query, setQuery] = useState("");
@@ -155,7 +143,7 @@ export default function AdminOrdersPage() {
     queryKey: [
       "admin",
       "orders",
-      { tab, page, pageSize, status, type: tabType, method, from, to, appliedQuery },
+      { tab, page, pageSize, status, type: tabType, from, to, appliedQuery },
     ],
     queryFn: () =>
       adminListOrders({
@@ -163,7 +151,6 @@ export default function AdminOrdersPage() {
         pageSize,
         status,
         type: tabType,
-        method,
         from: from || undefined,
         to: to || undefined,
         q: appliedQuery || undefined,
@@ -210,7 +197,6 @@ export default function AdminOrdersPage() {
   function clearFilters() {
     setStatus("ALL");
     setType("ALL");
-    setMethod("ALL");
     setFrom("");
     setTo("");
     setQuery("");
@@ -420,23 +406,6 @@ export default function AdminOrdersPage() {
             </Select>
           </label>
         ) : null}
-        <label className="block text-caption font-medium text-ink-muted">
-          {t("colPay")}
-          <Select
-            className="mt-1 w-40"
-            value={method}
-            onChange={(e) => {
-              setMethod(e.target.value);
-              setPage(1);
-            }}
-          >
-            {PAY_METHODS.map((s) => (
-              <option key={s} value={s}>
-                {s === "ALL" ? t("statusAll") : paymentMethodLabel(t, s)}
-              </option>
-            ))}
-          </Select>
-        </label>
         <label className="block text-caption font-medium text-ink-muted">
           {t("dateFrom")}
           <Input

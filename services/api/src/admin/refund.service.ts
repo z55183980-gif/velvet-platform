@@ -18,10 +18,63 @@ export class AdminRefundService {
     private readonly wallet: WalletService,
   ) {}
 
+  /** Terminal Stripe refund statuses that must not block a new refund attempt. */
+  private isStaleProviderRefundStatus(status: string | null | undefined): boolean {
+    const s = String(status || '')
+      .trim()
+      .toLowerCase();
+    return s === 'failed' || s === 'canceled' || s === 'cancelled';
+  }
+
+  /**
+   * Partial refunds are unsupported for local entitlement revoke.
+   * Succeeded + amount < order/charge ⇒ reject (never full-revoke on partial).
+   */
+  private async assertFullRefundOrThrow(opts: {
+    amountMinor: number;
+    orderAmountMinor: number;
+    status: string;
+    refundId: string;
+    currency: string;
+    prevMeta: Record<string, unknown>;
+    orderId: bigint;
+  }) {
+    const orderAmount = opts.orderAmountMinor;
+    if (
+      isStripeRefundSucceeded(opts.status) &&
+      opts.amountMinor > 0 &&
+      Number.isFinite(orderAmount) &&
+      orderAmount > 0 &&
+      !isFullStripeRefund({
+        refundAmountMinor: opts.amountMinor,
+        orderAmountMinor: orderAmount,
+      })
+    ) {
+      // Persist evidence but do not clear id — Stripe already took partial money.
+      await this.prisma.order.update({
+        where: { id: opts.orderId },
+        data: {
+          meta: {
+            ...opts.prevMeta,
+            stripeRefundId: opts.refundId,
+            stripeRefundAmountMinor: opts.amountMinor,
+            stripeRefundCurrency: opts.currency,
+            stripeRefundStatus: opts.status,
+            partialRefundPending: true,
+            ledgerCurrency: 'USD',
+          } as any,
+        },
+      });
+      throw new BizException(BizCode.CONFLICT, 'stripe.partialRefundUnsupported');
+    }
+  }
+
   /**
    * For Stripe-paid TOPUP/VIP: ensure a Stripe Refund exists and is verified.
    * Never assumes a historical refund id succeeded — retrieves status from Stripe.
-   * Local credit/VIP revoke must only run after status is succeeded (caller checks).
+   * Local credit/VIP revoke must only run after **succeeded full** refund (caller checks status;
+   * this method rejects partial succeeded amounts).
+   * Failed/canceled historical ids are cleared so a new refund can be created.
    */
   private async ensureProviderRefund(
     order: {
@@ -40,33 +93,66 @@ export class AdminRefundService {
     if (order.paymentMethod !== 'STRIPE') return null;
     if (order.orderType !== 'TOPUP' && order.orderType !== 'VIP_SUB') return null;
 
-    const prevMeta = order.meta && typeof order.meta === 'object' ? (order.meta as any) : {};
+    let prevMeta =
+      order.meta && typeof order.meta === 'object' ? { ...(order.meta as any) } : {};
+    const amountMinor = Number(order.amountVnd);
     const existingId = String(prevMeta.stripeRefundId || '').trim();
+
     if (existingId) {
       const retrieved = await retrieveStripeRefund({
         refundId: existingId,
         fetchImpl: opts?.fetchImpl,
       });
-      await this.prisma.order.update({
-        where: { id: order.id },
-        data: {
-          meta: {
-            ...prevMeta,
-            stripeRefundId: retrieved.refundId,
-            stripeRefundAmountMinor: retrieved.amountMinor,
-            stripeRefundCurrency: retrieved.currency,
-            stripeRefundStatus: retrieved.status,
-            ledgerCurrency: 'USD',
-          } as any,
-        },
-      });
-      return {
-        refundId: retrieved.refundId,
-        alreadyRefunded: retrieved.alreadyRefunded,
-        amountMinor: retrieved.amountMinor,
-        currency: retrieved.currency,
-        status: retrieved.status,
-      };
+
+      if (this.isStaleProviderRefundStatus(retrieved.status)) {
+        // Clear stale id so a new Stripe refund (new idempotency key) can be created.
+        const cleared = {
+          ...prevMeta,
+          stripeRefundId: null,
+          stripeRefundAmountMinor: retrieved.amountMinor,
+          stripeRefundCurrency: retrieved.currency,
+          stripeRefundStatus: retrieved.status,
+          stripeRefundStaleCleared: existingId,
+          ledgerCurrency: 'USD',
+        };
+        await this.prisma.order.update({
+          where: { id: order.id },
+          data: { meta: cleared as any },
+        });
+        prevMeta = cleared;
+        order.meta = cleared;
+        // fall through to create
+      } else {
+        await this.assertFullRefundOrThrow({
+          amountMinor: retrieved.amountMinor,
+          orderAmountMinor: amountMinor,
+          status: retrieved.status,
+          refundId: retrieved.refundId,
+          currency: retrieved.currency,
+          prevMeta,
+          orderId: order.id,
+        });
+        await this.prisma.order.update({
+          where: { id: order.id },
+          data: {
+            meta: {
+              ...prevMeta,
+              stripeRefundId: retrieved.refundId,
+              stripeRefundAmountMinor: retrieved.amountMinor,
+              stripeRefundCurrency: retrieved.currency,
+              stripeRefundStatus: retrieved.status,
+              ledgerCurrency: 'USD',
+            } as any,
+          },
+        });
+        return {
+          refundId: retrieved.refundId,
+          alreadyRefunded: retrieved.alreadyRefunded,
+          amountMinor: retrieved.amountMinor,
+          currency: retrieved.currency,
+          status: retrieved.status,
+        };
+      }
     }
 
     const paymentRef = String(order.externalRef || prevMeta.stripePaymentIntentId || '').trim();
@@ -74,14 +160,31 @@ export class AdminRefundService {
       throw new BizException(BizCode.BAD_REQUEST, 'stripe.refundMissingPaymentRef');
     }
 
-    const amountMinor = Number(order.amountVnd);
+    // First attempt keeps stable key; retries after failed/canceled use a fresh key.
+    const attempt = Number(prevMeta.stripeRefundAttempt || 0) || 0;
+    const nextAttempt = attempt + 1;
+    const staleCleared = !!prevMeta.stripeRefundStaleCleared;
+    const idempotencyKey =
+      staleCleared || nextAttempt > 1
+        ? `velvet-refund:${order.orderNo}:a${nextAttempt}`
+        : `velvet-refund:${order.orderNo}`;
     const stripe = await createStripeRefund({
       paymentIntentOrChargeId: paymentRef,
       amountMinor: Number.isFinite(amountMinor) && amountMinor > 0 ? amountMinor : undefined,
-      idempotencyKey: `velvet-refund:${order.orderNo}`,
+      idempotencyKey,
       metadata: { orderNo: order.orderNo, order_no: order.orderNo },
       fetchImpl: opts?.fetchImpl,
     });
+
+    const metaAfter = {
+      ...prevMeta,
+      stripeRefundId: stripe.refundId,
+      stripeRefundAmountMinor: stripe.amountMinor,
+      stripeRefundCurrency: stripe.currency,
+      stripeRefundStatus: stripe.status,
+      stripeRefundAttempt: nextAttempt,
+      ledgerCurrency: 'USD',
+    };
 
     // Partial Stripe refunds are not supported for local entitlement revoke.
     if (
@@ -97,34 +200,17 @@ export class AdminRefundService {
         where: { id: order.id },
         data: {
           meta: {
-            ...prevMeta,
-            stripeRefundId: stripe.refundId,
-            stripeRefundAmountMinor: stripe.amountMinor,
-            stripeRefundCurrency: stripe.currency,
-            stripeRefundStatus: stripe.status,
+            ...metaAfter,
             partialRefundPending: true,
-            ledgerCurrency: 'USD',
           } as any,
         },
       });
-      throw new BizException(
-        BizCode.CONFLICT,
-        'stripe.partialRefundUnsupported',
-      );
+      throw new BizException(BizCode.CONFLICT, 'stripe.partialRefundUnsupported');
     }
 
     await this.prisma.order.update({
       where: { id: order.id },
-      data: {
-        meta: {
-          ...prevMeta,
-          stripeRefundId: stripe.refundId,
-          stripeRefundAmountMinor: stripe.amountMinor,
-          stripeRefundCurrency: stripe.currency,
-          stripeRefundStatus: stripe.status,
-          ledgerCurrency: 'USD',
-        } as any,
-      },
+      data: { meta: metaAfter as any },
     });
     return stripe;
   }
@@ -162,7 +248,7 @@ export class AdminRefundService {
       return { alreadyRequested: true, orderNo };
     }
     if (order.refundStatus === 'APPROVED') {
-      throw new BizException(BizCode.CONFLICT, 'Đơn đã hoàn/đang xử lý');
+      throw new BizException(BizCode.CONFLICT, 'order.alreadyRefundedOrPending');
     }
     const updated = await this.prisma.order.update({
       where: { id: order.id },
@@ -185,7 +271,7 @@ export class AdminRefundService {
       return { alreadyRefunded: true, orderNo };
     }
     if (order.paymentStatus !== 'PAID') {
-      throw new BizException(BizCode.ORDER_NOT_PAID, 'Đơn chưa thanh toán');
+      throw new BizException(BizCode.ORDER_NOT_PAID, 'order.unpaidCannotCompleteRefund');
     }
 
     // Stripe real-money refund first; local credits/VIP revoke only after succeeded.
@@ -229,7 +315,7 @@ export class AdminRefundService {
         currency: providerRefund?.currency,
       });
     } else {
-      throw new BizException(BizCode.FORBIDDEN, 'Loại đơn không hỗ trợ hoàn');
+      throw new BizException(BizCode.FORBIDDEN, 'order.typeNoRefund');
     }
 
     await this.prisma.order.update({

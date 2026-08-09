@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Request, Response } from 'express';
 import * as fs from 'fs';
@@ -30,6 +30,7 @@ import {
 
 @Injectable()
 export class EpisodesService {
+  private readonly logger = new Logger(EpisodesService.name);
   private readonly refreshes = new Map<string, Promise<string>>();
 
   constructor(
@@ -99,8 +100,8 @@ export class EpisodesService {
           mediaOrientation: episode.mediaOrientation,
         };
       }
-      if (!userId) throw new BizException(BizCode.UNAUTHORIZED, 'Chưa đăng nhập');
-      throw new BizException(BizCode.FORBIDDEN, 'Tập này cần mở khóa để xem', 402 as any);
+      if (!userId) throw new BizException(BizCode.UNAUTHORIZED, 'auth.notLoggedIn');
+      throw new BizException(BizCode.FORBIDDEN, 'episode.unlockRequired', 402 as any);
     }
 
     const key = requireSecret('CDN_SIGN_KEY', this.config.get('CDN_SIGN_KEY'), 'dev');
@@ -601,6 +602,20 @@ export class EpisodesService {
         });
         return playUrl;
       })
+      .catch((e: unknown) => {
+        // Never surface yt-dlp / bootstrap ops copy on the public play path.
+        const detail =
+          e instanceof BizException
+            ? e.message
+            : e instanceof Error
+              ? e.message
+              : String(e);
+        this.logger.warn(
+          `external URL refresh failed for episode ${key}: ${String(detail).slice(0, 300)}`,
+        );
+        if (episode.hlsUrl) return episode.hlsUrl;
+        throw new BizException(BizCode.BAD_REQUEST, 'episode.playUnavailable');
+      })
       .finally(() => this.refreshes.delete(key));
     this.refreshes.set(key, task);
     return task;
@@ -615,13 +630,13 @@ export class EpisodesService {
     const duration = Math.max(0, ep.durationSec || 0);
     const raw = Number(progressSec);
     if (!Number.isFinite(raw) || raw < 0) {
-      throw new BizException(BizCode.BAD_REQUEST, 'progressSec không hợp lệ');
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.progressSecInvalid');
     }
     // 播放器 currentTime 常略超 durationSec；未知时长再放宽到 24h
     let clamped = Math.floor(raw);
     if (duration > 0) clamped = Math.min(clamped, duration);
     else if (clamped > 86400) {
-      throw new BizException(BizCode.BAD_REQUEST, 'progressSec vượt quá giới hạn');
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.progressSecTooLarge');
     }
     const existing = await this.prisma.watchHistory.findUnique({
       where: { userId_episodeId: { userId, episodeId } },

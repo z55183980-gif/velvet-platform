@@ -6,6 +6,7 @@ import { Save } from "lucide-react";
 import { useI18n } from "../lib/i18n";
 import type { GlobalLockMode } from "../lib/drama-playback-policy";
 import {
+  calcBuyoutCredits,
   freeCountWhenInheriting,
   freeEpisodeCountFromCustomPolicy,
 } from "../lib/drama-playback-policy";
@@ -28,6 +29,9 @@ export type DramaPlaybackPolicyFormProps = {
   onFreeRangeEndChange: (value: string) => void;
   priceCredits: number;
   onPriceCreditsChange: (value: number) => void;
+  /** Full-drama buyout discount 0–100 (0 = off). Auto-converts to credits by paid episode count. */
+  buyoutDiscountPercent: number;
+  onBuyoutDiscountPercentChange: (value: number) => void;
   allowPreview: boolean;
   onAllowPreviewChange: (value: boolean) => void;
   previewSeconds: number;
@@ -63,6 +67,8 @@ export function DramaPlaybackPolicyForm({
   onFreeRangeEndChange,
   priceCredits,
   onPriceCreditsChange,
+  buyoutDiscountPercent,
+  onBuyoutDiscountPercentChange,
   allowPreview,
   onAllowPreviewChange,
   previewSeconds,
@@ -100,7 +106,66 @@ export function DramaPlaybackPolicyForm({
 
   const previewCredits = Math.max(1, priceCredits || 10);
   const previewIsAllFree = allFree || (episodeTotal > 0 && previewFreeCount >= episodeTotal);
+  const pricingLocked = isGlobal
+    ? allFree
+    : inheritGlobal
+      ? globalMode === "ALL_FREE"
+      : allFree;
+  const previewBuyout = calcBuyoutCredits({
+    episodeTotal,
+    freeCount: previewFreeCount,
+    priceCredits: previewCredits,
+    discountPercent: buyoutDiscountPercent,
+  });
+  const discountClamped = Math.min(100, Math.max(0, Math.floor(Number(buyoutDiscountPercent) || 0)));
 
+  const pricingFields = (
+    <>
+      <label className="upload-field">
+        <span>{t("priceCreditsPerEpisode")}</span>
+        <Input
+          type="number"
+          min={1}
+          value={priceCredits}
+          disabled={disabled || pricingLocked}
+          onChange={(e) => onPriceCreditsChange(Number(e.target.value) || 0)}
+        />
+      </label>
+      <label className="upload-field">
+        <span>{t("buyoutDiscountPercentLabel")}</span>
+        <Input
+          type="number"
+          min={0}
+          max={100}
+          step={1}
+          value={buyoutDiscountPercent}
+          disabled={disabled || pricingLocked}
+          onChange={(e) => {
+            const n = Math.floor(Number(e.target.value));
+            if (!Number.isFinite(n)) {
+              onBuyoutDiscountPercentChange(0);
+              return;
+            }
+            onBuyoutDiscountPercentChange(Math.min(100, Math.max(0, n)));
+          }}
+        />
+      </label>
+      <p className="text-caption text-ink-muted">
+        {pricingLocked
+          ? t("buyoutDiscountAllFreeHint")
+          : discountClamped < 1
+            ? t("buyoutDiscountOffHint")
+            : !isGlobal && episodeTotal > 0 && previewBuyout != null
+              ? t("buyoutDiscountPreview", {
+                  paid: Math.max(0, episodeTotal - previewFreeCount),
+                  price: previewCredits,
+                  percent: discountClamped,
+                  buyout: previewBuyout,
+                })
+              : t("buyoutDiscountFormulaHint", { percent: discountClamped })}
+      </p>
+    </>
+  );
   const shellClass =
     variant === "upload-panel" ? "upload-panel space-y-3" : "content-section-card space-y-3";
   const headClass =
@@ -187,7 +252,10 @@ export function DramaPlaybackPolicyForm({
                       value="1"
                       disabled
                       readOnly
-                      title="FREE_FIRST_N is first-N only; start is always episode 1"
+                      tabIndex={-1}
+                      title={t("policyRangeStartFixedTitle")}
+                      aria-label={t("policyRangeStartFixedTitle")}
+                      className="cursor-not-allowed opacity-60"
                     />
                   </label>
                   <label className="upload-field">
@@ -202,26 +270,14 @@ export function DramaPlaybackPolicyForm({
                     />
                   </label>
                 </div>
-                <p className="text-caption text-ink-muted mt-1">
-                  Free means episodes 1…N only. Mid-range free (e.g. 5–10) is not supported and
-                  must not be saved as FREE_FIRST_N.
-                </p>
+                <p className="text-caption text-ink-muted mt-1">{t("policyFreeFirstNRangeHint")}</p>
               </div>
             </div>
             <div className="policy-mode-card">
               <div className="policy-mode-card__body">
                 <strong>{t("policyPartialFree")}</strong>
                 <small>{t("policyMemberHint")}</small>
-                <label className="upload-field">
-                  <span>{t("priceCreditsPerEpisode")}</span>
-                  <Input
-                    type="number"
-                    min={1}
-                    value={priceCredits}
-                    disabled={disabled || allFree}
-                    onChange={(e) => onPriceCreditsChange(Number(e.target.value) || 0)}
-                  />
-                </label>
+                {pricingFields}
                 <div className="policy-preview-options">
                   <div
                     className="policy-preview-choices"
@@ -290,6 +346,32 @@ export function DramaPlaybackPolicyForm({
                         free: previewFreeCount,
                         price: priceCredits,
                       })}
+              </p>
+            </div>
+          ) : null}
+        </>
+      ) : !isGlobal ? (
+        <>
+          <div className="policy-mode-card">
+            <div className="policy-mode-card__body">
+              <strong>{t("policyPartialFree")}</strong>
+              <small>{t("buyoutDiscountInheritHint")}</small>
+              {pricingFields}
+            </div>
+          </div>
+          {episodeTotal > 0 ? (
+            <div className={cn("policy-preview", previewIsAllFree ? "is-free" : "is-partial")}>
+              <span className="policy-preview__dot" aria-hidden />
+              <p>
+                {previewIsAllFree
+                  ? globalMode === "ALL_FREE"
+                    ? t("policyPreviewAllFreeForever", { total: episodeTotal })
+                    : t("policyPreviewAllFree", { total: episodeTotal })
+                  : t("policyPreviewPartial", {
+                      total: episodeTotal,
+                      free: previewFreeCount,
+                      price: previewCredits,
+                    })}
               </p>
             </div>
           ) : null}

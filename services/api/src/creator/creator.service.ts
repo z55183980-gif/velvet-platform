@@ -126,7 +126,7 @@ export class CreatorService {
       since = opts.from ? new Date(`${opts.from}T00:00:00.000Z`) : new Date(0);
       until = opts.to ? new Date(`${opts.to}T23:59:59.999Z`) : new Date();
       if (Number.isNaN(since.getTime()) || Number.isNaN(until.getTime())) {
-        throw new BizException(BizCode.BAD_REQUEST, 'from/to không hợp lệ');
+        throw new BizException(BizCode.BAD_REQUEST, 'validation.dateRangeInvalid');
       }
     } else {
       const days = Math.min(180, Math.max(1, opts.days || 30));
@@ -255,7 +255,7 @@ export class CreatorService {
       throw new BizException(BizCode.NOT_FOUND, 'drama.notFound');
     }
     if (drama.status !== 'DRAFT') {
-      throw new BizException(BizCode.CONFLICT, 'Chỉ xoá được phim ở trạng thái DRAFT');
+      throw new BizException(BizCode.CONFLICT, 'drama.deleteDraftOnly');
     }
     await this.prisma.$transaction(async (tx) => {
       await tx.like.deleteMany({ where: { dramaId: drama.id } });
@@ -278,7 +278,7 @@ export class CreatorService {
       throw new BizException(BizCode.NOT_FOUND, 'drama.notFound');
     }
     if (drama.status !== 'LIVE') {
-      throw new BizException(BizCode.CONFLICT, 'Chỉ có thể gỡ phim đang LIVE');
+      throw new BizException(BizCode.CONFLICT, 'drama.unpublishLiveOnly');
     }
     const updated = await this.prisma.drama.update({
       where: { id: drama.id },
@@ -298,7 +298,7 @@ export class CreatorService {
       throw new BizException(BizCode.NOT_FOUND, 'episode.notFound');
     }
     if (ep.drama.status !== 'DRAFT' && ep.drama.status !== 'REJECTED') {
-      throw new BizException(BizCode.CONFLICT, 'Chỉ xoá được tập của phim DRAFT/REJECTED');
+      throw new BizException(BizCode.CONFLICT, 'episode.deleteDraftRejectedOnly');
     }
     await this.prisma.$transaction(async (tx) => {
       await tx.episode.delete({ where: { id: ep.id } });
@@ -337,7 +337,7 @@ export class CreatorService {
       throw new BizException(BizCode.BAD_REQUEST, 'creator.bankAccountRequired');
     }
     const amount = toBigInt(amountVnd);
-    if (amount <= 0n) throw new BizException(BizCode.BAD_REQUEST, 'Số tiền không hợp lệ');
+    if (amount <= 0n) throw new BizException(BizCode.BAD_REQUEST, 'validation.amountInvalid');
     const minWithdraw = BigInt(await this.platformSettings.getMinWithdrawVnd());
     if (amount < minWithdraw) {
       throw new BizException(
@@ -353,7 +353,7 @@ export class CreatorService {
         data: { availableVnd: { decrement: amount } },
       });
       if (frozen.count !== 1) {
-        throw new BizException(BizCode.INSUFFICIENT_BALANCE, 'Số dư chưa đủ để rút');
+        throw new BizException(BizCode.INSUFFICIENT_BALANCE, 'wallet.insufficientForWithdraw');
       }
       return tx.withdrawRequest.create({
         data: {
@@ -430,7 +430,7 @@ export class CreatorService {
     if (drama.status !== 'DRAFT' && drama.status !== 'REJECTED') {
       throw new BizException(
         BizCode.CONFLICT,
-        'Trạng thái hiện tại không cho phép gửi duyệt',
+        'drama.submitReviewNotAllowed',
       );
     }
     await this.readiness.assertDramaReady(drama.id);
@@ -455,7 +455,7 @@ export class CreatorService {
         );
       }
       if (dto.episodeNumber == null || Number(dto.episodeNumber) < 1) {
-        throw new BizException(BizCode.BAD_REQUEST, 'episodeNumber không hợp lệ');
+        throw new BizException(BizCode.BAD_REQUEST, 'validation.episodeNumberInvalid');
       }
 
       const isFree = !!dto.isFree;
@@ -471,21 +471,21 @@ export class CreatorService {
           ? Number(dto.priceVnd)
           : priceCreditsNum;
       if (!Number.isFinite(priceVndNum) || priceVndNum < 0) {
-        throw new BizException(BizCode.BAD_REQUEST, 'priceVnd phải >= 0');
+        throw new BizException(BizCode.BAD_REQUEST, 'validation.priceVndMin');
       }
       if (!Number.isFinite(priceCreditsNum) || priceCreditsNum < 0) {
-        throw new BizException(BizCode.BAD_REQUEST, 'priceCredits phải >= 0');
+        throw new BizException(BizCode.BAD_REQUEST, 'validation.priceCreditsMin');
       }
       if (isFree && (priceVndNum > 0 || priceCreditsNum > 0)) {
         throw new BizException(
           BizCode.BAD_REQUEST,
-          'Tập miễn phí không được đặt giá > 0',
+          'episode.freePriceMustBeZero',
         );
       }
       if (!isFree && priceVndNum <= 0 && priceCreditsNum <= 0) {
         throw new BizException(
           BizCode.BAD_REQUEST,
-          'Tập trả phí cần priceVnd hoặc priceCredits > 0',
+          'episode.paidPriceRequired',
         );
       }
 
@@ -551,7 +551,7 @@ export class CreatorService {
 
     const cccdNumber = String(dto.cccdNumber || '').trim();
     if (!/^\d{9}$|^\d{12}$/.test(cccdNumber)) {
-      throw new BizException(BizCode.BAD_REQUEST, 'cccdNumber phải là 9 hoặc 12 chữ số');
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.cccdNumber');
     }
     const normalizeDoc = (u: string) => {
       const raw = String(u || '').trim();
@@ -573,31 +573,31 @@ export class CreatorService {
     if (!front) {
       throw new BizException(
         BizCode.BAD_REQUEST,
-        'cccdFrontUrl phải là https://、/api/v1/media/ 或 docs/',
+        'validation.cccdFrontUrl',
       );
     }
     if (!back) {
       throw new BizException(
         BizCode.BAD_REQUEST,
-        'cccdBackUrl phải là https://、/api/v1/media/ 或 docs/',
+        'validation.cccdBackUrl',
       );
     }
     // Client attestation only — admin KYC approval is the real gate for withdraw.
     const faceAttested =
       dto.faceVerified === true || dto.faceVerified === 'true' || dto.faceVerified === 1;
     if (!faceAttested) {
-      throw new BizException(BizCode.BAD_REQUEST, 'faceVerified phải là true');
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.faceVerifiedRequired');
     }
     const taxCode = String(dto.taxCode || '').trim();
     if (!taxCode || taxCode.length < 5) {
-      throw new BizException(BizCode.BAD_REQUEST, 'taxCode là bắt buộc');
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.taxCodeRequired');
     }
     if (
       dto.bankAccount == null ||
       (typeof dto.bankAccount === 'string' && !dto.bankAccount.trim()) ||
       (typeof dto.bankAccount === 'object' && Object.keys(dto.bankAccount).length === 0)
     ) {
-      throw new BizException(BizCode.BAD_REQUEST, 'bankAccount là bắt buộc');
+      throw new BizException(BizCode.BAD_REQUEST, 'creator.bankAccountRequired');
     }
 
     await this.prisma.creator.update({
