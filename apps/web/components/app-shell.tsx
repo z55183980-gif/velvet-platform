@@ -49,45 +49,49 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
   }, [mobileReady, isMobile, pathname]);
 
   return (
-    <div
-      className={cn(
-        // Home feed: full-bleed stage under a fixed tab (same chrome as theater).
-        // Prefer inset-0 over h-dvh so PWA translucent sizing stays stable.
-        lockMobileHome &&
-          isMobile &&
-          "feed-immersive fixed inset-0 flex flex-col overflow-hidden overscroll-none",
-      )}
-    >
-      <MaintenanceBanner />
-      {mobileReady && !isMobile ? (
-        <Suspense fallback={<header className="sticky top-0 z-50 h-16 shrink-0 bg-base/70 backdrop-blur-xl" />}>
-          <Navbar />
-        </Suspense>
-      ) : null}
-      <main
+    <>
+      <div
         className={cn(
-          "overflow-x-clip",
-          !lockMobileHome &&
-            isMobile &&
-            !onDrama &&
-            "pt-[env(safe-area-inset-top,0px)]",
-          // Theater/me: reserve fixed tab under scroll content.
-          // Home feed: no main pb — video stays full-bleed; feed overlays clear the tab.
-          !lockMobileHome &&
-            !onDrama &&
-            isMobile &&
-            "pb-[var(--mobile-tab-chrome-height)]",
-          onDrama && isMobile && "bg-base",
+          // Keep only the feed stage in this clipped fixed shell. The shared
+          // mobile tab is a sibling so every route uses the same viewport edge.
           lockMobileHome &&
             isMobile &&
-            "min-h-0 flex-1 overflow-hidden overscroll-none pb-0",
+            "feed-immersive fixed inset-0 flex flex-col overflow-hidden overscroll-none",
         )}
       >
-        {children}
-      </main>
-      {mobileReady && !isMobile ? <Footer /> : null}
-      {mobileReady && isMobile && !onDrama ? <BottomTabBar /> : null}
-      <PwaInstallRoot />
-    </div>
+        <MaintenanceBanner />
+        {mobileReady && !isMobile ? (
+          <Suspense fallback={<header className="sticky top-0 z-50 h-16 shrink-0 bg-base/70 backdrop-blur-xl" />}>
+            <Navbar />
+          </Suspense>
+        ) : null}
+        <main
+          className={cn(
+            "overflow-x-clip",
+            !lockMobileHome &&
+              isMobile &&
+              !onDrama &&
+              "pt-[env(safe-area-inset-top,0px)]",
+            // Theater/me: reserve fixed tab under scroll content.
+            // Home feed: no main pb — video stays full-bleed; feed overlays clear the tab.
+            !lockMobileHome &&
+              !onDrama &&
+              isMobile &&
+              "pb-[var(--mobile-tab-chrome-height)]",
+            onDrama && isMobile && "bg-base",
+            lockMobileHome &&
+              isMobile &&
+              "min-h-0 flex-1 overflow-hidden overscroll-none pb-0",
+          )}
+        >
+          {children}
+        </main>
+        {mobileReady && !isMobile ? <Footer /> : null}
+        <PwaInstallRoot />
+      </div>
+      {mobileReady && isMobile && !onDrama ? (
+        <BottomTabBar immersive={lockMobileHome} />
+      ) : null}
+    </>
   );
 }
