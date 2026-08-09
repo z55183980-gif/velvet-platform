@@ -23,7 +23,7 @@ export class FeedbackService {
   async submit(input: {
     category: FeedbackCategory;
     body: string;
-    contactEmail?: string;
+    contactEmail: string;
     captchaId?: string;
     captchaCode?: string;
     locale?: string;
@@ -40,12 +40,9 @@ export class FeedbackService {
       throw new BizException(BizCode.BAD_REQUEST, 'feedback.bodyRejected');
     }
 
-    let contactEmail: string | null = null;
-    if (input.contactEmail != null && String(input.contactEmail).trim()) {
-      contactEmail = sanitizePlainText(String(input.contactEmail), FEEDBACK_EMAIL_MAX).toLowerCase();
-      if (!isSimpleEmail(contactEmail)) {
-        throw new BizException(BizCode.BAD_REQUEST, 'auth.invalidEmail');
-      }
+    const contactEmail = sanitizePlainText(String(input.contactEmail || ''), FEEDBACK_EMAIL_MAX).toLowerCase();
+    if (!isSimpleEmail(contactEmail)) {
+      throw new BizException(BizCode.BAD_REQUEST, 'auth.invalidEmail');
     }
 
     const locale = input.locale

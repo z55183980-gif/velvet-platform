@@ -1020,7 +1020,7 @@ export type FeedbackCategory = "feedback" | "complaint" | "suggestion";
 export async function submitFeedback(opts: {
   category: FeedbackCategory;
   body: string;
-  contactEmail?: string;
+  contactEmail: string;
   locale?: string;
   captchaId?: string;
   captchaCode?: string;

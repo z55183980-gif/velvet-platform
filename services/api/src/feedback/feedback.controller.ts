@@ -33,10 +33,11 @@ class SubmitFeedbackDto {
   @MaxLength(FEEDBACK_BODY_MAX, { message: 'feedback.bodyTooLong' })
   body!: string;
 
-  @IsOptional()
+  @IsString()
+  @IsNotEmpty({ message: 'auth.invalidEmail' })
   @IsEmail({}, { message: 'auth.invalidEmail' })
   @MaxLength(FEEDBACK_EMAIL_MAX)
-  contactEmail?: string;
+  contactEmail!: string;
 
   @IsOptional()
   @IsString()

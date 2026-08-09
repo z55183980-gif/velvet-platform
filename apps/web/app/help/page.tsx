@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useLocale } from "@/lib/i18n";
 import {
@@ -67,9 +66,12 @@ export default function HelpPage() {
 
   const captchaRequired = captcha?.captchaRequired !== false;
   const bodyLen = body.trim().length;
+  const emailTrimmed = email.trim();
+  const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailTrimmed);
   const canSubmit =
     !busy &&
     !done &&
+    emailOk &&
     bodyLen >= BODY_MIN &&
     bodyLen <= BODY_MAX &&
     (!captchaRequired || (!!captcha?.captchaId && captchaCode.trim().length >= 4));
@@ -77,7 +79,7 @@ export default function HelpPage() {
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setErr(null);
-    if (bodyLen < BODY_MIN || bodyLen > BODY_MAX) return;
+    if (!emailOk || bodyLen < BODY_MIN || bodyLen > BODY_MAX) return;
     if (captchaRequired && !(captcha?.captchaId && captchaCode.trim().length >= 4)) {
       setErr(t("help.captchaRequired"));
       return;
@@ -87,7 +89,7 @@ export default function HelpPage() {
       await submitFeedback({
         category,
         body: body.trim(),
-        contactEmail: email.trim() || undefined,
+        contactEmail: emailTrimmed,
         locale,
         ...(captchaRequired && captcha?.captchaId
           ? { captchaId: captcha.captchaId, captchaCode: captchaCode.trim() }
@@ -112,17 +114,12 @@ export default function HelpPage() {
   };
 
   return (
-    <main className="mx-auto max-w-2xl px-6 py-12">
-      <Link href="/" className="text-sm text-ink-muted hover:text-ink">
-        ← Velvet
-      </Link>
-      <h1 className="mt-6 text-2xl font-semibold text-ink">{t("help.title")}</h1>
+    <main className="mx-auto max-w-3xl px-6 py-12">
+      <h1 className="text-2xl font-semibold text-ink">{t("help.title")}</h1>
       <p className="mt-3 text-sm leading-relaxed text-ink-muted">{t("help.intro")}</p>
 
       <section id="feedback" className="mt-10 scroll-mt-24">
         <h2 className="text-lg font-medium text-ink">{t("help.formTitle")}</h2>
-        <p className="mt-2 text-sm text-ink-muted">{t("help.replyHint")}</p>
-        <p className="mt-1 text-sm text-ink-subtle">{t("help.safetyHint")}</p>
 
         {done ? (
           <p className="mt-6 rounded-xl border border-line bg-surface-2 px-4 py-4 text-sm text-ink">
@@ -131,8 +128,7 @@ export default function HelpPage() {
         ) : (
           <form className="mt-6 space-y-4" onSubmit={onSubmit}>
             <div>
-              <label className="mb-2 block text-sm text-ink-muted">{t("help.categoryLabel")}</label>
-              <div className="flex flex-wrap gap-2">
+              <div className="flex flex-wrap gap-2" role="group" aria-label={t("help.categoryLabel")}>
                 {CATEGORIES.map((c) => (
                   <button
                     key={c}
@@ -159,6 +155,7 @@ export default function HelpPage() {
                 type="email"
                 name="email"
                 autoComplete="email"
+                required
                 value={email}
                 onChange={(e) => setEmail(e.target.value.slice(0, 120))}
                 placeholder={t("help.emailPlaceholder")}
