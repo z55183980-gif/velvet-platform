@@ -36,6 +36,7 @@ export function VerticalPager({
   blocked = false,
   onTap,
   ahead = 1,
+  preserveCenterMedia = false,
   className,
   children,
 }: {
@@ -51,6 +52,12 @@ export function VerticalPager({
    * Home feed uses 2 so the second-next item can media-warm for fast swipes.
    */
   ahead?: number;
+  /**
+   * Keep the center slot mounted while its page index changes. Watch pages use
+   * this to preserve one user-authorized <video>; feed pages retain page keys so
+   * warmed neighbors can promote to active without losing their media state.
+   */
+  preserveCenterMedia?: boolean;
   className?: string;
   children: (ctx: {
     offset: PageOffset;
@@ -365,7 +372,7 @@ export function VerticalPager({
           const pageIndex = index + offset;
           return (
             <div
-              key={pageIndex}
+              key={preserveCenterMedia ? `slot:${offset}` : `page:${pageIndex}`}
               className="absolute inset-x-0 top-0 h-full"
               style={{ transform: `translate3d(0, ${offset * 100}%, 0)` }}
               // Keep inactive slides from eating taps while settled.

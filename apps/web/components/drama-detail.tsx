@@ -72,6 +72,16 @@ function isHls(url: string) {
   return /\.m3u8(\?|$)/i.test(url);
 }
 
+function releaseVideoSource(video: HTMLVideoElement) {
+  try {
+    video.pause();
+    video.removeAttribute("src");
+    video.load();
+  } catch {
+    /* ignore media teardown failures */
+  }
+}
+
 const PLAY_URL_REFRESH_MS = 5 * 60_000;
 /** Start next-episode media warm once current playback crosses this ratio. */
 const NEXT_WARM_PROGRESS = 0.2;
@@ -81,6 +91,12 @@ type PlayUrlCacheEntry = {
   expiresAtMs: number;
   previewOnly: boolean;
   previewSeconds: number;
+};
+
+type BoundPlaySource = {
+  authCacheKey: string;
+  episodeId: string;
+  entry: PlayUrlCacheEntry;
 };
 
 function shouldSkipWatchWarmNetwork() {
@@ -197,6 +213,10 @@ export function DramaDetail({
   const { user, openLogin, unlock, refreshWallet, ready: authReady, sessionEpoch } = useAuth();
   const { ready: guestReady, canWatch: canGuestWatch, markWatched: markGuestWatched } = useGuestWatchQuota();
   const { mobile: isMobile, ready: mobileReady } = useIsMobile();
+  /** Bound signed play URLs to account + session epoch — guest/B must not reuse A's paid URL. */
+  const authCacheKey = `${
+    user?.id || user?.email || user?.phone || user?.username || user?.label || (authReady ? "guest" : "pending")
+  }:e${sessionEpoch}`;
   const [pendingLandscapeFs, setPendingLandscapeFs] = useState(autoLandscapeFs);
   const pendingLandscapeFsRef = useRef(autoLandscapeFs);
   pendingLandscapeFsRef.current = pendingLandscapeFs;
@@ -215,8 +235,19 @@ export function DramaDetail({
   const [unlockOpen, setUnlockOpen] = useState(false);
   const [unlockTarget, setUnlockTarget] = useState<Episode | null>(null);
   const [selected, setSelected] = useState<Episode | null>(null);
-  const [playUrl, setPlayUrl] = useState<string | null>(null);
-  const [previewLimit, setPreviewLimit] = useState(0);
+  const [playSource, setPlaySource] = useState<BoundPlaySource | null>(null);
+  const selectedEpisodeId = selected?.id != null ? String(selected.id) : "";
+  // Never expose a signed URL to a player rendered for another episode. This
+  // closes the selected->effect gap that otherwise attaches the previous media.
+  const activePlaySource =
+    playSource?.authCacheKey === authCacheKey &&
+    playSource.episodeId === selectedEpisodeId
+      ? playSource
+      : null;
+  const playUrl = activePlaySource?.entry.playUrl ?? null;
+  const previewLimit = activePlaySource?.entry.previewOnly
+    ? activePlaySource.entry.previewSeconds
+    : 0;
   const [playErr, setPlayErr] = useState<string | null>(null);
   const [resumeHint, setResumeHint] = useState<{ epNo: number; progressSec: number } | null>(null);
   const [seekTo, setSeekTo] = useState<number | null>(null);
@@ -263,6 +294,7 @@ export function DramaDetail({
   const videoRef = useRef<HTMLVideoElement>(null);
   const watchShellRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<any>(null);
+  const playbackSelectionChangedRef = useRef(false);
   const resumeApplied = useRef(false);
   /** Avoid putting seekTo in the HLS setup effect deps (rebuilds player). */
   const seekToRef = useRef(seekTo);
@@ -280,14 +312,9 @@ export function DramaDetail({
   tRef.current = t;
 
   const playUrlCacheRef = useRef(new Map<string, PlayUrlCacheEntry>());
-  const playUrlInflightRef = useRef(new Map<string, Promise<PlayUrlCacheEntry | null>>());
+  const playUrlInflightRef = useRef(new Map<string, Promise<PlayUrlCacheEntry>>());
   const warmNextRef = useRef<{ episodeId: string; destroy: () => void } | null>(null);
   const nextWarmArmedRef = useRef(false);
-  /** Bound signed play URLs to account + session epoch — guest/B must not reuse A's paid URL. */
-  const authCacheKey = `${
-    user?.id || user?.email || user?.phone || user?.username || user?.label || (authReady ? "guest" : "pending")
-  }:e${sessionEpoch}`;
-
   const playCacheKey = useCallback(
     (episodeId: string) => `${authCacheKey}:${episodeId}`,
     [authCacheKey],
@@ -344,10 +371,8 @@ export function DramaDetail({
       const task = (async () => {
         try {
           const r = await getPlayUrl(episodeId);
-          if (!r?.playUrl) return null;
+          if (!r?.playUrl) throw new Error("Missing play URL");
           return writeCachedPlayUrl(episodeId, r);
-        } catch {
-          return null;
         } finally {
           playUrlInflightRef.current.delete(inflightKey);
         }
@@ -361,14 +386,37 @@ export function DramaDetail({
     [playCacheKey, readCachedPlayUrl, writeCachedPlayUrl],
   );
 
+  /**
+   * Switch the logical episode and its already-cached source in one render so
+   * the stable watch media element never observes a new episode with an old URL.
+   */
+  const switchPlaybackEpisode = useCallback(
+    (episode: Episode) => {
+      const episodeId = episode.id != null ? String(episode.id) : "";
+      if (!episodeId || episodeId === selectedEpisodeId) return;
+
+      const cached = readCachedPlayUrl(episodeId);
+      setPlaySource(
+        cached ? { authCacheKey, episodeId, entry: cached } : null,
+      );
+      setPlayErr(null);
+      setSeekTo(null);
+      setResumeHint(null);
+      setResumeToast(false);
+      resumeApplied.current = true;
+      playbackSelectionChangedRef.current = true;
+      setSelected(episode);
+    },
+    [authCacheKey, readCachedPlayUrl, selectedEpisodeId],
+  );
+
   // Account switch: drop signed URLs + warm player + playback state bound to prior principal.
   useEffect(() => {
     playUrlCacheRef.current.clear();
     playUrlInflightRef.current.clear();
     warmNextRef.current?.destroy();
     warmNextRef.current = null;
-    setPlayUrl(null);
-    setPreviewLimit(0);
+    setPlaySource(null);
     setPlayErr(null);
     setWatching(false);
   }, [authCacheKey]);
@@ -388,7 +436,11 @@ export function DramaDetail({
     setLikeCount(0);
     setUnlockedNos(new Set());
     setSelected(null);
-    setPlayUrl(null);
+    setPlaySource(null);
+    setSeekTo(null);
+    setResumeHint(null);
+    resumeApplied.current = false;
+    playbackSelectionChangedRef.current = false;
     loadDramaDetail(id, { signal: ac.signal })
       .then((d) => {
         if (ac.signal.aborted) return;
@@ -443,8 +495,8 @@ export function DramaDetail({
     setFollowVideoAspect(true);
     // Prefer persisted media metadata; runtime video dimensions remain the fallback.
     const knownLandscape = episodeIsLandscape(selected);
-    // A new episode replaces the media element. Keep the surrounding immersive
-    // shell alive while the previous episode was already in landscape mode.
+    // Keep the surrounding immersive shell alive while the previous episode
+    // was already in landscape mode.
     const keepLandscapePlayback = landscapeModeRef.current;
     const nextLandscape = knownLandscape ?? (keepLandscapePlayback || pendingLandscapeFsRef.current);
     setLandscapeMode(nextLandscape);
@@ -525,12 +577,12 @@ export function DramaDetail({
   }, []);
 
   useEffect(() => {
-    if (!user || !data) return;
+    if (!user || !data || playbackSelectionChangedRef.current) return;
     let alive = true;
     resumeApplied.current = false;
     getWatchHistory(1, data.drama.numericId || data.drama.id)
       .then((r) => {
-        if (!alive) return;
+        if (!alive || playbackSelectionChangedRef.current) return;
         const row = r?.rows?.[0];
         if (!row?.episode?.episodeNumber) return;
         const epNo = row.episode.episodeNumber as number;
@@ -588,6 +640,11 @@ export function DramaDetail({
   );
   const selectedTrialAvailable = !!(selected && !isUnlocked(selected) && (selected.previewSeconds || 0) > 0);
   const playerReady = !!(selected && (isUnlocked(selected) || selectedTrialAvailable));
+  const playbackAllowed = !!(
+    user ||
+    selectedTrialAvailable ||
+    (selectedEpisodeId && canGuestWatch(selectedEpisodeId))
+  );
   const lockActionLabel =
     selected && !selected.isFree && !isUnlocked(selected) ? t("vip.open") : undefined;
 
@@ -604,47 +661,42 @@ export function DramaDetail({
 
   useEffect(() => {
     if (!playerReady || !selected?.id) {
-      setPlayUrl(null);
-      setPreviewLimit(0);
+      setPlaySource(null);
       setPlayErr(null);
       return;
     }
     if (!authReady || !guestReady) {
-      setPlayUrl(null);
+      setPlaySource(null);
       setPlayErr(null);
       return;
     }
     const episodeId = String(selected.id);
     const allowed = !!(user || selectedTrialAvailable || canGuestWatch(episodeId));
     if (!allowed) {
-      setPlayUrl(null);
+      setPlaySource(null);
       setPlayErr(null);
       return;
     }
 
     const cached = readCachedPlayUrl(episodeId);
     if (cached) {
-      setPlayUrl(cached.playUrl);
-      setPreviewLimit(cached.previewOnly ? cached.previewSeconds : 0);
+      setPlaySource({ authCacheKey, episodeId, entry: cached });
       setPlayErr(null);
       if (!user) markGuestWatched(episodeId);
       return;
     }
 
     const ac = new AbortController();
-    // Drop previous episode's URL so HLS never attaches the wrong source.
-    setPlayUrl(null);
+    setPlaySource(null);
     setPlayErr(null);
-    getPlayUrl(episodeId, { signal: ac.signal })
-      .then((r) => {
+    ensureCachedPlayUrl(episodeId, ac.signal)
+      .then((entry) => {
         if (ac.signal.aborted) return;
-        if (!r?.playUrl) {
+        if (!entry) {
           setPlayErr(t("player.error"));
           return;
         }
-        writeCachedPlayUrl(episodeId, r);
-        setPlayUrl(r.playUrl);
-        setPreviewLimit(r.previewOnly ? r.previewSeconds : 0);
+        setPlaySource({ authCacheKey, episodeId, entry });
         if (!user) markGuestWatched(episodeId);
       })
       .catch((e) => {
@@ -664,8 +716,9 @@ export function DramaDetail({
     canGuestWatch,
     markGuestWatched,
     t,
+    authCacheKey,
     readCachedPlayUrl,
-    writeCachedPlayUrl,
+    ensureCachedPlayUrl,
   ]);
   // Prefetch next unlocked episode's signed URL (no guest quota burn).
   useEffect(() => {
@@ -826,7 +879,7 @@ export function DramaDetail({
       if (!Number.isFinite(duration) || duration <= 0) return;
       if (video.currentTime / duration < NEXT_WARM_PROGRESS) return;
       nextWarmArmedRef.current = true;
-      void warmNext();
+      void warmNext().catch(() => {});
     };
 
     video.addEventListener("timeupdate", onTime);
@@ -1152,13 +1205,7 @@ export function DramaDetail({
   // Do not depend on landscapeMode/seekTo/t — those would destroy+recreate and restart playback.
   useEffect(() => {
     const video = videoRef.current;
-    const episodeId = selected?.id ? String(selected.id) : "";
-    const allowed = !!(
-      user ||
-      selectedTrialAvailable ||
-      (episodeId && canGuestWatch(episodeId))
-    );
-    if (!video || !playUrl || !playerReady || !watching || !allowed) return;
+    if (!video || !playUrl || !playerReady || !watching || !playbackAllowed) return;
 
     const onMeta = () => {
       applyResumeSeek(video);
@@ -1169,20 +1216,26 @@ export function DramaDetail({
       video.removeEventListener("loadedmetadata", onMeta);
     };
 
+    const teardownDirectMedia = () => {
+      dropMediaListeners();
+      releaseVideoSource(video);
+    };
+
     if (!isHls(playUrl)) {
       video.src = playUrl;
       setQualities([]);
       hlsRef.current = null;
-      return dropMediaListeners;
+      return teardownDirectMedia;
     }
     if (video.canPlayType("application/vnd.apple.mpegurl")) {
       video.src = playUrl;
       setQualities([]);
       hlsRef.current = null;
-      return dropMediaListeners;
+      return teardownDirectMedia;
     }
     let hls: any;
     let cancelled = false;
+    let attachedMedia: HTMLVideoElement | null = null;
     (async () => {
       try {
         const mod = await import("hls.js");
@@ -1191,8 +1244,10 @@ export function DramaDetail({
           if (!cancelled) setPlayErr(tRef.current("player.hlsUnsupported"));
           return;
         }
-        // Surface may have remounted while hls.js was loading.
-        const media = videoRef.current ?? video;
+        // Bind this HLS instance to the exact media captured by this effect so
+        // a late callback can never attach to a newer episode's element.
+        const media = video;
+        attachedMedia = media;
         hls = new Hls({ capLevelToPlayerSize: true });
         hlsRef.current = hls;
         hls.loadSource(playUrl);
@@ -1210,8 +1265,7 @@ export function DramaDetail({
           setQualities(mapped);
           setQualityIndex(-1);
           hls.currentLevel = -1;
-          const playTarget = videoRef.current ?? media;
-          void playTarget.play().catch(() => {});
+          void media.play().catch(() => {});
         });
       } catch {
         if (!cancelled) setPlayErr(tRef.current("player.hlsLoadFailed"));
@@ -1222,23 +1276,22 @@ export function DramaDetail({
       dropMediaListeners();
       if (hls) hls.destroy();
       if (hlsRef.current === hls) hlsRef.current = null;
+      releaseVideoSource(attachedMedia ?? video);
     };
   }, [
     playUrl,
+    selectedEpisodeId,
     playerReady,
-    user,
     watching,
-    selected?.id,
-    selectedTrialAvailable,
-    canGuestWatch,
+    playbackAllowed,
   ]);
 
   const selectEpisodeByIndex = useCallback(
     (i: number) => {
       const ep = data?.episodes[i];
-      if (ep) setSelected(ep);
+      if (ep) switchPlaybackEpisode(ep);
     },
-    [data?.episodes],
+    [data?.episodes, switchPlaybackEpisode],
   );
 
   const onSeekingChange = useCallback((seeking: boolean) => {
@@ -1405,7 +1458,7 @@ export function DramaDetail({
     const f =
       data!.episodes.find((e) => isUnlocked(e)) ?? data!.episodes[0];
     if (f) {
-      if (isUnlocked(f)) setSelected(f);
+      if (isUnlocked(f)) switchPlaybackEpisode(f);
       else {
         openUnlockGate(f);
         return;
@@ -1430,7 +1483,7 @@ export function DramaDetail({
       return;
     }
     if (isUnlocked(next) || (next.previewSeconds || 0) > 0) {
-      setSelected(next);
+      switchPlaybackEpisode(next);
       return;
     }
     openUnlockGate(next);
@@ -1455,7 +1508,7 @@ export function DramaDetail({
       return;
     }
     if (isUnlocked(ep) || (ep.previewSeconds || 0) > 0) {
-      setSelected(ep);
+      switchPlaybackEpisode(ep);
       setDrawerOpen(false);
       if (isMobile && !autoStartWatch && !watching) {
         router.push(`/drama/${id}/play?ep=${ep.no}`);
@@ -1771,6 +1824,7 @@ export function DramaDetail({
               count={data.episodes.length}
               onChange={selectEpisodeByIndex}
               blocked={pagerBlocked || pagerMenusOpen || landscapeImmersive}
+              preserveCenterMedia
               onTap={() => {
                 if (landscapeImmersive) {
                   setLandChromeVisible((v) => !v);
@@ -2064,9 +2118,9 @@ export function DramaDetail({
         ) : null}
 
         {/*
-          Hongguo bottom chrome — flush to the physical bottom (pb-0).
-          Do NOT set bottom: env(safe-area): that lifts this stack and paints an
-          empty black slab under the episode bar (visible after black-translucent).
+          Keep the portrait chrome anchored to the physical bottom. The black
+          action row owns the safe-area padding so the seek bar stays over video
+          while the episode and fullscreen controls clear the home indicator.
         */}
         {showWatchBottomChrome ? (
           <div className="absolute inset-x-0 bottom-0 z-40">
@@ -2095,7 +2149,7 @@ export function DramaDetail({
                       </span>
                     </button>
                   </div>
-                  <div className="absolute bottom-0 right-2.5 flex flex-col items-center gap-5">
+                  <div className="absolute bottom-2 right-2.5 flex flex-col items-center gap-5">
                     <WatchSideAction
                       label={favorited ? t("detail.favorited") : t("detail.favorite")}
                       count={formatCount(favCount, locale)}
@@ -2126,7 +2180,7 @@ export function DramaDetail({
                 </div>
               ) : null}
 
-              <div className="relative z-10 w-full bg-[#000000]">
+              <div className="relative z-10 w-full">
                 <WatchSeekBar
                   videoRef={videoRef}
                   absolute={false}
@@ -2136,7 +2190,7 @@ export function DramaDetail({
                   disabled={!playUrl || needsLogin || locked}
                   onSeekingChange={onSeekingChange}
                 />
-                <div className="flex items-center gap-6 px-[18px] pb-0 pt-1">
+                <div className="flex items-center gap-6 bg-[#000000] px-[18px] pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] pt-1">
                   <button
                     type="button"
                     onClick={() => setDrawerOpen(true)}
