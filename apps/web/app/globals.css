@@ -173,6 +173,18 @@ html[data-theme="light"] {
 }
 
 /*
+  iOS Home Screen + black-translucent: a fixed inset-0 box stops at the top of
+  the home-indicator band, unlike normal document pages. Extend only the
+  immersive home shell through that band so its fixed tab uses the same
+  physical bottom edge as Theater/Me. Browser mode is intentionally unchanged.
+*/
+@media (display-mode: standalone) {
+  .feed-immersive {
+    bottom: calc(0px - env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/*
   Auth / login modal: always dark chrome, even when site theme is light.
 */
 .auth-modal-dark {
