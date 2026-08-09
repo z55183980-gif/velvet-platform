@@ -278,6 +278,8 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
   const [previewSeconds, setPreviewSeconds] = useState(10);
   const [freeRangeStart, setFreeRangeStart] = useState("1");
   const [freeRangeEnd, setFreeRangeEnd] = useState("");
+  /** Explicit ALL_FREE lock mode — not freeEnd === episode total. */
+  const [allFree, setAllFree] = useState(false);
   /** Default ON: drama follows platform global lock policy (lockMode null). */
   const [inheritGlobal, setInheritGlobal] = useState(true);
   const [draft, setDraft] = useState<BasicDraft>(emptyDraft);
@@ -364,24 +366,30 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
     if (lock == null) {
       // Keep custom fields primed for when the user turns the switch off
       if (globalMode === "ALL_FREE") {
-        setFreeRangeStart("");
-        setFreeRangeEnd("");
+        setAllFree(true);
+        setFreeRangeStart("1");
+        setFreeRangeEnd(String(Math.max(1, total || 3)));
       } else if (globalMode === "VIP_ALL") {
+        setAllFree(false);
         setFreeRangeStart(String(total + 1 || 999));
         setFreeRangeEnd(String(total + 1 || 999));
       } else {
+        setAllFree(false);
         setFreeRangeStart("1");
         setFreeRangeEnd(String(Math.max(0, globalFreeCount)));
       }
-    } else if (lock === "ALL_FREE" || (total > 0 && freeCount >= total)) {
-      setFreeRangeStart("");
-      setFreeRangeEnd("");
+    } else if (lock === "ALL_FREE") {
+      setAllFree(true);
+      setFreeRangeStart("1");
+      setFreeRangeEnd(String(Math.max(1, total || freeCount || 3)));
     } else if (lock === "VIP_ALL" && freeCount <= 0) {
       // Out-of-range card values represent "no free episodes"
+      setAllFree(false);
       setFreeRangeStart(String(total + 1 || 999));
       setFreeRangeEnd(String(total + 1 || 999));
     } else {
       // FREE_FIRST_N, or legacy VIP_ALL+freeCount>0 (buggy prior save) → first-N free cards
+      setAllFree(false);
       setFreeRangeStart("1");
       setFreeRangeEnd(String(Math.max(1, freeCount)));
     }
@@ -568,12 +576,12 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
 
     let resolved: ReturnType<typeof resolveCustomFreePolicy>;
     try {
-      resolved = resolveCustomFreePolicy(total, freeRangeStart, freeRangeEnd);
+      resolved = resolveCustomFreePolicy(total, freeRangeStart, freeRangeEnd, allFree);
     } catch {
       throw new Error(t("policyRangeInvalid", { total: total || 1 }));
     }
     const { freeThru, freeCount, lockMode } = resolved;
-    if (total > 0 && freeCount < total && priceCredits <= 0) {
+    if (total > 0 && lockMode !== "ALL_FREE" && freeCount < total && priceCredits <= 0) {
       throw new Error(t("policyPriceInvalid"));
     }
     const previewSec = allowPreview ? Math.max(1, Math.floor(Number(previewSeconds) || 10)) : 0;
@@ -1337,6 +1345,8 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
             globalFreeCount={globalFreeCount}
             globalPreviewSeconds={globalPreviewSeconds}
             episodeTotal={episodes.length}
+            allFree={allFree}
+            onAllFreeChange={setAllFree}
             freeRangeStart={freeRangeStart}
             freeRangeEnd={freeRangeEnd}
             onFreeRangeStartChange={setFreeRangeStart}

@@ -36,18 +36,27 @@ export function freeThruWhenInheriting(opts: {
   return Math.min(opts.total, Math.max(0, opts.globalFreeCount));
 }
 
-/** Custom (non-inherit) range → lock mode + freeThru. Empty range = ALL_FREE. */
+/**
+ * Custom (non-inherit) free policy.
+ * `allFree` maps to real ALL_FREE lock mode (future episodes stay free).
+ * Do NOT infer ALL_FREE from freeEnd >= total — that would leave later appends paid.
+ */
 export function resolveCustomFreePolicy(
   total: number,
   freeRangeStart: string,
   freeRangeEnd: string,
+  allFree = false,
 ): {
   freeThru: number;
   freeCount: number;
   lockMode: DramaLockModeValue;
 } {
-  if (!freeRangeStart && !freeRangeEnd) {
-    return { freeThru: total, freeCount: total, lockMode: "ALL_FREE" };
+  if (allFree) {
+    return {
+      freeThru: Number.POSITIVE_INFINITY,
+      freeCount: 0,
+      lockMode: "ALL_FREE",
+    };
   }
   const freeStart = Number(freeRangeStart);
   const freeEnd = Number(freeRangeEnd);
@@ -55,8 +64,15 @@ export function resolveCustomFreePolicy(
     !Number.isInteger(freeStart) ||
     !Number.isInteger(freeEnd) ||
     freeStart < 1 ||
-    freeEnd < freeStart
+    freeEnd < 0
   ) {
+    throw new Error("INVALID_RANGE");
+  }
+  // end 0 = no free episodes (VIP_ALL); mirrors global settings.
+  if (freeEnd === 0) {
+    return { freeThru: 0, freeCount: 0, lockMode: "VIP_ALL" };
+  }
+  if (freeEnd < freeStart) {
     throw new Error("INVALID_RANGE");
   }
   if (total > 0 && freeStart > total) {
@@ -65,13 +81,11 @@ export function resolveCustomFreePolicy(
   if (total > 0 && freeEnd > total) {
     throw new Error("INVALID_RANGE");
   }
-  const freeThru = Math.max(0, Math.min(total, freeEnd));
-  const lockMode: DramaLockModeValue =
-    total > 0 && freeThru >= total ? "ALL_FREE" : freeThru <= 0 ? "VIP_ALL" : "FREE_FIRST_N";
+  const freeThru = Math.max(0, freeEnd);
   return {
     freeThru,
-    freeCount: lockMode === "ALL_FREE" ? total : lockMode === "VIP_ALL" ? 0 : freeThru,
-    lockMode,
+    freeCount: freeThru,
+    lockMode: freeThru <= 0 ? "VIP_ALL" : "FREE_FIRST_N",
   };
 }
 
@@ -79,11 +93,44 @@ export function freeEpisodeCountFromCustomPolicy(
   total: number,
   freeRangeStart: string,
   freeRangeEnd: string,
+  allFree = false,
 ): number {
   if (!total) return 0;
+  if (allFree) return total;
   try {
-    return resolveCustomFreePolicy(total, freeRangeStart, freeRangeEnd).freeCount;
+    return resolveCustomFreePolicy(total, freeRangeStart, freeRangeEnd, false).freeCount;
   } catch {
-    return total;
+    return 0;
   }
+}
+
+/**
+ * Global settings free policy (no drama total).
+ * `allFree` → episodeLockMode=ALL_FREE (future episodes stay free).
+ * freeEnd === 0 → VIP_ALL (all episodes paid; create encodes this via start > total).
+ * Otherwise FREE_FIRST_N with freeCount = end (first-N; start is UI parity).
+ */
+export function resolveGlobalFreeRangePolicy(
+  allFree: boolean,
+  freeRangeStart: string,
+  freeRangeEnd: string,
+): {
+  freeCount: number;
+  lockMode: DramaLockModeValue;
+} {
+  if (allFree) {
+    return { freeCount: 0, lockMode: "ALL_FREE" };
+  }
+  const freeStart = Number(freeRangeStart);
+  const freeEnd = Number(freeRangeEnd);
+  if (!Number.isInteger(freeStart) || !Number.isInteger(freeEnd) || freeStart < 1) {
+    throw new Error("INVALID_RANGE");
+  }
+  if (freeEnd === 0) {
+    return { freeCount: 0, lockMode: "VIP_ALL" };
+  }
+  if (freeEnd < freeStart) {
+    throw new Error("INVALID_RANGE");
+  }
+  return { freeCount: freeEnd, lockMode: "FREE_FIRST_N" };
 }

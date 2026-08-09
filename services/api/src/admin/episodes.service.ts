@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import { PrismaService } from '../prisma/prisma.service';
 import { BizException, BizCode } from '../common/biz.exception';
 import { AuditService } from '../common/audit.service';
+import { LockAccessService } from '../common/lock-access.service';
 import { UploadService } from '../upload/upload.service';
 import { convertExternalPlayUrl } from './online-drama.util';
 
@@ -21,6 +22,7 @@ export class AdminEpisodesService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly upload: UploadService,
+    private readonly lockAccess: LockAccessService,
   ) {}
 
   async listByDrama(dramaId: string) {
@@ -65,7 +67,13 @@ export class AdminEpisodesService {
       throw new BizException(BizCode.CONFLICT, `第 ${episodeNumber} 集已存在`);
     }
 
-    const isFree = !!dto.isFree;
+    // Default isFree from resolved lock policy (inherit/ALL_FREE/first-N) when omitted —
+    // never leave new episodes paid under ALL_FREE / global inherit by accident.
+    const policy = await this.lockAccess.resolveForDrama(drama);
+    const isFree =
+      dto.isFree != null
+        ? !!dto.isFree
+        : this.lockAccess.isFree({ isFree: false, episodeNumber }, policy);
     const previewSeconds = isFree ? 0 : Math.max(0, Math.floor(Number(dto.previewSeconds) || 0));
     const priceCredits = isFree ? 0n : toBigIntCredits(dto.priceCredits, 0n);
     const priceVnd = isFree ? 0n : toBigIntCredits(dto.priceVnd ?? dto.priceCredits, 0n);
@@ -384,9 +392,9 @@ export class AdminEpisodesService {
       {
         title: dto.title,
         episodeNumber: dto.episodeNumber,
-        isFree: !!dto.isFree,
+        isFree: dto.isFree,
         previewSeconds: dto.previewSeconds,
-        priceCredits: dto.isFree ? 0 : dto.priceCredits ?? 10,
+        priceCredits: dto.isFree === true ? 0 : dto.priceCredits ?? 10,
         thumbnailUrl: dto.thumbnailUrl,
       },
       actorId,
@@ -435,9 +443,9 @@ export class AdminEpisodesService {
       {
         title: dto.title,
         episodeNumber: dto.episodeNumber,
-        isFree: !!dto.isFree,
+        isFree: dto.isFree,
         previewSeconds: dto.previewSeconds,
-        priceCredits: dto.isFree ? 0 : dto.priceCredits ?? 10,
+        priceCredits: dto.isFree === true ? 0 : dto.priceCredits ?? 10,
         thumbnailUrl: dto.thumbnailUrl,
       },
       actorId,

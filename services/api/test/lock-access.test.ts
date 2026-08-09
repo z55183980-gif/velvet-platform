@@ -92,3 +92,51 @@ test('inheritance + FREE_FIRST_N: only first N free when drama stamped total', (
     false,
   );
 });
+
+test('ALL_FREE keeps late appends free even when freeCount stamp is 0', () => {
+  assert.equal(
+    isEpisodeFreeByPolicy({
+      episodeIsFree: false,
+      episodeNumber: 100,
+      mode: 'ALL_FREE',
+      freeEpisodeCount: 0,
+    }),
+    true,
+  );
+});
+
+test('inherit ALL_FREE: mode wins over stale FREE_FIRST_N freeCount stamp', () => {
+  // Runtime resolve uses global mode ALL_FREE; freeCount stamp may be 0 or old N.
+  const freeCount = resolveInheritedFreeCount({
+    inherited: true,
+    dramaFreeEpisodeCount: 3,
+    globalFreeCount: 0,
+  });
+  assert.equal(freeCount, 0);
+  assert.equal(
+    isEpisodeFreeByPolicy({
+      episodeIsFree: false,
+      episodeNumber: 50,
+      mode: 'ALL_FREE',
+      freeEpisodeCount: freeCount,
+    }),
+    true,
+  );
+});
+
+test('inherit FREE_FIRST_N: appended episode beyond N is paid', () => {
+  const freeCount = resolveInheritedFreeCount({
+    inherited: true,
+    dramaFreeEpisodeCount: 999,
+    globalFreeCount: 3,
+  });
+  assert.equal(
+    isEpisodeFreeByPolicy({
+      episodeIsFree: true,
+      episodeNumber: 4,
+      mode: 'FREE_FIRST_N',
+      freeEpisodeCount: freeCount,
+    }),
+    false,
+  );
+});

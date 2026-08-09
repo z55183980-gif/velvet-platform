@@ -676,13 +676,10 @@ export class AdminService {
       ? paidSample.priceVnd
       : paidCredits;
 
-    const freeCount = Math.max(0, drama.freeEpisodeCount ?? 0);
-    const lockMode = drama.lockMode || 'FREE_FIRST_N';
-    const episodeIsFree = (ep: number) => {
-      if (lockMode === 'ALL_FREE') return true;
-      if (lockMode === 'VIP_ALL') return false;
-      return ep <= freeCount;
-    };
+    // Use resolveForDrama — lockMode null must follow global (NOT coerce to FREE_FIRST_N).
+    const policy = await this.lockAccess.resolveForDrama(drama);
+    const episodeIsFree = (ep: number) =>
+      this.lockAccess.isFree({ isFree: false, episodeNumber: ep }, policy);
 
     const titleZh = drama.titleZh || drama.titleEn || drama.slug;
     if (dryRun) {
@@ -1272,6 +1269,12 @@ export class AdminService {
     if (dto.lockMode !== undefined) {
       if (dto.lockMode === null || dto.lockMode === '' || dto.lockMode === 'INHERIT') {
         data.lockMode = null;
+        // Stamp global freeCount so denormalized drama.freeEpisodeCount stays consistent
+        // when caller did not pass an explicit freeEpisodeCount (same as batch INHERIT).
+        if (dto.freeEpisodeCount == null) {
+          const global = await this.lockAccess.getGlobalPolicy();
+          data.freeEpisodeCount = global.freeCount;
+        }
       } else if (
         dto.lockMode === 'FREE_FIRST_N' ||
         dto.lockMode === 'VIP_ALL' ||
@@ -1520,8 +1523,16 @@ export class AdminService {
     const buyoutCredits = normalizeCreateBuyoutCredits(dto.buyoutCredits);
     const policy = await this.lockAccess.resolveForDrama({
       lockMode,
-      freeEpisodeCount,
+      freeEpisodeCount:
+        lockMode == null && dto.freeEpisodeCount == null
+          ? (await this.lockAccess.getGlobalPolicy()).freeCount
+          : freeEpisodeCount,
     });
+    // Prefer stamped global freeCount when Follow Global and caller omitted freeEpisodeCount.
+    const stampedFreeCount =
+      lockMode == null && dto.freeEpisodeCount == null
+        ? policy.globalFreeCount
+        : freeEpisodeCount;
     // 外部资源必须先完成来源和权利审核，禁止创建时直接上线。
     const status = 'DRAFT' as const;
 
@@ -1537,7 +1548,7 @@ export class AdminService {
           descriptionZh: dto.descriptionZh?.trim() || null,
           categorySlug,
           coverUrl: dto.coverUrl?.trim() || null,
-          freeEpisodeCount,
+          freeEpisodeCount: stampedFreeCount,
           lockMode,
           buyoutCredits,
           isOfficial: true,
@@ -1677,9 +1688,13 @@ export class AdminService {
       });
     }
 
-    const freeEpisodeCount = Math.max(0, Math.floor(Number(dto.freeEpisodeCount ?? 3)));
     const lockMode = normalizeCreateLockMode(dto.lockMode);
     const buyoutCredits = normalizeCreateBuyoutCredits(dto.buyoutCredits);
+    const global = await this.lockAccess.getGlobalPolicy();
+    const freeEpisodeCount =
+      lockMode == null && dto.freeEpisodeCount == null
+        ? global.freeCount
+        : Math.max(0, Math.floor(Number(dto.freeEpisodeCount ?? 3)));
     // 创建时一律草稿；上架走就绪校验。ONLINE 另需提交审核 → 人工审核通过。
     const status = 'DRAFT' as const;
     const announcedTotal = Math.max(0, Math.floor(Number(dto.totalEpisodes ?? 0)));

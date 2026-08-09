@@ -89,6 +89,7 @@ type DraftRecord = {
   updatedAt: string;
   freeRangeStart?: string;
   freeRangeEnd?: string;
+  allFree?: boolean;
   priceCredits?: number;
   allowPreview?: boolean;
   previewSeconds?: number;
@@ -363,6 +364,8 @@ export const LocalUploadWizard = forwardRef<
   const [previewSeconds, setPreviewSeconds] = useState(10);
   const [freeRangeStart, setFreeRangeStart] = useState("1");
   const [freeRangeEnd, setFreeRangeEnd] = useState("");
+  /** Explicit ALL_FREE lock mode — not freeEnd === episode total. */
+  const [allFree, setAllFree] = useState(false);
   /** Default ON — drama follows platform global lock policy on create. */
   const [inheritGlobal, setInheritGlobal] = useState(true);
   const [episodes, setEpisodes] = useState<EpisodeDraft[]>([]);
@@ -741,6 +744,7 @@ export const LocalUploadWizard = forwardRef<
       updatedAt: new Date().toISOString(),
       freeRangeStart,
       freeRangeEnd,
+      allFree,
       priceCredits,
       allowPreview,
       previewSeconds,
@@ -766,6 +770,7 @@ export const LocalUploadWizard = forwardRef<
     setCompletion(normalizeCompletion(record.completion));
     setFreeRangeStart(record.freeRangeStart || "1");
     setFreeRangeEnd(record.freeRangeEnd || "");
+    setAllFree(record.allFree ?? false);
     setPriceCredits(record.priceCredits || 10);
     setAllowPreview(record.allowPreview ?? false);
     setPreviewSeconds(record.previewSeconds || 10);
@@ -1162,13 +1167,13 @@ export const LocalUploadWizard = forwardRef<
 
     let custom: ReturnType<typeof resolveCustomFreePolicy>;
     try {
-      custom = resolveCustomFreePolicy(total, freeRangeStart, freeRangeEnd);
+      custom = resolveCustomFreePolicy(total, freeRangeStart, freeRangeEnd, allFree);
     } catch {
       throw new Error(t("policyRangeInvalid", { total: total || 1 }));
     }
     return {
       createLockMode: custom.lockMode,
-      freeThru: custom.freeThru,
+      freeThru: custom.lockMode === "ALL_FREE" ? Number.POSITIVE_INFINITY : custom.freeThru,
       freeCount: custom.freeCount,
       previewSec: allowPreview ? Math.max(1, Math.floor(Number(previewSeconds) || 10)) : 0,
       credits: Math.max(1, priceCredits || 10),
@@ -1178,8 +1183,9 @@ export const LocalUploadWizard = forwardRef<
   function episodeIsFreeForUpload(_episodeNumber: number, indexInBatch: number) {
     const n = indexInBatch + 1;
     try {
-      const { freeThru } = resolvePolicyForTotal(Math.max(episodes.length, n));
-      return n <= freeThru;
+      const policy = resolvePolicyForTotal(Math.max(episodes.length, n));
+      if (policy.createLockMode === "ALL_FREE") return true;
+      return n <= policy.freeThru;
     } catch {
       return true;
     }
@@ -1562,6 +1568,7 @@ export const LocalUploadWizard = forwardRef<
     setTotalEpisodesDirty(false);
     setFreeRangeStart("1");
     setFreeRangeEnd("");
+    setAllFree(false);
     setPriceCredits(10);
     setAllowPreview(false);
     setPreviewSeconds(10);
@@ -1573,12 +1580,17 @@ export const LocalUploadWizard = forwardRef<
     if (!total) return episodes;
 
     const policy = resolvePolicyForTotal(total);
-    if (policy.freeThru < total && policy.credits <= 0) {
+    if (
+      policy.createLockMode !== "ALL_FREE" &&
+      policy.freeThru < total &&
+      policy.credits <= 0
+    ) {
       throw new Error(t("policyPriceInvalid"));
     }
 
     return episodes.map((episode, index) => {
-      const isFree = index + 1 <= policy.freeThru;
+      const isFree =
+        policy.createLockMode === "ALL_FREE" || index + 1 <= policy.freeThru;
       return {
         ...episode,
         isFree,
@@ -2598,6 +2610,8 @@ export const LocalUploadWizard = forwardRef<
               globalFreeCount={globalFreeCount}
               globalPreviewSeconds={globalPreviewSeconds}
               episodeTotal={episodes.length}
+              allFree={allFree}
+              onAllFreeChange={setAllFree}
               freeRangeStart={freeRangeStart}
               freeRangeEnd={freeRangeEnd}
               onFreeRangeStartChange={setFreeRangeStart}

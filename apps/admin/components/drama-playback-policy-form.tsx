@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { Button, Input, Switch, cn } from "@velvet/ui";
 import { Save } from "lucide-react";
 import { useI18n } from "../lib/i18n";
@@ -10,12 +11,17 @@ import {
 } from "../lib/drama-playback-policy";
 
 export type DramaPlaybackPolicyFormProps = {
-  inheritGlobal: boolean;
-  onInheritGlobalChange: (next: boolean) => void;
-  globalMode: GlobalLockMode;
-  globalFreeCount: number;
-  globalPreviewSeconds: number;
+  /** Drama create/edit: follow-global switch. Global settings: omit inherit card. */
+  surface?: "drama" | "global";
+  inheritGlobal?: boolean;
+  onInheritGlobalChange?: (next: boolean) => void;
+  globalMode?: GlobalLockMode;
+  globalFreeCount?: number;
+  globalPreviewSeconds?: number;
   episodeTotal: number;
+  /** Explicit ALL_FREE — future episodes stay free (not freeEnd = current total). */
+  allFree: boolean;
+  onAllFreeChange: (next: boolean) => void;
   freeRangeStart: string;
   freeRangeEnd: string;
   onFreeRangeStartChange: (value: string) => void;
@@ -27,26 +33,30 @@ export type DramaPlaybackPolicyFormProps = {
   previewSeconds: number;
   onPreviewSecondsChange: (value: number) => void;
   disabled?: boolean;
-  /** Unique radio name so create/edit can coexist on the same page. */
+  /** Unique radio name so create/edit/settings can coexist. */
   previewRadioName?: string;
-  /** Wrapper style: create wizard uses upload-panel; edit may use content-section-card. */
   variant?: "upload-panel" | "content-section";
-  /** Optional heading override (defaults to uploadSectionPolicy). */
   showHeading?: boolean;
   headingHint?: string;
-  /** Edit flow: show save button at bottom. */
+  headingExtra?: ReactNode;
   showSaveButton?: boolean;
   savePending?: boolean;
   onSave?: () => void;
+  /** Optional footer preview override (global settings). */
+  previewText?: string;
+  previewIsFree?: boolean;
 };
 
 export function DramaPlaybackPolicyForm({
-  inheritGlobal,
+  surface = "drama",
+  inheritGlobal = false,
   onInheritGlobalChange,
-  globalMode,
-  globalFreeCount,
-  globalPreviewSeconds,
+  globalMode = "FREE_FIRST_N",
+  globalFreeCount = 0,
+  globalPreviewSeconds = 0,
   episodeTotal,
+  allFree,
+  onAllFreeChange,
   freeRangeStart,
   freeRangeEnd,
   onFreeRangeStartChange,
@@ -62,22 +72,29 @@ export function DramaPlaybackPolicyForm({
   variant = "upload-panel",
   showHeading = true,
   headingHint,
+  headingExtra,
   showSaveButton = false,
   savePending = false,
   onSave,
+  previewText,
+  previewIsFree,
 }: DramaPlaybackPolicyFormProps) {
   const { t } = useI18n();
+  const isGlobal = surface === "global";
+  const customEditable = isGlobal || !inheritGlobal;
+  const rangeDisabled = disabled || allFree || (!isGlobal && !episodeTotal);
 
-  const previewFreeCount = inheritGlobal
-    ? freeCountWhenInheriting({
-        total: episodeTotal,
-        globalMode,
-        globalFreeCount,
-      })
-    : freeEpisodeCountFromCustomPolicy(episodeTotal, freeRangeStart, freeRangeEnd);
+  const previewFreeCount =
+    !isGlobal && inheritGlobal
+      ? freeCountWhenInheriting({
+          total: episodeTotal,
+          globalMode,
+          globalFreeCount,
+        })
+      : freeEpisodeCountFromCustomPolicy(episodeTotal, freeRangeStart, freeRangeEnd, allFree);
 
   const previewCredits = Math.max(1, priceCredits || 10);
-  const previewIsAllFree = episodeTotal > 0 && previewFreeCount >= episodeTotal;
+  const previewIsAllFree = allFree || (episodeTotal > 0 && previewFreeCount >= episodeTotal);
 
   const shellClass =
     variant === "upload-panel" ? "upload-panel space-y-3" : "content-section-card space-y-3";
@@ -91,66 +108,79 @@ export function DramaPlaybackPolicyForm({
           <div>
             <h2>{t("uploadSectionPolicy")}</h2>
             <p>{headingHint ?? t("uploadSectionPolicyHint")}</p>
+            {headingExtra}
           </div>
         </div>
       ) : null}
 
-      <div className="policy-mode-card is-selected">
-        <div className="policy-mode-card__body">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <strong>{t("policyGlobalCard")}</strong>
-              <small>{t("policyGlobalCardHint")}</small>
+      {!isGlobal ? (
+        <div className="policy-mode-card is-selected">
+          <div className="policy-mode-card__body">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <strong>{t("policyGlobalCard")}</strong>
+                <small>{t("policyGlobalCardHint")}</small>
+              </div>
+              <div className="flex shrink-0 flex-col items-end gap-1">
+                <Switch
+                  size="sm"
+                  checked={inheritGlobal}
+                  disabled={disabled}
+                  aria-label={t("policyInheritGlobal")}
+                  onCheckedChange={(next) => onInheritGlobalChange?.(next)}
+                />
+                <span className="text-caption text-ink-muted">{t("policyInheritGlobal")}</span>
+              </div>
             </div>
-            <div className="flex shrink-0 flex-col items-end gap-1">
-              <Switch
-                size="sm"
-                checked={inheritGlobal}
-                disabled={disabled}
-                aria-label={t("policyInheritGlobal")}
-                onCheckedChange={onInheritGlobalChange}
-              />
-              <span className="text-caption text-ink-muted">{t("policyInheritGlobal")}</span>
+            <p className="mt-2 text-caption text-ink-muted">{t("policyInheritGlobalHint")}</p>
+            <div
+              className={cn(
+                "policy-preview mt-2",
+                globalMode === "ALL_FREE" ? "is-free" : "is-partial",
+              )}
+            >
+              <span className="policy-preview__dot" aria-hidden />
+              <p>
+                {globalMode === "ALL_FREE"
+                  ? t("settingsPolicyPreviewAllFree")
+                  : globalMode === "VIP_ALL"
+                    ? t("settingsPolicyPreviewVipAll")
+                    : t("settingsPolicyPreviewFreeFirstN", { n: globalFreeCount })}
+                {globalMode !== "ALL_FREE" && globalPreviewSeconds > 0
+                  ? t("settingsPolicyPreviewTrialSuffix", { seconds: globalPreviewSeconds })
+                  : null}
+              </p>
             </div>
-          </div>
-          <p className="mt-2 text-caption text-ink-muted">{t("policyInheritGlobalHint")}</p>
-          <div
-            className={cn(
-              "policy-preview mt-2",
-              globalMode === "ALL_FREE" ? "is-free" : "is-partial",
-            )}
-          >
-            <span className="policy-preview__dot" aria-hidden />
-            <p>
-              {globalMode === "ALL_FREE"
-                ? t("settingsPolicyPreviewAllFree")
-                : globalMode === "VIP_ALL"
-                  ? t("settingsPolicyPreviewVipAll")
-                  : t("settingsPolicyPreviewFreeFirstN", { n: globalFreeCount })}
-              {globalMode !== "ALL_FREE" && globalPreviewSeconds > 0
-                ? t("settingsPolicyPreviewTrialSuffix", { seconds: globalPreviewSeconds })
-                : null}
-            </p>
           </div>
         </div>
-      </div>
+      ) : null}
 
-      {!inheritGlobal ? (
+      {customEditable ? (
         <>
           <div className="policy-mode-grid" aria-label={t("uploadSectionPolicy")}>
             <div className="policy-mode-card">
               <div className="policy-mode-card__body">
                 <strong>{t("policyAllFree")}</strong>
                 <small>{t("policyModeHint")}</small>
+                <label className="policy-preview-toggle mt-2">
+                  <input
+                    type="checkbox"
+                    checked={allFree}
+                    disabled={disabled}
+                    onChange={(e) => onAllFreeChange(e.target.checked)}
+                  />
+                  <span>{t("lockModeAllFree")}</span>
+                </label>
+                <p className="text-caption text-ink-muted">{t("policyAllFreeForeverHint")}</p>
                 <div className="policy-range-grid">
                   <label className="upload-field">
                     <span>{t("policyRangeStart")}</span>
                     <Input
                       type="number"
                       min={1}
-                      max={episodeTotal || undefined}
+                      max={!isGlobal && episodeTotal ? episodeTotal : undefined}
                       value={freeRangeStart}
-                      disabled={disabled || !episodeTotal}
+                      disabled={rangeDisabled}
                       onChange={(e) => onFreeRangeStartChange(e.target.value)}
                     />
                   </label>
@@ -158,10 +188,10 @@ export function DramaPlaybackPolicyForm({
                     <span>{t("policyRangeEnd")}</span>
                     <Input
                       type="number"
-                      min={1}
-                      max={episodeTotal || undefined}
+                      min={0}
+                      max={!isGlobal && episodeTotal ? episodeTotal : undefined}
                       value={freeRangeEnd}
-                      disabled={disabled || !episodeTotal}
+                      disabled={rangeDisabled}
                       onChange={(e) => onFreeRangeEndChange(e.target.value)}
                     />
                   </label>
@@ -178,7 +208,7 @@ export function DramaPlaybackPolicyForm({
                     type="number"
                     min={1}
                     value={priceCredits}
-                    disabled={disabled}
+                    disabled={disabled || allFree}
                     onChange={(e) => onPriceCreditsChange(Number(e.target.value) || 0)}
                   />
                 </label>
@@ -193,7 +223,7 @@ export function DramaPlaybackPolicyForm({
                         type="radio"
                         name={previewRadioName}
                         checked={!allowPreview}
-                        disabled={disabled}
+                        disabled={disabled || allFree}
                         onChange={() => onAllowPreviewChange(false)}
                       />
                       <span>{t("policyPreviewDisabled")}</span>
@@ -203,13 +233,13 @@ export function DramaPlaybackPolicyForm({
                         type="radio"
                         name={previewRadioName}
                         checked={allowPreview}
-                        disabled={disabled}
+                        disabled={disabled || allFree}
                         onChange={() => onAllowPreviewChange(true)}
                       />
                       <span>{t("policyAllowPreview")}</span>
                     </label>
                   </div>
-                  {allowPreview ? (
+                  {allowPreview && !allFree ? (
                     <label className="upload-field">
                       <span>{t("policyPreviewSeconds")}</span>
                       <Input
@@ -227,17 +257,29 @@ export function DramaPlaybackPolicyForm({
               </div>
             </div>
           </div>
-          {episodeTotal > 0 ? (
+          {previewText != null ? (
+            <div
+              className={cn(
+                "policy-preview",
+                (previewIsFree ?? previewIsAllFree) ? "is-free" : "is-partial",
+              )}
+            >
+              <span className="policy-preview__dot" aria-hidden />
+              <p>{previewText}</p>
+            </div>
+          ) : !isGlobal && episodeTotal > 0 ? (
             <div className={cn("policy-preview", previewIsAllFree ? "is-free" : "is-partial")}>
               <span className="policy-preview__dot" aria-hidden />
               <p>
-                {previewIsAllFree
-                  ? t("policyPreviewAllFree", { total: episodeTotal })
-                  : t("policyPreviewPartial", {
-                      total: episodeTotal,
-                      free: previewFreeCount,
-                      price: priceCredits,
-                    })}
+                {allFree
+                  ? t("policyPreviewAllFreeForever", { total: episodeTotal })
+                  : previewIsAllFree
+                    ? t("policyPreviewAllFree", { total: episodeTotal })
+                    : t("policyPreviewPartial", {
+                        total: episodeTotal,
+                        free: previewFreeCount,
+                        price: priceCredits,
+                      })}
               </p>
             </div>
           ) : null}
@@ -247,7 +289,9 @@ export function DramaPlaybackPolicyForm({
           <span className="policy-preview__dot" aria-hidden />
           <p>
             {previewIsAllFree
-              ? t("policyPreviewAllFree", { total: episodeTotal })
+              ? globalMode === "ALL_FREE"
+                ? t("policyPreviewAllFreeForever", { total: episodeTotal })
+                : t("policyPreviewAllFree", { total: episodeTotal })
               : t("policyPreviewPartial", {
                   total: episodeTotal,
                   free: previewFreeCount,

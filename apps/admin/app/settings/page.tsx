@@ -8,10 +8,12 @@ import {
   adminUpdateSetting,
   adminUpdateStripePaymentGateway,
 } from "@velvet/api-client";
-import { Button, Input, Select, cn, fmtDate } from "@velvet/ui";
+import { Button, Input, Select, fmtDate } from "@velvet/ui";
 import { Save } from "lucide-react";
 import { AdminShell } from "@/components/admin-shell";
+import { DramaPlaybackPolicyForm } from "@/components/drama-playback-policy-form";
 import { StripeSettingsPanel } from "@/components/stripe-settings-panel";
+import { resolveGlobalFreeRangePolicy } from "@/lib/drama-playback-policy";
 import { useI18n } from "@/lib/i18n";
 import { useLocationSearchParams } from "@/lib/use-location-search";
 
@@ -91,7 +93,10 @@ export default function AdminSettingsPage() {
   const [pitRatePercent, setPitRatePercent] = useState("5");
 
   const [lockMode, setLockMode] = useState<LockMode>("FREE_FIRST_N");
-  const [freeEpisodes, setFreeEpisodes] = useState("3");
+  const [allFree, setAllFree] = useState(false);
+  const [freeRangeStart, setFreeRangeStart] = useState("1");
+  const [freeRangeEnd, setFreeRangeEnd] = useState("3");
+  const [priceCredits, setPriceCredits] = useState(10);
   const [allowPreview, setAllowPreview] = useState(false);
   const [previewSeconds, setPreviewSeconds] = useState(10);
   const [error, setError] = useState<string | null>(null);
@@ -131,11 +136,23 @@ export default function AdminSettingsPage() {
     setMinWithdrawVnd(String(settingValue(settingsQ.data, "minWithdrawVnd") ?? 100000));
     setPitRatePercent(toPercentInput(settingValue(settingsQ.data, "pitRate"), 5));
 
-    setLockMode(parseLockMode(settingValue(settingsQ.data, "episodeLockMode")));
+    const mode = parseLockMode(settingValue(settingsQ.data, "episodeLockMode"));
+    setLockMode(mode);
     const freeRaw = settingValue(settingsQ.data, "defaultFreeEpisodes");
-    setFreeEpisodes(
-      typeof freeRaw === "number" || typeof freeRaw === "string" ? String(freeRaw) : "3",
-    );
+    const freeN =
+      typeof freeRaw === "number" || typeof freeRaw === "string"
+        ? Math.max(0, Math.floor(Number(freeRaw)) || 0)
+        : 3;
+    setAllFree(mode === "ALL_FREE");
+    setFreeRangeStart("1");
+    if (mode === "VIP_ALL") {
+      // Create encodes VIP_ALL as start > total; global has no total — end 0 = no free eps.
+      setFreeRangeEnd("0");
+    } else if (mode === "ALL_FREE") {
+      setFreeRangeEnd(String(Math.max(freeN, 3)));
+    } else {
+      setFreeRangeEnd(String(freeN));
+    }
     const previewRaw = Number(settingValue(settingsQ.data, "defaultPreviewSeconds"));
     const previewN = Number.isFinite(previewRaw) ? Math.max(0, Math.floor(previewRaw)) : 0;
     setAllowPreview(previewN > 0);
@@ -181,19 +198,29 @@ export default function AdminSettingsPage() {
 
   const policyMut = useMutation({
     mutationFn: async () => {
-      const n = Math.floor(Number(freeEpisodes));
-      if (!Number.isFinite(n) || n < 0) {
-        throw new Error(t("settingsPolicyFreeCountInvalid"));
+      let nextMode: LockMode;
+      let freeCount: number;
+      try {
+        const resolved = resolveGlobalFreeRangePolicy(allFree, freeRangeStart, freeRangeEnd);
+        nextMode = resolved.lockMode;
+        freeCount = resolved.freeCount;
+      } catch {
+        throw new Error(t("settingsPolicyFreeRangeInvalid"));
       }
-      const previewN = allowPreview
-        ? Math.max(1, Math.floor(Number(previewSeconds) || 10))
-        : 0;
-      if (allowPreview && !Number.isFinite(Number(previewSeconds))) {
+      if (nextMode !== "ALL_FREE" && freeCount > 0 && priceCredits <= 0) {
+        throw new Error(t("policyPriceInvalid"));
+      }
+      const previewN =
+        nextMode !== "ALL_FREE" && allowPreview
+          ? Math.max(1, Math.floor(Number(previewSeconds) || 10))
+          : 0;
+      if (allowPreview && nextMode !== "ALL_FREE" && !Number.isFinite(Number(previewSeconds))) {
         throw new Error(t("settingsPolicyPreviewInvalid"));
       }
-      await adminUpdateSetting("episodeLockMode", lockMode);
-      await adminUpdateSetting("defaultFreeEpisodes", n);
+      await adminUpdateSetting("episodeLockMode", nextMode);
+      await adminUpdateSetting("defaultFreeEpisodes", freeCount);
       await adminUpdateSetting("defaultPreviewSeconds", previewN);
+      setLockMode(nextMode);
     },
     onSuccess: () => {
       setError(null);
@@ -245,22 +272,45 @@ export default function AdminSettingsPage() {
     [settingsQ.data],
   );
 
-  const freeCountPreview = Math.max(0, Math.floor(Number(freeEpisodes) || 0));
+  const freeStartPreview = Math.floor(Number(freeRangeStart) || 0);
+  const freeEndPreview = Math.floor(Number(freeRangeEnd) || 0);
+  const liveMode: LockMode = allFree
+    ? "ALL_FREE"
+    : freeEndPreview === 0 && freeStartPreview >= 1
+      ? "VIP_ALL"
+      : "FREE_FIRST_N";
   const previewSecondsPreview = allowPreview
     ? Math.max(1, Math.floor(Number(previewSeconds) || 10))
     : 0;
   const previewSuffix =
-    lockMode !== "ALL_FREE" && previewSecondsPreview > 0
+    liveMode !== "ALL_FREE" && previewSecondsPreview > 0
       ? t("settingsPolicyPreviewTrialSuffix", { seconds: previewSecondsPreview })
       : "";
 
-  const policyPreviewText =
-    (lockMode === "ALL_FREE"
-      ? t("settingsPolicyPreviewAllFree")
-      : lockMode === "VIP_ALL"
-        ? t("settingsPolicyPreviewVipAll")
-        : t("settingsPolicyPreviewFreeFirstN", { n: freeCountPreview })) +
-    previewSuffix;
+  let policyPreviewBody: string;
+  if (liveMode === "ALL_FREE") {
+    policyPreviewBody = t("settingsPolicyPreviewAllFree");
+  } else if (liveMode === "VIP_ALL") {
+    policyPreviewBody = t("settingsPolicyPreviewVipAll");
+  } else if (
+    Number.isInteger(freeStartPreview) &&
+    Number.isInteger(freeEndPreview) &&
+    freeStartPreview >= 1 &&
+    freeEndPreview >= freeStartPreview
+  ) {
+    policyPreviewBody =
+      freeStartPreview === 1
+        ? t("settingsPolicyPreviewFreeFirstN", { n: freeEndPreview })
+        : t("settingsPolicyPreviewFreeRange", {
+            start: freeStartPreview,
+            end: freeEndPreview,
+          });
+  } else {
+    policyPreviewBody = t("settingsPolicyPreviewFreeFirstN", {
+      n: Math.max(0, freeEndPreview),
+    });
+  }
+  const policyPreviewText = policyPreviewBody + previewSuffix;
 
   const shellTitle =
     tab === "payments"
@@ -525,168 +575,45 @@ export default function AdminSettingsPage() {
       ) : null}
 
       {tab === "policy" ? (
-        <section className="upload-panel space-y-3">
-          <div className="upload-panel__head">
-            <div>
-              <h2>{t("uploadSectionPolicy")}</h2>
-              <p>{t("uploadSectionPolicyHint")}</p>
-              <p className="mt-1 text-caption text-ink-muted">{t("settingsPolicyGlobalHint")}</p>
-              {policyUpdatedAt ? (
-                <p className="mt-1 text-caption text-ink-subtle">
-                  {fmtDate(policyUpdatedAt, dateLocale)}
-                </p>
-              ) : null}
-            </div>
-          </div>
-
-          {settingsQ.isLoading ? (
-            <p className="text-body-sm text-ink-muted">{t("loading")}</p>
-          ) : (
-            <>
-              <div
-                className="policy-mode-grid"
-                role="radiogroup"
-                aria-label={t("uploadSectionPolicy")}
-              >
-                <div
-                  className={cn(
-                    "policy-mode-card",
-                    (lockMode === "ALL_FREE" || lockMode === "FREE_FIRST_N") && "is-selected",
-                  )}
-                >
-                  <div className="policy-mode-card__body">
-                    <strong>{t("policyAllFree")}</strong>
-                    <small>{t("policyModeHint")}</small>
-                    <div className="policy-preview-choices">
-                      <label className="policy-preview-toggle">
-                        <input
-                          type="radio"
-                          name="global-playback-policy"
-                          checked={lockMode === "ALL_FREE"}
-                          disabled={policyMut.isPending}
-                          onChange={() => setLockMode("ALL_FREE")}
-                        />
-                        <span>{t("lockModeAllFree")}</span>
-                      </label>
-                      <label className="policy-preview-toggle">
-                        <input
-                          type="radio"
-                          name="global-playback-policy"
-                          checked={lockMode === "FREE_FIRST_N"}
-                          disabled={policyMut.isPending}
-                          onChange={() => setLockMode("FREE_FIRST_N")}
-                        />
-                        <span>{t("lockModeFreeFirstN")}</span>
-                      </label>
-                    </div>
-                    <div className="policy-range-grid">
-                      <label className="upload-field">
-                        <span>{t("freeEpisodes")}</span>
-                        <Input
-                          type="number"
-                          min={0}
-                          value={freeEpisodes}
-                          disabled={policyMut.isPending || lockMode !== "FREE_FIRST_N"}
-                          onChange={(e) => setFreeEpisodes(e.target.value)}
-                        />
-                      </label>
-                    </div>
-                  </div>
-                </div>
-
-                <div
-                  className={cn(
-                    "policy-mode-card",
-                    lockMode === "VIP_ALL" && "is-selected",
-                  )}
-                >
-                  <div className="policy-mode-card__body">
-                    <strong>{t("policyPartialFree")}</strong>
-                    <small>{t("policyMemberHint")}</small>
-                    <div className="policy-preview-choices">
-                      <label className="policy-preview-toggle">
-                        <input
-                          type="radio"
-                          name="global-playback-policy"
-                          checked={lockMode === "VIP_ALL"}
-                          disabled={policyMut.isPending}
-                          onChange={() => setLockMode("VIP_ALL")}
-                        />
-                        <span>{t("lockModeVipAll")}</span>
-                      </label>
-                    </div>
-                    <div className="policy-preview-options">
-                      <div
-                        className="policy-preview-choices"
-                        role="radiogroup"
-                        aria-label={t("policyAllowPreview")}
-                      >
-                        <label className="policy-preview-toggle">
-                          <input
-                            type="radio"
-                            name="global-member-preview-policy"
-                            checked={!allowPreview}
-                            disabled={policyMut.isPending || lockMode === "ALL_FREE"}
-                            onChange={() => setAllowPreview(false)}
-                          />
-                          <span>{t("policyPreviewDisabled")}</span>
-                        </label>
-                        <label className="policy-preview-toggle">
-                          <input
-                            type="radio"
-                            name="global-member-preview-policy"
-                            checked={allowPreview}
-                            disabled={policyMut.isPending || lockMode === "ALL_FREE"}
-                            onChange={() => setAllowPreview(true)}
-                          />
-                          <span>{t("policyAllowPreview")}</span>
-                        </label>
-                      </div>
-                      {allowPreview && lockMode !== "ALL_FREE" ? (
-                        <label className="upload-field">
-                          <span>{t("policyPreviewSeconds")}</span>
-                          <Input
-                            type="number"
-                            min={1}
-                            value={previewSeconds}
-                            disabled={policyMut.isPending}
-                            onChange={(e) =>
-                              setPreviewSeconds(Math.max(1, Number(e.target.value) || 10))
-                            }
-                          />
-                        </label>
-                      ) : null}
-                    </div>
-                    <p className="mt-2 text-[0.7rem] leading-snug text-ink-subtle">
-                      {t("settingsPolicyMemberSideHint")}
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div
-                className={cn(
-                  "policy-preview",
-                  lockMode === "ALL_FREE" ? "is-free" : "is-partial",
-                )}
-              >
-                <span className="policy-preview__dot" aria-hidden />
-                <p>{policyPreviewText}</p>
-              </div>
-
-              <div className="flex justify-end border-t border-line pt-3">
-                <Button
-                  size="sm"
-                  disabled={policyMut.isPending}
-                  onClick={() => policyMut.mutate()}
-                >
-                  <Save className="h-4 w-4" />
-                  {policyMut.isPending ? t("loading") : t("saveLockPolicy")}
-                </Button>
-              </div>
-            </>
-          )}
-        </section>
+        settingsQ.isLoading ? (
+          <p className="text-body-sm text-ink-muted">{t("loading")}</p>
+        ) : (
+          <DramaPlaybackPolicyForm
+            surface="global"
+            variant="upload-panel"
+            episodeTotal={0}
+            allFree={allFree}
+            onAllFreeChange={setAllFree}
+            freeRangeStart={freeRangeStart}
+            freeRangeEnd={freeRangeEnd}
+            onFreeRangeStartChange={setFreeRangeStart}
+            onFreeRangeEndChange={setFreeRangeEnd}
+            priceCredits={priceCredits}
+            onPriceCreditsChange={setPriceCredits}
+            allowPreview={allowPreview}
+            onAllowPreviewChange={setAllowPreview}
+            previewSeconds={previewSeconds}
+            onPreviewSecondsChange={setPreviewSeconds}
+            disabled={policyMut.isPending}
+            previewRadioName="global-member-preview-policy"
+            headingHint={t("uploadSectionPolicyHint")}
+            headingExtra={
+              <>
+                <p className="mt-1 text-caption text-ink-muted">{t("settingsPolicyGlobalHint")}</p>
+                {policyUpdatedAt ? (
+                  <p className="mt-1 text-caption text-ink-subtle">
+                    {fmtDate(policyUpdatedAt, dateLocale)}
+                  </p>
+                ) : null}
+              </>
+            }
+            previewText={policyPreviewText}
+            previewIsFree={liveMode === "ALL_FREE"}
+            showSaveButton
+            savePending={policyMut.isPending}
+            onSave={() => policyMut.mutate()}
+          />
+        )
       ) : null}
 
       {tab === "payments" ? (
