@@ -40,6 +40,8 @@ import { AdminFeedbackController } from './feedback.controller';
 import { AdminFeedbackService } from './feedback.service';
 import { YtdlpProvider } from './ytdlp.provider';
 import { YtdlpImportService } from './ytdlp-import.service';
+import { TelegramProvider } from './telegram.provider';
+import { TelegramImportService } from './telegram-import.service';
 import { UploadModule } from '../upload/upload.module';
 import { OpsMonitorController } from './ops-monitor.controller';
 import { OpsMonitorService } from './ops-monitor.service';
@@ -87,6 +89,8 @@ import { CloudflareAnalyticsService } from './cloudflare-analytics.service';
     AdminFeedbackService,
     YtdlpProvider,
     YtdlpImportService,
+    TelegramProvider,
+    TelegramImportService,
     CloudflareAnalyticsService,
     OpsMonitorService,
   ],
@@ -96,6 +100,7 @@ import { CloudflareAnalyticsService } from './cloudflare-analytics.service';
     AdminGuard,
     AdminRoleGuard,
     YtdlpProvider,
+    TelegramProvider,
   ],
 })
 export class AdminModule {}

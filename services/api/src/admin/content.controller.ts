@@ -49,6 +49,7 @@ import { ContentService } from './content.service';
 import { AdminEpisodesService } from './episodes.service';
 import { AdminOpsService } from './ops.service';
 import { YtdlpImportService } from './ytdlp-import.service';
+import { TelegramImportService } from './telegram-import.service';
 import { OpenaiService } from '../common/openai.service';
 
 function getActor(req: any): bigint | undefined {
@@ -486,6 +487,47 @@ class YtdlpAppendDto extends YtdlpAuthFields {
   formatPreference?: 'best_hls' | 'best_mp4' | 'best';
 }
 
+class TelegramProbeDto {
+  @IsNotEmpty() @IsString() channel!: string;
+  @IsOptional() @IsIn(['recent', 'range'])
+  mode?: 'recent' | 'range';
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) recentN?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) fromId?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) toId?: number;
+  @IsOptional() mediaOnly?: boolean | string;
+}
+
+class TelegramTransferEpisodeDto {
+  @IsNotEmpty() @Type(() => Number) @IsNumber() @Min(1) messageId!: number;
+  @IsOptional() @IsString() title?: string;
+  @IsOptional() @IsString() webpageUrl?: string;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) episodeNumber?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() durationSec?: number;
+}
+
+class TelegramTransferDto {
+  @IsNotEmpty() @IsString() channel!: string;
+  @IsOptional() @IsString() categorySlug?: string;
+  @IsOptional() @IsString() titleZh?: string;
+  @IsOptional() @IsString() titleEn?: string;
+  @IsOptional() @IsString() coverUrl?: string;
+  @IsOptional() @IsString() descriptionEn?: string;
+  @IsOptional() @IsString() descriptionZh?: string;
+  @IsOptional() @IsString() creatorId?: string;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(0) freeEpisodeCount?: number;
+  @IsOptional() @IsIn(['FREE_FIRST_N', 'VIP_ALL', 'ALL_FREE', 'INHERIT'])
+  lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE' | 'INHERIT' | null;
+  @IsOptional() buyoutCredits?: number | string | null;
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => TelegramTransferEpisodeDto)
+  episodes!: TelegramTransferEpisodeDto[];
+  @IsOptional() watermarkEnabled?: boolean | string;
+  @IsOptional() @Type(() => Number) @IsNumber() watermarkX?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() watermarkY?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() watermarkScale?: number;
+}
+
 @Controller('v1/admin')
 @UseGuards(AdminGuard, AdminRoleGuard)
 export class ContentController {
@@ -495,6 +537,7 @@ export class ContentController {
     private readonly episodes: AdminEpisodesService,
     private readonly ops: AdminOpsService,
     private readonly ytdlp: YtdlpImportService,
+    private readonly telegram: TelegramImportService,
     private readonly upload: UploadService,
     private readonly openai: OpenaiService,
   ) {}
@@ -1114,6 +1157,66 @@ export class ContentController {
   @AdminRoles('SUPER_ADMIN', 'OPS')
   async ytdlpTransferJob(@Param('jobId') jobId: string) {
     return ok(await this.ytdlp.getTransferJob(jobId));
+  }
+
+  @Get('telegram/status')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async telegramStatus() {
+    return ok(await this.telegram.status());
+  }
+
+  @Post('telegram/probe')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async telegramProbe(@Body() dto: TelegramProbeDto) {
+    const mediaOnly =
+      dto.mediaOnly === undefined
+        ? true
+        : !(dto.mediaOnly === false || dto.mediaOnly === 'false' || dto.mediaOnly === '0');
+    return ok(
+      await this.telegram.probe({
+        channel: dto.channel,
+        mode: dto.mode,
+        recentN: dto.recentN,
+        fromId: dto.fromId,
+        toId: dto.toId,
+        mediaOnly,
+      }),
+    );
+  }
+
+  @Post('telegram/transfer')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async telegramTransfer(@Body() dto: TelegramTransferDto, @Req() req: any) {
+    const wm = parseWatermarkOpts(dto);
+    return ok(
+      await this.telegram.transferDrama(
+        {
+          channel: dto.channel,
+          categorySlug: dto.categorySlug,
+          titleZh: dto.titleZh,
+          titleEn: dto.titleEn,
+          coverUrl: dto.coverUrl,
+          descriptionEn: dto.descriptionEn,
+          descriptionZh: dto.descriptionZh,
+          creatorId: dto.creatorId,
+          freeEpisodeCount: dto.freeEpisodeCount,
+          lockMode: dto.lockMode,
+          buyoutCredits: dto.buyoutCredits,
+          episodes: dto.episodes || [],
+          watermarkEnabled: wm?.watermarkEnabled,
+          watermarkX: wm?.watermarkX,
+          watermarkY: wm?.watermarkY,
+          watermarkScale: wm?.watermarkScale,
+        },
+        getActor(req),
+      ),
+    );
+  }
+
+  @Get('telegram/transfer/:jobId')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async telegramTransferJob(@Param('jobId') jobId: string) {
+    return ok(await this.telegram.getTransferJob(jobId));
   }
 
   /**

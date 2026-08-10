@@ -2091,6 +2091,120 @@ export async function adminYtdlpTransferResume(
   });
 }
 
+export async function adminTelegramStatus() {
+  return adminRequest<{
+    enabled: boolean;
+    sidecarUrl: string | null;
+    health: {
+      ok: boolean;
+      configured: boolean;
+      sessionExists: boolean;
+      authorized: boolean;
+      user?: { id?: number; username?: string | null; phone?: string | null } | null;
+      error?: string | null;
+      uploadDir?: string;
+    } | null;
+    r2Configured?: boolean;
+    ffmpegReady?: boolean;
+    storageBackend?: string;
+  }>("/admin/telegram/status");
+}
+
+export async function adminTelegramProbe(body: {
+  channel: string;
+  mode?: "recent" | "range";
+  recentN?: number;
+  fromId?: number;
+  toId?: number;
+  mediaOnly?: boolean;
+}) {
+  return adminRequest<{
+    channel: string;
+    count: number;
+    extractor: string;
+    kind: "playlist";
+    items: Array<{
+      messageId: number;
+      date?: string | null;
+      title: string;
+      text?: string;
+      mediaKind: string;
+      hasVideo: boolean;
+      size?: number | null;
+      duration?: number | null;
+      filename?: string | null;
+      webpageUrl: string;
+    }>;
+    episodes: Array<{
+      index: number;
+      id: string;
+      title: string;
+      webpageUrl: string;
+      messageId: number;
+      durationSec?: number | null;
+      size?: number | null;
+      hasVideo: boolean;
+      mediaKind: string;
+      candidateCount: number;
+    }>;
+  }>("/admin/telegram/probe", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function adminTelegramTransfer(body: {
+  channel: string;
+  categorySlug?: string;
+  titleZh?: string;
+  titleEn?: string;
+  coverUrl?: string;
+  descriptionEn?: string;
+  descriptionZh?: string;
+  creatorId?: string;
+  freeEpisodeCount?: number;
+  lockMode?: "FREE_FIRST_N" | "VIP_ALL" | "ALL_FREE" | "INHERIT" | null;
+  buyoutCredits?: number | null;
+  watermarkEnabled?: boolean;
+  watermarkX?: number;
+  watermarkY?: number;
+  watermarkScale?: number;
+  episodes: Array<{
+    messageId: number;
+    title?: string;
+    webpageUrl?: string;
+    episodeNumber?: number;
+    durationSec?: number | null;
+  }>;
+}) {
+  return adminRequest<{
+    jobId: string;
+    id: string;
+    slug: string;
+    status: string;
+    jobStatus: "queued";
+    sourceType: string;
+    target: "r2";
+    preferR2: true;
+    extractor: "telegram";
+    kind: "single" | "playlist";
+    externalRef: string;
+    totalEpisodes: number;
+    transferredEpisodes: number;
+    async: true;
+    channel: string;
+  }>("/admin/telegram/transfer", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function adminTelegramTransferJob(jobId: string) {
+  return adminRequest<YtdlpTransferJob>(
+    `/admin/telegram/transfer/${encodeURIComponent(jobId)}`,
+  );
+}
+
 export async function adminSettleT7(days = 0) {
   return adminRequest(`/admin/settle-t7?days=${days}`, { method: "POST", body: "{}" });
 }

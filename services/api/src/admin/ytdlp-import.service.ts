@@ -1265,7 +1265,11 @@ export class YtdlpImportService implements OnModuleInit {
   private async recoverPendingTransferJobs() {
     try {
       const pending = await this.prisma.ytdlpTransferJob.findMany({
-        where: { status: { in: ['QUEUED', 'RUNNING'] } },
+        where: {
+          status: { in: ['QUEUED', 'RUNNING'] },
+          // Telegram jobs are recovered by TelegramImportService.
+          NOT: { extractor: 'telegram' },
+        },
         orderBy: { createdAt: 'asc' },
         take: 20,
       });

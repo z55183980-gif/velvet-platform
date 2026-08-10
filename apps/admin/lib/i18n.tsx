@@ -1428,6 +1428,23 @@ const zh = {
   ytdlpAiExtractHint:
     "优先从页面 HTML 抽取分集链接；单集/trailer 会自动尝试剧集主页。抽完后可用 yt-dlp 解析可播地址。",
   ytdlpAiExtractNeedOpenai: "未配置 OPENAI_API_KEY（仅影响标题翻译补全，分集抽取仍可用）",
+  telegramUrlPlaceholder: "https://t.me/channel 或 https://t.me/channel/123",
+  telegramProbe: "探测 TG 频道",
+  telegramProbeBusy: "TG 探测中…",
+  telegramProbeDone: "已探测 TG",
+  telegramProbeHint:
+    "粘贴 t.me 链接后走 Telethon sidecar：支持网页端「请打开 Telegram 查看」的公开频道视频，结果仅可转存 R2。",
+  telegramModeRecent: "最近 N 条",
+  telegramModeRange: "起止帖号",
+  telegramRecentN: "条数",
+  telegramFromId: "起始 ID",
+  telegramToId: "结束 ID",
+  telegramNeedUrl: "请填写 Telegram 频道或帖子链接",
+  telegramNeedProbe: "请先探测并勾选带视频的 TG 帖",
+  telegramNotReady: "Telegram sidecar 未就绪（未授权 session）",
+  telegramOnlyReady: "yt-dlp 未配置；当前可用 Telegram 频道探测（需 sidecar session）",
+  telegramSidecarMissing: "未配置 TELEGRAM_SIDECAR_URL，无法探测 TG",
+  telegramSessionMissing: "sidecar 在线但 session 未登录 — 服务器执行 python -m app.login",
   ytdlpAiNotes: "备注",
   ytdlpAiPreferLinkHint:
     "AI 抽取的是分集链接列表；选「存 R2」会按勾选集逐一下载转存（优先已解析直链，否则用分集页）。付费集建议先上传 cookies。",
@@ -2978,6 +2995,25 @@ const en: Record<LabelKey, string> = {
     "Prefers deterministic HTML episode links; expands trailer/episode URLs to the series page. Then optionally resolve playable URLs with yt-dlp.",
   ytdlpAiExtractNeedOpenai:
     "OPENAI_API_KEY is not configured (only needed for title translation; episode extract still works)",
+  telegramUrlPlaceholder: "https://t.me/channel or https://t.me/channel/123",
+  telegramProbe: "Probe TG channel",
+  telegramProbeBusy: "Probing TG…",
+  telegramProbeDone: "TG probed",
+  telegramProbeHint:
+    "t.me links use the Telethon sidecar — works for posts that say “open Telegram to view”, R2 transfer only.",
+  telegramModeRecent: "Recent N",
+  telegramModeRange: "Message ID range",
+  telegramRecentN: "Count",
+  telegramFromId: "From ID",
+  telegramToId: "To ID",
+  telegramNeedUrl: "Enter a Telegram channel or post URL",
+  telegramNeedProbe: "Probe and select TG video posts first",
+  telegramNotReady: "Telegram sidecar not ready (session unauthorized)",
+  telegramOnlyReady:
+    "yt-dlp unavailable; Telegram probe is available if sidecar session is logged in",
+  telegramSidecarMissing: "TELEGRAM_SIDECAR_URL not set",
+  telegramSessionMissing:
+    "Sidecar up but session missing — run python -m app.login on the server",
   ytdlpAiNotes: "Notes",
   ytdlpAiPreferLinkHint:
     "AI returned episode page links; R2 downloads checked episodes one-by-one (prefers resolved media, else episode page). Upload cookies for paid episodes.",

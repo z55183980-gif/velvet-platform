@@ -15,6 +15,8 @@ export type OnlineEpisodeFill = {
   durationSec?: number;
   /** yt-dlp playlist entry index when the page is a playlist. */
   playlistIndex?: number;
+  /** Telegram channel message id (Telethon ingest). */
+  messageId?: number;
 };
 
 /** Staged online resources — executed only when the main window submits. */
@@ -22,6 +24,10 @@ export type OnlineSourcePackage = {
   /** Public page URL for parse/import/transfer; empty for pure manual links. */
   pageUrl: string;
   ingestForm: OnlineIngestForm;
+  /** Default ytdlp; telegram uses Telethon sidecar transfer. */
+  provider?: "ytdlp" | "telegram";
+  /** Channel username when provider === telegram. */
+  telegramChannel?: string;
   formatPreference?: OnlineFormatPreference;
   maxEpisodes?: number;
   episodes: OnlineEpisodeFill[];
@@ -62,6 +68,7 @@ type ProbeEpisodeLike = {
   sourceUrl?: string | null;
   durationSec?: number | null;
   playlistIndex?: number | null;
+  messageId?: number | null;
 };
 
 type ProbeLike = {
@@ -71,13 +78,16 @@ type ProbeLike = {
   coverUrl?: string | null;
   description?: string | null;
   categorySlug?: string | null;
-  source?: "ai" | "ytdlp" | string | null;
+  source?: "ai" | "ytdlp" | "telegram" | string | null;
+  channel?: string | null;
   episodes?: ProbeEpisodeLike[] | null;
 };
 
 type ProbeExtras = {
   pageUrl?: string;
   ingestForm?: OnlineIngestForm;
+  provider?: "ytdlp" | "telegram";
+  telegramChannel?: string;
   formatPreference?: OnlineFormatPreference;
   maxEpisodes?: number;
   /** When set, only these probe episode `index` values are staged (order preserved). */
@@ -159,9 +169,17 @@ export function dramaInfoFromYtdlpProbe(
 
   if (includeOnline) {
     // Never put episode *page* URLs into sourceUrl — only playable media.
+    const provider =
+      extras?.provider ||
+      (probe.source === "telegram" ? "telegram" : "ytdlp");
     payload.online = {
       pageUrl: (extras?.pageUrl || "").trim(),
       ingestForm: extras?.ingestForm || "link",
+      provider,
+      telegramChannel:
+        extras?.telegramChannel?.trim() ||
+        (typeof probe.channel === "string" ? probe.channel.trim() : undefined) ||
+        undefined,
       formatPreference: extras?.formatPreference || "best",
       maxEpisodes: extras?.episodeIndexes?.length
         ? extras.episodeIndexes.length
@@ -192,6 +210,10 @@ export function dramaInfoFromYtdlpProbe(
           typeof ep.playlistIndex === "number" && Number.isFinite(ep.playlistIndex)
             ? ep.playlistIndex
             : undefined;
+        const messageId =
+          ep.messageId != null && Number.isFinite(Number(ep.messageId))
+            ? Math.floor(Number(ep.messageId))
+            : undefined;
         return {
           episodeNumber: Number.isFinite(indexNum) && indexNum > 0 ? indexNum : i + 1,
           title: (ep.title || "").trim() || undefined,
@@ -199,6 +221,7 @@ export function dramaInfoFromYtdlpProbe(
           sourceUrl: playableSource,
           durationSec: typeof ep.durationSec === "number" ? ep.durationSec : undefined,
           playlistIndex,
+          ...(messageId ? { messageId } : {}),
         };
       }),
     };

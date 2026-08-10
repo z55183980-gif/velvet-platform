@@ -13,6 +13,7 @@ import {
   adminUploadImage,
   adminYtdlpPreviewFrame,
   adminYtdlpTransfer,
+  adminTelegramTransfer,
   asRows,
 } from "@velvet/api-client";
 import { Button, Input, Select, cn } from "@velvet/ui";
@@ -170,6 +171,8 @@ type EpisodeDraft = {
   sourceUrl?: string;
   /** Public page URL for a probe item (may need server resolve). */
   webpageUrl?: string;
+  /** Telegram message id when staged from Telethon probe. */
+  messageId?: number;
   /** yt-dlp playlist entry index when applicable. */
   playlistIndex?: number;
   title: string;
@@ -189,6 +192,8 @@ type EpisodeDraft = {
 type OnlineIngestMeta = {
   pageUrl: string;
   ingestForm: OnlineSourcePackage["ingestForm"];
+  provider?: OnlineSourcePackage["provider"];
+  telegramChannel?: string;
   formatPreference?: OnlineSourcePackage["formatPreference"];
   maxEpisodes?: number;
   cookiesFile?: string;
@@ -472,6 +477,8 @@ export const LocalUploadWizard = forwardRef<
           const nextOnline = {
             pageUrl: payload.online.pageUrl.trim(),
             ingestForm: payload.online.ingestForm,
+            provider: payload.online.provider || "ytdlp",
+            telegramChannel: payload.online.telegramChannel,
             formatPreference: payload.online.formatPreference,
             maxEpisodes: payload.online.maxEpisodes,
             cookiesFile: payload.online.cookiesFile,
@@ -500,6 +507,7 @@ export const LocalUploadWizard = forwardRef<
               kind: "link" as const,
               sourceUrl,
               webpageUrl,
+              messageId: ep.messageId,
               playlistIndex: ep.playlistIndex,
               title: title.slice(0, 80),
               isFree: true,
@@ -858,6 +866,21 @@ export const LocalUploadWizard = forwardRef<
     const fileEps = episodes.filter((ep) => ep.kind === "file");
     const linkEps = episodes.filter((ep) => ep.kind === "link");
     if (onlineIngest?.ingestForm === "r2" && !fileEps.length) {
+      if (onlineIngest.provider === "telegram") {
+        const hasMsg = linkEps.some((ep) => ep.messageId != null && ep.messageId > 0);
+        if (!hasMsg && !onlineIngest.telegramChannel?.trim() && !onlineIngest.pageUrl.trim()) {
+          return t("telegramNeedProbe");
+        }
+        const missing = linkEps.filter(
+          (ep) => !(ep.messageId != null && ep.messageId > 0),
+        );
+        if (linkEps.length && missing.length) {
+          return t("onlineNeedDownloadEpisodes", {
+            n: String(missing.length),
+            total: String(linkEps.length),
+          });
+        }
+      } else {
       const pageUrl = onlineIngest.pageUrl.trim();
       const hasDownloadable = linkEps.some(
         (ep) =>
@@ -875,6 +898,7 @@ export const LocalUploadWizard = forwardRef<
           n: String(missing.length),
           total: String(linkEps.length),
         });
+      }
       }
     } else if (!fileEps.length && linkEps.length) {
       const unplayable = linkEps.filter(
@@ -1681,6 +1705,72 @@ export const LocalUploadWizard = forwardRef<
       const pageUrl = onlineIngest?.pageUrl?.trim() || "";
 
       if (onlineIngest?.ingestForm === "r2") {
+        if (onlineIngest.provider === "telegram") {
+          const channel =
+            onlineIngest.telegramChannel?.trim() ||
+            pageUrl ||
+            linkEps.find((ep) => ep.webpageUrl)?.webpageUrl ||
+            "";
+          const transferEps = linkEps
+            .map((ep, i) => ({
+              episodeNumber: i + 1,
+              title: ep.title,
+              webpageUrl: ep.webpageUrl?.trim() || undefined,
+              messageId: ep.messageId,
+              durationSec: ep.durationSec,
+            }))
+            .filter((ep) => ep.messageId != null && ep.messageId > 0);
+          if (!channel || !transferEps.length) {
+            throw new Error(t("telegramNeedProbe"));
+          }
+          const titleDisplay = englishTitle || titleZhResolved || "—";
+          return adminTelegramTransfer({
+            channel,
+            categorySlug,
+            titleZh: titleZhResolved,
+            titleEn: englishTitle,
+            coverUrl: coverUrl.trim() || undefined,
+            descriptionEn: descriptionEn.trim() || undefined,
+            creatorId: creatorId.trim() || undefined,
+            freeEpisodeCount: (() => {
+              try {
+                return resolvePolicyForTotal(transferEps.length || max || 0).freeCount;
+              } catch {
+                return transferEps.length || max;
+              }
+            })(),
+            lockMode: (() => {
+              try {
+                const p = resolvePolicyForTotal(transferEps.length || max || 0);
+                return p.createLockMode;
+              } catch {
+                return "ALL_FREE";
+              }
+            })(),
+            buyoutCredits: (() => {
+              try {
+                return resolvePolicyForTotal(transferEps.length || max || 0).buyoutCredits;
+              } catch {
+                return null;
+              }
+            })(),
+            watermarkEnabled: watermark.enabled,
+            watermarkX: watermark.x,
+            watermarkY: watermark.y,
+            watermarkScale: watermark.scale,
+            episodes: transferEps.map((ep) => ({
+              messageId: ep.messageId!,
+              title: ep.title,
+              webpageUrl: ep.webpageUrl,
+              episodeNumber: ep.episodeNumber,
+              durationSec: ep.durationSec,
+            })),
+          }).then((data) => ({
+            kind: "transfer" as const,
+            data,
+            titleDisplay,
+          }));
+        }
         const transferEps = linkEps
           .map((ep, i) => ({
             episodeNumber: i + 1,

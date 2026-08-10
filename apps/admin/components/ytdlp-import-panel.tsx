@@ -4,6 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import {
   adminStorageStatus,
+  adminTelegramProbe,
+  adminTelegramStatus,
   adminYtdlpAiExtract,
   adminYtdlpDownloadEpisode,
   adminYtdlpInferCategory,
@@ -32,13 +34,49 @@ import {
 
 type AiProbeResult = Awaited<ReturnType<typeof adminYtdlpAiExtract>>;
 type YtProbeResult = Awaited<ReturnType<typeof adminYtdlpProbe>>;
-type ProbeResult = AiProbeResult | YtProbeResult;
+type TgProbeResult = Awaited<ReturnType<typeof adminTelegramProbe>> & {
+  source: "telegram";
+  webpageUrl: string;
+  title?: string;
+};
+type ProbeResult = AiProbeResult | YtProbeResult | TgProbeResult;
 type FormatPreference = "best_hls" | "best_mp4" | "best";
 type IngestTab = "parse" | "manual";
 export type OnlineIngestTab = IngestTab;
 
 function isAiProbe(p: ProbeResult | null): p is AiProbeResult {
   return !!p && "source" in p && p.source === "ai";
+}
+
+function isTgProbe(p: ProbeResult | null): p is TgProbeResult {
+  return !!p && "source" in p && p.source === "telegram";
+}
+
+function parseTelegramInput(raw: string): {
+  channel: string;
+  messageId?: number;
+} | null {
+  const text = raw.trim();
+  if (!text) return null;
+  const post = text.match(
+    /(?:https?:\/\/)?(?:t\.me|telegram\.me)\/(?:s\/)?([A-Za-z0-9_]+)\/(\d+)/i,
+  );
+  if (post) return { channel: post[1], messageId: Number(post[2]) };
+  const ch = text.match(
+    /(?:https?:\/\/)?(?:t\.me|telegram\.me)\/(?:s\/)?([A-Za-z0-9_]+)\/?/i,
+  );
+  if (ch) return { channel: ch[1] };
+  if (/^[A-Za-z0-9_]+$/.test(text) && !text.includes(".")) {
+    // bare channel usernames only — keep host-like strings for yt-dlp
+    return { channel: text };
+  }
+  return null;
+}
+
+function isLikelyTelegramUrl(raw: string): boolean {
+  const t = raw.trim();
+  if (!t) return false;
+  return /(?:^|\/\/)(?:t\.me|telegram\.me)\//i.test(t) || !!parseTelegramInput(t)?.channel && /t\.me|telegram\.me/i.test(t);
 }
 
 function episodeSourceUrl(ep: ProbeResult["episodes"][number]): string | undefined {
@@ -48,7 +86,8 @@ function episodeSourceUrl(ep: ProbeResult["episodes"][number]): string | undefin
 }
 
 function probeSelectionKey(p: ProbeResult): string {
-  return `${isAiProbe(p) ? "ai" : "yt"}:${p.webpageUrl ?? ""}:${p.episodes
+  const kind = isAiProbe(p) ? "ai" : isTgProbe(p) ? "tg" : "yt";
+  return `${kind}:${p.webpageUrl ?? ""}:${p.episodes
     .map((e) => `${e.index}:${e.id}`)
     .join("|")}`;
 }
@@ -88,6 +127,10 @@ export function YtdlpImportPanel({
   const [ingestForm, setIngestForm] = useState<OnlineIngestForm>("r2");
   const [manualDirty, setManualDirty] = useState(false);
   const [url, setUrl] = useState("");
+  const [tgMode, setTgMode] = useState<"recent" | "range">("recent");
+  const [tgRecentN, setTgRecentN] = useState("30");
+  const [tgFromId, setTgFromId] = useState("");
+  const [tgToId, setTgToId] = useState("");
   const [probe, setProbe] = useState<ProbeResult | null>(null);
   const [epRangeStart, setEpRangeStart] = useState("");
   const [epRangeEnd, setEpRangeEnd] = useState("");
@@ -123,10 +166,20 @@ export function YtdlpImportPanel({
     queryKey: ["admin", "ytdlp", "status"],
     queryFn: () => adminYtdlpStatus(),
   });
+  const telegramStatusQ = useQuery({
+    queryKey: ["admin", "telegram", "status"],
+    queryFn: () => adminTelegramStatus(),
+  });
   const storageQ = useQuery({
     queryKey: ["admin", "storage", "status"],
     queryFn: () => adminStorageStatus(),
   });
+
+  const urlLooksTelegram = isLikelyTelegramUrl(url);
+  const tgParsed = urlLooksTelegram ? parseTelegramInput(url) : null;
+  const telegramReady =
+    !!telegramStatusQ.data?.enabled &&
+    !!telegramStatusQ.data?.health?.authorized;
 
   const parseDirty = Boolean(url.trim() || probe || epRangeStart.trim() || epRangeEnd.trim());
   const dirty = parseDirty || manualDirty;
@@ -448,6 +501,50 @@ export function YtdlpImportPanel({
     },
   });
 
+  const tgProbeMut = useMutation({
+    mutationFn: async () => {
+      const parsed = parseTelegramInput(url);
+      if (!parsed?.channel) throw new Error(t("telegramNeedUrl"));
+      if (!telegramReady) throw new Error(t("telegramNotReady"));
+      const mode = tgMode;
+      let fromId = tgFromId.trim() ? Number(tgFromId) : undefined;
+      let toId = tgToId.trim() ? Number(tgToId) : undefined;
+      if (mode === "range" && parsed.messageId && fromId == null && toId == null) {
+        fromId = parsed.messageId;
+        toId = parsed.messageId;
+      }
+      const recentN = Math.max(1, Math.min(500, Number(tgRecentN) || 30));
+      const data = await adminTelegramProbe({
+        channel: parsed.channel,
+        mode,
+        recentN: mode === "recent" ? recentN : undefined,
+        fromId: mode === "range" ? fromId : undefined,
+        toId: mode === "range" ? toId : undefined,
+        mediaOnly: true,
+      });
+      const mapped: TgProbeResult = {
+        ...data,
+        source: "telegram",
+        webpageUrl: url.trim() || `https://t.me/${data.channel}`,
+        title: data.channel,
+      };
+      return mapped;
+    },
+    onSuccess: (data) => {
+      setError(null);
+      setPreviewEpIndex(null);
+      setPreviewUrl(null);
+      setApplied(false);
+      setResolveProgress(null);
+      setIngestForm("r2");
+      setProbe(data);
+    },
+    onError: (e: Error) => {
+      setApplied(false);
+      setError(e.message);
+    },
+  });
+
   const resolveMut = useMutation({
     mutationFn: async (ep: ProbeResult["episodes"][number]) => {
       const direct = episodeSourceUrl(ep);
@@ -729,6 +826,22 @@ export function YtdlpImportPanel({
       const selected = working.episodes.filter((ep) =>
         selectedIndexes.includes(ep.index),
       );
+      if (isTgProbe(working)) {
+        const missing = selected.filter((ep) => {
+          const mid =
+            "messageId" in ep ? Number((ep as { messageId?: number }).messageId) : NaN;
+          return !(Number.isFinite(mid) && mid > 0);
+        });
+        if (missing.length) {
+          setError(
+            t("ytdlpApplyNeedDownloadUrl", {
+              n: String(missing.length),
+              total: String(selected.length),
+            }),
+          );
+          return;
+        }
+      } else {
       const missing = selected.filter((ep) => {
         const src = episodeSourceUrl(ep);
         const page = (ep.webpageUrl || "").trim();
@@ -743,6 +856,7 @@ export function YtdlpImportPanel({
         );
         return;
       }
+      }
     }
 
     const auth = authPayload();
@@ -752,7 +866,7 @@ export function YtdlpImportPanel({
         ? working.categorySlug
         : ""
       ).trim() || undefined;
-    if (!categorySlug) {
+    if (!categorySlug && !isTgProbe(working)) {
       try {
         const title =
           ("titleZh" in working && working.titleZh) ||
@@ -776,12 +890,17 @@ export function YtdlpImportPanel({
     onFillDramaInfo(
       dramaInfoFromYtdlpProbe(working, {
         pageUrl: url.trim(),
-        ingestForm,
+        ingestForm: isTgProbe(working) ? "r2" : ingestForm,
+        provider: isTgProbe(working) ? "telegram" : "ytdlp",
+        telegramChannel: isTgProbe(working)
+          ? working.channel || tgParsed?.channel
+          : undefined,
         formatPreference,
         episodeIndexes: selectedIndexes,
         cookiesFile: auth?.cookiesFile,
         authBearer: auth?.authBearer,
-        watermarkEnabled: ingestForm === "r2" ? watermark.enabled : false,
+        watermarkEnabled:
+          ingestForm === "r2" || isTgProbe(working) ? watermark.enabled : false,
         watermarkX: watermark.x,
         watermarkY: watermark.y,
         watermarkScale: watermark.scale,
@@ -797,12 +916,13 @@ export function YtdlpImportPanel({
 
   const busy =
     aiExtractMut.isPending ||
+    tgProbeMut.isPending ||
     resolveQueueBusy ||
     downloadQueueBusy ||
     resolveMut.isPending ||
     downloadingEpIndex != null ||
     cookieUploadBusy;
-  const showEmpty = !probe && !error && !aiExtractMut.isPending;
+  const showEmpty = !probe && !error && !aiExtractMut.isPending && !tgProbeMut.isPending;
   const selectedCount = selectedIndexes.length;
   const allSelected = !!probe && selectedCount === probe.episodes.length && probe.episodes.length > 0;
 
@@ -869,11 +989,13 @@ export function YtdlpImportPanel({
           />
         ) : (
           <>
-            {!configured ? (
+            {!configured && !telegramReady ? (
               <p className="text-body-sm text-danger">
                 {t("ytdlpNotConfigured")}
                 {statusQ.data?.lastError ? ` (${statusQ.data.lastError})` : ""}
               </p>
+            ) : !configured && telegramReady ? (
+              <p className="text-body-sm text-ink-muted">{t("telegramOnlyReady")}</p>
             ) : engineOpen ? (
               <p className="break-all text-caption text-ink-muted">
                 {t("ytdlpProvider")}: {statusQ.data?.provider}
@@ -1003,44 +1125,125 @@ export function YtdlpImportPanel({
             <div className="flex flex-wrap items-end gap-2">
               <Input
                 className="min-w-[20rem] flex-1"
-                placeholder={t("ytdlpUrlPlaceholder")}
+                placeholder={
+                  urlLooksTelegram
+                    ? t("telegramUrlPlaceholder")
+                    : t("ytdlpUrlPlaceholder")
+                }
                 value={url}
-                disabled={!configured}
+                disabled={!configured && !telegramReady}
                 onChange={(e) => {
                   setUrl(e.target.value);
-                  // Do not wipe probe on every keystroke — re-extract replaces it.
                   setApplied(false);
                 }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && url.trim() && !busy) {
-                    aiExtractMut.mutate();
+                    if (urlLooksTelegram) tgProbeMut.mutate();
+                    else aiExtractMut.mutate();
                   }
                 }}
               />
-              <Button
-                size="sm"
-                variant={isAiProbe(probe) ? "secondary" : "primary"}
-                className={
-                  isAiProbe(probe)
-                    ? "border-success/40 bg-success-soft text-success hover:bg-success/15"
-                    : undefined
-                }
-                disabled={!url.trim() || busy}
-                title={t("ytdlpAiExtractHint")}
-                onClick={() => aiExtractMut.mutate()}
-              >
-                {aiExtractMut.isPending
-                  ? t("ytdlpAiExtractBusy")
-                  : isAiProbe(probe)
-                    ? t("ytdlpAiExtractDone")
-                    : t("ytdlpAiExtract")}
-              </Button>
+              {urlLooksTelegram ? (
+                <Button
+                  size="sm"
+                  variant={isTgProbe(probe) ? "secondary" : "primary"}
+                  className={
+                    isTgProbe(probe)
+                      ? "border-success/40 bg-success-soft text-success hover:bg-success/15"
+                      : undefined
+                  }
+                  disabled={!url.trim() || busy || !telegramReady}
+                  title={t("telegramProbeHint")}
+                  onClick={() => tgProbeMut.mutate()}
+                >
+                  {tgProbeMut.isPending
+                    ? t("telegramProbeBusy")
+                    : isTgProbe(probe)
+                      ? t("telegramProbeDone")
+                      : t("telegramProbe")}
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  variant={isAiProbe(probe) ? "secondary" : "primary"}
+                  className={
+                    isAiProbe(probe)
+                      ? "border-success/40 bg-success-soft text-success hover:bg-success/15"
+                      : undefined
+                  }
+                  disabled={!url.trim() || busy || !configured}
+                  title={t("ytdlpAiExtractHint")}
+                  onClick={() => aiExtractMut.mutate()}
+                >
+                  {aiExtractMut.isPending
+                    ? t("ytdlpAiExtractBusy")
+                    : isAiProbe(probe)
+                      ? t("ytdlpAiExtractDone")
+                      : t("ytdlpAiExtract")}
+                </Button>
+              )}
               {url || probe ? (
                 <Button size="sm" variant="ghost" onClick={clearUrlInput}>
                   {t("ytdlpClearUrl")}
                 </Button>
               ) : null}
             </div>
+
+            {urlLooksTelegram ? (
+              <div className="flex flex-wrap items-end gap-2 rounded-lg border border-line/60 bg-surface-2/30 px-3 py-2">
+                <Select
+                  value={tgMode}
+                  onChange={(e) =>
+                    setTgMode(e.target.value === "range" ? "range" : "recent")
+                  }
+                  disabled={busy}
+                >
+                  <option value="recent">{t("telegramModeRecent")}</option>
+                  <option value="range">{t("telegramModeRange")}</option>
+                </Select>
+                {tgMode === "recent" ? (
+                  <Input
+                    className="w-28"
+                    type="number"
+                    min={1}
+                    max={500}
+                    value={tgRecentN}
+                    onChange={(e) => setTgRecentN(e.target.value)}
+                    disabled={busy}
+                    title={t("telegramRecentN")}
+                    placeholder={t("telegramRecentN")}
+                  />
+                ) : (
+                  <>
+                    <Input
+                      className="w-28"
+                      type="number"
+                      min={1}
+                      value={tgFromId}
+                      onChange={(e) => setTgFromId(e.target.value)}
+                      disabled={busy}
+                      placeholder={t("telegramFromId")}
+                    />
+                    <Input
+                      className="w-28"
+                      type="number"
+                      min={1}
+                      value={tgToId}
+                      onChange={(e) => setTgToId(e.target.value)}
+                      disabled={busy}
+                      placeholder={t("telegramToId")}
+                    />
+                  </>
+                )}
+                <p className="w-full text-caption text-ink-muted">
+                  {telegramReady
+                    ? t("telegramProbeHint")
+                    : telegramStatusQ.data?.enabled
+                      ? t("telegramSessionMissing")
+                      : t("telegramSidecarMissing")}
+                </p>
+              </div>
+            ) : null}
 
             {showEmpty ? (
               <div className="online-empty">
