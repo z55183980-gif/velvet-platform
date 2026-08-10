@@ -10,15 +10,18 @@ const log = new Logger('YtdlpBootstrap');
 
 /** Pinned release — never follow mutable /latest without an explicit override. */
 export const YTDLP_DEFAULT_RELEASE_TAG = '2025.10.14';
-/** SHA256 of official `yt-dlp` asset for YTDLP_DEFAULT_RELEASE_TAG (linux/mac zipimport). */
+/** SHA256 of official Python zipimport `yt-dlp` (kept for docs / manual pin). */
 export const YTDLP_DEFAULT_SHA256_UNIX =
   '104d8103f871fe5f165a945ab82884fa4f34007a8ab0d377fbad54482b6e0b68';
 /** SHA256 of official `yt-dlp.exe` for YTDLP_DEFAULT_RELEASE_TAG. */
 export const YTDLP_DEFAULT_SHA256_WIN =
   '9ba4b80c9b64a7a2145c77c33b0208adaad34a650c73ea8373d64d6173ecd1a7';
-/** SHA256 of official `yt-dlp_linux` standalone for Docker/glibc images. */
+/** SHA256 of official `yt-dlp_linux` standalone (glibc; no Python). */
 export const YTDLP_DEFAULT_SHA256_LINUX_STANDALONE =
   '83d2c55a8893b49d0ccd23f5c528acf06840fc59bd1100519832b60724af34b7';
+/** SHA256 of official `yt-dlp_macos` standalone for YTDLP_DEFAULT_RELEASE_TAG. */
+export const YTDLP_DEFAULT_SHA256_MACOS =
+  'b7f48d7fd34f480873ac2eced43ea7ae0379553ffb1fd19597926f12c5b0b0b4';
 
 function releaseTag(): string {
   return (process.env.YTDLP_RELEASE_TAG || YTDLP_DEFAULT_RELEASE_TAG).trim();
@@ -35,7 +38,9 @@ function releaseBase(): string {
 export function ytdlpAssetName(platform = process.platform): string {
   if (platform === 'win32') return 'yt-dlp.exe';
   if (platform === 'darwin') return 'yt-dlp_macos';
-  return 'yt-dlp';
+  // glibc standalone — matches Docker pin and production YTDLP_SHA256.
+  // Override asset via YTDLP_DOWNLOAD_BASE + custom filename only if needed.
+  return 'yt-dlp_linux';
 }
 
 export function ytdlpLocalFileName(platform = process.platform): string {
@@ -53,7 +58,8 @@ export function expectedYtdlpSha256(platform = process.platform): string {
   const fromEnv = (process.env.YTDLP_SHA256 || '').trim().toLowerCase();
   if (fromEnv) return fromEnv;
   if (platform === 'win32') return YTDLP_DEFAULT_SHA256_WIN;
-  return YTDLP_DEFAULT_SHA256_UNIX;
+  if (platform === 'darwin') return YTDLP_DEFAULT_SHA256_MACOS;
+  return YTDLP_DEFAULT_SHA256_LINUX_STANDALONE;
 }
 
 export function verifyYtdlpSha256(filePath: string, expectedSha: string): void {

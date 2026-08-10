@@ -8,6 +8,10 @@ import {
   expectedYtdlpSha256,
   verifyYtdlpSha256,
   ensureYtdlpBinary,
+  ytdlpAssetName,
+  YTDLP_DEFAULT_SHA256_LINUX_STANDALONE,
+  YTDLP_DEFAULT_SHA256_MACOS,
+  YTDLP_DEFAULT_SHA256_WIN,
 } from '../src/admin/ytdlp-bootstrap.util';
 
 test('verifyYtdlpSha256 rejects mismatch', () => {
@@ -79,6 +83,22 @@ test('expectedYtdlpSha256 prefers env override', () => {
   try {
     process.env.YTDLP_SHA256 = 'ab'.repeat(32);
     assert.equal(expectedYtdlpSha256(), 'ab'.repeat(32));
+  } finally {
+    if (prev === undefined) delete process.env.YTDLP_SHA256;
+    else process.env.YTDLP_SHA256 = prev;
+  }
+});
+
+test('linux/mac/win pin standalone assets (not zipimport on linux)', () => {
+  assert.equal(ytdlpAssetName('linux'), 'yt-dlp_linux');
+  assert.equal(ytdlpAssetName('darwin'), 'yt-dlp_macos');
+  assert.equal(ytdlpAssetName('win32'), 'yt-dlp.exe');
+  const prev = process.env.YTDLP_SHA256;
+  try {
+    delete process.env.YTDLP_SHA256;
+    assert.equal(expectedYtdlpSha256('linux'), YTDLP_DEFAULT_SHA256_LINUX_STANDALONE);
+    assert.equal(expectedYtdlpSha256('darwin'), YTDLP_DEFAULT_SHA256_MACOS);
+    assert.equal(expectedYtdlpSha256('win32'), YTDLP_DEFAULT_SHA256_WIN);
   } finally {
     if (prev === undefined) delete process.env.YTDLP_SHA256;
     else process.env.YTDLP_SHA256 = prev;
