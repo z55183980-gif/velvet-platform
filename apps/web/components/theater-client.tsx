@@ -505,13 +505,20 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
       </div>
 
       <div className="-mx-4 mb-3 min-w-0 md:mx-0">
-        <div className="flex gap-2 overflow-x-auto overscroll-x-contain px-4 pb-1 [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:flex-wrap md:overflow-visible md:px-0">
+        <div className="grid grid-cols-3 gap-2 px-4 md:max-w-2xl md:gap-3 md:px-0">
           <ActionPill
             active={!!tag || filterOpen}
             label={tag || t("theater.filter")}
             onClick={() => setFilterOpen((open) => !open)}
             iconBg="bg-[#7C5CFF]"
             icon={<Filter className="h-3 w-3 text-white" strokeWidth={2.5} />}
+            trailing={
+              filterOpen ? (
+                <ChevronUp className="h-3.5 w-3.5 shrink-0 text-ink-muted" strokeWidth={2.5} />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5 shrink-0 text-ink-muted" strokeWidth={2.5} />
+              )
+            }
           />
           <ActionPill
             active={sort === "hottest"}
@@ -532,7 +539,6 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
 
       <TagFilterPanel
         open={filterOpen}
-        onClose={() => setFilterOpen(false)}
         tags={allTags}
         loading={tagsLoading}
         selected={tag}
@@ -542,9 +548,9 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
       <div className="mb-6" />
 
       {showSkeleton ? (
-        <div className="grid min-w-0 grid-cols-3 gap-2 md:gap-4">
+        <div className="grid min-w-0 grid-cols-3 gap-x-2 gap-y-4 lg:grid-cols-4 lg:gap-x-4 lg:gap-y-7 xl:grid-cols-6">
           {Array.from({ length: 12 }).map((_, i) => (
-            <div key={i} className="aspect-[2/3] min-w-0 animate-pulse rounded-md bg-surface-2" />
+            <div key={i} className="aspect-[2/3] min-w-0 animate-pulse rounded-lg bg-surface-2" />
           ))}
         </div>
       ) : loadError && rows.length === 0 ? (
@@ -557,22 +563,20 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
         <>
           <div
             className={cn(
-              "grid min-w-0 grid-cols-3 gap-x-2 gap-y-4 transition-opacity duration-200 md:gap-x-4 md:gap-y-6",
+              "grid min-w-0 grid-cols-3 gap-x-2 gap-y-4 transition-opacity duration-200 lg:grid-cols-4 lg:gap-x-4 lg:gap-y-7 xl:grid-cols-6",
               refreshing && "pointer-events-none opacity-60",
             )}
             aria-busy={refreshing || loadingMore}
           >
             {rows.map((d) => (
-              <div key={d.id} className="min-w-0">
-                <DramaCard drama={d} compact reserveTitleLines={2} />
-              </div>
+              <DramaCard key={d.id} drama={d} variant="grid" />
             ))}
           </div>
           <div ref={sentinelRef} className="h-px w-full" aria-hidden />
           {loadingMore ? (
-            <div className="mt-6 grid min-w-0 grid-cols-3 gap-2 md:gap-4">
+            <div className="mt-6 grid min-w-0 grid-cols-3 gap-x-2 gap-y-4 lg:grid-cols-4 lg:gap-x-4 lg:gap-y-7 xl:grid-cols-6">
               {Array.from({ length: 6 }).map((_, i) => (
-                <div key={i} className="aspect-[2/3] min-w-0 animate-pulse rounded-md bg-surface-2" />
+                <div key={i} className="aspect-[2/3] min-w-0 animate-pulse rounded-lg bg-surface-2" />
               ))}
             </div>
           ) : null}
@@ -614,12 +618,14 @@ function ActionPill({
   onClick,
   icon,
   iconBg,
+  trailing,
 }: {
   label: string;
   active?: boolean;
   onClick: () => void;
   icon: ReactNode;
   iconBg: string;
+  trailing?: ReactNode;
 }) {
   return (
     <button
@@ -627,50 +633,58 @@ function ActionPill({
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        "inline-flex min-h-11 shrink-0 touch-manipulation items-center gap-2 rounded-full px-3.5 py-2 text-body-sm transition-colors",
+        "inline-flex min-h-11 w-full touch-manipulation items-center justify-center gap-1.5 rounded-full px-2 py-2 text-body-sm transition-colors md:min-h-12 md:gap-2 md:px-4",
         active
           ? "bg-surface-3 font-medium text-ink ring-1 ring-brand/50"
           : "bg-surface-2 text-ink hover:bg-surface-3",
       )}
     >
-      <span className={cn("grid h-5 w-5 place-items-center rounded-[5px]", iconBg)}>{icon}</span>
-      <span className="max-w-[9rem] truncate">{label}</span>
+      <span className={cn("grid h-5 w-5 shrink-0 place-items-center rounded-[5px] md:h-6 md:w-6", iconBg)}>{icon}</span>
+      <span className="min-w-0 truncate">{label}</span>
+      {trailing}
     </button>
   );
 }
 
-/** Inline expand-down tag grid: 3 cols × 5 rows first, then “more” expands further. */
+/** Inline expand-down tag grid: 3 cols (mobile) / 6 cols (PC) × 5 rows, then “more”. */
 function TagFilterPanel({
   open,
-  onClose,
   tags,
   loading,
   selected,
   onSelect,
 }: {
   open: boolean;
-  onClose: () => void;
   tags: string[];
   loading: boolean;
   selected: string;
   onSelect: (tag: string) => void;
 }) {
   const { t } = useLocale();
-  const COLS = 3;
   const ROWS_STEP = 5;
+  const [cols, setCols] = useState(3);
   const [extraRows, setExtraRows] = useState(0);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 768px)");
+    const sync = () => setCols(mq.matches ? 6 : 3);
+    sync();
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
 
   useEffect(() => {
     if (!open) setExtraRows(0);
   }, [open]);
 
   const visibleRows = ROWS_STEP + extraRows;
-  const visibleSlots = visibleRows * COLS;
+  const visibleSlots = visibleRows * cols;
   // +1 for leading "All"
   const totalItems = 1 + tags.length;
   const hasMore = totalItems > visibleSlots;
   const visibleTagCount = Math.max(0, visibleSlots - 1);
   const visibleTags = tags.slice(0, visibleTagCount);
+  const skeletonCount = cols * ROWS_STEP;
 
   return (
     <div
@@ -681,19 +695,10 @@ function TagFilterPanel({
       aria-hidden={!open}
     >
       <div className="min-h-0 overflow-hidden">
-        <div className="relative -mx-4 bg-surface px-4 pb-2 pt-8 md:mx-0 md:rounded-xl">
-          <button
-            type="button"
-            onClick={onClose}
-            className="absolute right-3 top-2 grid h-8 w-8 place-items-center rounded-full text-ink-muted hover:bg-surface-2 hover:text-ink"
-            aria-label={t("theater.filterCollapse")}
-          >
-            <ChevronUp className="h-5 w-5" strokeWidth={2.25} />
-          </button>
-
+        <div className="relative -mx-4 bg-surface px-4 pb-2 pt-1 md:mx-0 md:rounded-xl">
           {loading ? (
-            <div className="grid grid-cols-3 gap-2">
-              {Array.from({ length: COLS * ROWS_STEP }).map((_, i) => (
+            <div className="grid grid-cols-3 gap-2 md:grid-cols-6">
+              {Array.from({ length: skeletonCount }).map((_, i) => (
                 <div key={i} className="h-9 animate-pulse rounded-md bg-surface-2" />
               ))}
             </div>
@@ -702,7 +707,7 @@ function TagFilterPanel({
           ) : (
             <>
               <div
-                className="grid grid-cols-3 gap-2"
+                className="grid grid-cols-3 gap-2 md:grid-cols-6"
                 role="listbox"
                 aria-label={t("theater.filterTitle")}
               >
