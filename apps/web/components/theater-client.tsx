@@ -60,7 +60,9 @@ function cacheKey(
   sort: SortMode,
   q: string,
 ): CacheKey {
-  return `${contentType || "__all__"}|${tag || "__notag__"}|${sort}|${q}`;
+  // hottest and hot share the same API sort — reuse one cache entry.
+  const sortKey = sort === "hottest" ? "hot" : sort;
+  return `${contentType || "__all__"}|${tag || "__notag__"}|${sortKey}|${q}`;
 }
 
 function computeHasMore(page: number, pageSize: number, loaded: number, total: number) {
@@ -295,7 +297,8 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
       hasContentRef.current = cached.rows.length > 0;
       setInitialLoading(false);
       setRefreshing(false);
-      // Keep already-paginated lists; only refresh page-1 caches in background.
+      setLoadError(false);
+      // Paginated caches stay as-is; page-1 revalidates silently (no dimming).
       if (cached.page > 1) {
         return () => ac.abort();
       }
@@ -304,7 +307,13 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
       setPage(1);
       setHasMore(true);
     } else {
-      setRefreshing(true);
+      // Uncached switch: clear to a short skeleton instead of dimming stale rows.
+      setRows([]);
+      setTotal(0);
+      setPage(1);
+      setHasMore(true);
+      setInitialLoading(true);
+      setRefreshing(false);
     }
 
     const stillCurrent = () =>
@@ -337,14 +346,14 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
       })
       .catch((err) => {
         if (!stillCurrent() || (err instanceof DOMException && err.name === "AbortError")) return;
+        // Keep showing cached rows on silent revalidate failure.
+        if (cacheRef.current.has(key)) return;
         setLoadError(true);
-        if (!cacheRef.current.has(key)) {
-          hasContentRef.current = false;
-          setRows([]);
-          setTotal(0);
-          setPage(1);
-          setHasMore(false);
-        }
+        hasContentRef.current = false;
+        setRows([]);
+        setTotal(0);
+        setPage(1);
+        setHasMore(false);
       })
       .finally(() => {
         if (ac.signal.aborted || listGenerationRef.current !== generation) return;
@@ -356,6 +365,40 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
       ac.abort();
     };
   }, [contentType, tag, sort, q, reloadKey, urlReady]);
+
+  // Prefetch sibling sort modes so ranking / new switches feel instant.
+  useEffect(() => {
+    if (!urlReady) return;
+    const siblings: SortMode[] = ["hot", "latest"];
+    const run = () => {
+      for (const nextSort of siblings) {
+        const key = cacheKey(contentType, tag, nextSort, q);
+        if (cacheRef.current.has(key)) continue;
+        const tagFilter = composeDramaTagFilter(contentType, tag);
+        void loadHome(1, THEATER_PAGE_SIZE, {
+          tag: tagFilter,
+          q: q || undefined,
+          sort: nextSort === "latest" ? "latest" : "hot",
+        })
+          .then((r) => {
+            if (cacheRef.current.has(key)) return;
+            cacheRef.current.set(key, {
+              rows: r.rows,
+              total: r.total,
+              page: 1,
+              hasMore: computeHasMore(1, THEATER_PAGE_SIZE, r.rows.length, r.total),
+            });
+          })
+          .catch(() => undefined);
+      }
+    };
+    const ric = window.requestIdleCallback?.(run, { timeout: 1500 });
+    const timer = ric == null ? window.setTimeout(run, 400) : 0;
+    return () => {
+      if (ric != null) window.cancelIdleCallback?.(ric);
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [urlReady, contentType, tag, q]);
 
   const loadMore = useCallback(async () => {
     const cur = listRef.current;
@@ -416,8 +459,14 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
     return () => io.disconnect();
   }, [hasMore, initialLoading, loadMore, urlReady, sort, contentType, tag, q, page, rows.length]);
 
+  function scrollListTop() {
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }
+
   function selectAll() {
+    setFilterOpen(false);
     if (!contentType && sort === "hot" && !tag) return;
+    scrollListTop();
     startTransition(() => {
       setContentType("");
       setTag("");
@@ -426,7 +475,9 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
   }
 
   function selectContentType(next: DramaContentTypeSlug) {
+    setFilterOpen(false);
     if (next === contentType && sort === "hot") return;
+    scrollListTop();
     startTransition(() => {
       setContentType(next);
       setSort("hot");
@@ -434,16 +485,22 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
   }
 
   function selectRanking() {
+    setFilterOpen(false);
     if (sort === "hottest") return;
+    scrollListTop();
     startTransition(() => setSort("hottest"));
   }
 
   function selectNew() {
+    setFilterOpen(false);
     if (sort === "latest") return;
+    scrollListTop();
     startTransition(() => setSort("latest"));
   }
 
   function applyTag(next: string) {
+    setFilterOpen(false);
+    scrollListTop();
     startTransition(() => {
       setTag(next);
       setSort("hot");
@@ -689,8 +746,8 @@ function TagFilterPanel({
   return (
     <div
       className={cn(
-        "grid transition-[grid-template-rows,opacity] duration-300 ease-out",
-        open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+        "grid transition-[grid-template-rows,opacity] duration-200 ease-out",
+        open ? "grid-rows-[1fr] opacity-100" : "pointer-events-none grid-rows-[0fr] opacity-0",
       )}
       aria-hidden={!open}
     >
