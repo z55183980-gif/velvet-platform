@@ -56,6 +56,7 @@ import {
   type DramaCompletion,
   type DramaContentType,
 } from "@/lib/drama-tags";
+import { DramaTagPicker } from "@/components/drama-tag-picker";
 import type {
   DramaInfoFillPayload,
   OnlineSourcePackage,
@@ -363,7 +364,6 @@ export const LocalUploadWizard = forwardRef<
   const [coverUrl, setCoverUrl] = useState("");
   const [descriptionEn, setDescriptionEn] = useState("");
   const [tags, setTags] = useState<string[]>([]);
-  const [tagInput, setTagInput] = useState("");
   const [contentType, setContentType] = useState<DramaContentType>(DEFAULT_CONTENT_TYPE);
   const [completion, setCompletion] = useState<DramaCompletion>(DEFAULT_COMPLETION);
   const [totalEpisodes, setTotalEpisodes] = useState(0);
@@ -2642,37 +2642,12 @@ export const LocalUploadWizard = forwardRef<
                       {t("dramaTags")}
                       <em className="float-right not-italic text-ink-subtle">{tags.length}/{MAX_DRAMA_TAGS}</em>
                     </span>
-                    <div className="flex flex-wrap gap-1.5 rounded-md border border-line bg-surface px-2 py-1.5">
-                      {tags.length
-                        ? tags.map((tag) => (
-                            <button
-                              type="button"
-                              key={tag}
-                              className="rounded-full bg-brand/10 px-2 py-0.5 text-xs text-brand"
-                              onClick={() => setTags((items) => items.filter((item) => item !== tag))}
-                            >
-                              {tag} ×
-                            </button>
-                          ))
-                        : null}
-                      <input
-                        className="min-w-24 flex-1 bg-transparent text-sm outline-none"
-                        value={tagInput}
-                        maxLength={12}
-                        placeholder={t("dramaTagsPlaceholder")}
-                        onChange={(e) => setTagInput(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === ",") {
-                            e.preventDefault();
-                            const tag = tagInput.trim();
-                            if (tag && !tags.includes(tag) && tags.length < MAX_DRAMA_TAGS) {
-                              setTags((items) => [...items, tag]);
-                            }
-                            setTagInput("");
-                          }
-                        }}
-                      />
-                    </div>
+                    <DramaTagPicker
+                      value={tags}
+                      onChange={setTags}
+                      max={MAX_DRAMA_TAGS}
+                      disabled={busy}
+                    />
                   </div>
                   <label className="upload-field upload-field--compact upload-field--creator">
                     <span>{t("dramaCreator")}</span>

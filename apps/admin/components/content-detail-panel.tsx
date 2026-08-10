@@ -68,6 +68,7 @@ import { EpisodeThumbnailField } from "@/components/episode-thumbnail-field";
 import { DramaCoverField } from "@/components/drama-cover-field";
 import { DramaCoverThumb } from "@/components/drama-cover-thumb";
 import { DramaPlaybackPolicyForm } from "@/components/drama-playback-policy-form";
+import { DramaTagPicker } from "@/components/drama-tag-picker";
 import {
   DEFAULT_COMPLETION,
   DEFAULT_CONTENT_TYPE,
@@ -292,7 +293,6 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
   const [inheritGlobal, setInheritGlobal] = useState(true);
   const [draft, setDraft] = useState<BasicDraft>(emptyDraft);
   const [savedDraft, setSavedDraft] = useState<BasicDraft>(emptyDraft);
-  const [tagInput, setTagInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [translateBusy, setTranslateBusy] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -1089,35 +1089,11 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
                 </>
               }
             >
-              <div className="flex flex-wrap gap-1.5 rounded-md border border-line bg-surface px-2 py-1.5">
-                {draft.tags.map((tag) => (
-                  <button
-                    type="button"
-                    key={tag}
-                    className="rounded-full bg-brand/10 px-2 py-0.5 text-xs text-brand"
-                    onClick={() => setDraft((v) => ({ ...v, tags: v.tags.filter((item) => item !== tag) }))}
-                  >
-                    {tag} ×
-                  </button>
-                ))}
-                <input
-                  className="min-w-24 flex-1 bg-transparent text-sm outline-none"
-                  value={tagInput}
-                  maxLength={12}
-                  placeholder={t("dramaTagsPlaceholder")}
-                  onChange={(e) => setTagInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === ",") {
-                      e.preventDefault();
-                      const tag = tagInput.trim();
-                      if (tag && !draft.tags.includes(tag) && draft.tags.length < MAX_DRAMA_TAGS) {
-                        setDraft((v) => ({ ...v, tags: [...v.tags, tag] }));
-                      }
-                      setTagInput("");
-                    }
-                  }}
-                />
-              </div>
+              <DramaTagPicker
+                value={draft.tags}
+                onChange={(tags) => setDraft((v) => ({ ...v, tags }))}
+                max={MAX_DRAMA_TAGS}
+              />
             </FieldLabel>
             <div className="grid gap-4 md:grid-cols-2">
               <FieldLabel label={t("descriptionEnLabel")}><textarea className="content-textarea" rows={7} value={draft.descriptionEn} onChange={(e) => setDraft((v) => ({ ...v, descriptionEn: e.target.value }))} /></FieldLabel>
