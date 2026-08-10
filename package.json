@@ -7,6 +7,7 @@
     "dev:web": "turbo run dev --filter=velvet-web",
     "dev:admin": "turbo run dev --filter=velvet-admin",
     "dev:api": "turbo run start:dev --filter=velvet-api",
+    "dev:telegram": "cd services/telegram-sidecar && .venv/Scripts/python.exe run.py",
     "build": "turbo run build",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",

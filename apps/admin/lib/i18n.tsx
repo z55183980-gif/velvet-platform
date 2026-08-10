@@ -1445,6 +1445,27 @@ const zh = {
   telegramOnlyReady: "yt-dlp 未配置；当前可用 Telegram 频道探测（需 sidecar session）",
   telegramSidecarMissing: "未配置 TELEGRAM_SIDECAR_URL，无法探测 TG",
   telegramSessionMissing: "sidecar 在线但 session 未登录 — 服务器执行 python -m app.login",
+  telegramNoYtdlpPreview:
+    "Telegram 帖无法走 yt-dlp 预览/本地下载（网页端无直链）。请勾选后「应用到主窗口」再「转存 R2」。",
+  telegramR2OnlyHint:
+    "TG 仅支持转存 R2：勾选分集 → 应用到主窗口 → 提交转存（无浏览器预览/本地下载）。",
+  telegramPanelTitle: "Telegram 频道",
+  telegramPanelHint:
+    "粘贴上方同一地址栏的 t.me 链接即切换为 TG 操作：详情可点缩略图；入库仅转存 R2。",
+  telegramStatusReady: "sidecar 已授权",
+  telegramThumbPreview: "缩略图",
+  telegramThumbPreviewTitle: "TG 缩略图预览",
+  telegramThumbPreviewHint:
+    "来自 Telegram 内嵌封面/缩略图，非整段视频；大文件请用转存 R2。",
+  telegramThumbMissing: "无缩略图",
+  telegramSegmentSeconds: "每集秒数",
+  telegramSegmentSecondsHint:
+    "留空=整帖一集；填写 30–600 将按固定时长切成多集再转码。第 2 集起起点前移 1 秒与上一集重叠，减少砍句。",
+  telegramSegmentSecondsInvalid: "每集秒数需在 30–600 之间（或留空不切）",
+  telegramSegmentEstimate: "预估约 {n} 集（每 {sec}s）",
+  telegramCardParts: "≈{n} 集",
+  telegramSegmentSaved: "已记住每集 {sec}s（提交后切片）",
+  telegramSegmentNone: "不切片（整帖一集）",
   ytdlpAiNotes: "备注",
   ytdlpAiPreferLinkHint:
     "AI 抽取的是分集链接列表；选「存 R2」会按勾选集逐一下载转存（优先已解析直链，否则用分集页）。付费集建议先上传 cookies。",
@@ -3014,6 +3035,28 @@ const en: Record<LabelKey, string> = {
   telegramSidecarMissing: "TELEGRAM_SIDECAR_URL not set",
   telegramSessionMissing:
     "Sidecar up but session missing — run python -m app.login on the server",
+  telegramNoYtdlpPreview:
+    "Telegram posts cannot use yt-dlp preview/local download (no web direct link). Select episodes → Apply to main → Transfer to R2.",
+  telegramR2OnlyHint:
+    "TG is R2-only: select episodes → Apply to main → submit transfer (no browser preview/local download).",
+  telegramPanelTitle: "Telegram channel",
+  telegramPanelHint:
+    "Paste a t.me link in the shared URL field above to switch to TG actions. Thumbnails supported; ingest is R2-only.",
+  telegramStatusReady: "sidecar authorized",
+  telegramThumbPreview: "Thumbnail",
+  telegramThumbPreviewTitle: "TG thumbnail preview",
+  telegramThumbPreviewHint:
+    "Telegram embedded cover/thumbnail — not the full video. Use Transfer to R2 for the file.",
+  telegramThumbMissing: "No thumbnail",
+  telegramSegmentSeconds: "Seconds / episode",
+  telegramSegmentSecondsHint:
+    "Leave empty = one post → one episode; set 30–600 to split by fixed duration before transcode. From ep 2, start 1s early (overlap) to avoid clipped lines.",
+  telegramSegmentSecondsInvalid:
+    "Seconds per episode must be 30–600 (or leave empty for no split)",
+  telegramSegmentEstimate: "≈{n} episodes ({sec}s each)",
+  telegramCardParts: "≈{n} eps",
+  telegramSegmentSaved: "Saved {sec}s/ep (split on submit)",
+  telegramSegmentNone: "No split (1 post → 1 ep)",
   ytdlpAiNotes: "Notes",
   ytdlpAiPreferLinkHint:
     "AI returned episode page links; R2 downloads checked episodes one-by-one (prefers resolved media, else episode page). Upload cookies for paid episodes.",

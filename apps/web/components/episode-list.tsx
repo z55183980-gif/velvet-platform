@@ -45,7 +45,8 @@ export function EpisodeList({
   layout?: "list" | "rail" | "grid" | "sidebar";
 }) {
   const { locale, t } = useLocale();
-  const epTitle = (ep: Episode) => pickTitleText(locale, ep.titleEn, ep.titleZh);
+  const epTitle = (ep: Episode) =>
+    pickTitleText(locale, ep.titleEn, ep.titleZh, ep.titleFr);
   const unlocked = (ep: Episode) =>
     isUnlocked?.(ep) ?? !!(ep.isFree || ep.unlocked);
   /** Crown = member pricing; click/play uses `unlocked` (VIP/purchase/free). */

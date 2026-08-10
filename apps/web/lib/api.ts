@@ -195,11 +195,23 @@ export function mapDrama(d: any): Drama {
 }
 
 function mapEpisode(e: any): Episode {
+  const no = Number(e.episodeNumber) || 0;
+  const raw = String(e.title || "").trim();
+  /** Generic numbered titles — localize per UI language instead of locking one locale. */
+  const isGenericEpisodeTitle =
+    !raw ||
+    /^第\s*\d+\s*集$/.test(raw) ||
+    /^Episode\s+\d+$/i.test(raw) ||
+    /^Épisode\s+\d+$/i.test(raw);
+  const titleEn = isGenericEpisodeTitle ? `Episode ${no}` : raw;
+  const titleZh = isGenericEpisodeTitle ? `第 ${no} 集` : raw;
+  const titleFr = isGenericEpisodeTitle ? `Épisode ${no}` : raw;
   return {
     id: e.id,
-    no: e.episodeNumber,
-    titleEn: e.title || `Episode ${e.episodeNumber}`,
-    titleZh: e.title || `第 ${e.episodeNumber} 集`,
+    no,
+    titleEn,
+    titleZh,
+    titleFr,
     isFree: !!e.isFree,
     previewSeconds: Math.max(0, Number(e.previewSeconds) || 0),
     // 平台原子定价为积分（priceCredits）；回退 priceVnd

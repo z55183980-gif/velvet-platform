@@ -40,6 +40,8 @@ type TelegramTransferPayload = {
   watermarkX?: number;
   watermarkY?: number;
   watermarkScale?: number;
+  /** When set (30–600), each TG message is cut into fixed-duration episode parts. */
+  segmentSeconds?: number;
   selected: TelegramTransferSelected[];
   useSourceIndexAsEpisodeNumber?: boolean;
 };
@@ -120,6 +122,23 @@ export class TelegramImportService implements OnModuleInit {
     };
   }
 
+  async thumb(opts: { channel: string; messageId: number }) {
+    if (!this.telegram.isConfigured()) {
+      throw new BizException(
+        BizCode.BAD_REQUEST,
+        'Telegram sidecar 未配置（TELEGRAM_SIDECAR_URL）',
+      );
+    }
+    const messageId = Math.floor(Number(opts.messageId));
+    if (!Number.isFinite(messageId) || messageId < 1) {
+      throw new BizException(BizCode.BAD_REQUEST, '无效的 messageId');
+    }
+    return this.telegram.thumb({
+      channel: this.normalizeChannel(opts.channel),
+      messageId,
+    });
+  }
+
   private toEpisodeRow(item: TelegramProbeItem, index: number) {
     return {
       index,
@@ -162,6 +181,8 @@ export class TelegramImportService implements OnModuleInit {
       watermarkX?: number;
       watermarkY?: number;
       watermarkScale?: number;
+      /** Optional fixed-duration cut in seconds (30–600). Empty/omit = 1 message → 1 episode. */
+      segmentSeconds?: number | string | null;
       episodes: Array<{
         messageId: number;
         title?: string;
@@ -198,6 +219,8 @@ export class TelegramImportService implements OnModuleInit {
       throw new BizException(BizCode.BAD_REQUEST, '请至少勾选一条带视频的 TG 帖');
     }
 
+    const segmentSeconds = this.normalizeSegmentSeconds(opts.segmentSeconds);
+
     const categorySlug = await this.requireCategorySlug(opts.categorySlug);
     const titleEn =
       (opts.titleEn || '').trim() ||
@@ -205,7 +228,12 @@ export class TelegramImportService implements OnModuleInit {
       `telegram-${channel}`;
     const titleZh = (opts.titleZh || '').trim() || undefined;
     const probeId = createHash('sha1')
-      .update(selected.map((s) => `${channel}:${s.messageId}`).join('|'))
+      .update(
+        [
+          ...selected.map((s) => `${channel}:${s.messageId}`),
+          `seg:${segmentSeconds ?? 0}`,
+        ].join('|'),
+      )
       .digest('hex')
       .slice(0, 20);
     const externalRef = `telegram:${channel}:${probeId}`;
@@ -246,7 +274,13 @@ export class TelegramImportService implements OnModuleInit {
         buyoutCredits: opts.buyoutCredits,
         status: 'DRAFT',
         sourceType: 'R2',
-        sourceTags: ['telegram', 'transfer', 'r2', `tg:${channel}`],
+        sourceTags: [
+          'telegram',
+          'transfer',
+          'r2',
+          `tg:${channel}`,
+          ...(segmentSeconds ? [`seg:${segmentSeconds}`] : []),
+        ],
         totalEpisodes: selected.length,
         externalRef,
       },
@@ -264,6 +298,7 @@ export class TelegramImportService implements OnModuleInit {
       watermarkX: opts.watermarkX,
       watermarkY: opts.watermarkY,
       watermarkScale: opts.watermarkScale,
+      segmentSeconds,
       selected,
       useSourceIndexAsEpisodeNumber: true,
     };
@@ -318,6 +353,22 @@ export class TelegramImportService implements OnModuleInit {
     if (m) return m[1];
     if (/^[A-Za-z0-9_]+$/.test(text)) return text;
     throw new BizException(BizCode.BAD_REQUEST, `无效 Telegram 频道: ${text}`);
+  }
+
+  /** Empty / unset = no split. Otherwise clamp to 30–600. */
+  private normalizeSegmentSeconds(
+    raw: number | string | null | undefined,
+  ): number | undefined {
+    if (raw == null || raw === '') return undefined;
+    const n = Math.floor(Number(raw));
+    if (!Number.isFinite(n) || n <= 0) return undefined;
+    if (n < 30 || n > 600) {
+      throw new BizException(
+        BizCode.BAD_REQUEST,
+        '每集秒数需在 30–600 之间（留空则整帖一集）',
+      );
+    }
+    return n;
   }
 
   private normalizeSelected(
@@ -428,31 +479,35 @@ export class TelegramImportService implements OnModuleInit {
       const actorId = payload.actorId != null ? BigInt(payload.actorId) : undefined;
       let jobs = this.parseJobs(row.jobs);
       let failedEpisodes = this.parseFailures(row.failedEpisodes);
-      const doneIds = new Set(jobs.map((j) => j.sourceIndex).filter((n) => n != null));
+      const segmentSeconds = this.normalizeSegmentSeconds(payload.segmentSeconds);
+      const doneExtIds = new Set(
+        (
+          await this.prisma.episode.findMany({
+            where: {
+              dramaId: BigInt(payload.dramaId),
+              sourceProvider: 'telegram',
+              externalVideoId: { not: null },
+            },
+            select: { externalVideoId: true },
+          })
+        )
+          .map((e) => e.externalVideoId)
+          .filter(Boolean) as string[],
+      );
+
+      const maxEp = await this.prisma.episode.aggregate({
+        where: { dramaId: BigInt(payload.dramaId) },
+        _max: { episodeNumber: true },
+      });
+      let nextEpisodeNumber = Math.max(0, Number(maxEp._max.episodeNumber || 0)) + 1;
 
       for (const ep of payload.selected) {
-        if (doneIds.has(ep.index) || doneIds.has(ep.messageId)) continue;
-
         await this.prisma.ytdlpTransferJob.update({
           where: { id: jobId },
-          data: { currentEpisode: ep.index },
+          data: { currentEpisode: nextEpisodeNumber },
         });
 
         try {
-          const occupied = await this.prisma.episode.findUnique({
-            where: {
-              dramaId_episodeNumber: {
-                dramaId: BigInt(payload.dramaId),
-                episodeNumber: ep.index,
-              },
-            },
-            select: { id: true },
-          });
-          if (occupied) {
-            doneIds.add(ep.index);
-            continue;
-          }
-
           const downloaded = await this.telegram.download({
             channel: payload.channel,
             messageId: ep.messageId,
@@ -464,7 +519,6 @@ export class TelegramImportService implements OnModuleInit {
           }
           const absInUploads = this.upload.resolveAbs(relativePath);
           if (!fs.existsSync(absInUploads) && downloaded.absolutePath) {
-            // Sidecar and API may share the same uploads dir via different path strings
             if (fs.existsSync(downloaded.absolutePath)) {
               fs.copyFileSync(downloaded.absolutePath, absInUploads);
             }
@@ -473,78 +527,139 @@ export class TelegramImportService implements OnModuleInit {
             throw new Error(`downloaded file missing: ${relativePath}`);
           }
 
-          const created = await this.episodes.create(
-            payload.dramaId,
-            {
-              title: ep.title || downloaded.title || `第 ${ep.index} 集`,
-              episodeNumber: ep.index,
-              isFree: true,
-              originalUrl: relativePath,
-              hlsUrl: relativePath,
-            },
-            actorId,
-          );
+          const parts = segmentSeconds
+            ? await this.upload.splitFixedDuration(relativePath, segmentSeconds, {
+                outDirRel: `uploads/tg-split/${jobId}/${ep.messageId}`,
+                /** Next episode starts 1s early so cuts don't clip dialogue. */
+                overlapSeconds: 1,
+              })
+            : [
+                {
+                  relativePath,
+                  durationSec:
+                    ep.durationSec != null
+                      ? Math.round(Number(ep.durationSec))
+                      : downloaded.duration != null
+                        ? Math.round(Number(downloaded.duration))
+                        : null,
+                },
+              ];
 
-          const thumbnailUrl = await this.autoEpisodeThumbnailFromVideo(
-            relativePath,
-            `tg-ep-${created.id}`,
-          );
+          for (let partIdx = 0; partIdx < parts.length; partIdx++) {
+            const part = parts[partIdx];
+            const externalVideoId = segmentSeconds
+              ? `${ep.messageId}:${partIdx + 1}`
+              : String(ep.messageId);
+            if (doneExtIds.has(externalVideoId)) {
+              continue;
+            }
 
-          await this.prisma.episode.update({
-            where: { id: BigInt(created.id) },
-            data: {
-              originalUrl: relativePath,
-              hlsUrl: relativePath,
-              uploadStatus: 'COMPLETED',
-              transcodeStatus: 'PENDING',
-              sourcePageUrl: ep.webpageUrl,
-              sourceProvider: 'telegram',
-              externalVideoId: String(ep.messageId),
-              resolvedAt: new Date(),
-              resolvedExpiresAt: new Date('2099-01-01T00:00:00.000Z'),
-              ...(ep.durationSec != null
-                ? { durationSec: Math.round(Number(ep.durationSec)) }
-                : downloaded.duration != null
-                  ? { durationSec: Math.round(Number(downloaded.duration)) }
+            // Skip already-used episode numbers on this drama.
+            while (true) {
+              const occupied = await this.prisma.episode.findUnique({
+                where: {
+                  dramaId_episodeNumber: {
+                    dramaId: BigInt(payload.dramaId),
+                    episodeNumber: nextEpisodeNumber,
+                  },
+                },
+                select: { id: true },
+              });
+              if (!occupied) break;
+              nextEpisodeNumber += 1;
+            }
+
+            const episodeNumber = nextEpisodeNumber;
+            nextEpisodeNumber += 1;
+
+            // Split parts: plain “第 N 集”. Web localizes Episode / Épisode from episodeNumber
+            // when title matches this generic pattern.
+            const title = segmentSeconds
+              ? `第 ${episodeNumber} 集`
+              : ep.title || downloaded.title || `TG ${ep.messageId}`;
+
+            const created = await this.episodes.create(
+              payload.dramaId,
+              {
+                title,
+                episodeNumber,
+                isFree: true,
+                originalUrl: part.relativePath,
+                hlsUrl: part.relativePath,
+              },
+              actorId,
+            );
+
+            const thumbnailUrl = await this.autoEpisodeThumbnailFromVideo(
+              part.relativePath,
+              `tg-ep-${created.id}`,
+            );
+
+            await this.prisma.episode.update({
+              where: { id: BigInt(created.id) },
+              data: {
+                originalUrl: part.relativePath,
+                hlsUrl: part.relativePath,
+                uploadStatus: 'COMPLETED',
+                transcodeStatus: 'PENDING',
+                sourcePageUrl: ep.webpageUrl,
+                sourceProvider: 'telegram',
+                externalVideoId,
+                resolvedAt: new Date(),
+                resolvedExpiresAt: new Date('2099-01-01T00:00:00.000Z'),
+                ...(part.durationSec != null
+                  ? { durationSec: Math.round(Number(part.durationSec)) }
                   : {}),
-              ...(thumbnailUrl ? { thumbnailUrl } : {}),
-            },
-          });
+                ...(thumbnailUrl ? { thumbnailUrl } : {}),
+              },
+            });
 
-          const mediaJob = await this.upload.enqueueTranscode(relativePath, created.id, {
-            preferR2: true,
-            watermarkEnabled: !!payload.watermarkEnabled,
-            watermarkX: payload.watermarkX,
-            watermarkY: payload.watermarkY,
-            watermarkScale: payload.watermarkScale,
-          });
+            const mediaJob = await this.upload.enqueueTranscode(
+              part.relativePath,
+              created.id,
+              {
+                preferR2: true,
+                watermarkEnabled: !!payload.watermarkEnabled,
+                watermarkX: payload.watermarkX,
+                watermarkY: payload.watermarkY,
+                watermarkScale: payload.watermarkScale,
+              },
+            );
 
-          const entry: YtdlpTransferJobEntry = {
-            episodeId: created.id,
-            episodeNumber: ep.index,
-            jobId: mediaJob.id,
-            filename: path.basename(absInUploads),
-            size: downloaded.size,
-            webpageUrl: ep.webpageUrl,
-            downloadUrl: relativePath,
-            sourceIndex: ep.messageId,
-          };
-          jobs = [...jobs, entry];
-          doneIds.add(ep.index);
-          failedEpisodes = failedEpisodes.filter((f) => f.url !== ep.webpageUrl);
+            const entry: YtdlpTransferJobEntry = {
+              episodeId: created.id,
+              episodeNumber,
+              jobId: mediaJob.id,
+              filename: path.basename(part.relativePath),
+              size: fs.existsSync(this.upload.resolveAbs(part.relativePath))
+                ? fs.statSync(this.upload.resolveAbs(part.relativePath)).size
+                : downloaded.size,
+              webpageUrl: ep.webpageUrl,
+              downloadUrl: part.relativePath,
+              sourceIndex: segmentSeconds
+                ? ep.messageId * 10000 + (partIdx + 1)
+                : ep.messageId,
+            };
+            jobs = [...jobs, entry];
+            doneExtIds.add(externalVideoId);
+            failedEpisodes = failedEpisodes.filter((f) => f.url !== ep.webpageUrl);
 
-          const previewUrl =
-            row.previewUrl || this.signLocalMedia(path.basename(absInUploads));
-          await this.prisma.ytdlpTransferJob.update({
-            where: { id: jobId },
-            data: {
-              jobs: jobs as any,
-              transferred: jobs.length,
-              previewUrl,
-              failedEpisodes: failedEpisodes as any,
-            },
-          });
-          if (!row.previewUrl) row.previewUrl = previewUrl;
+            const previewUrl =
+              row.previewUrl ||
+              this.signLocalMedia(path.basename(part.relativePath));
+            await this.prisma.ytdlpTransferJob.update({
+              where: { id: jobId },
+              data: {
+                jobs: jobs as any,
+                transferred: jobs.length,
+                total: Math.max(row.total || 0, jobs.length),
+                previewUrl,
+                failedEpisodes: failedEpisodes as any,
+                currentEpisode: episodeNumber,
+              },
+            });
+            if (!row.previewUrl) row.previewUrl = previewUrl;
+          }
         } catch (e: any) {
           this.logger.warn(
             `telegram transfer ep ${ep.messageId} failed: ${e?.message || e}`,
@@ -598,6 +713,7 @@ export class TelegramImportService implements OnModuleInit {
         data: {
           status: 'COMPLETED',
           currentEpisode: null,
+          total: Math.max(totalEpisodes, jobs.length),
           transferred: jobs.length,
           jobs: jobs as any,
           failedEpisodes: failedEpisodes as any,

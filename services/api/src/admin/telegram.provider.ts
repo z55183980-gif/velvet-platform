@@ -120,6 +120,23 @@ export class TelegramProvider {
     }, 600_000);
   }
 
+  async thumb(opts: {
+    channel: string;
+    messageId: number;
+  }): Promise<{
+    channel: string;
+    messageId: number;
+    contentType: string;
+    byteLength: number;
+    base64: string;
+    webpageUrl: string;
+  }> {
+    return this.request('POST', '/thumb', {
+      channel: opts.channel,
+      messageId: opts.messageId,
+    }, 60_000);
+  }
+
   private async request<T>(
     method: 'GET' | 'POST',
     path: string,

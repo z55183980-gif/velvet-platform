@@ -39,6 +39,8 @@ export type OnlineSourcePackage = {
   watermarkX?: number;
   watermarkY?: number;
   watermarkScale?: number;
+  /** Telegram only: fixed-duration cut in seconds (30–600). Omit = 1 post → 1 ep. */
+  segmentSeconds?: number;
 };
 
 export type DramaInfoFillPayload = {
@@ -98,6 +100,8 @@ type ProbeExtras = {
   watermarkX?: number;
   watermarkY?: number;
   watermarkScale?: number;
+  /** Telegram only: fixed-duration cut in seconds (30–600). */
+  segmentSeconds?: number;
   /** Include title/cover/desc/totalEpisodes. Default true. */
   includeMeta?: boolean;
   /** Include staged online package. Default true. */
@@ -161,7 +165,24 @@ export function dramaInfoFromYtdlpProbe(
         payload.descriptionZh = desc;
       }
     }
-    payload.totalEpisodes = selected.length || undefined;
+    const segmentSec =
+      extras?.segmentSeconds != null &&
+      Number.isFinite(Number(extras.segmentSeconds)) &&
+      Number(extras.segmentSeconds) >= 30
+        ? Math.floor(Number(extras.segmentSeconds))
+        : undefined;
+    if (segmentSec) {
+      payload.totalEpisodes =
+        selected.reduce((sum, ep) => {
+          const d = ep.durationSec;
+          if (typeof d === "number" && d > 0) {
+            return sum + Math.max(1, Math.ceil(d / segmentSec));
+          }
+          return sum + 1;
+        }, 0) || undefined;
+    } else {
+      payload.totalEpisodes = selected.length || undefined;
+    }
     const categorySlug = (probe.categorySlug || "").trim();
     if (categorySlug) payload.categorySlug = categorySlug;
     if (extras?.overwriteMeta) payload.overwriteMeta = true;
@@ -172,6 +193,12 @@ export function dramaInfoFromYtdlpProbe(
     const provider =
       extras?.provider ||
       (probe.source === "telegram" ? "telegram" : "ytdlp");
+    const segmentSec =
+      extras?.segmentSeconds != null &&
+      Number.isFinite(Number(extras.segmentSeconds)) &&
+      Number(extras.segmentSeconds) >= 30
+        ? Math.floor(Number(extras.segmentSeconds))
+        : undefined;
     payload.online = {
       pageUrl: (extras?.pageUrl || "").trim(),
       ingestForm: extras?.ingestForm || "link",
@@ -190,6 +217,7 @@ export function dramaInfoFromYtdlpProbe(
       watermarkX: extras?.watermarkX,
       watermarkY: extras?.watermarkY,
       watermarkScale: extras?.watermarkScale,
+      ...(segmentSec ? { segmentSeconds: segmentSec } : {}),
       episodes: selected.map((ep, i) => {
         const webpageRaw = (ep.webpageUrl || "").trim() || undefined;
         const sourceRaw = (ep.sourceUrl || "").trim() || undefined;

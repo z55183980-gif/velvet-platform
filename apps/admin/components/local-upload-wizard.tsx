@@ -202,6 +202,7 @@ type OnlineIngestMeta = {
   watermarkX?: number;
   watermarkY?: number;
   watermarkScale?: number;
+  segmentSeconds?: number;
 };
 
 function fmtSize(n: number) {
@@ -487,6 +488,7 @@ export const LocalUploadWizard = forwardRef<
             watermarkX: payload.online.watermarkX,
             watermarkY: payload.online.watermarkY,
             watermarkScale: payload.online.watermarkScale,
+            segmentSeconds: payload.online.segmentSeconds,
           };
           onlineIngestRef.current = nextOnline;
           const incoming: EpisodeDraft[] = payload.online.episodes.map((ep, i) => {
@@ -1706,8 +1708,9 @@ export const LocalUploadWizard = forwardRef<
 
       if (onlineIngest?.ingestForm === "r2") {
         if (onlineIngest.provider === "telegram") {
+          const ingest = onlineIngestRef.current ?? onlineIngest;
           const channel =
-            onlineIngest.telegramChannel?.trim() ||
+            ingest.telegramChannel?.trim() ||
             pageUrl ||
             linkEps.find((ep) => ep.webpageUrl)?.webpageUrl ||
             "";
@@ -1724,6 +1727,13 @@ export const LocalUploadWizard = forwardRef<
             throw new Error(t("telegramNeedProbe"));
           }
           const titleDisplay = englishTitle || titleZhResolved || "—";
+          const segmentSeconds =
+            typeof ingest.segmentSeconds === "number" &&
+            Number.isFinite(ingest.segmentSeconds) &&
+            ingest.segmentSeconds >= 30 &&
+            ingest.segmentSeconds <= 600
+              ? Math.floor(ingest.segmentSeconds)
+              : undefined;
           return adminTelegramTransfer({
             channel,
             categorySlug,
@@ -1758,6 +1768,7 @@ export const LocalUploadWizard = forwardRef<
             watermarkX: watermark.x,
             watermarkY: watermark.y,
             watermarkScale: watermark.scale,
+            ...(segmentSeconds != null ? { segmentSeconds } : {}),
             episodes: transferEps.map((ep) => ({
               messageId: ep.messageId!,
               title: ep.title,
@@ -2292,6 +2303,15 @@ export const LocalUploadWizard = forwardRef<
                       {onlineIngest
                         ? ` · ${onlineIngest.ingestForm === "r2" ? t("ytdlpIngestFormR2") : t("ytdlpIngestFormLink")}`
                         : ""}
+                      {onlineIngest?.provider === "telegram" &&
+                      onlineIngest.segmentSeconds != null &&
+                      onlineIngest.segmentSeconds >= 30
+                        ? ` · ${t("telegramSegmentSaved", {
+                            sec: String(onlineIngest.segmentSeconds),
+                          })}`
+                        : onlineIngest?.provider === "telegram"
+                          ? ` · ${t("telegramSegmentNone")}`
+                          : ""}
                       {" · "}
                       {t("localWizardEpisodeOrderHint")}
                       {selectedIds.length

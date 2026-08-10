@@ -27,6 +27,7 @@ import {
   IsOptional,
   IsString,
   Matches,
+  Max,
   Min,
   ValidateIf,
   ValidateNested,
@@ -497,6 +498,11 @@ class TelegramProbeDto {
   @IsOptional() mediaOnly?: boolean | string;
 }
 
+class TelegramThumbDto {
+  @IsNotEmpty() @IsString() channel!: string;
+  @IsNotEmpty() @Type(() => Number) @IsNumber() @Min(1) messageId!: number;
+}
+
 class TelegramTransferEpisodeDto {
   @IsNotEmpty() @Type(() => Number) @IsNumber() @Min(1) messageId!: number;
   @IsOptional() @IsString() title?: string;
@@ -526,6 +532,13 @@ class TelegramTransferDto {
   @IsOptional() @Type(() => Number) @IsNumber() watermarkX?: number;
   @IsOptional() @Type(() => Number) @IsNumber() watermarkY?: number;
   @IsOptional() @Type(() => Number) @IsNumber() watermarkScale?: number;
+  /** Optional fixed-duration cut (seconds). Empty = one TG post → one episode. */
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(30)
+  @Max(600)
+  segmentSeconds?: number;
 }
 
 @Controller('v1/admin')
@@ -1184,6 +1197,17 @@ export class ContentController {
     );
   }
 
+  @Post('telegram/thumb')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async telegramThumb(@Body() dto: TelegramThumbDto) {
+    return ok(
+      await this.telegram.thumb({
+        channel: dto.channel,
+        messageId: dto.messageId,
+      }),
+    );
+  }
+
   @Post('telegram/transfer')
   @AdminRoles('SUPER_ADMIN', 'OPS')
   async telegramTransfer(@Body() dto: TelegramTransferDto, @Req() req: any) {
@@ -1207,6 +1231,7 @@ export class ContentController {
           watermarkX: wm?.watermarkX,
           watermarkY: wm?.watermarkY,
           watermarkScale: wm?.watermarkScale,
+          segmentSeconds: dto.segmentSeconds,
         },
         getActor(req),
       ),

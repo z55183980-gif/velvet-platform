@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import logging
 import os
 import re
@@ -54,6 +55,11 @@ class Settings(BaseSettings):
 settings = Settings()
 _client: TelegramClient | None = None
 _client_lock = asyncio.Lock()
+# Telethon downloads on a single client are not safely concurrent.
+_media_lock = asyncio.Lock()
+# In-process thumb cache: (channel, messageId) -> response dict
+_thumb_cache: dict[tuple[str, int], dict[str, Any]] = {}
+_THUMB_CACHE_MAX = 200
 
 
 def session_file_base() -> str:
@@ -324,60 +330,136 @@ def _item(channel: str, msg: Message, info: dict[str, Any] | None) -> dict[str, 
     }
 
 
+@app.post("/thumb")
+async def thumb(body: DownloadBody):
+    """Download Telegram-provided thumbnail / cover (not the full video)."""
+    channel, _ = parse_channel(body.channel)
+    cache_key = (channel.lower(), int(body.messageId))
+    cached = _thumb_cache.get(cache_key)
+    if cached:
+        return cached
+
+    client = await get_client()
+    async with _media_lock:
+        # Re-check after waiting for the lock (another request may have filled cache).
+        cached = _thumb_cache.get(cache_key)
+        if cached:
+            return cached
+
+        try:
+            entity = await client.get_entity(channel)
+            msg = await client.get_messages(entity, ids=body.messageId)
+        except FloodWaitError as e:
+            raise HTTPException(status_code=429, detail=f"flood wait {e.seconds}s") from e
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail=str(e)) from e
+
+        if not isinstance(msg, Message) or not msg.media:
+            raise HTTPException(status_code=404, detail="message has no media")
+
+        raw: bytes | None = None
+        try:
+            # Prefer the largest embedded document/photo thumb (cheap).
+            downloaded = await client.download_media(msg, file=bytes, thumb=-1)
+            if isinstance(downloaded, (bytes, bytearray)):
+                raw = bytes(downloaded)
+        except FloodWaitError as e:
+            raise HTTPException(status_code=429, detail=f"flood wait {e.seconds}s") from e
+        except Exception as e:  # noqa: BLE001
+            logger.info("thumb=-1 failed for %s/%s: %s", channel, body.messageId, e)
+
+        if not raw and isinstance(msg.media, MessageMediaPhoto):
+            try:
+                downloaded = await client.download_media(msg, file=bytes)
+                if isinstance(downloaded, (bytes, bytearray)):
+                    raw = bytes(downloaded)
+            except FloodWaitError as e:
+                raise HTTPException(status_code=429, detail=f"flood wait {e.seconds}s") from e
+            except Exception as e:  # noqa: BLE001
+                logger.info("photo download failed for %s/%s: %s", channel, body.messageId, e)
+
+        if not raw:
+            raise HTTPException(
+                status_code=404,
+                detail="no thumbnail available for this message",
+            )
+
+        content_type = "image/jpeg"
+        if raw[:8] == b"\x89PNG\r\n\x1a\n":
+            content_type = "image/png"
+        elif raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+            content_type = "image/webp"
+
+        payload = {
+            "channel": channel,
+            "messageId": body.messageId,
+            "contentType": content_type,
+            "byteLength": len(raw),
+            "base64": base64.b64encode(raw).decode("ascii"),
+            "webpageUrl": f"https://t.me/{channel}/{body.messageId}",
+        }
+        if len(_thumb_cache) >= _THUMB_CACHE_MAX:
+            # Drop an arbitrary old entry (insertion order in 3.7+).
+            _thumb_cache.pop(next(iter(_thumb_cache)), None)
+        _thumb_cache[cache_key] = payload
+        return payload
+
+
 @app.post("/download")
 async def download(body: DownloadBody):
     channel, _ = parse_channel(body.channel)
     client = await get_client()
-    try:
-        entity = await client.get_entity(channel)
-        msg = await client.get_messages(entity, ids=body.messageId)
-    except FloodWaitError as e:
-        raise HTTPException(status_code=429, detail=f"flood wait {e.seconds}s") from e
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=400, detail=str(e)) from e
+    async with _media_lock:
+        try:
+            entity = await client.get_entity(channel)
+            msg = await client.get_messages(entity, ids=body.messageId)
+        except FloodWaitError as e:
+            raise HTTPException(status_code=429, detail=f"flood wait {e.seconds}s") from e
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(status_code=400, detail=str(e)) from e
 
-    if not isinstance(msg, Message) or not msg.media:
-        raise HTTPException(status_code=404, detail="message has no media")
+        if not isinstance(msg, Message) or not msg.media:
+            raise HTTPException(status_code=404, detail="message has no media")
 
-    info = media_info(msg)
-    if not info or not info.get("hasVideo"):
-        raise HTTPException(status_code=400, detail="message is not a video")
+        info = media_info(msg)
+        if not info or not info.get("hasVideo"):
+            raise HTTPException(status_code=400, detail="message is not a video")
 
-    dest_dir = uploads_abs()
-    # Unique name under uploads/
-    stamp = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
-    safe_channel = re.sub(r"[^A-Za-z0-9_]+", "_", channel)[:40]
-    base_name = info.get("filename") or f"tg-{safe_channel}-{body.messageId}.mp4"
-    base_name = Path(base_name).name
-    if not Path(base_name).suffix:
-        base_name = f"{base_name}.mp4"
-    filename = f"{stamp}-{safe_channel}-{body.messageId}-{base_name}"
-    dest = dest_dir / filename
+        dest_dir = uploads_abs()
+        # Unique name under uploads/
+        stamp = int(datetime.now(tz=timezone.utc).timestamp() * 1000)
+        safe_channel = re.sub(r"[^A-Za-z0-9_]+", "_", channel)[:40]
+        base_name = info.get("filename") or f"tg-{safe_channel}-{body.messageId}.mp4"
+        base_name = Path(base_name).name
+        if not Path(base_name).suffix:
+            base_name = f"{base_name}.mp4"
+        filename = f"{stamp}-{safe_channel}-{body.messageId}-{base_name}"
+        dest = dest_dir / filename
 
-    try:
-        path = await client.download_media(msg, file=str(dest))
-    except FloodWaitError as e:
-        raise HTTPException(status_code=429, detail=f"flood wait {e.seconds}s") from e
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=f"download failed: {e}") from e
+        try:
+            path = await client.download_media(msg, file=str(dest))
+        except FloodWaitError as e:
+            raise HTTPException(status_code=429, detail=f"flood wait {e.seconds}s") from e
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=f"download failed: {e}") from e
 
-    if not path:
-        raise HTTPException(status_code=500, detail="download returned empty path")
-    abs_path = Path(path).resolve()
-    size = abs_path.stat().st_size
-    # Nest UploadService expects uploads/<filename> relative to STORAGE_ROOT
-    relative = f"uploads/{abs_path.name}"
-    return {
-        "channel": channel,
-        "messageId": body.messageId,
-        "filename": abs_path.name,
-        "absolutePath": str(abs_path),
-        "relativePath": relative,
-        "size": size,
-        "duration": info.get("duration"),
-        "title": message_title(msg, f"{channel}/{body.messageId}"),
-        "webpageUrl": f"https://t.me/{channel}/{body.messageId}",
-    }
+        if not path:
+            raise HTTPException(status_code=500, detail="download returned empty path")
+        abs_path = Path(path).resolve()
+        size = abs_path.stat().st_size
+        # Nest UploadService expects uploads/<filename> relative to STORAGE_ROOT
+        relative = f"uploads/{abs_path.name}"
+        return {
+            "channel": channel,
+            "messageId": body.messageId,
+            "filename": abs_path.name,
+            "absolutePath": str(abs_path),
+            "relativePath": relative,
+            "size": size,
+            "duration": info.get("duration"),
+            "title": message_title(msg, f"{channel}/{body.messageId}"),
+            "webpageUrl": f"https://t.me/{channel}/{body.messageId}",
+        }
 
 
 def main():

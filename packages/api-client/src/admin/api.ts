@@ -2153,6 +2153,23 @@ export async function adminTelegramProbe(body: {
   });
 }
 
+export async function adminTelegramThumb(body: {
+  channel: string;
+  messageId: number;
+}) {
+  return adminRequest<{
+    channel: string;
+    messageId: number;
+    contentType: string;
+    byteLength: number;
+    base64: string;
+    webpageUrl: string;
+  }>("/admin/telegram/thumb", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export async function adminTelegramTransfer(body: {
   channel: string;
   categorySlug?: string;
@@ -2169,6 +2186,8 @@ export async function adminTelegramTransfer(body: {
   watermarkX?: number;
   watermarkY?: number;
   watermarkScale?: number;
+  /** When set (30–600), split each TG video into fixed-duration episodes. */
+  segmentSeconds?: number;
   episodes: Array<{
     messageId: number;
     title?: string;

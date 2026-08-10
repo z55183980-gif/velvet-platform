@@ -1213,6 +1213,223 @@ export class UploadService implements OnModuleInit {
     };
   }
 
+  /**
+   * Split a local uploads/… video into fixed-duration parts (for TG episode cut).
+   * Prefer stream copy; fall back to light re-encode if copy fails.
+   *
+   * When `overlapSeconds` > 0 (TG default 1): part i>0 starts that many seconds
+   * before the grid boundary so adjacent episodes share a short overlap.
+   */
+  async splitFixedDuration(
+    inputRel: string,
+    segmentSeconds: number,
+    opts?: { outDirRel?: string; overlapSeconds?: number },
+  ): Promise<Array<{ relativePath: string; durationSec: number | null }>> {
+    const sec = Math.floor(Number(segmentSeconds));
+    if (!Number.isFinite(sec) || sec < 30 || sec > 600) {
+      throw new BizException(BizCode.BAD_REQUEST, 'segmentSeconds 需在 30–600 之间');
+    }
+    const overlapRaw = Math.floor(Number(opts?.overlapSeconds ?? 0));
+    const overlap =
+      Number.isFinite(overlapRaw) && overlapRaw > 0
+        ? Math.min(overlapRaw, Math.max(0, sec - 1))
+        : 0;
+
+    const ffmpeg = await this.detectFfmpeg();
+    if (!ffmpeg) {
+      throw new BizException(BizCode.BAD_REQUEST, '未检测到 ffmpeg，无法按固定时长切片');
+    }
+    const normalized = String(inputRel || '')
+      .replace(/\\/g, '/')
+      .replace(/^\/+/, '');
+    const inputAbs = this.resolveAbs(normalized);
+    if (!fs.existsSync(inputAbs)) {
+      throw new BizException(BizCode.BAD_REQUEST, '源视频不存在，无法切片');
+    }
+
+    const batchId = crypto.randomBytes(6).toString('hex');
+    const outDirRel = (
+      opts?.outDirRel || `uploads/tg-split/${Date.now()}-${batchId}`
+    )
+      .replace(/\\/g, '/')
+      .replace(/^\/+/, '');
+    const outDirAbs = this.resolveAbs(outDirRel);
+    fs.mkdirSync(outDirAbs, { recursive: true });
+
+    const run = async (args: string[]) => {
+      await execFileAsync(ffmpeg, args, {
+        timeout: 3_600_000,
+        maxBuffer: 4 * 1024 * 1024,
+      });
+    };
+
+    // Overlap needs explicit time windows; plain `-f segment` cannot overlap.
+    if (overlap > 0) {
+      const totalSec = await this.probeDurationSec(ffmpeg, inputAbs);
+      if (totalSec == null || !(totalSec > 0)) {
+        throw new BizException(BizCode.BAD_REQUEST, '无法读取片长，固定时长切片失败');
+      }
+      const partCount = Math.max(1, Math.ceil(totalSec / sec));
+      const parts: Array<{ relativePath: string; durationSec: number | null }> =
+        [];
+
+      for (let i = 0; i < partCount; i++) {
+        const gridStart = i * sec;
+        const gridEnd = Math.min(totalSec, (i + 1) * sec);
+        if (gridEnd - gridStart < 0.25) break;
+        const start = i === 0 ? 0 : Math.max(0, gridStart - overlap);
+        const duration = Math.max(0.25, gridEnd - start);
+        const name = `part-${String(i).padStart(3, '0')}.mp4`;
+        const outAbs = path.join(outDirAbs, name);
+        const relativePath = `${outDirRel}/${name}`.replace(/\\/g, '/');
+
+        try {
+          await run([
+            '-y',
+            '-ss',
+            start.toFixed(3),
+            '-i',
+            inputAbs,
+            '-t',
+            duration.toFixed(3),
+            '-map',
+            '0',
+            '-c',
+            'copy',
+            '-avoid_negative_ts',
+            'make_zero',
+            outAbs,
+          ]);
+        } catch (e: any) {
+          this.logger.warn(
+            `splitFixedDuration part ${i} copy failed, re-encoding: ${e?.message || e}`,
+          );
+          try {
+            fs.unlinkSync(outAbs);
+          } catch {
+            /* ignore */
+          }
+          await run([
+            '-y',
+            '-i',
+            inputAbs,
+            '-ss',
+            start.toFixed(3),
+            '-t',
+            duration.toFixed(3),
+            '-map',
+            '0:v:0?',
+            '-map',
+            '0:a:0?',
+            '-c:v',
+            'libx264',
+            '-preset',
+            'veryfast',
+            '-crf',
+            '23',
+            '-c:a',
+            'aac',
+            '-b:a',
+            '128k',
+            outAbs,
+          ]);
+        }
+
+        if (!fs.existsSync(outAbs) || fs.statSync(outAbs).size < 64) {
+          throw new BizException(
+            BizCode.BAD_REQUEST,
+            `固定时长切片第 ${i + 1} 段未产出文件`,
+          );
+        }
+        const durationSec = await this.probeDurationSec(ffmpeg, outAbs);
+        parts.push({ relativePath, durationSec });
+      }
+
+      if (!parts.length) {
+        throw new BizException(BizCode.BAD_REQUEST, '固定时长切片未产出文件');
+      }
+      return parts;
+    }
+
+    const pattern = path.join(outDirAbs, 'part-%03d.mp4');
+
+    try {
+      await run([
+        '-y',
+        '-i',
+        inputAbs,
+        '-map',
+        '0',
+        '-c',
+        'copy',
+        '-f',
+        'segment',
+        '-segment_time',
+        String(sec),
+        '-reset_timestamps',
+        '1',
+        '-break_non_keyframes',
+        '1',
+        pattern,
+      ]);
+    } catch (e: any) {
+      this.logger.warn(
+        `splitFixedDuration copy failed, re-encoding: ${e?.message || e}`,
+      );
+      // Clean partials then re-encode.
+      for (const name of fs.readdirSync(outDirAbs)) {
+        try {
+          fs.unlinkSync(path.join(outDirAbs, name));
+        } catch {
+          /* ignore */
+        }
+      }
+      await run([
+        '-y',
+        '-i',
+        inputAbs,
+        '-map',
+        '0:v:0?',
+        '-map',
+        '0:a:0?',
+        '-c:v',
+        'libx264',
+        '-preset',
+        'veryfast',
+        '-crf',
+        '23',
+        '-c:a',
+        'aac',
+        '-b:a',
+        '128k',
+        '-f',
+        'segment',
+        '-segment_time',
+        String(sec),
+        '-reset_timestamps',
+        '1',
+        pattern,
+      ]);
+    }
+
+    const names = fs
+      .readdirSync(outDirAbs)
+      .filter((n) => /^part-\d+\.mp4$/i.test(n))
+      .sort();
+    if (!names.length) {
+      throw new BizException(BizCode.BAD_REQUEST, '固定时长切片未产出文件');
+    }
+
+    const parts: Array<{ relativePath: string; durationSec: number | null }> = [];
+    for (const name of names) {
+      const relativePath = `${outDirRel}/${name}`.replace(/\\/g, '/');
+      const abs = path.join(outDirAbs, name);
+      const durationSec = await this.probeDurationSec(ffmpeg, abs);
+      parts.push({ relativePath, durationSec });
+    }
+    return parts;
+  }
+
   private execFfmpeg(
     bin: string,
     input: string,
