@@ -1642,7 +1642,6 @@ export const LocalUploadWizard = forwardRef<
     setCreatorId("");
     setDescriptionEn("");
     setTags([]);
-    setTagInput("");
     setContentType(DEFAULT_CONTENT_TYPE);
     setCompletion(DEFAULT_COMPLETION);
     setTotalEpisodes(0);
