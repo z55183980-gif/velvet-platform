@@ -393,9 +393,15 @@ export class YtdlpImportService implements OnModuleInit {
       );
     } else if (episodes.length >= 2) {
       if (dramabox && bestMeta.chapterCount) {
+        const withMedia = episodes.filter((ep) =>
+          /\.(m3u8|mp4|webm|mkv|mov|m4v)(\?|$)/i.test(ep.sourceUrl),
+        ).length;
         notes =
           `DramaBox deterministic extract from ${fetchedOk} page(s); skipped LLM. ` +
-          `${episodes.length}/${bestMeta.chapterCount} chapters with playable media.`;
+          `${episodes.length}/${bestMeta.chapterCount} chapters` +
+          (withMedia < episodes.length
+            ? ` (${withMedia} with direct media, rest chapter pages)`
+            : '');
       } else {
         notes = `Deterministic extract from ${fetchedOk} page(s); skipped LLM.`;
       }
@@ -437,7 +443,7 @@ export class YtdlpImportService implements OnModuleInit {
         notes
           ? `未抽到可用分集链接：${notes}`
           : dramabox
-            ? '未抽到可用分集链接。DramaBox 页面需含可播 m3u8/mp4（免费集），请确认链接可访问'
+            ? '未抽到可用分集链接。请确认 DramaBox 剧集页可访问且含 chapterList'
             : '未抽到可用分集链接。请改用剧集主页 /movie/... 或 /full-episodes/...，并确认链接可访问（非 404）',
       );
     }

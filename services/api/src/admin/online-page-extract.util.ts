@@ -246,7 +246,10 @@ function extractReelshortFromPageData(pageData: any): {
 }
 
 /** DramaBox: pageProps.bookInfo + chapterList (only call when host matches). */
-function extractDramaboxFromPageProps(pageProps: any): {
+function extractDramaboxFromPageProps(
+  pageProps: any,
+  pageUrl: string,
+): {
   meta: PageMetaHints;
   episodes: ExtractedPageEpisode[];
 } {
@@ -254,6 +257,13 @@ function extractDramaboxFromPageProps(pageProps: any): {
   const episodes: ExtractedPageEpisode[] = [];
   const bookInfo = pageProps?.bookInfo;
   if (!bookInfo || typeof bookInfo !== 'object') return { meta, episodes };
+
+  let origin = '';
+  try {
+    origin = new URL(pageUrl).origin;
+  } catch {
+    origin = '';
+  }
 
   const title = String(bookInfo.bookName || bookInfo.bookNameEn || '').trim();
   if (title) meta.title = title.slice(0, 80);
@@ -284,6 +294,7 @@ function extractDramaboxFromPageProps(pageProps: any): {
   pushGenreLabel(genreLabels, bookInfo.typeTwoName);
   if (genreLabels.length) meta.genreLabels = [...new Set(genreLabels)].slice(0, 12);
 
+  const bookId = String(bookInfo.bookId || pageProps?.sourceBookId || '').trim();
   const list = Array.isArray(pageProps?.chapterList) ? pageProps.chapterList : [];
   const preferEnTitle =
     !meta.language ||
@@ -297,13 +308,20 @@ function extractDramaboxFromPageProps(pageProps: any): {
       Number.isFinite(n) && n >= 0 ? Math.floor(n) + 1 : episodes.length + 1;
     const m3u8 = String(ch.m3u8Url || '').trim();
     const mp4 = String(ch.mp4 || '').trim();
-    // Free/unlocked chapters expose m3u8/mp4 in SSR; locked ones omit media URIs.
-    const sourceUrl = /^https?:\/\//i.test(m3u8)
+    const chapterId = String(ch.id || '').trim();
+    // Include every chapter: prefer playable media, else chapter page URL
+    // (same as prior AI extract which listed all /episode/{bookId}/{chapterId} hrefs).
+    const mediaUrl = /^https?:\/\//i.test(m3u8)
       ? m3u8
       : /^https?:\/\//i.test(mp4)
         ? mp4
         : '';
-    if (!sourceUrl) continue;
+    const pageHref =
+      origin && bookId && chapterId
+        ? `${origin}/episode/${bookId}/${chapterId}`
+        : '';
+    const sourceUrl = mediaUrl || pageHref;
+    if (!/^https?:\/\//i.test(sourceUrl)) continue;
 
     let epTitle = String(ch.name || '').trim();
     if (!epTitle || (preferEnTitle && isLikelyCjkEpisodeTitle(epTitle))) {
@@ -344,7 +362,7 @@ export function extractMetaFromNextData(
   const pageProps = data?.props?.pageProps;
 
   if (pageUrl && isDramaboxHost(pageUrl)) {
-    return extractDramaboxFromPageProps(pageProps);
+    return extractDramaboxFromPageProps(pageProps, pageUrl);
   }
 
   // Default / ReelShort: pageProps.data.book_title / chapter_list
