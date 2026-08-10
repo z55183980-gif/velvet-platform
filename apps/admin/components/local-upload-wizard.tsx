@@ -1767,8 +1767,14 @@ export const LocalUploadWizard = forwardRef<
             })),
           }).then((data) => ({
             kind: "transfer" as const,
-            data,
-            titleDisplay,
+            id: data.id,
+            jobId: data.jobId,
+            n: data.totalEpisodes,
+            title: titleDisplay,
+            episodeTitles: transferEps.map((ep) => ({
+              episodeNumber: ep.episodeNumber,
+              title: ep.title,
+            })),
           }));
         }
         const transferEps = linkEps

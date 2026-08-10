@@ -34,10 +34,31 @@ import {
 
 type AiProbeResult = Awaited<ReturnType<typeof adminYtdlpAiExtract>>;
 type YtProbeResult = Awaited<ReturnType<typeof adminYtdlpProbe>>;
-type TgProbeResult = Awaited<ReturnType<typeof adminTelegramProbe>> & {
+type TgProbeResult = {
   source: "telegram";
   webpageUrl: string;
   title?: string;
+  coverUrl?: string;
+  description?: string;
+  channel: string;
+  count: number;
+  extractor: string;
+  kind: "playlist";
+  items: Awaited<ReturnType<typeof adminTelegramProbe>>["items"];
+  episodes: Array<{
+    index: number;
+    id: string;
+    title: string;
+    webpageUrl: string;
+    messageId: number;
+    durationSec?: number | null;
+    size?: number | null;
+    hasVideo: boolean;
+    mediaKind: string;
+    candidateCount: number;
+    playlistIndex?: number;
+    sourceUrl?: string;
+  }>;
 };
 type ProbeResult = AiProbeResult | YtProbeResult | TgProbeResult;
 type FormatPreference = "best_hls" | "best_mp4" | "best";
@@ -82,6 +103,14 @@ function isLikelyTelegramUrl(raw: string): boolean {
 function episodeSourceUrl(ep: ProbeResult["episodes"][number]): string | undefined {
   return "sourceUrl" in ep && typeof ep.sourceUrl === "string"
     ? ep.sourceUrl.trim() || undefined
+    : undefined;
+}
+
+function episodePlaylistIndex(
+  ep: ProbeResult["episodes"][number],
+): number | undefined {
+  return "playlistIndex" in ep && typeof ep.playlistIndex === "number"
+    ? ep.playlistIndex
     : undefined;
 }
 
@@ -313,7 +342,7 @@ export function YtdlpImportPanel({
     void adminYtdlpPreviewFrame({
       url: targetUrl,
       formatPreference: formatPreference === "best_hls" ? "best_mp4" : formatPreference,
-      playlistIndex: pick?.playlistIndex,
+      playlistIndex: pick ? episodePlaylistIndex(pick) : undefined,
       cookiesFile: auth?.cookiesFile,
       authBearer: auth?.authBearer,
     })
@@ -360,7 +389,7 @@ export function YtdlpImportPanel({
         url: downloadUrl,
         formatPreference:
           formatPreference === "best_hls" ? "best_mp4" : formatPreference,
-        playlistIndex: ep.playlistIndex,
+        playlistIndex: episodePlaylistIndex(ep),
         filenameHint: `${String(ep.index).padStart(2, "0")}-${title}`,
         ...authPayload(),
       });
@@ -428,7 +457,7 @@ export function YtdlpImportPanel({
           url: downloadUrl,
           formatPreference:
             formatPreference === "best_hls" ? "best_mp4" : formatPreference,
-          playlistIndex: ep.playlistIndex,
+          playlistIndex: episodePlaylistIndex(ep),
           filenameHint: `${String(ep.index).padStart(2, "0")}-${title}`,
           ...authPayload(),
         });
@@ -554,7 +583,7 @@ export function YtdlpImportPanel({
       return adminYtdlpResolve({
         url: ep.webpageUrl,
         formatPreference,
-        playlistIndex: ep.playlistIndex,
+        playlistIndex: episodePlaylistIndex(ep),
         ...authPayload(),
       });
     },
@@ -703,7 +732,7 @@ export function YtdlpImportPanel({
         const data = await adminYtdlpResolve({
           url: pageUrl,
           formatPreference,
-          playlistIndex: ep.playlistIndex,
+          playlistIndex: episodePlaylistIndex(ep),
           ...authPayload(),
         });
         episodes = episodes.map((row) =>
@@ -1280,7 +1309,7 @@ export function YtdlpImportPanel({
       {ingestTab === "parse" && probe ? (
         <div className="upload-panel space-y-4">
           <div className="flex flex-wrap gap-3">
-            {probe.coverUrl ? (
+            {"coverUrl" in probe && probe.coverUrl ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={probe.coverUrl} alt="" className="h-24 w-16 rounded object-cover" />
             ) : null}
@@ -1300,7 +1329,7 @@ export function YtdlpImportPanel({
                   {t("ytdlpAiNotes")}: {probe.notes}
                 </p>
               ) : null}
-              {probe.description ? (
+              {"description" in probe && probe.description ? (
                 <p className="mt-1 line-clamp-3 text-body-sm text-ink-muted">{probe.description}</p>
               ) : null}
             </div>
@@ -1621,7 +1650,9 @@ export function YtdlpImportPanel({
         {previewUrl ? (
           <StreamPreview
             src={previewUrl}
-            poster={probe?.coverUrl}
+            poster={
+              probe && "coverUrl" in probe ? probe.coverUrl || undefined : undefined
+            }
             failHint={t("ytdlpPreviewCorsFail")}
             className="aspect-video w-full overflow-hidden rounded-lg bg-black"
           />
