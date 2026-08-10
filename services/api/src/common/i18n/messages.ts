@@ -125,6 +125,7 @@ const en = {
   'validation.bannerDramaId': 'Invalid banner dramaId',
   'validation.tagRequired': 'Tag name is required',
   'validation.tagSystemForbidden': 'System tags cannot be renamed or deleted',
+  'validation.tagExists': 'Tag already exists',
   'vipPlan.hasOrders': 'This VIP plan has related orders and cannot be deleted. Take it offline instead.',
   'topupPackage.hasOrders':
     'This credit pack has related orders and cannot be deleted. Take it offline instead.',
@@ -339,6 +340,7 @@ const zh: Record<MessageKey, string> = {
   'validation.bannerDramaId': '轮播短剧 ID 无效',
   'validation.tagRequired': '请填写标签名',
   'validation.tagSystemForbidden': '系统标签不可重命名或删除',
+  'validation.tagExists': '标签已存在',
   'vipPlan.hasOrders': '该 VIP 套餐已有关联订单，无法删除，请改为下架。',
   'topupPackage.hasOrders': '该积分充值套餐已有关联订单，无法删除，请改为下架。',
 
@@ -544,6 +546,7 @@ const fr: Record<MessageKey, string> = {
   'validation.bannerDramaId': 'dramaId de banner invalide',
   'validation.tagRequired': 'Le nom du tag est requis',
   'validation.tagSystemForbidden': 'Les tags système ne peuvent pas être renommés ou supprimés',
+  'validation.tagExists': 'Ce tag existe déjà',
   'vipPlan.hasOrders':
     'Ce forfait VIP a des commandes associées et ne peut pas être supprimé. Désactivez-le plutôt.',
   'topupPackage.hasOrders':

@@ -50,7 +50,7 @@ import {
 } from "@/lib/api";
 import { guestNeedsLoginForEpisode } from "@/lib/episode-membership";
 import { episodeIsLandscape, type Drama, type Episode } from "@/lib/mock-data";
-import { toPublicDramaTags } from "@/lib/drama-tags";
+import { pickTagText, toPublicDramaTagObjects, toPublicDramaTags } from "@/lib/drama-tags";
 import { useGuestWatchQuota } from "@/lib/use-guest-watch-quota";
 import { canGoBackInApp } from "@/lib/nav-history";
 import { pickContentText, pickTitleText } from "@/lib/languages";
@@ -126,18 +126,21 @@ function findNextUnlockedEpisode(
 }
 
 function formatCount(n: number, locale: string) {
-  const zhStyle = locale === "zh";
-  if (zhStyle) {
-    if (n >= 10_000) {
-      const w = n / 10_000;
+  const value = Math.max(0, Math.floor(Number(n) || 0));
+  if (locale === "zh") {
+    if (value >= 10_000) {
+      const w = value / 10_000;
       const s = w >= 100 ? String(Math.round(w)) : w.toFixed(1).replace(/\.0$/, "");
       return `${s}万`;
     }
-    return String(n);
+    return String(value);
   }
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, "")}K`;
-  return String(n);
+  if (value >= 1_000) {
+    const k = value / 1_000;
+    const s = k >= 100 ? String(Math.round(k)) : k.toFixed(1).replace(/\.0$/, "");
+    return `${s}K`;
+  }
+  return String(value);
 }
 
 /** Approximate “heat” from available engagement signals (no dedicated heat field). */
@@ -1358,7 +1361,7 @@ export function DramaDetail({
   const { drama } = data;
   const title = pickTitleText(locale, drama.titleEn, drama.titleZh, drama.titleFr);
   const desc = pickContentText(locale, drama.descEn, drama.descZh);
-  const displayTags = toPublicDramaTags(drama.tags);
+  const displayTags = toPublicDramaTagObjects(drama.tags);
   const coverIsImg = isUrl(drama.cover[0]);
   const favoriteDramaId = drama.numericId || drama.id;
 
@@ -2369,10 +2372,10 @@ export function DramaDetail({
                 <div className="mb-5 flex flex-wrap gap-1.5">
                   {tags.map((tag) => (
                     <span
-                      key={tag}
+                      key={tag.key}
                       className="rounded-md bg-white/[0.08] px-2.5 py-1 text-[12px] text-white/65"
                     >
-                      {tag}
+                      {pickTagText(locale, tag)}
                     </span>
                   ))}
                 </div>
@@ -2531,10 +2534,10 @@ export function DramaDetail({
                 <div className="mt-3 flex flex-wrap gap-2">
                   {tags.map((tag) => (
                     <span
-                      key={tag}
+                      key={tag.key}
                       className="inline-flex max-w-full items-center gap-0.5 rounded-md bg-white/[0.06] px-2 py-1 text-[12px] leading-none text-white/65"
                     >
-                      <span className="truncate">{tag}</span>
+                      <span className="truncate">{pickTagText(locale, tag)}</span>
                       <ChevronRight className="h-3 w-3 shrink-0 opacity-70" strokeWidth={2.25} />
                     </span>
                   ))}
@@ -2597,8 +2600,8 @@ export function DramaDetail({
                 {related.map((d) => {
                   const rTitle = pickTitleText(locale, d.titleEn, d.titleZh, d.titleFr);
                   const rCover = isUrl(d.cover[0]);
-                  const rTags = toPublicDramaTags(d.tags).slice(0, 3);
-                  const chipTags = rTags;
+                  const rTags = toPublicDramaTagObjects(d.tags).slice(0, 3);
+                  const chipTags = rTags.map((tag) => pickTagText(locale, tag));
                   return (
                     <Link key={d.id} href={`/drama/${d.id}`} className="min-w-0">
                       <div className="relative aspect-[3/4] overflow-hidden rounded-lg bg-white/[0.06]">
@@ -2737,10 +2740,10 @@ export function DramaDetail({
               <div className="mt-4 flex flex-wrap gap-x-3 gap-y-3 overflow-hidden md:mt-0 md:h-8">
                 {tags.map((tag) => (
                   <span
-                    key={tag}
+                    key={tag.key}
                     className="inline-flex max-w-[6.5rem] items-center truncate rounded bg-[hsla(0,0%,88%,0.06)] px-2 py-1.5 text-[12px] leading-none text-white/70 md:h-8 md:max-w-[150px] md:rounded-md md:bg-[hsla(0,0%,88%,0.08)] md:px-2.5 md:py-0 md:text-[16px] md:text-white/80"
                   >
-                    {tag}
+                    {pickTagText(locale, tag)}
                   </span>
                 ))}
               </div>

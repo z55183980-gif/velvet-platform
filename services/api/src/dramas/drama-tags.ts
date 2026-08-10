@@ -43,13 +43,38 @@ export function toPublicDramaTags(tags: unknown): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
   for (const raw of tags) {
-    const t = String(raw ?? '').trim();
+    const t =
+      raw && typeof raw === 'object' && 'key' in (raw as object)
+        ? String((raw as { key?: unknown }).key ?? '').trim()
+        : String(raw ?? '').trim();
     const key = t.toLowerCase();
     if (!t || isDramaSystemTag(t) || seen.has(key)) continue;
     seen.add(key);
     out.push(t);
   }
   return out;
+}
+
+export type PublicDramaTag = {
+  key: string;
+  nameEn: string;
+  nameZh: string | null;
+  nameFr: string | null;
+};
+
+export function toPublicDramaTagObjects(
+  keys: string[],
+  labels: Map<string, { nameEn: string; nameZh: string | null; nameFr: string | null }>,
+): PublicDramaTag[] {
+  return keys.map((key) => {
+    const l = labels.get(key) || labels.get(key.toLowerCase());
+    return {
+      key,
+      nameEn: (l?.nameEn || key).trim() || key,
+      nameZh: l?.nameZh?.trim() || null,
+      nameFr: l?.nameFr?.trim() || null,
+    };
+  });
 }
 
 /** Escape `%` / `_` / `\` for use inside `ILIKE … ESCAPE '\'` patterns. */

@@ -9,6 +9,14 @@ export interface Category {
   nameFr?: string;
 }
 
+/** Display tag: English key stored on Drama.tags + optional zh/fr labels. */
+export interface DramaTag {
+  key: string;
+  nameEn: string;
+  nameZh?: string | null;
+  nameFr?: string | null;
+}
+
 export interface Episode {
   id?: string | number;
   no: number;
@@ -46,7 +54,7 @@ export interface Drama {
   /** Localized category from API when available (prefer over mock lookup). */
   category?: Category;
   /** Theme/genre tags (Hongguo-style chips under title) */
-  tags?: string[];
+  tags?: DramaTag[];
   cover: [string, string];
   isVip: boolean;
   rating: number;

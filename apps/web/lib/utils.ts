@@ -20,6 +20,25 @@ export function formatUsd(amount: number): string {
   }).format(amount);
 }
 
+/** Compact engagement counts: zh uses 万, all other locales use K. */
+export function formatCount(n: number, locale: string) {
+  const value = Math.max(0, Math.floor(Number(n) || 0));
+  if (locale === "zh") {
+    if (value >= 10_000) {
+      const w = value / 10_000;
+      const s = w >= 100 ? String(Math.round(w)) : w.toFixed(1).replace(/\.0$/, "");
+      return `${s}万`;
+    }
+    return String(value);
+  }
+  if (value >= 1_000) {
+    const k = value / 1_000;
+    const s = k >= 100 ? String(Math.round(k)) : k.toFixed(1).replace(/\.0$/, "");
+    return `${s}K`;
+  }
+  return String(value);
+}
+
 /** @param unit i18n label, e.g. t("card.credits") — defaults avoid hard-coded 中文 */
 export function formatCredits(amount: number, unit = "credits"): string {
   return `${formatAmount(amount)} ${unit}`;

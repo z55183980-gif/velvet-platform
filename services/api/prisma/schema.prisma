@@ -149,6 +149,19 @@ model Category {
   @@map("categories")
 }
 
+// ========== 剧集展示标签字典（Drama.tags 存英文 key；三语展示名）==========
+model DramaTagLabel {
+  /// Canonical key stored in Drama.tags (English label).
+  key       String   @id
+  nameEn    String
+  nameZh    String?
+  nameFr    String?
+  createdAt DateTime @default(now()) @db.Timestamptz
+  updatedAt DateTime @updatedAt @db.Timestamptz
+
+  @@map("drama_tag_labels")
+}
+
 // ========== 短剧 ==========
 model Drama {
   id              BigInt      @id @default(autoincrement())

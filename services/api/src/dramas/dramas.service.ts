@@ -2,7 +2,13 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { LockAccessService } from '../common/lock-access.service';
 import { resolveCategorySlugAlias } from '../admin/drama-category-infer.util';
-import { escapeIlikePattern, isDramaSystemTag, toPublicDramaTags } from './drama-tags';
+import {
+  escapeIlikePattern,
+  isDramaSystemTag,
+  toPublicDramaTagObjects,
+  toPublicDramaTags,
+  type PublicDramaTag,
+} from './drama-tags';
 
 type FeedRankCache = {
   at: number;
@@ -80,7 +86,7 @@ export class DramasService {
       this.prisma.drama.count({ where }),
     ]);
     return {
-      rows: rows.map((d) => this.mapListDrama(d)),
+      rows: await this.mapListDramas(rows),
       total,
       page,
       pageSize,
@@ -88,8 +94,8 @@ export class DramasService {
   }
 
   /**
-   * LIVE dramas whose EN/ZH title or a public user tag contains `q` (case-insensitive).
-   * System provenance tags (upload/r2/type:/completion:/ytdlp*) are ignored.
+   * LIVE dramas whose EN/ZH/FR title or a public user tag (key or zh/fr label)
+   * contains `q` (case-insensitive). System provenance tags are ignored.
    */
   private async findLiveDramaIdsByQuery(q: string): Promise<bigint[]> {
     const pattern = `%${escapeIlikePattern(q)}%`;
@@ -104,11 +110,23 @@ export class DramasService {
            OR EXISTS (
              SELECT 1
                FROM unnest(d.tags) AS t(tag)
-              WHERE t.tag ILIKE ${pattern} ESCAPE '\'
-                AND t.tag NOT IN ('upload', 'r2', 'transfer', 'ytdlp')
+              WHERE t.tag NOT IN ('upload', 'r2', 'transfer', 'ytdlp')
                 AND t.tag NOT LIKE 'ytdlp%'
                 AND t.tag NOT LIKE 'type:%'
                 AND t.tag NOT LIKE 'completion:%'
+                AND (
+                  t.tag ILIKE ${pattern} ESCAPE '\'
+                  OR EXISTS (
+                    SELECT 1
+                      FROM drama_tag_labels l
+                     WHERE l.key = t.tag
+                       AND (
+                         l."nameEn" ILIKE ${pattern} ESCAPE '\'
+                         OR COALESCE(l."nameZh", '') ILIKE ${pattern} ESCAPE '\'
+                         OR COALESCE(l."nameFr", '') ILIKE ${pattern} ESCAPE '\'
+                       )
+                  )
+                )
            )
          )
     `;
@@ -154,7 +172,7 @@ export class DramasService {
       .filter((d): d is NonNullable<typeof d> => !!d);
 
     return {
-      rows: ordered.map((d) => this.mapListDrama(d)),
+      rows: await this.mapListDramas(ordered),
       total,
       page,
       pageSize,
@@ -241,18 +259,67 @@ export class DramasService {
     return { at: Date.now(), pinCount: pinHottest, pinIds, heatIds };
   }
 
-  private mapListDrama(d: {
-    creator?: {
-      displayName: string;
-      creatorType: string;
-      user?: { avatarUrl: string | null } | null;
-    } | null;
-    tags?: unknown;
-    [key: string]: unknown;
-  }) {
+  private async loadTagLabelMap(keys: string[]) {
+    const unique = [...new Set(keys.map((k) => k.trim()).filter(Boolean))];
+    if (unique.length === 0) {
+      return new Map<string, { nameEn: string; nameZh: string | null; nameFr: string | null }>();
+    }
+    const rows = await this.prisma.dramaTagLabel.findMany({
+      where: { key: { in: unique } },
+      select: { key: true, nameEn: true, nameZh: true, nameFr: true },
+    });
+    const map = new Map<string, { nameEn: string; nameZh: string | null; nameFr: string | null }>();
+    for (const row of rows) {
+      map.set(row.key, {
+        nameEn: row.nameEn,
+        nameZh: row.nameZh,
+        nameFr: row.nameFr,
+      });
+      map.set(row.key.toLowerCase(), {
+        nameEn: row.nameEn,
+        nameZh: row.nameZh,
+        nameFr: row.nameFr,
+      });
+    }
+    return map;
+  }
+
+  private async mapListDramas(
+    rows: Array<{
+      creator?: {
+        displayName: string;
+        creatorType: string;
+        user?: { avatarUrl: string | null } | null;
+      } | null;
+      tags?: unknown;
+      [key: string]: unknown;
+    }>,
+  ) {
+    const allKeys: string[] = [];
+    const cleanedPerRow = rows.map((d) => {
+      const keys = toPublicDramaTags(d.tags);
+      allKeys.push(...keys);
+      return keys;
+    });
+    const labels = await this.loadTagLabelMap(allKeys);
+    return rows.map((d, i) => this.mapListDrama(d, toPublicDramaTagObjects(cleanedPerRow[i], labels)));
+  }
+
+  private mapListDrama(
+    d: {
+      creator?: {
+        displayName: string;
+        creatorType: string;
+        user?: { avatarUrl: string | null } | null;
+      } | null;
+      tags?: unknown;
+      [key: string]: unknown;
+    },
+    tags?: PublicDramaTag[],
+  ) {
     return {
       ...d,
-      tags: toPublicDramaTags(d.tags),
+      tags: tags ?? toPublicDramaTagObjects(toPublicDramaTags(d.tags), new Map()),
       creator: d.creator
         ? {
             displayName: d.creator.displayName,
@@ -296,9 +363,11 @@ export class DramasService {
     });
     // Public catalog: offline / draft titles must not be reachable by old URLs.
     if (!drama || drama.status !== 'LIVE') return null;
+    const keys = toPublicDramaTags(drama.tags);
+    const labels = await this.loadTagLabelMap(keys);
     return {
       ...drama,
-      tags: toPublicDramaTags(drama.tags),
+      tags: toPublicDramaTagObjects(keys, labels),
       creator: drama.creator
         ? {
             displayName: drama.creator.displayName,
@@ -394,7 +463,7 @@ export class DramasService {
       take: limit,
       include: { creator: { select: { displayName: true, creatorType: true } }, category: true },
     });
-    return rows.map((d) => this.mapListDrama(d));
+    return this.mapListDramas(rows);
   }
 
   async getHottest(limit = 48) {
@@ -413,7 +482,7 @@ export class DramasService {
         category: true,
       },
     });
-    return rows.map((d) => this.mapListDrama(d));
+    return this.mapListDramas(rows);
   }
 
   async listCategories() {
@@ -423,8 +492,8 @@ export class DramasService {
     });
   }
 
-  /** Distinct public (non-system) tags on LIVE dramas, most used first. */
-  async listPublicTags(): Promise<string[]> {
+  /** Distinct public (non-system) tags on LIVE dramas, with multilingual labels. */
+  async listPublicTags(): Promise<PublicDramaTag[]> {
     const rows = await this.prisma.$queryRaw<Array<{ tag: string }>>`
       SELECT t.tag AS tag
         FROM dramas d
@@ -433,16 +502,17 @@ export class DramasService {
        GROUP BY t.tag
        ORDER BY COUNT(*) DESC, t.tag ASC
     `;
-    const out: string[] = [];
+    const keys: string[] = [];
     const seen = new Set<string>();
     for (const row of rows) {
       const tag = String(row.tag || '').trim();
       const key = tag.toLowerCase();
       if (!tag || isDramaSystemTag(tag) || seen.has(key)) continue;
       seen.add(key);
-      out.push(tag);
+      keys.push(tag);
     }
-    return out;
+    const labels = await this.loadTagLabelMap(keys);
+    return toPublicDramaTagObjects(keys, labels);
   }
 
   async listBanners() {

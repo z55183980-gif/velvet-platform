@@ -1,17 +1,21 @@
 "use client";
 
 import Link from "next/link";
-import { Star } from "lucide-react";
+import { Flame, Star } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { Badge } from "./ui/badge";
 import { type Drama } from "@/lib/mock-data";
-import { toPublicDramaTags } from "@/lib/drama-tags";
+import { pickTagText, toPublicDramaTagObjects } from "@/lib/drama-tags";
 import { pickTitleText } from "@/lib/languages";
-import { formatCredits, cn } from "@/lib/utils";
+import { formatCount, formatCredits, cn } from "@/lib/utils";
 import { SafeImage } from "@/components/safe-image";
 
 function isImg(s: string) {
   return /^https?:\/\//.test(s) || s.startsWith("/");
+}
+
+function dramaCardHeat(d: Drama) {
+  return Math.max(0, (d.likeCount ?? 0) + (d.favoriteCount ?? 0));
 }
 
 export function DramaCard({
@@ -29,9 +33,17 @@ export function DramaCard({
 }) {
   const { locale, t } = useLocale();
   const title = pickTitleText(locale, drama.titleEn, drama.titleZh, drama.titleFr);
-  const tagLabel = toPublicDramaTags(drama.tags).slice(0, 2).join(" · ");
+  const tags = toPublicDramaTagObjects(drama.tags)
+    .slice(0, 2)
+    .map((tag) => pickTagText(locale, tag));
+  const heatLabel = formatCount(dramaCardHeat(drama), locale);
   const isFree = drama.freeCount > 0;
   const isGrid = variant === "grid";
+  const metaClass = isGrid
+    ? "mt-1.5 flex min-w-0 flex-nowrap items-center gap-1 overflow-hidden whitespace-nowrap text-[12px] text-ink-subtle"
+    : compact
+      ? "mt-1 flex min-w-0 flex-nowrap items-center gap-1 overflow-hidden whitespace-nowrap text-caption text-ink-subtle"
+      : "mt-1.5 flex min-w-0 flex-nowrap items-center gap-1 overflow-hidden whitespace-nowrap text-caption text-ink-muted";
 
   return (
     <Link href={`/drama/${drama.id}`} className="group block min-w-0 max-w-full">
@@ -104,18 +116,18 @@ export function DramaCard({
         >
           {title}
         </h3>
-        {isGrid ? (
-          <p className="mt-1.5 flex flex-wrap gap-1.5 text-[12px] text-ink-subtle">
-            {tagLabel ? <span>{tagLabel}</span> : null}
-            {drama.isVip ? <span>· {t("card.vip")}</span> : null}
-            {isFree ? <span>· {t("card.firstEpisodesFree", { n: drama.freeCount })}</span> : null}
-          </p>
-        ) : !compact ? (
-          <p className="mt-1.5 text-caption text-ink-muted">
-            {tagLabel ? `${tagLabel} · ` : ""}
-            {drama.episodesCount} {t("card.episodes")}
-          </p>
-        ) : null}
+        <p className={metaClass}>
+          <Flame className="h-3 w-3 shrink-0 text-[#ff8a3d]" fill="currentColor" aria-hidden />
+          <span className="shrink-0 tabular-nums">{heatLabel}</span>
+          {tags.length > 0 ? (
+            <>
+              <span className="shrink-0 text-ink-subtle/80" aria-hidden>
+                ·
+              </span>
+              <span className="min-w-0 truncate">{tags.join(" · ")}</span>
+            </>
+          ) : null}
+        </p>
       </div>
     </Link>
   );

@@ -29,7 +29,7 @@ import { useMobileFeedLock } from "@/components/mobile/mobile-feed-lock";
 import { getPlayUrl, loadDramaDetail, loadFeed, checkFavorite, addFavorite, removeFavorite, checkLike, addLike, removeLike, reportProgress, unlockDrama, type DramaDetailPayload } from "@/lib/api";
 import type { Drama, Episode } from "@/lib/mock-data";
 import { episodeIsLandscape } from "@/lib/mock-data";
-import { toPublicDramaTags } from "@/lib/drama-tags";
+import { pickTagText, toPublicDramaTagObjects } from "@/lib/drama-tags";
 import { pickTitleText, type Locale } from "@/lib/languages";
 import { cn, formatCredits } from "@/lib/utils";
 import { useGuestWatchQuota } from "@/lib/use-guest-watch-quota";
@@ -42,18 +42,21 @@ import {
 import { DataErrorState } from "@/components/data-error-state";
 
 function formatCount(n: number, locale: string) {
-  const zhStyle = locale === "zh";
-  if (zhStyle) {
-    if (n >= 10_000) {
-      const w = n / 10_000;
+  const value = Math.max(0, Math.floor(Number(n) || 0));
+  if (locale === "zh") {
+    if (value >= 10_000) {
+      const w = value / 10_000;
       const s = w >= 100 ? String(Math.round(w)) : w.toFixed(1).replace(/\.0$/, "");
       return `${s}万`;
     }
-    return String(n);
+    return String(value);
   }
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1).replace(/\.0$/, "")}K`;
-  return String(n);
+  if (value >= 1_000) {
+    const k = value / 1_000;
+    const s = k >= 100 ? String(Math.round(k)) : k.toFixed(1).replace(/\.0$/, "");
+    return `${s}K`;
+  }
+  return String(value);
 }
 
 function formatRating(rating: number) {
@@ -271,8 +274,8 @@ function buildFeedMeta(
     });
   }
   tags.push({ key: "season", node: t("feed.season", { n: 1 }) });
-  for (const tag of toPublicDramaTags(drama.tags).slice(0, 2)) {
-    tags.push({ key: `tag-${tag}`, node: tag });
+  for (const tag of toPublicDramaTagObjects(drama.tags).slice(0, 2)) {
+    tags.push({ key: `tag-${tag.key}`, node: pickTagText(locale, tag) });
   }
   const creator = drama.creator?.displayName?.trim();
   if (creator) {

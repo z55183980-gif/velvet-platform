@@ -1,5 +1,5 @@
 import type { Category, Drama, Episode } from "./mock-data";
-import { toPublicDramaTags } from "./drama-tags";
+import { toPublicDramaTagObjects, type DramaTagLabel } from "./drama-tags";
 
 // 相对路径：dev 下由 next.config 代理到 :4000；静态导出无后端时回退 mock
 const API_BASE = "/api/v1";
@@ -171,7 +171,7 @@ export function mapDrama(d: any): Drama {
         }
       : undefined,
     tags: (() => {
-      const cleaned = toPublicDramaTags(d.tags);
+      const cleaned = toPublicDramaTagObjects(d.tags);
       return cleaned.length ? cleaned : undefined;
     })(),
     cover: [cover, cover],
@@ -296,16 +296,14 @@ export async function loadCategories(opts?: { signal?: AbortSignal }): Promise<C
 }
 
 /** Public display tags on LIVE dramas (system/meta tags stripped server-side). */
-export async function loadDramaTags(opts?: { signal?: AbortSignal }): Promise<string[]> {
+export async function loadDramaTags(opts?: { signal?: AbortSignal }): Promise<DramaTagLabel[]> {
   return cachedGet(
     "drama-tags",
     60_000,
     async () => {
       try {
         const list = await request<any[]>("/drama-tags");
-        return (Array.isArray(list) ? list : [])
-          .map((t) => String(t || "").trim())
-          .filter(Boolean);
+        return toPublicDramaTagObjects(Array.isArray(list) ? list : []);
       } catch (err) {
         if (isAbortError(err)) throw err;
         if (process.env.NODE_ENV === "production") throw err;

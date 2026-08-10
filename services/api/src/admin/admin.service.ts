@@ -1293,7 +1293,24 @@ export class AdminService {
     return cat.slug;
   }
 
-  // ============ Drama display tags (open-ended) ============
+  // ============ Drama display tags (open-ended + multilingual labels) ============
+  private async ensureDramaTagLabels(tags: string[]) {
+    const keys = [
+      ...new Set(
+        tags
+          .map((t) => String(t || '').trim())
+          .filter((t) => t && !isDramaSystemTag(t)),
+      ),
+    ];
+    for (const key of keys) {
+      await this.prisma.dramaTagLabel.upsert({
+        where: { key },
+        create: { key, nameEn: key },
+        update: {},
+      });
+    }
+  }
+
   async listDramaTags() {
     const rows = await this.prisma.$queryRaw<Array<{ tag: string; count: bigint }>>`
       SELECT t.tag AS tag, COUNT(*)::bigint AS count
@@ -1302,16 +1319,145 @@ export class AdminService {
        GROUP BY t.tag
        ORDER BY COUNT(*) DESC, t.tag ASC
     `;
-    const out: Array<{ tag: string; count: number }> = [];
+    const countByKey = new Map<string, number>();
     const seen = new Set<string>();
     for (const row of rows) {
       const tag = String(row.tag || '').trim();
       const key = tag.toLowerCase();
       if (!tag || isDramaSystemTag(tag) || seen.has(key)) continue;
       seen.add(key);
-      out.push({ tag, count: Number(row.count) || 0 });
+      countByKey.set(tag, Number(row.count) || 0);
     }
+
+    const labels = await this.prisma.dramaTagLabel.findMany({
+      orderBy: { nameEn: 'asc' },
+    });
+    const labelByKey = new Map(labels.map((l) => [l.key, l]));
+    const labelByLower = new Map(labels.map((l) => [l.key.toLowerCase(), l]));
+
+    const out: Array<{
+      tag: string;
+      nameEn: string;
+      nameZh: string | null;
+      nameFr: string | null;
+      count: number;
+    }> = [];
+    const emitted = new Set<string>();
+
+    for (const [tag, count] of countByKey) {
+      const label = labelByKey.get(tag) || labelByLower.get(tag.toLowerCase());
+      out.push({
+        tag,
+        nameEn: label?.nameEn || tag,
+        nameZh: label?.nameZh ?? null,
+        nameFr: label?.nameFr ?? null,
+        count,
+      });
+      emitted.add(tag.toLowerCase());
+    }
+
+    // Dictionary-only tags (created in admin, not yet attached to a drama).
+    for (const label of labels) {
+      if (emitted.has(label.key.toLowerCase())) continue;
+      if (isDramaSystemTag(label.key)) continue;
+      out.push({
+        tag: label.key,
+        nameEn: label.nameEn,
+        nameZh: label.nameZh,
+        nameFr: label.nameFr,
+        count: 0,
+      });
+    }
+
+    out.sort((a, b) => b.count - a.count || a.nameEn.localeCompare(b.nameEn));
     return { rows: out, total: out.length };
+  }
+
+  async createDramaTag(
+    dto: { nameEn?: string; nameZh?: string | null; nameFr?: string | null },
+    actorId?: bigint,
+  ) {
+    const nameEn = String(dto.nameEn || '').trim();
+    if (!nameEn) {
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.tagRequired');
+    }
+    if (isDramaSystemTag(nameEn)) {
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.tagSystemForbidden');
+    }
+    const existing = await this.prisma.dramaTagLabel.findUnique({ where: { key: nameEn } });
+    if (existing) {
+      throw new BizException(BizCode.CONFLICT, 'validation.tagExists');
+    }
+    const row = await this.prisma.dramaTagLabel.create({
+      data: {
+        key: nameEn,
+        nameEn,
+        nameZh: dto.nameZh?.trim() || null,
+        nameFr: dto.nameFr?.trim() || null,
+      },
+    });
+    await this.audit.write({
+      actorId,
+      action: 'dramaTag.create',
+      targetType: 'dramaTag',
+      targetId: row.key,
+      payload: { nameEn: row.nameEn, nameZh: row.nameZh, nameFr: row.nameFr },
+    });
+    return row;
+  }
+
+  async updateDramaTag(
+    keyRaw: string,
+    dto: { nameEn?: string; nameZh?: string | null; nameFr?: string | null },
+    actorId?: bigint,
+  ) {
+    const key = String(keyRaw || '').trim();
+    if (!key) {
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.tagRequired');
+    }
+    if (isDramaSystemTag(key)) {
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.tagSystemForbidden');
+    }
+    const existing = await this.prisma.dramaTagLabel.findUnique({ where: { key } });
+    const nextEn = dto.nameEn !== undefined ? String(dto.nameEn || '').trim() : (existing?.nameEn || key);
+    if (!nextEn) {
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.tagRequired');
+    }
+    if (isDramaSystemTag(nextEn)) {
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.tagSystemForbidden');
+    }
+
+    const nameZh =
+      dto.nameZh !== undefined ? dto.nameZh?.trim() || null : (existing?.nameZh ?? null);
+    const nameFr =
+      dto.nameFr !== undefined ? dto.nameFr?.trim() || null : (existing?.nameFr ?? null);
+
+    let updatedDramas = 0;
+    if (nextEn !== key) {
+      const renamed = await this.renameDramaTag(key, nextEn, actorId);
+      updatedDramas = renamed.updated;
+      // renameDramaTag also moves/creates the label; refresh translations.
+      await this.prisma.dramaTagLabel.upsert({
+        where: { key: nextEn },
+        create: { key: nextEn, nameEn: nextEn, nameZh, nameFr },
+        update: { nameEn: nextEn, nameZh, nameFr },
+      });
+    } else {
+      await this.prisma.dramaTagLabel.upsert({
+        where: { key },
+        create: { key, nameEn: nextEn, nameZh, nameFr },
+        update: { nameEn: nextEn, nameZh, nameFr },
+      });
+    }
+
+    await this.audit.write({
+      actorId,
+      action: 'dramaTag.update',
+      targetType: 'dramaTag',
+      targetId: nextEn,
+      payload: { from: key, nameEn: nextEn, nameZh, nameFr, updatedDramas },
+    });
+    return { ok: true, key: nextEn, updatedDramas };
   }
 
   async renameDramaTag(fromRaw: string, toRaw: string, actorId?: bigint) {
@@ -1344,6 +1490,32 @@ export class AdminService {
       await this.prisma.drama.update({ where: { id: d.id }, data: { tags: next } });
       updated += 1;
     }
+
+    const fromLabel = await this.prisma.dramaTagLabel.findUnique({ where: { key: from } });
+    if (fromLabel) {
+      await this.prisma.dramaTagLabel.delete({ where: { key: from } }).catch(() => undefined);
+      await this.prisma.dramaTagLabel.upsert({
+        where: { key: to },
+        create: {
+          key: to,
+          nameEn: to,
+          nameZh: fromLabel.nameZh,
+          nameFr: fromLabel.nameFr,
+        },
+        update: {
+          nameEn: to,
+          nameZh: fromLabel.nameZh ?? undefined,
+          nameFr: fromLabel.nameFr ?? undefined,
+        },
+      });
+    } else {
+      await this.prisma.dramaTagLabel.upsert({
+        where: { key: to },
+        create: { key: to, nameEn: to },
+        update: {},
+      });
+    }
+
     await this.audit.write({
       actorId,
       action: 'dramaTag.rename',
@@ -1373,6 +1545,7 @@ export class AdminService {
       await this.prisma.drama.update({ where: { id: d.id }, data: { tags: next } });
       updated += 1;
     }
+    await this.prisma.dramaTagLabel.delete({ where: { key: tag } }).catch(() => undefined);
     await this.audit.write({
       actorId,
       action: 'dramaTag.delete',
@@ -1474,6 +1647,9 @@ export class AdminService {
       }
       data.tags = mergeDramaSourceTags(
         existing.tags,
+        Array.isArray(dto.sourceTags) ? dto.sourceTags.map(String) : [],
+      );
+      await this.ensureDramaTagLabels(
         Array.isArray(dto.sourceTags) ? dto.sourceTags.map(String) : [],
       );
     }
@@ -1764,6 +1940,10 @@ export class AdminService {
       return created;
     });
 
+    if (Array.isArray(dto.sourceTags) && dto.sourceTags.length) {
+      await this.ensureDramaTagLabels(dto.sourceTags.map(String));
+    }
+
     await this.audit.write({
       actorId,
       action: 'drama.createOnline',
@@ -1842,6 +2022,7 @@ export class AdminService {
     const baseTags = sourceType === 'LOCAL' ? ['upload', 'local'] : ['upload', 'r2'];
     const extraTags = (dto.sourceTags || []).map(String).filter(Boolean);
     const tags = [...baseTags, ...extraTags.filter((t) => !baseTags.includes(t))];
+    await this.ensureDramaTagLabels(extraTags);
 
     const drama = await this.prisma.drama.create({
       data: {

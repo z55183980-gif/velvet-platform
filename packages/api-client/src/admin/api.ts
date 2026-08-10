@@ -908,11 +908,40 @@ export async function adminDeleteCategory(slug: string) {
   return adminRequest(`/admin/categories/${slug}/delete`, { method: "POST", body: "{}" });
 }
 
-export type AdminDramaTagRow = { tag: string; count: number };
+export type AdminDramaTagRow = {
+  tag: string;
+  nameEn: string;
+  nameZh: string | null;
+  nameFr: string | null;
+  count: number;
+};
 
 export async function adminListDramaTags() {
   const data = await adminRequest(`/admin/drama-tags`);
   return asRows(data) as AdminDramaTagRow[];
+}
+
+export async function adminCreateDramaTag(body: {
+  nameEn: string;
+  nameZh?: string | null;
+  nameFr?: string | null;
+}) {
+  return adminRequest("/admin/drama-tags", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export async function adminUpdateDramaTag(body: {
+  tag: string;
+  nameEn?: string;
+  nameZh?: string | null;
+  nameFr?: string | null;
+}) {
+  return adminRequest("/admin/drama-tags/update", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }
 
 export async function adminRenameDramaTag(body: { from: string; to: string }) {

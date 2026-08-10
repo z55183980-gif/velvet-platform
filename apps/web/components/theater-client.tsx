@@ -16,8 +16,10 @@ import type { Drama } from "@/lib/mock-data";
 import {
   composeDramaTagFilter,
   DRAMA_CONTENT_TYPES,
+  pickTagText,
   resolveContentTypeSlug,
   type DramaContentTypeSlug,
+  type DramaTagLabel,
 } from "@/lib/drama-tags";
 import { cn } from "@/lib/utils";
 import { DataErrorState } from "@/components/data-error-state";
@@ -125,7 +127,7 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
   const [reloadKey, setReloadKey] = useState(0);
   const [urlReady, setUrlReady] = useState(() => !!snap || !!initial);
   const [filterOpen, setFilterOpen] = useState(false);
-  const [allTags, setAllTags] = useState<string[]>([]);
+  const [allTags, setAllTags] = useState<DramaTagLabel[]>([]);
   const [tagsLoading, setTagsLoading] = useState(false);
 
   const cacheRef = useRef<Map<CacheKey, TheaterListCache>>(
@@ -712,12 +714,12 @@ function TagFilterPanel({
   onSelect,
 }: {
   open: boolean;
-  tags: string[];
+  tags: DramaTagLabel[];
   loading: boolean;
   selected: string;
   onSelect: (tag: string) => void;
 }) {
-  const { t } = useLocale();
+  const { locale, t } = useLocale();
   const ROWS_STEP = 5;
   const [cols, setCols] = useState(3);
   const [extraRows, setExtraRows] = useState(0);
@@ -781,21 +783,22 @@ function TagFilterPanel({
                   {t("theater.all")}
                 </button>
                 {visibleTags.map((item) => {
-                  const active = selected === item;
+                  const label = pickTagText(locale, item);
+                  const active = selected === item.key;
                   return (
                     <button
-                      key={item}
+                      key={item.key}
                       type="button"
                       role="option"
                       aria-selected={active}
-                      title={item}
-                      onClick={() => onSelect(item)}
+                      title={label}
+                      onClick={() => onSelect(item.key)}
                       className={cn(
                         "h-9 truncate rounded-md bg-surface-2 px-2 text-center text-[13px] transition-colors",
                         active ? "font-medium text-brand" : "text-ink hover:bg-surface-3",
                       )}
                     >
-                      {item}
+                      {label}
                     </button>
                   );
                 })}

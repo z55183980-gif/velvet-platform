@@ -1538,6 +1538,30 @@ export class ContentController {
     return ok(await this.admin.listDramaTags());
   }
 
+  @Post('drama-tags')
+  async createDramaTag(
+    @Body() body: { nameEn?: string; nameZh?: string | null; nameFr?: string | null },
+    @Req() req: any,
+  ) {
+    return ok(await this.admin.createDramaTag(body || {}, getActor(req)));
+  }
+
+  @Post('drama-tags/update')
+  async updateDramaTag(
+    @Body()
+    body: {
+      tag?: string;
+      nameEn?: string;
+      nameZh?: string | null;
+      nameFr?: string | null;
+    },
+    @Req() req: any,
+  ) {
+    return ok(
+      await this.admin.updateDramaTag(String(body?.tag || ''), body || {}, getActor(req)),
+    );
+  }
+
   @Post('drama-tags/rename')
   async renameDramaTag(
     @Body() body: { from?: string; to?: string },
