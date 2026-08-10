@@ -12,6 +12,7 @@ import {
   adminDeleteEpisode,
   adminGetDrama,
   adminListCategories,
+  adminListCreators,
   adminListSettings,
   adminOfflineDrama,
   adminOnlineDrama,
@@ -24,6 +25,7 @@ import {
   adminUpdateDrama,
   adminUpdateEpisode,
   adminPurgeEpisodeMedia,
+  asRows,
 } from "@velvet/api-client";
 import { Badge, Button, DataTable, Input, Select, cn, fmtNum, type Column } from "@velvet/ui";
 import {
@@ -129,12 +131,13 @@ type Drama = {
   publishedAt?: string | null;
   sourceType?: string;
   tags?: string[];
-  creator?: { displayName?: string };
+  creator?: { id?: string | number; displayName?: string };
   category?: { slug?: string; nameZh?: string | null; nameEn?: string; nameFr?: string | null };
   episodes?: Episode[];
 };
 
 type Category = { slug: string; nameZh?: string | null; nameEn?: string; nameFr?: string | null };
+type CreatorOption = { id: string | number; displayName?: string };
 type DetailTab = "overview" | "info" | "episodes" | "policy";
 /** Marker returned by delete mutation so shared onSuccess skips detail refetch. */
 type DramaDeletedResult = { __velvetDramaDeleted: true };
@@ -177,6 +180,7 @@ type BasicDraft = {
   titleEn: string;
   titleFr: string;
   categorySlug: string;
+  creatorId: string;
   coverUrl: string;
   descriptionZh: string;
   descriptionEn: string;
@@ -190,6 +194,7 @@ const emptyDraft: BasicDraft = {
   titleEn: "",
   titleFr: "",
   categorySlug: "",
+  creatorId: "",
   coverUrl: "",
   descriptionZh: "",
   descriptionEn: "",
@@ -211,6 +216,7 @@ function draftFromDrama(drama: Drama): BasicDraft {
     titleEn: drama.titleEn || "",
     titleFr: drama.titleFr || "",
     categorySlug: drama.category?.slug || "",
+    creatorId: drama.creator?.id != null ? String(drama.creator.id) : "",
     coverUrl: drama.coverUrl || "",
     descriptionZh: storedZh,
     descriptionEn: storedEn || (enLooksMissing && zhLooksEnglish ? storedZh : ""),
@@ -324,6 +330,14 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
 
   const detailQ = useQuery({ queryKey: ["admin", "drama", id], queryFn: () => adminGetDrama(id) as Promise<Drama> });
   const categoriesQ = useQuery({ queryKey: ["admin", "categories"], queryFn: () => adminListCategories(true) as Promise<Category[]> });
+  const creatorsQ = useQuery({
+    queryKey: ["admin", "creators", "picker"],
+    queryFn: async () => {
+      const result = await adminListCreators({ page: 1, pageSize: 100 });
+      return asRows<CreatorOption>(result);
+    },
+    staleTime: 60_000,
+  });
   const settingsQ = useQuery({
     queryKey: ["admin", "settings"],
     queryFn: async () => {
@@ -534,14 +548,17 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
         tags,
         contentType,
         completion,
+        creatorId,
         ...rest
       } = draft;
+      const nextCreatorId = creatorId.trim();
       await actionMut.mutateAsync(() =>
         adminUpdateDrama(id, {
           ...rest,
           titleZh: draft.titleZh.trim(),
           titleEn: draft.titleEn.trim(),
           titleFr: draft.titleFr.trim() || null,
+          ...(nextCreatorId ? { creatorId: nextCreatorId } : {}),
           sourceTags: composeDramaSourceTags(tags, contentType, completion),
         }),
       );
@@ -1019,7 +1036,7 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
                 <p className="text-caption text-ink-subtle">{t("localeTitleFallbackHint")}</p>
               </div>
             </div>
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <FieldLabel label={t("category")} required>
                 <Select value={draft.categorySlug} onChange={(e) => setDraft((v) => ({ ...v, categorySlug: e.target.value }))}>
                   <option value="">{t("selectCategory")}</option>
@@ -1028,6 +1045,28 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
                       {category.nameEn || category.nameZh || category.nameFr || category.slug}
                     </option>
                   ))}
+                </Select>
+              </FieldLabel>
+              <FieldLabel label={t("dramaCreator")}>
+                <Select
+                  value={draft.creatorId}
+                  aria-label={t("dramaCreator")}
+                  onChange={(e) => setDraft((v) => ({ ...v, creatorId: e.target.value }))}
+                >
+                  {!draft.creatorId ? (
+                    <option value="">{t("dramaCreatorKeep")}</option>
+                  ) : null}
+                  {(creatorsQ.data ?? []).map((creator) => (
+                    <option key={String(creator.id)} value={String(creator.id)}>
+                      {creator.displayName || String(creator.id)}
+                    </option>
+                  ))}
+                  {draft.creatorId &&
+                  !(creatorsQ.data ?? []).some((c) => String(c.id) === draft.creatorId) ? (
+                    <option value={draft.creatorId}>
+                      {drama?.creator?.displayName || draft.creatorId}
+                    </option>
+                  ) : null}
                 </Select>
               </FieldLabel>
               <FieldLabel label={t("contentType")} required>

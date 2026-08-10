@@ -1615,6 +1615,7 @@ export async function adminCreateOnlineDrama(body: {
   descriptionEn?: string;
   categorySlug: string;
   coverUrl?: string;
+  creatorId?: string;
   freeEpisodeCount?: number;
   lockMode?: "FREE_FIRST_N" | "VIP_ALL" | "ALL_FREE" | "INHERIT" | null;
   buyoutCredits?: number | null;
@@ -1654,6 +1655,7 @@ export async function adminCreateUploadDrama(body: {
   descriptionEn?: string;
   categorySlug: string;
   coverUrl?: string;
+  creatorId?: string;
   freeEpisodeCount?: number;
   lockMode?: "FREE_FIRST_N" | "VIP_ALL" | "ALL_FREE" | "INHERIT" | null;
   buyoutCredits?: number | null;
@@ -1688,6 +1690,7 @@ export async function adminCreateUploadDramaWithFiles(
     descriptionEn?: string;
     categorySlug: string;
     coverUrl?: string;
+    creatorId?: string;
     freeEpisodeCount?: number;
     lockMode?: "FREE_FIRST_N" | "VIP_ALL" | "ALL_FREE";
     status?: "DRAFT";
@@ -1705,6 +1708,7 @@ export async function adminCreateUploadDramaWithFiles(
   if (meta.descriptionZh) form.append("descriptionZh", meta.descriptionZh);
   form.append("categorySlug", meta.categorySlug);
   if (meta.coverUrl) form.append("coverUrl", meta.coverUrl);
+  if (meta.creatorId) form.append("creatorId", meta.creatorId);
   if (meta.freeEpisodeCount != null) form.append("freeEpisodeCount", String(meta.freeEpisodeCount));
   if (meta.lockMode) form.append("lockMode", meta.lockMode);
   if (meta.status) form.append("status", meta.status);
@@ -2002,6 +2006,7 @@ export async function adminYtdlpTransfer(body: {
   coverUrl?: string;
   descriptionEn?: string;
   descriptionZh?: string;
+  creatorId?: string;
   maxEpisodes?: number;
   formatPreference?: "best_hls" | "best_mp4" | "best";
   cookiesFile?: string;

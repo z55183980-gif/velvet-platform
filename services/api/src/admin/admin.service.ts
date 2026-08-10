@@ -71,6 +71,8 @@ export interface CreateOnlineDramaInput {
   descriptionEn?: string;
   categorySlug: string;
   coverUrl?: string;
+  /** Optional owner; when omitted, first KYC-approved (else any / Sample Studio) is used. */
+  creatorId?: string;
   freeEpisodeCount?: number;
   /** null / INHERIT = follow global episodeLockMode */
   lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE' | 'INHERIT' | null;
@@ -94,6 +96,8 @@ export interface CreateLocalUploadDramaInput {
   descriptionEn?: string;
   categorySlug: string;
   coverUrl?: string;
+  /** Optional owner; when omitted, first KYC-approved (else any / Sample Studio) is used. */
+  creatorId?: string;
   freeEpisodeCount?: number;
   /** null / INHERIT = follow global episodeLockMode */
   lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE' | 'INHERIT' | null;
@@ -1273,6 +1277,23 @@ export class AdminService {
     if (dto.descriptionEn != null) data.descriptionEn = dto.descriptionEn;
     if (dto.descriptionZh != null) data.descriptionZh = dto.descriptionZh;
     if (dto.categorySlug != null) data.categorySlug = dto.categorySlug;
+    if (dto.creatorId !== undefined) {
+      const explicit = String(dto.creatorId || '').trim();
+      // Empty string = keep existing owner (optional field on edit).
+      if (explicit) {
+        let creatorPk: bigint;
+        try {
+          creatorPk = BigInt(explicit);
+        } catch {
+          throw new BizException(BizCode.BAD_REQUEST, `创作者 ID 无效: ${explicit}`);
+        }
+        const creator = await this.prisma.creator.findUnique({ where: { id: creatorPk } });
+        if (!creator) {
+          throw new BizException(BizCode.BAD_REQUEST, `创作者不存在: ${explicit}`);
+        }
+        data.creatorId = creator.id;
+      }
+    }
     if (dto.coverUrl != null) data.coverUrl = dto.coverUrl;
     if (dto.licenseType != null) data.licenseType = dto.licenseType;
     if (dto.sourcePublisher != null) data.sourcePublisher = String(dto.sourcePublisher).trim() || null;
@@ -1412,6 +1433,52 @@ export class AdminService {
   }
 
   /**
+   * Resolve drama owner for admin create. Explicit creatorId wins; otherwise
+   * first KYC-approved creator, else any creator, else bootstrap Sample Studio.
+   */
+  private async resolveCreatorForAdminCreate(creatorId?: string | null) {
+    const explicit = String(creatorId || '').trim();
+    if (explicit) {
+      let id: bigint;
+      try {
+        id = BigInt(explicit);
+      } catch {
+        throw new BizException(BizCode.BAD_REQUEST, `创作者 ID 无效: ${explicit}`);
+      }
+      const found = await this.prisma.creator.findUnique({ where: { id } });
+      if (!found) {
+        throw new BizException(BizCode.BAD_REQUEST, `创作者不存在: ${explicit}`);
+      }
+      return found;
+    }
+
+    let creator = await this.prisma.creator.findFirst({
+      where: { kycStatus: 'APPROVED' },
+      orderBy: { id: 'asc' },
+    });
+    if (!creator) {
+      creator = await this.prisma.creator.findFirst();
+    }
+    if (!creator) {
+      const u = await this.prisma.user.upsert({
+        where: { email: 'sample@velvet.dev' },
+        create: { email: 'sample@velvet.dev', nickname: 'Sample Studio' },
+        update: {},
+      });
+      creator = await this.prisma.creator.create({
+        data: {
+          userId: u.id,
+          creatorType: 'INDIVIDUAL',
+          displayName: 'Sample Studio',
+          revenueShare: await this.platformSettings.getRevenueShareDefault(),
+          kycStatus: 'APPROVED',
+        },
+      });
+    }
+    return creator;
+  }
+
+  /**
    * 管理员创建在线剧集：填写外链/平台跳转链，转换为可播放地址后入库。
    */
   async createOnlineDrama(dto: CreateOnlineDramaInput, actorId?: bigint) {
@@ -1508,29 +1575,7 @@ export class AdminService {
       throw new BizException(BizCode.BAD_REQUEST, '集号不能重复');
     }
 
-    let creator = await this.prisma.creator.findFirst({
-      where: { kycStatus: 'APPROVED' },
-      orderBy: { id: 'asc' },
-    });
-    if (!creator) {
-      creator = await this.prisma.creator.findFirst();
-    }
-    if (!creator) {
-      const u = await this.prisma.user.upsert({
-        where: { email: 'sample@velvet.dev' },
-        create: { email: 'sample@velvet.dev', nickname: 'Sample Studio' },
-        update: {},
-      });
-      creator = await this.prisma.creator.create({
-        data: {
-          userId: u.id,
-          creatorType: 'INDIVIDUAL',
-          displayName: 'Sample Studio',
-          revenueShare: await this.platformSettings.getRevenueShareDefault(),
-          kycStatus: 'APPROVED',
-        },
-      });
-    }
+    const creator = await this.resolveCreatorForAdminCreate(dto.creatorId);
 
     const freeEpisodeCount = Math.max(0, Math.floor(Number(dto.freeEpisodeCount ?? 3)));
     const lockMode = normalizeCreateLockMode(dto.lockMode);
@@ -1553,7 +1598,7 @@ export class AdminService {
     const drama = await this.prisma.$transaction(async (tx) => {
       const created = await tx.drama.create({
         data: {
-          creatorId: creator!.id,
+          creatorId: creator.id,
           slug,
           titleEn,
           titleZh,
@@ -1678,29 +1723,7 @@ export class AdminService {
       }
     }
 
-    let creator = await this.prisma.creator.findFirst({
-      where: { kycStatus: 'APPROVED' },
-      orderBy: { id: 'asc' },
-    });
-    if (!creator) {
-      creator = await this.prisma.creator.findFirst();
-    }
-    if (!creator) {
-      const u = await this.prisma.user.upsert({
-        where: { email: 'sample@velvet.dev' },
-        create: { email: 'sample@velvet.dev', nickname: 'Sample Studio' },
-        update: {},
-      });
-      creator = await this.prisma.creator.create({
-        data: {
-          userId: u.id,
-          creatorType: 'INDIVIDUAL',
-          displayName: 'Sample Studio',
-          revenueShare: await this.platformSettings.getRevenueShareDefault(),
-          kycStatus: 'APPROVED',
-        },
-      });
-    }
+    const creator = await this.resolveCreatorForAdminCreate(dto.creatorId);
 
     const lockMode = normalizeCreateLockMode(dto.lockMode);
     const buyoutCredits = normalizeCreateBuyoutCredits(dto.buyoutCredits);

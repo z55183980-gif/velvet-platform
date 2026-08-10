@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   adminCreateOnlineDrama,
   adminListCategories,
+  adminListCreators,
   adminListSettings,
   adminStorageProbe,
   adminStorageStatus,
@@ -12,6 +13,7 @@ import {
   adminUploadImage,
   adminYtdlpPreviewFrame,
   adminYtdlpTransfer,
+  asRows,
 } from "@velvet/api-client";
 import { Button, Input, Select, cn } from "@velvet/ui";
 import {
@@ -72,12 +74,14 @@ import { useUploadQueue } from "@/lib/upload-queue";
 import { VIDEO_ACCEPT, isVideoFile } from "@/lib/video-formats";
 
 type Category = { slug: string; nameZh?: string | null; nameEn?: string; nameFr?: string | null };
+type CreatorOption = { id: string | number; displayName?: string };
 type DraftRecord = {
   id: string;
   titleZh: string;
   titleEn?: string;
   titleFr?: string;
   categorySlug: string;
+  creatorId?: string;
   tags: string[];
   /** Primary synopsis (English). Legacy drafts may only have descriptionZh. */
   descriptionEn?: string;
@@ -351,6 +355,7 @@ export const LocalUploadWizard = forwardRef<
   const [titleTouched, setTitleTouched] = useState(false);
   const [translateBusy, setTranslateBusy] = useState(false);
   const [categorySlug, setCategorySlug] = useState("");
+  const [creatorId, setCreatorId] = useState("");
   const [coverUrl, setCoverUrl] = useState("");
   const [descriptionEn, setDescriptionEn] = useState("");
   const [tags, setTags] = useState<string[]>([]);
@@ -738,6 +743,7 @@ export const LocalUploadWizard = forwardRef<
       titleEn: en || undefined,
       titleFr: fr || undefined,
       categorySlug,
+      creatorId: creatorId || undefined,
       tags,
       descriptionEn,
       coverUrl,
@@ -768,6 +774,7 @@ export const LocalUploadWizard = forwardRef<
     setTitleFr(record.titleFr || "");
     setTitleTouched(Boolean(record.titleEn?.trim() || (record.titleZh && record.titleZh !== "未命名剧集")));
     setCategorySlug(record.categorySlug || "");
+    setCreatorId(record.creatorId || "");
     setTags(record.tags || []);
     setDescriptionEn(record.descriptionEn || record.descriptionZh || "");
     setCoverUrl(record.coverUrl || "");
@@ -916,6 +923,14 @@ export const LocalUploadWizard = forwardRef<
   const categoriesQ = useQuery({
     queryKey: ["admin", "categories"],
     queryFn: () => adminListCategories(true) as Promise<Category[]>,
+  });
+  const creatorsQ = useQuery({
+    queryKey: ["admin", "creators", "picker"],
+    queryFn: async () => {
+      const result = await adminListCreators({ page: 1, pageSize: 100 });
+      return asRows<CreatorOption>(result);
+    },
+    staleTime: 60_000,
   });
   const settingsQ = useQuery({
     queryKey: ["admin", "settings"],
@@ -1605,6 +1620,7 @@ export const LocalUploadWizard = forwardRef<
     setTitleEn("");
     setTitleTouched(false);
     setCoverUrl("");
+    setCreatorId("");
     setDescriptionEn("");
     setTags([]);
     setTagInput("");
@@ -1685,6 +1701,7 @@ export const LocalUploadWizard = forwardRef<
           titleEn: englishTitle,
           coverUrl: coverUrl.trim() || undefined,
           descriptionEn: descriptionEn.trim() || undefined,
+          creatorId: creatorId.trim() || undefined,
           maxEpisodes: max,
           formatPreference:
             onlineIngest.formatPreference === "best_hls"
@@ -1784,6 +1801,7 @@ export const LocalUploadWizard = forwardRef<
         categorySlug,
         coverUrl: coverUrl.trim() || undefined,
         descriptionEn: descriptionEn.trim() || undefined,
+        creatorId: creatorId.trim() || undefined,
         freeEpisodeCount: policy.freeCount,
         lockMode: policy.createLockMode ?? undefined,
         buyoutCredits: policy.buyoutCredits,
@@ -1881,6 +1899,7 @@ export const LocalUploadWizard = forwardRef<
         categorySlug,
         coverUrl: coverUrl.trim() || undefined,
         descriptionEn: descriptionEn.trim() || undefined,
+        creatorId: creatorId.trim() || undefined,
         freeEpisodeCount: policy.freeCount,
         lockMode: (policy.createLockMode ?? null) as "ALL_FREE" | "VIP_ALL" | "FREE_FIRST_N" | null,
         buyoutCredits: policy.buyoutCredits,
@@ -2561,6 +2580,22 @@ export const LocalUploadWizard = forwardRef<
                       {(categoriesQ.data ?? []).map((c) => (
                         <option key={c.slug} value={c.slug}>
                           {c.nameEn || c.nameZh || c.nameFr || c.slug}
+                        </option>
+                      ))}
+                    </Select>
+                  </label>
+                  <label className="upload-field upload-field--compact upload-field--creator">
+                    <span>{t("dramaCreator")}</span>
+                    <Select
+                      value={creatorId}
+                      disabled={busy}
+                      aria-label={t("dramaCreator")}
+                      onChange={(e) => setCreatorId(e.target.value)}
+                    >
+                      <option value="">{t("dramaCreatorAuto")}</option>
+                      {(creatorsQ.data ?? []).map((c) => (
+                        <option key={String(c.id)} value={String(c.id)}>
+                          {c.displayName || String(c.id)}
                         </option>
                       ))}
                     </Select>

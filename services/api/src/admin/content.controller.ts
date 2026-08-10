@@ -184,6 +184,8 @@ class DramaUpdateDto {
   @IsOptional() @IsString() descriptionEn?: string;
   @IsOptional() @IsString() descriptionZh?: string;
   @IsOptional() @IsString() categorySlug?: string;
+  /** When set (non-empty), reassign owner; empty/omitted keeps current creator. */
+  @IsOptional() @IsString() creatorId?: string;
   @IsOptional() @IsString() coverUrl?: string;
   @IsOptional() @IsIn(['UNKNOWN', 'PUBLIC_DOMAIN', 'CC0', 'CC_BY', 'CC_BY_SA', 'AUTHORIZED', 'OWNED'])
   licenseType?: 'UNKNOWN' | 'PUBLIC_DOMAIN' | 'CC0' | 'CC_BY' | 'CC_BY_SA' | 'AUTHORIZED' | 'OWNED';
@@ -321,6 +323,7 @@ class CreateOnlineDramaDto {
   @IsOptional() @IsString() descriptionEn?: string;
   @IsNotEmpty() @IsString() categorySlug!: string;
   @IsOptional() @IsString() coverUrl?: string;
+  @IsOptional() @IsString() creatorId?: string;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) freeEpisodeCount?: number;
   @IsOptional() @IsIn(['FREE_FIRST_N', 'VIP_ALL', 'ALL_FREE', 'INHERIT'])
   lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE' | 'INHERIT' | null;
@@ -346,6 +349,7 @@ class CreateLocalUploadDramaDto {
   @IsOptional() @IsString() descriptionEn?: string;
   @IsNotEmpty() @IsString() categorySlug!: string;
   @IsOptional() @IsString() coverUrl?: string;
+  @IsOptional() @IsString() creatorId?: string;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) freeEpisodeCount?: number;
   @IsOptional() @IsIn(['FREE_FIRST_N', 'VIP_ALL', 'ALL_FREE', 'INHERIT'])
   lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE' | 'INHERIT' | null;
@@ -455,6 +459,7 @@ class YtdlpTransferDto extends YtdlpAuthFields {
   @IsOptional() @IsString() coverUrl?: string;
   @IsOptional() @IsString() descriptionEn?: string;
   @IsOptional() @IsString() descriptionZh?: string;
+  @IsOptional() @IsString() creatorId?: string;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(1) maxEpisodes?: number;
   @IsOptional() @IsIn(['best_hls', 'best_mp4', 'best'])
   formatPreference?: 'best_hls' | 'best_mp4' | 'best';
@@ -832,6 +837,7 @@ export class ContentController {
       descriptionEn?: string;
       categorySlug?: string;
       coverUrl?: string;
+      creatorId?: string;
       freeEpisodeCount?: string | number;
       lockMode?: string;
       status?: string;
@@ -854,6 +860,7 @@ export class ContentController {
           descriptionEn: body.descriptionEn,
           categorySlug: body.categorySlug || '',
           coverUrl: body.coverUrl,
+          creatorId: body.creatorId,
           freeEpisodeCount:
             body.freeEpisodeCount != null ? Number(body.freeEpisodeCount) : undefined,
           lockMode: body.lockMode as any,
@@ -1084,6 +1091,7 @@ export class ContentController {
           coverUrl: dto.coverUrl,
           descriptionEn: dto.descriptionEn,
           descriptionZh: dto.descriptionZh,
+          creatorId: dto.creatorId,
           maxEpisodes: dto.maxEpisodes,
           formatPreference: dto.formatPreference,
           cookiesFile: dto.cookiesFile,

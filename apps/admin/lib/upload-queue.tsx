@@ -34,6 +34,7 @@ export type UploadCreateDramaMeta = {
   titleFr?: string;
   categorySlug: string;
   coverUrl?: string;
+  creatorId?: string;
   descriptionEn?: string;
   descriptionZh?: string;
   freeEpisodeCount: number;

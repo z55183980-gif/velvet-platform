@@ -39,6 +39,8 @@ export type YtdlpImportOptions = {
   categorySlug?: string;
   titleZh?: string;
   titleEn?: string;
+  /** Optional owner for admin create; falls back to platform default. */
+  creatorId?: string;
   /** Ignored — imports always create DRAFT. Kept for API compatibility. */
   status?: 'DRAFT';
   maxEpisodes?: number;
@@ -883,6 +885,7 @@ export class YtdlpImportService implements OnModuleInit {
           probeDesc && /[\u4e00-\u9fff]/.test(probeDesc) ? probeDesc : undefined,
         categorySlug,
         coverUrl: probe.coverUrl,
+        creatorId: opts.creatorId,
         lockMode: 'FREE_FIRST_N',
         freeEpisodeCount: 3,
         // 拉取的第三方内容必须先完成来源/可播审核，不允许直接上线。
@@ -1141,6 +1144,7 @@ export class YtdlpImportService implements OnModuleInit {
         descriptionZh,
         categorySlug,
         coverUrl,
+        creatorId: opts.creatorId,
         lockMode,
         freeEpisodeCount,
         buyoutCredits: opts.buyoutCredits,
