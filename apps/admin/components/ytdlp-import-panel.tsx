@@ -7,7 +7,6 @@ import {
   adminTelegramStatus,
   adminYtdlpAiExtract,
   adminYtdlpDownloadEpisode,
-  adminYtdlpInferCategory,
   adminYtdlpPreviewFrame,
   adminYtdlpProbe,
   adminYtdlpResolve,
@@ -783,32 +782,6 @@ export function YtdlpImportPanel({
     }
 
     const auth = authPayload();
-    // Ensure category reaches main form even when probe/AI omitted it.
-    let categorySlug =
-      ("categorySlug" in working && typeof working.categorySlug === "string"
-        ? working.categorySlug
-        : ""
-      ).trim() || undefined;
-    if (!categorySlug) {
-      try {
-        const title =
-          ("titleZh" in working && working.titleZh) ||
-          ("titleEn" in working && working.titleEn) ||
-          working.title ||
-          "";
-        const inferred = await adminYtdlpInferCategory({
-          title: String(title || "").trim() || undefined,
-          description: (working.description || "").trim() || undefined,
-        });
-        categorySlug = inferred.categorySlug || undefined;
-        if (categorySlug) {
-          working = { ...working, categorySlug } as ProbeResult;
-          setProbe(working);
-        }
-      } catch {
-        // Non-blocking: main form still requires category on submit.
-      }
-    }
 
     onFillDramaInfo(
       dramaInfoFromYtdlpProbe(working, {
@@ -1168,8 +1141,10 @@ export function YtdlpImportPanel({
                   ? `${t("ytdlpAiExtract")} · ${probe.model || "openai"}`
                   : `${probe.extractor} · ${probe.kind}`}{" "}
                 · {t("importEpisodeCount", { n: probe.episodes.length })}
-                {isAiProbe(probe) && probe.categorySlug
-                  ? ` · ${t("category")}: ${probe.categorySlug}`
+                {isAiProbe(probe) &&
+                Array.isArray(probe.tags) &&
+                probe.tags.length
+                  ? ` · ${t("dramaTags")}: ${probe.tags.slice(0, 4).join(", ")}`
                   : null}
               </p>
               {isAiProbe(probe) && probe.notes ? (

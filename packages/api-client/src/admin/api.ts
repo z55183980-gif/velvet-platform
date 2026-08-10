@@ -1841,6 +1841,8 @@ export async function adminYtdlpAiExtract(
     titleEn?: string;
     /** Inferred catalog slug when heuristics/LLM could pick one. */
     categorySlug?: string;
+    /** Display tags from page genres / AI extract. */
+    tags?: string[];
     notes?: string;
     model?: string;
     htmlChars: number;

@@ -31,8 +31,12 @@ export type DramaPageExtractResult = {
   titleEn: string;
   coverUrl: string;
   descriptionZh: string;
+  /** Primary synopsis in page language when preferDescriptionLanguage was set. */
+  descriptionEn?: string;
   /** Preferred catalog category slug when the model can choose among allowed ones. */
   categorySlug: string;
+  /** Free-form genre/tag labels from the page when present. */
+  tags?: string[];
   episodes: DramaPageExtractEpisode[];
   notes: string;
   model: string;
@@ -68,6 +72,46 @@ const EXTRACT_SCHEMA = {
     'coverUrl',
     'descriptionZh',
     'categorySlug',
+    'episodes',
+    'notes',
+  ],
+} as const;
+
+/** Schema used only when preferDescriptionLanguage is set (e.g. DramaBox EN pages). */
+const EXTRACT_SCHEMA_LOCALIZED = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    titleZh: { type: 'string' },
+    titleEn: { type: 'string' },
+    coverUrl: { type: 'string' },
+    descriptionEn: { type: 'string' },
+    descriptionZh: { type: 'string' },
+    categorySlug: { type: 'string' },
+    tags: { type: 'array', items: { type: 'string' } },
+    episodes: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          episodeNumber: { type: 'integer' },
+          title: { type: 'string' },
+          sourceUrl: { type: 'string' },
+        },
+        required: ['episodeNumber', 'title', 'sourceUrl'],
+      },
+    },
+    notes: { type: 'string' },
+  },
+  required: [
+    'titleZh',
+    'titleEn',
+    'coverUrl',
+    'descriptionEn',
+    'descriptionZh',
+    'categorySlug',
+    'tags',
     'episodes',
     'notes',
   ],
@@ -264,6 +308,11 @@ export class OpenaiService {
     pageText: string;
     /** When set, ask the model to pick one catalog slug (or empty). */
     allowedCategorySlugs?: string[];
+    /**
+     * When set (host-specific adapters), synopsis language follows the page.
+     * Default/legacy callers omit this and keep descriptionZh-oriented behavior.
+     */
+    preferDescriptionLanguage?: string;
   }): Promise<DramaPageExtractResult> {
     if (!this.isConfigured()) {
       throw new BizException(
@@ -285,6 +334,16 @@ export class OpenaiService {
       ? ` categorySlug must be one of [${allowed.join(', ')}] when genre is clear, else empty string.`
       : ' categorySlug should be empty string when no catalog is provided.';
 
+    const preferLang = String(opts.preferDescriptionLanguage || '')
+      .trim()
+      .toLowerCase();
+    const localized = Boolean(preferLang);
+    const langHint = localized
+      ? preferLang.startsWith('zh')
+        ? ' descriptionEn may be empty; descriptionZh must stay in the page language (Simplified Chinese). Do not invent English when the page is Chinese. tags = genre/label strings from the page.'
+        : ' descriptionEn must match the page language (usually English). Do NOT invent a Chinese synopsis when the page introduction is English. descriptionZh may be empty. tags = genre/label strings from the page (e.g. Sweet Love, Revenge).'
+      : '';
+
     const system =
       'Extract short-drama metadata from a source page. ' +
       'Return playable episode media URLs when present (m3u8/mp4/direct video). ' +
@@ -292,10 +351,12 @@ export class OpenaiService {
       'Prefer the full episode list over a single trailer when both appear. ' +
       'episodeNumber must be contiguous starting at 1. Use empty string when unknown. ' +
       'titleZh should be Simplified Chinese when possible; titleEn English.' +
+      langHint +
       categoryHint;
 
     const user = `Page URL: ${pageUrl}\n\nPage text:\n${truncated}`;
     const model = this.model();
+    const schema = localized ? EXTRACT_SCHEMA_LOCALIZED : EXTRACT_SCHEMA;
 
     let parsed: any;
     try {
@@ -304,8 +365,8 @@ export class OpenaiService {
         system,
         user,
         useSchema: true,
-        schemaName: 'drama_extract',
-        schema: EXTRACT_SCHEMA,
+        schemaName: localized ? 'drama_extract_localized' : 'drama_extract',
+        schema,
       });
     } catch (e) {
       this.logger.warn(
@@ -336,12 +397,22 @@ export class OpenaiService {
         episodeNumber: i + 1,
       }));
 
+    const tagsRaw = Array.isArray(parsed?.tags) ? parsed.tags : [];
+    const tags: string[] = [];
+    for (const raw of tagsRaw) {
+      const t = String(raw || '').trim();
+      if (t && !tags.includes(t)) tags.push(t);
+      if (tags.length >= 12) break;
+    }
+
     return {
       titleZh: String(parsed?.titleZh || '').trim().slice(0, TITLE_MAX),
       titleEn: String(parsed?.titleEn || '').trim().slice(0, TITLE_MAX),
       coverUrl: String(parsed?.coverUrl || '').trim(),
       descriptionZh: String(parsed?.descriptionZh || '').trim().slice(0, DESC_MAX),
+      descriptionEn: String(parsed?.descriptionEn || '').trim().slice(0, DESC_MAX) || undefined,
       categorySlug: String(parsed?.categorySlug || '').trim(),
+      tags: tags.length ? tags : undefined,
       episodes,
       notes: String(parsed?.notes || '').trim().slice(0, 500),
       model,

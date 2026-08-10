@@ -53,8 +53,10 @@ export type DramaInfoFillPayload = {
   /** Optional Chinese synopsis; probe only sets this when description is CJK. */
   descriptionZh?: string;
   totalEpisodes?: number;
-  /** Inferred / explicit catalog slug from online AI extract. */
+  /** @deprecated Prefer tags — kept for soft DB default only. */
   categorySlug?: string;
+  /** Display tags inferred from page genres / AI extract. */
+  tags?: string[];
   /**
    * When true, overwrite non-empty main-form meta fields.
    * When false/omit, only fill blank fields. Does not affect `online` staging.
@@ -80,6 +82,7 @@ type ProbeLike = {
   coverUrl?: string | null;
   description?: string | null;
   categorySlug?: string | null;
+  tags?: string[] | null;
   source?: "ai" | "ytdlp" | "telegram" | string | null;
   channel?: string | null;
   episodes?: ProbeEpisodeLike[] | null;
@@ -185,6 +188,16 @@ export function dramaInfoFromYtdlpProbe(
     }
     const categorySlug = (probe.categorySlug || "").trim();
     if (categorySlug) payload.categorySlug = categorySlug;
+    const tags = Array.isArray(probe.tags)
+      ? [
+          ...new Set(
+            probe.tags
+              .map((t) => String(t || "").trim())
+              .filter(Boolean),
+          ),
+        ].slice(0, 8)
+      : [];
+    if (tags.length) payload.tags = tags;
     if (extras?.overwriteMeta) payload.overwriteMeta = true;
   }
 

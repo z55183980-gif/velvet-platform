@@ -24,6 +24,7 @@ import {
   expandDramaPageCandidates,
   extractEpisodeLinksFromHtml,
   extractMetaFromNextData,
+  isDramaboxHost,
   type ExtractedPageEpisode,
 } from './online-page-extract.util';
 import {
@@ -211,8 +212,7 @@ export class YtdlpImportService implements OnModuleInit {
 
   /**
    * Path B: fetch public page HTML → deterministic episode href extract (+ OpenAI meta fallback).
-   * ReelShort SPA pages put episode lists in HTML/__NEXT_DATA__; stripped text alone is not enough.
-   * Also infers categorySlug (page labels → heuristic → optional LLM).
+   * Site parsers are host-matched (ReelShort vs DramaBox). Tags come from page labels when present.
    */
   async aiExtract(opts: {
     url: string;
@@ -224,6 +224,7 @@ export class YtdlpImportService implements OnModuleInit {
     const auth = this.authFromOpts(opts);
     const candidates = expandDramaPageCandidates(pageUrl);
     const allowedCategories = await this.listCategorySlugs();
+    const dramabox = isDramaboxHost(pageUrl);
 
     const episodeMap = new Map<number, ExtractedPageEpisode>();
     let bestMeta: {
@@ -231,6 +232,8 @@ export class YtdlpImportService implements OnModuleInit {
       coverUrl?: string;
       description?: string;
       genreLabels?: string[];
+      language?: string;
+      chapterCount?: number;
     } = {};
     let bestHtml = '';
     let bestHtmlUrl = pageUrl;
@@ -271,11 +274,18 @@ export class YtdlpImportService implements OnModuleInit {
         if (!episodeMap.has(ep.episodeNumber)) episodeMap.set(ep.episodeNumber, ep);
       }
 
-      const { meta, episodes: nextEps } = extractMetaFromNextData(rawHtml);
+      const { meta, episodes: nextEps } = extractMetaFromNextData(
+        rawHtml,
+        fetchedFrom,
+      );
       if (meta.title && !bestMeta.title) bestMeta.title = meta.title;
       if (meta.coverUrl && !bestMeta.coverUrl) bestMeta.coverUrl = meta.coverUrl;
       if (meta.description && !bestMeta.description) {
         bestMeta.description = meta.description;
+      }
+      if (meta.language && !bestMeta.language) bestMeta.language = meta.language;
+      if (meta.chapterCount && !bestMeta.chapterCount) {
+        bestMeta.chapterCount = meta.chapterCount;
       }
       if (meta.genreLabels?.length) {
         bestMeta.genreLabels = [
@@ -283,7 +293,7 @@ export class YtdlpImportService implements OnModuleInit {
         ].slice(0, 12);
       }
       for (const ep of nextEps) {
-        // Prefer page hrefs (playable ingest via yt-dlp later); keep media URLs if no href.
+        // Prefer page hrefs for ReelShort (yt-dlp later); keep media URLs if no href.
         if (!episodeMap.has(ep.episodeNumber)) episodeMap.set(ep.episodeNumber, ep);
       }
     }
@@ -297,9 +307,11 @@ export class YtdlpImportService implements OnModuleInit {
     let model: string | undefined;
     let titleZh = '';
     let titleEn = bestMeta.title || '';
+    // Keep historical variable name for probe.description mapping; content follows page language.
     let descriptionZh = bestMeta.description || '';
     let coverUrl = bestMeta.coverUrl || '';
     let categorySlug = '';
+    let tags = [...(bestMeta.genreLabels || [])];
 
     const needLlm =
       this.openai.isConfigured() &&
@@ -326,6 +338,10 @@ export class YtdlpImportService implements OnModuleInit {
           pageUrl: bestHtmlUrl,
           pageText,
           allowedCategorySlugs: allowedCategories,
+          // DramaBox: keep synopsis language aligned with the page (usually EN).
+          ...(dramabox
+            ? { preferDescriptionLanguage: bestMeta.language || 'en' }
+            : {}),
         });
         model = extracted.model;
         notes = extracted.notes || '';
@@ -334,8 +350,19 @@ export class YtdlpImportService implements OnModuleInit {
         if (extracted.coverUrl && /^https?:\/\//i.test(extracted.coverUrl)) {
           coverUrl = extracted.coverUrl;
         }
-        if (extracted.descriptionZh) {
-          descriptionZh = extracted.descriptionZh || descriptionZh;
+        const llmDesc =
+          (dramabox
+            ? extracted.descriptionEn || extracted.descriptionZh
+            : extracted.descriptionZh || extracted.descriptionEn) || '';
+        if (llmDesc) {
+          if (dramabox && descriptionZh && /[\u4e00-\u9fff]/.test(llmDesc) && !/[\u4e00-\u9fff]/.test(descriptionZh)) {
+            // Keep English page synopsis; ignore invented Chinese from LLM.
+          } else {
+            descriptionZh = llmDesc || descriptionZh;
+          }
+        }
+        if (extracted.tags?.length) {
+          tags = [...new Set([...tags, ...extracted.tags])].slice(0, 12);
         }
         const fromLlm = sanitizeCategorySlug(
           extracted.categorySlug,
@@ -365,14 +392,21 @@ export class YtdlpImportService implements OnModuleInit {
           : '抓取页面失败',
       );
     } else if (episodes.length >= 2) {
-      notes = `Deterministic extract from ${fetchedOk} page(s); skipped LLM.`;
+      if (dramabox && bestMeta.chapterCount) {
+        notes =
+          `DramaBox deterministic extract from ${fetchedOk} page(s); skipped LLM. ` +
+          `${episodes.length}/${bestMeta.chapterCount} chapters with playable media.`;
+      } else {
+        notes = `Deterministic extract from ${fetchedOk} page(s); skipped LLM.`;
+      }
     }
 
+    // Soft category for DB FK only — UI backfills tags instead of category.
     if (!categorySlug) {
       const resolved = await this.resolveCategorySlug({
         title: titleZh || titleEn || bestMeta.title,
         description: descriptionZh || bestMeta.description,
-        pageLabels: bestMeta.genreLabels,
+        pageLabels: tags.length ? tags : bestMeta.genreLabels,
         allowedSlugs: allowedCategories,
       });
       if (resolved.slug) {
@@ -380,7 +414,7 @@ export class YtdlpImportService implements OnModuleInit {
         if (resolved.via === 'llm' && resolved.model) {
           model = model || resolved.model;
         }
-        if (resolved.note) {
+        if (resolved.note && !dramabox) {
           notes = notes ? `${notes} ${resolved.note}` : resolved.note;
         }
       }
@@ -402,7 +436,9 @@ export class YtdlpImportService implements OnModuleInit {
         BizCode.BAD_REQUEST,
         notes
           ? `未抽到可用分集链接：${notes}`
-          : '未抽到可用分集链接。请改用剧集主页 /movie/... 或 /full-episodes/...，并确认链接可访问（非 404）',
+          : dramabox
+            ? '未抽到可用分集链接。DramaBox 页面需含可播 m3u8/mp4（免费集），请确认链接可访问'
+            : '未抽到可用分集链接。请改用剧集主页 /movie/... 或 /full-episodes/...，并确认链接可访问（非 404）',
       );
     }
 
@@ -413,6 +449,7 @@ export class YtdlpImportService implements OnModuleInit {
       titleZh?: string;
       titleEn?: string;
       categorySlug?: string;
+      tags?: string[];
       notes?: string;
       model?: string;
       htmlChars: number;
@@ -433,6 +470,7 @@ export class YtdlpImportService implements OnModuleInit {
       titleZh: titleZh || undefined,
       titleEn: titleEn || undefined,
       categorySlug: categorySlug || undefined,
+      tags: tags.length ? tags.slice(0, 8) : undefined,
       notes: notes || undefined,
       model,
       htmlChars: bestHtml.length,
@@ -455,7 +493,7 @@ export class YtdlpImportService implements OnModuleInit {
 
     this.logger.log(
       `aiExtract ${pageUrl} → ${episodes.length} eps via ${probe.extractor}` +
-        ` category=${categorySlug || '-'} (fetched=${fetchedOk})`,
+        ` tags=${(tags || []).join(',') || '-'} host=${dramabox ? 'dramabox' : 'default'} (fetched=${fetchedOk})`,
     );
     return probe;
   }

@@ -424,6 +424,7 @@ export const LocalUploadWizard = forwardRef<
           payload.descriptionEn !== undefined ||
           payload.descriptionZh !== undefined ||
           payload.categorySlug !== undefined ||
+          payload.tags !== undefined ||
           payload.totalEpisodes !== undefined;
 
         if (payload.titleEn !== undefined) {
@@ -465,6 +466,12 @@ export const LocalUploadWizard = forwardRef<
           setCategorySlug((prev) =>
             !overwrite && prev.trim() ? prev : payload.categorySlug!,
           );
+        }
+        if (payload.tags !== undefined && payload.tags.length) {
+          setTags((prev) => {
+            if (!overwrite && prev.length) return prev;
+            return payload.tags!.map((t) => t.trim()).filter(Boolean).slice(0, MAX_DRAMA_TAGS);
+          });
         }
         if (payload.totalEpisodes !== undefined && payload.totalEpisodes >= 0) {
           setTotalEpisodes((prev) =>

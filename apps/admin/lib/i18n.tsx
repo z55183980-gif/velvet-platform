@@ -1173,9 +1173,9 @@ const zh = {
   contentAddOwnedHint:
     "本地上传：把本地视频入库。启用 R2 时写入 CDN，否则落在实例服务器磁盘；目录导入同样走本站托管。",
   contentAddOnlineRefHint:
-    "解析公开页或粘贴直链后点「应用到主窗口」；分类与提交在主页面完成。",
+    "解析公开页或粘贴直链后点「应用到主窗口」；标签与提交在主页面完成。",
   contentOnlineProbeFirstLead:
-    "步骤：解析预览 → 选分类 → 再选入库方式。同一解析结果可外链或转存，无需重复粘贴。",
+    "步骤：解析预览 → 选标签 → 再选入库方式。同一解析结果可外链或转存，无需重复粘贴。",
   contentOnlineStreamLead:
     "主路径：粘贴公开页 → 解析预览 → 导入草稿 → 详情里完成权利核验后再上架。",
   contentOnlineTransferLead:
@@ -1398,7 +1398,7 @@ const zh = {
   ytdlpApplyConfigHint: "此处仅配置片源形式，不会立刻入库。",
   ytdlpApplyToMain: "应用到主窗口",
   ytdlpApplyToMainDone: "已应用",
-  ytdlpApplyToMainHint: "只导入上方勾选的分集资源与入库配置，不改动主窗口剧集信息；分类在主页设置，提交时才入库。",
+  ytdlpApplyToMainHint: "只导入上方勾选的分集资源与入库配置，不改动主窗口剧集信息；标签在主页设置，提交时才入库。",
   ytdlpApplyToMainHintLink:
     "外链：会先对勾选集串行解析可播地址，再回填主窗口；解析中可取消。不改动主窗口剧集信息。",
   ytdlpApplyNeedMain: "请从「新建剧集」打开本弹窗以回填主窗口",
@@ -1409,7 +1409,7 @@ const zh = {
   ytdlpFillDramaInfo: "填入剧集信息",
   ytdlpFillDramaInfoDoneBtn: "已填入",
   ytdlpFillDramaInfoHint: "写入标题、封面、简介与集数；默认只填空白字段，勾选上方可覆盖已有内容。",
-  ytdlpFillDramaInfoDone: "已回填在线资源到分集清单，请核对分类后提交剧集",
+  ytdlpFillDramaInfoDone: "已回填在线资源到分集清单，请核对标签后提交剧集",
   ytdlpFillMetaDone: "已填入剧集信息",
   ytdlpFillNeedMeta: "请至少填写标题、封面或简介后再填入",
   onlineStagedTitle: "已暂存在线分集",
@@ -2772,9 +2772,9 @@ const en: Record<LabelKey, string> = {
   contentAddOwnedHint:
     "Local upload: ingest local videos. With R2 enabled they go to CDN; otherwise they land on the instance disk. Folder import is also platform-hosted.",
   contentAddOnlineRefHint:
-    "Parse a public page or paste direct links, then Apply to main window. Set category and submit on the main form.",
+    "Parse a public page or paste direct links, then Apply to main window. Set tags and submit on the main form.",
   contentOnlineProbeFirstLead:
-    "Flow: probe → pick category → choose how to ingest. One probe serves both stream and transfer — no need to re-paste.",
+    "Flow: probe → pick tags → choose how to ingest. One probe serves both stream and transfer — no need to re-paste.",
   contentOnlineStreamLead:
     "Primary path: paste a public page → preview → import draft → complete rights verification on the detail page before publishing.",
   contentOnlineTransferLead:
@@ -3009,7 +3009,7 @@ const en: Record<LabelKey, string> = {
   ytdlpApplyToMain: "Apply to main window",
   ytdlpApplyToMainDone: "Applied",
   ytdlpApplyToMainHint:
-    "Imports only the checked episodes plus ingest settings — does not change drama info. Set category on the main form; ingest runs on submit.",
+    "Imports only the checked episodes plus ingest settings — does not change drama info. Set tags on the main form; ingest runs on submit.",
   ytdlpApplyToMainHintLink:
     "External link: resolves checked episodes serially via yt-dlp, then applies. Cancel anytime during resolve. Does not change drama info.",
   ytdlpApplyNeedMain: "Open this dialog from New drama so it can fill the main form",
@@ -3021,7 +3021,7 @@ const en: Record<LabelKey, string> = {
   ytdlpFillDramaInfoDoneBtn: "Filled",
   ytdlpFillDramaInfoHint:
     "Write title, cover, synopsis, and episode count. Empty fields only unless overwrite is checked.",
-  ytdlpFillDramaInfoDone: "Online resources added to the episode list — check category, then submit",
+  ytdlpFillDramaInfoDone: "Online resources added to the episode list — check tags, then submit",
   ytdlpFillMetaDone: "Drama info filled",
   ytdlpFillNeedMeta: "Add a title, cover, or synopsis before filling",
   onlineStagedTitle: "Staged online episodes",

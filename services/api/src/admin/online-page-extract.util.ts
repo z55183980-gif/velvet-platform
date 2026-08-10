@@ -1,6 +1,6 @@
 /**
- * Deterministic helpers for Path B page extract (esp. ReelShort SPA pages).
- * Episode lists live in HTML hrefs / __NEXT_DATA__, not visible stripped text.
+ * Deterministic helpers for Path B page extract.
+ * Site rules are host-matched — do not apply DramaBox logic to ReelShort (or vice versa).
  */
 
 export type ExtractedPageEpisode = {
@@ -13,13 +13,52 @@ export type PageMetaHints = {
   title?: string;
   coverUrl?: string;
   description?: string;
-  /** Free-form genre / category labels from page JSON when present. */
+  /** Free-form genre / tag labels from page JSON when present. */
   genreLabels?: string[];
+  /** Page/content language hint (e.g. en, zh). */
+  language?: string;
   paidStart?: number;
   chapterCount?: number;
 };
 
-/** Expand episode/trailer URLs to movie + full-episodes listing pages. */
+export function isDramaboxHost(pageUrl: string): boolean {
+  try {
+    const host = new URL(pageUrl).hostname.toLowerCase();
+    return (
+      host === 'dramaboxapp.com' ||
+      host === 'www.dramaboxapp.com' ||
+      host.endsWith('.dramaboxapp.com') ||
+      host === 'dramabox.com' ||
+      host === 'www.dramabox.com' ||
+      host.endsWith('.dramabox.com')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function pushGenreLabel(out: string[], v: unknown) {
+  if (typeof v === 'string' && v.trim()) out.push(v.trim());
+  else if (Array.isArray(v)) {
+    for (const item of v) {
+      if (typeof item === 'string' && item.trim()) out.push(item.trim());
+      else if (item && typeof item === 'object') {
+        const name = String(
+          (item as any).name || (item as any).title || (item as any).label || '',
+        ).trim();
+        if (name) out.push(name);
+      }
+    }
+  }
+}
+
+function isLikelyCjkEpisodeTitle(title: string): boolean {
+  return /第\s*\d+\s*[集话話]|第[一二三四五六七八九十百千零〇两兩]+[集话話]/.test(
+    title,
+  );
+}
+
+/** Expand episode/trailer URLs to listing pages (host-aware). */
 export function expandDramaPageCandidates(pageUrl: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
@@ -40,6 +79,11 @@ export function expandDramaPageCandidates(pageUrl: string): string[] {
 
   const origin = parsed.origin;
   const path = parsed.pathname;
+
+  // DramaBox: a single /episode/{bookId}/{chapterId} page embeds full chapterList — no rewrite.
+  if (isDramaboxHost(pageUrl)) {
+    return out;
+  }
 
   // /vi/episodes/... → also try /episodes/...
   if (/^\/[a-z]{2}\/episodes\//i.test(path)) {
@@ -72,18 +116,11 @@ export function expandDramaPageCandidates(pageUrl: string): string[] {
   return out;
 }
 
-/** Collect /episodes/episode-N-... links from raw HTML (and absolute URLs). */
-export function extractEpisodeLinksFromHtml(
+/** Collect ReelShort /episodes/episode-N-... links from raw HTML. */
+function extractReelshortEpisodeLinks(
   html: string,
-  pageUrl: string,
+  origin: string,
 ): ExtractedPageEpisode[] {
-  let origin = '';
-  try {
-    origin = new URL(pageUrl).origin;
-  } catch {
-    return [];
-  }
-
   const map = new Map<number, string>();
   const re =
     /(?:https?:\/\/[^"'\\\s<>]+)?((?:\/[a-z]{2})?\/episodes\/episode-(\d+)-[^"'\\\s<>]+)/gi;
@@ -95,7 +132,6 @@ export function extractEpisodeLinksFromHtml(
     if (!map.has(n)) map.set(n, `${origin}${path}`);
   }
 
-  // Also absolute episode URLs without leading path capture edge cases
   const abs =
     /https?:\/\/[^"'\\\s<>]+\/(?:[a-z]{2}\/)?episodes\/episode-(\d+)-[^"'\\\s<>]+/gi;
   while ((m = abs.exec(html))) {
@@ -114,97 +150,205 @@ export function extractEpisodeLinksFromHtml(
     }));
 }
 
-/** Pull title/cover/desc (+ chapter_list when present) from Next.js __NEXT_DATA__. */
-export function extractMetaFromNextData(html: string): {
+/**
+ * DramaBox href scrape is unused for numbering (chapterList is authoritative).
+ * Kept empty on purpose so global href merge never invents Dramabox rows.
+ */
+function extractDramaboxEpisodeLinks(
+  _html: string,
+  _origin: string,
+): ExtractedPageEpisode[] {
+  return [];
+}
+
+/** Collect episode links from raw HTML (host-matched site rules). */
+export function extractEpisodeLinksFromHtml(
+  html: string,
+  pageUrl: string,
+): ExtractedPageEpisode[] {
+  let origin = '';
+  try {
+    origin = new URL(pageUrl).origin;
+  } catch {
+    return [];
+  }
+
+  if (isDramaboxHost(pageUrl)) {
+    return extractDramaboxEpisodeLinks(html, origin);
+  }
+
+  return extractReelshortEpisodeLinks(html, origin);
+}
+
+function extractReelshortFromPageData(pageData: any): {
   meta: PageMetaHints;
   episodes: ExtractedPageEpisode[];
 } {
   const meta: PageMetaHints = {};
   const episodes: ExtractedPageEpisode[] = [];
+  if (!pageData || typeof pageData !== 'object') return { meta, episodes };
+
+  const title = String(pageData.book_title || pageData.title || '').trim();
+  if (title) meta.title = title.slice(0, 80);
+  const cover = String(pageData.book_pic || pageData.video_pic || '').trim();
+  if (/^https?:\/\//i.test(cover)) meta.coverUrl = cover;
+  const desc = String(
+    pageData.book_desc || pageData.chapter_desc || pageData.desc || '',
+  ).trim();
+  if (desc) meta.description = desc.slice(0, 300);
+  if (Number(pageData.paid_start) > 0) meta.paidStart = Number(pageData.paid_start);
+  if (Number(pageData.chapter_count) > 0) {
+    meta.chapterCount = Number(pageData.chapter_count);
+  }
+
+  const genreLabels: string[] = [];
+  pushGenreLabel(genreLabels, pageData.book_type);
+  pushGenreLabel(genreLabels, pageData.bookType);
+  pushGenreLabel(genreLabels, pageData.category);
+  pushGenreLabel(genreLabels, pageData.category_name);
+  pushGenreLabel(genreLabels, pageData.categoryName);
+  pushGenreLabel(genreLabels, pageData.genre);
+  pushGenreLabel(genreLabels, pageData.genres);
+  pushGenreLabel(genreLabels, pageData.tags);
+  pushGenreLabel(genreLabels, pageData.type_name);
+  pushGenreLabel(genreLabels, pageData.typeName);
+  if (genreLabels.length) meta.genreLabels = [...new Set(genreLabels)].slice(0, 12);
+
+  const list = Array.isArray(pageData.chapter_list)
+    ? pageData.chapter_list
+    : Array.isArray(pageData.chapterList)
+      ? pageData.chapterList
+      : [];
+  for (const ch of list) {
+    if (!ch || typeof ch !== 'object') continue;
+    const n = Number(ch.serial_number ?? ch.serialNumber ?? ch.index);
+    // ReelShort serial_number is often 0-based for ep1
+    const episodeNumber =
+      Number.isFinite(n) && n >= 0
+        ? n >= 1
+          ? Math.floor(n)
+          : Math.floor(n) + 1
+        : episodes.length + 1;
+    const sourceUrl = String(
+      ch.play_url || ch.playUrl || ch.video_url || ch.videoUrl || '',
+    ).trim();
+    if (!/^https?:\/\//i.test(sourceUrl)) continue;
+    episodes.push({
+      episodeNumber,
+      title: String(ch.desc || ch.chapter_name || `EP${episodeNumber}`)
+        .trim()
+        .slice(0, 80) || `EP${episodeNumber}`,
+      sourceUrl,
+    });
+  }
+
+  return { meta, episodes };
+}
+
+/** DramaBox: pageProps.bookInfo + chapterList (only call when host matches). */
+function extractDramaboxFromPageProps(pageProps: any): {
+  meta: PageMetaHints;
+  episodes: ExtractedPageEpisode[];
+} {
+  const meta: PageMetaHints = {};
+  const episodes: ExtractedPageEpisode[] = [];
+  const bookInfo = pageProps?.bookInfo;
+  if (!bookInfo || typeof bookInfo !== 'object') return { meta, episodes };
+
+  const title = String(bookInfo.bookName || bookInfo.bookNameEn || '').trim();
+  if (title) meta.title = title.slice(0, 80);
+  const cover = String(bookInfo.cover || '').trim();
+  if (/^https?:\/\//i.test(cover)) {
+    // Strip DramaBox image transform suffix (@w=…&h=…) for a cleaner cover URL.
+    meta.coverUrl = cover.replace(/@w=\d+&h=\d+$/i, '');
+  }
+  const desc = String(bookInfo.introduction || '').trim();
+  if (desc) meta.description = desc.slice(0, 300);
+
+  const lang = String(
+    bookInfo.simpleLanguage || bookInfo.language || pageProps?.locale || '',
+  )
+    .trim()
+    .toLowerCase();
+  if (lang) meta.language = lang.startsWith('zh') ? 'zh' : lang.slice(0, 8);
+
+  if (Number(bookInfo.chapterCount) > 0) {
+    meta.chapterCount = Number(bookInfo.chapterCount);
+  }
+
+  const genreLabels: string[] = [];
+  pushGenreLabel(genreLabels, bookInfo.tags);
+  pushGenreLabel(genreLabels, bookInfo.labels);
+  pushGenreLabel(genreLabels, bookInfo.typeTwoNames);
+  pushGenreLabel(genreLabels, bookInfo.typeTwoList);
+  pushGenreLabel(genreLabels, bookInfo.typeTwoName);
+  if (genreLabels.length) meta.genreLabels = [...new Set(genreLabels)].slice(0, 12);
+
+  const list = Array.isArray(pageProps?.chapterList) ? pageProps.chapterList : [];
+  const preferEnTitle =
+    !meta.language ||
+    meta.language === 'en' ||
+    /english/i.test(String(bookInfo.language || ''));
+
+  for (const ch of list) {
+    if (!ch || typeof ch !== 'object') continue;
+    const n = Number(ch.index);
+    const episodeNumber =
+      Number.isFinite(n) && n >= 0 ? Math.floor(n) + 1 : episodes.length + 1;
+    const m3u8 = String(ch.m3u8Url || '').trim();
+    const mp4 = String(ch.mp4 || '').trim();
+    // Free/unlocked chapters expose m3u8/mp4 in SSR; locked ones omit media URIs.
+    const sourceUrl = /^https?:\/\//i.test(m3u8)
+      ? m3u8
+      : /^https?:\/\//i.test(mp4)
+        ? mp4
+        : '';
+    if (!sourceUrl) continue;
+
+    let epTitle = String(ch.name || '').trim();
+    if (!epTitle || (preferEnTitle && isLikelyCjkEpisodeTitle(epTitle))) {
+      epTitle = `EP${episodeNumber}`;
+    }
+
+    episodes.push({
+      episodeNumber,
+      title: epTitle.slice(0, 80) || `EP${episodeNumber}`,
+      sourceUrl,
+    });
+  }
+
+  return { meta, episodes };
+}
+
+/** Pull title/cover/desc (+ chapter list) from __NEXT_DATA__ using host-matched parser. */
+export function extractMetaFromNextData(
+  html: string,
+  pageUrl = '',
+): {
+  meta: PageMetaHints;
+  episodes: ExtractedPageEpisode[];
+} {
+  const empty = { meta: {} as PageMetaHints, episodes: [] as ExtractedPageEpisode[] };
   const m = html.match(
     /<script[^>]*id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i,
   );
-  if (!m?.[1]) return { meta, episodes };
+  if (!m?.[1]) return empty;
 
   let data: any;
   try {
     data = JSON.parse(m[1]);
   } catch {
-    return { meta, episodes };
+    return empty;
   }
 
-  const pageData = data?.props?.pageProps?.data;
-  if (pageData && typeof pageData === 'object') {
-    const title = String(pageData.book_title || pageData.title || '').trim();
-    if (title) meta.title = title.slice(0, 80);
-    const cover = String(pageData.book_pic || pageData.video_pic || '').trim();
-    if (/^https?:\/\//i.test(cover)) meta.coverUrl = cover;
-    const desc = String(
-      pageData.book_desc || pageData.chapter_desc || pageData.desc || '',
-    ).trim();
-    if (desc) meta.description = desc.slice(0, 300);
-    if (Number(pageData.paid_start) > 0) meta.paidStart = Number(pageData.paid_start);
-    if (Number(pageData.chapter_count) > 0) {
-      meta.chapterCount = Number(pageData.chapter_count);
-    }
+  const pageProps = data?.props?.pageProps;
 
-    const genreLabels: string[] = [];
-    const pushLabel = (v: unknown) => {
-      if (typeof v === 'string' && v.trim()) genreLabels.push(v.trim());
-      else if (Array.isArray(v)) {
-        for (const item of v) {
-          if (typeof item === 'string' && item.trim()) genreLabels.push(item.trim());
-          else if (item && typeof item === 'object') {
-            const name = String(
-              (item as any).name || (item as any).title || (item as any).label || '',
-            ).trim();
-            if (name) genreLabels.push(name);
-          }
-        }
-      }
-    };
-    pushLabel(pageData.book_type);
-    pushLabel(pageData.bookType);
-    pushLabel(pageData.category);
-    pushLabel(pageData.category_name);
-    pushLabel(pageData.categoryName);
-    pushLabel(pageData.genre);
-    pushLabel(pageData.genres);
-    pushLabel(pageData.tags);
-    pushLabel(pageData.type_name);
-    pushLabel(pageData.typeName);
-    if (genreLabels.length) meta.genreLabels = [...new Set(genreLabels)].slice(0, 12);
-
-    const list = Array.isArray(pageData.chapter_list)
-      ? pageData.chapter_list
-      : Array.isArray(pageData.chapterList)
-        ? pageData.chapterList
-        : [];
-    for (const ch of list) {
-      if (!ch || typeof ch !== 'object') continue;
-      const n = Number(ch.serial_number ?? ch.serialNumber ?? ch.index);
-      // ReelShort serial_number is often 0-based for ep1
-      const episodeNumber =
-        Number.isFinite(n) && n >= 0
-          ? n >= 1
-            ? Math.floor(n)
-            : Math.floor(n) + 1
-          : episodes.length + 1;
-      const sourceUrl = String(
-        ch.play_url || ch.playUrl || ch.video_url || ch.videoUrl || '',
-      ).trim();
-      if (!/^https?:\/\//i.test(sourceUrl)) continue;
-      episodes.push({
-        episodeNumber,
-        title: String(ch.desc || ch.chapter_name || `EP${episodeNumber}`)
-          .trim()
-          .slice(0, 80) || `EP${episodeNumber}`,
-        sourceUrl,
-      });
-    }
+  if (pageUrl && isDramaboxHost(pageUrl)) {
+    return extractDramaboxFromPageProps(pageProps);
   }
 
-  return { meta, episodes };
+  // Default / ReelShort: pageProps.data.book_title / chapter_list
+  return extractReelshortFromPageData(pageProps?.data);
 }
 
 /** Build LLM-friendly text: visible copy + hrefs + truncated __NEXT_DATA__. */
