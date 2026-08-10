@@ -405,6 +405,7 @@ export type HomeBanner = {
   id: string;
   titleEn: string;
   titleZh?: string | null;
+  titleFr?: string | null;
   imageUrl: string;
   linkUrl?: string | null;
   dramaId?: string | null;
@@ -424,6 +425,7 @@ export async function loadBanners(opts?: { signal?: AbortSignal }): Promise<Home
           id: String(b.id),
           titleEn: b.titleEn || "",
           titleZh: b.titleZh || "",
+          titleFr: b.titleFr || "",
           imageUrl: b.imageUrl || "",
           linkUrl: b.linkUrl || null,
           dramaId: b.dramaId != null ? String(b.dramaId) : null,

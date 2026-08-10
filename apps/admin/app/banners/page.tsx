@@ -40,6 +40,7 @@ type DramaLite = {
   id: string | number;
   titleZh?: string;
   titleEn?: string;
+  titleFr?: string;
   slug?: string;
   status?: string;
   coverUrl?: string | null;
@@ -48,6 +49,7 @@ type DramaLite = {
 type BannerPhase = "live" | "scheduled" | "expired" | "inactive";
 
 type BannerForm = {
+  titleEn: string;
   titleZh: string;
   imageUrl: string;
   dramaId: string;
@@ -89,7 +91,17 @@ function bannerPhase(row: Banner, now = Date.now()): BannerPhase {
 
 function dramaLabel(d: DramaLite | null | undefined, fallbackId?: string) {
   if (!d) return fallbackId || "";
-  return d.titleZh || d.titleEn || d.slug || String(d.id);
+  return d.titleZh || d.titleEn || d.titleFr || d.slug || String(d.id);
+}
+
+/** Prefer drama bilingual titles so C-end locale switching works. */
+function dramaTitles(d: DramaLite | null | undefined) {
+  const titleEn = (d?.titleEn || "").trim();
+  const titleZh = (d?.titleZh || "").trim();
+  return {
+    titleEn: titleEn || titleZh,
+    titleZh: titleZh || titleEn,
+  };
 }
 
 /** Sentinel far-future end — DB endAt stays non-null */
@@ -102,6 +114,7 @@ function isPermanentEnd(value: string | Date | null | undefined) {
 }
 
 const makeEmpty = (sortOrder = 0): BannerForm => ({
+  titleEn: "",
   titleZh: "",
   imageUrl: "",
   dramaId: "",
@@ -119,8 +132,11 @@ const makeEmpty = (sortOrder = 0): BannerForm => ({
 
 function bannerFromRow(row: Banner): BannerForm {
   const permanent = isPermanentEnd(row.endAt);
+  const titleEn = (row.titleEn || "").trim();
+  const titleZh = (row.titleZh || "").trim();
   return {
-    titleZh: row.titleZh || row.titleEn || "",
+    titleEn: titleEn || titleZh,
+    titleZh: titleZh || titleEn,
     imageUrl: row.imageUrl || "",
     dramaId: row.dramaId ? String(row.dramaId) : "",
     dramaTitle: "",
@@ -222,18 +238,25 @@ export default function AdminBannersPage() {
       try {
         const drama = (await adminGetDrama(form.dramaId)) as DramaLite;
         if (!cancelled) {
-          setForm((value) =>
-            value.dramaId === form.dramaId
-              ? {
-                  ...value,
-                  dramaTitle: dramaLabel(drama, form.dramaId),
-                  dramaSlug: drama.slug || "",
-                  dramaCoverUrl: drama.coverUrl || value.dramaCoverUrl,
-                  imageUrl: value.imageUrl || drama.coverUrl || "",
-                  titleZh: value.titleZh || dramaLabel(drama, form.dramaId),
-                }
-              : value,
-          );
+          const titles = dramaTitles(drama);
+          setForm((value) => {
+            if (value.dramaId !== form.dramaId) return value;
+            // Repair ZH-copied-into-EN (common mis-fill) by syncing from drama.
+            const sameTitle =
+              !!value.titleEn &&
+              !!value.titleZh &&
+              value.titleEn.trim() === value.titleZh.trim();
+            const needsTitleRepair = !value.titleEn || !value.titleZh || sameTitle;
+            return {
+              ...value,
+              dramaTitle: dramaLabel(drama, form.dramaId),
+              dramaSlug: drama.slug || "",
+              dramaCoverUrl: drama.coverUrl || value.dramaCoverUrl,
+              imageUrl: value.imageUrl || drama.coverUrl || "",
+              titleEn: needsTitleRepair ? titles.titleEn || value.titleEn : value.titleEn,
+              titleZh: needsTitleRepair ? titles.titleZh || value.titleZh : value.titleZh,
+            };
+          });
         }
       } catch {
         if (!cancelled) {
@@ -282,6 +305,7 @@ export default function AdminBannersPage() {
   function pickDrama(drama: DramaLite) {
     const id = String(drama.id);
     const title = dramaLabel(drama, id);
+    const titles = dramaTitles(drama);
     const cover = drama.coverUrl || "";
     setForm((value) => ({
       ...value,
@@ -289,7 +313,8 @@ export default function AdminBannersPage() {
       dramaTitle: title,
       dramaSlug: drama.slug || "",
       dramaCoverUrl: cover,
-      titleZh: title,
+      titleEn: titles.titleEn || title,
+      titleZh: titles.titleZh || title,
       imageUrl: cover || value.imageUrl,
     }));
     setDramaQ("");
@@ -310,8 +335,9 @@ export default function AdminBannersPage() {
     mutationFn: () => {
       const dramaId = form.dramaId.trim();
       if (!dramaId) throw new Error(t("bannerNeedDrama"));
+      const titleEn = form.titleEn.trim();
       const titleZh = form.titleZh.trim();
-      if (!titleZh) throw new Error(t("onlineNeedTitle"));
+      if (!titleEn && !titleZh) throw new Error(t("onlineNeedTitle"));
       if (!isValidImageUrl(form.imageUrl)) throw new Error(t("imageUrlInvalid"));
       if (!form.startAt) throw new Error(t("bannerEndAfterStart"));
       const startAt = new Date(form.startAt);
@@ -327,8 +353,8 @@ export default function AdminBannersPage() {
       }
 
       const body = {
-        titleZh,
-        titleEn: titleZh,
+        titleEn: titleEn || titleZh,
+        titleZh: titleZh || titleEn,
         imageUrl: form.imageUrl.trim(),
         linkUrl: null,
         dramaId,
@@ -637,8 +663,16 @@ export default function AdminBannersPage() {
           </div>
 
           <div className="grid gap-3 md:grid-cols-2">
-            <label className="text-caption text-ink-muted md:col-span-2">
-              {t("colTitle")}
+            <label className="text-caption text-ink-muted">
+              {t("titleEnLabel")}
+              <Input
+                className="mt-1"
+                value={form.titleEn}
+                onChange={(e) => setForm((value) => ({ ...value, titleEn: e.target.value }))}
+              />
+            </label>
+            <label className="text-caption text-ink-muted">
+              {t("titleZhLabel")}
               <Input
                 className="mt-1"
                 value={form.titleZh}

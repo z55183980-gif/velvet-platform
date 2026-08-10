@@ -31,6 +31,7 @@ function mapBanner(b: any): HomeBanner {
     id: String(b.id),
     titleEn: b.titleEn || "",
     titleZh: b.titleZh || "",
+    titleFr: b.titleFr || "",
     imageUrl: b.imageUrl || "",
     linkUrl: b.linkUrl || null,
     dramaId: b.dramaId != null ? String(b.dramaId) : null,

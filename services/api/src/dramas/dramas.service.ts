@@ -422,20 +422,45 @@ export class DramasService {
       where: { isActive: true, startAt: { lte: now }, endAt: { gte: now } },
       orderBy: { sortOrder: 'asc' },
     });
-    return rows.map((b) => ({
-      id: b.id.toString(),
-      titleEn: b.titleEn,
-      titleZh: b.titleZh,
-      imageUrl: b.imageUrl,
-      linkUrl: b.linkUrl,
-      dramaId: b.dramaId != null ? b.dramaId.toString() : null,
-      focusX: b.focusX,
-      focusY: b.focusY,
-      focusZoom: b.focusZoom,
-      sortOrder: b.sortOrder,
-      startAt: b.startAt,
-      endAt: b.endAt,
-    }));
+    const dramaIds = [
+      ...new Set(
+        rows
+          .map((b) => b.dramaId)
+          .filter((id): id is bigint => id != null),
+      ),
+    ];
+    const dramas =
+      dramaIds.length > 0
+        ? await this.prisma.drama.findMany({
+            where: { id: { in: dramaIds } },
+            select: { id: true, titleEn: true, titleZh: true, titleFr: true },
+          })
+        : [];
+    const dramaMap = new Map(dramas.map((d) => [d.id.toString(), d]));
+
+    return rows.map((b) => {
+      const drama = b.dramaId != null ? dramaMap.get(b.dramaId.toString()) : undefined;
+      // Prefer linked drama titles so C-end locale switching works even when
+      // banner.titleEn was mistakenly saved as Chinese (or left identical to titleZh).
+      const titleEn = (drama?.titleEn || b.titleEn || '').trim();
+      const titleZh = (drama?.titleZh || b.titleZh || titleEn || '').trim();
+      const titleFr = (drama?.titleFr || '').trim() || null;
+      return {
+        id: b.id.toString(),
+        titleEn: titleEn || titleZh,
+        titleZh: titleZh || titleEn,
+        titleFr,
+        imageUrl: b.imageUrl,
+        linkUrl: b.linkUrl,
+        dramaId: b.dramaId != null ? b.dramaId.toString() : null,
+        focusX: b.focusX,
+        focusY: b.focusY,
+        focusZoom: b.focusZoom,
+        sortOrder: b.sortOrder,
+        startAt: b.startAt,
+        endAt: b.endAt,
+      };
+    });
   }
 
   async incView(dramaId: string) {

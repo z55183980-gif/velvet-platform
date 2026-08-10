@@ -26,6 +26,7 @@ function bannerToSlide(banner: HomeBanner): HeroSlide {
     id: `banner-${banner.id}`,
     titleEn: banner.titleEn,
     titleZh: banner.titleZh || banner.titleEn,
+    titleFr: banner.titleFr || undefined,
     cover: [cover, cover],
     href,
     tags: [],
