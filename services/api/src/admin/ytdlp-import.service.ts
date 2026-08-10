@@ -89,6 +89,8 @@ export type YtdlpTransferJobEntry = {
   filename: string;
   size: number;
   webpageUrl?: string;
+  /** Actual download target — required for correct resume / dedup. */
+  downloadUrl?: string;
   sourceIndex?: number;
 };
 
@@ -137,6 +139,10 @@ type TransferPayload = {
     playlistIndex?: number;
     durationSec?: number | null;
   }>;
+  /** When true, episodeNumber follows selected.index (gaps allowed). */
+  useSourceIndexAsEpisodeNumber?: boolean;
+  /** Parent transfer job id when this is a resume / gap-fill run. */
+  resumeOf?: string;
 };
 
 type DbTransferRow = {
@@ -1171,6 +1177,7 @@ export class YtdlpImportService implements OnModuleInit {
       watermarkY: opts.watermarkY,
       watermarkScale: opts.watermarkScale,
       selected,
+      useSourceIndexAsEpisodeNumber: true,
     };
 
     const row = await this.prisma.ytdlpTransferJob.create({
@@ -1278,6 +1285,186 @@ export class YtdlpImportService implements OnModuleInit {
     }
   }
 
+  /**
+   * Gap-fill a COMPLETED/FAILED transfer: optionally realign drama episodeNumbers
+   * to selected.sourceIndex, then queue a new job for missing download targets.
+   */
+  async resumeTransferJob(
+    jobId: string,
+    opts?: { realignEpisodeNumbers?: boolean },
+    actorId?: bigint,
+  ) {
+    const row = await this.prisma.ytdlpTransferJob.findUnique({
+      where: { id: String(jobId || '').trim() },
+    });
+    if (!row) throw new BizException(BizCode.NOT_FOUND, '转存任务不存在');
+    if (row.status === 'QUEUED' || row.status === 'RUNNING') {
+      throw new BizException(BizCode.CONFLICT, '转存任务仍在进行中，请稍后再试');
+    }
+
+    const payload = row.payload as TransferPayload;
+    if (!payload?.selected?.length) {
+      throw new BizException(BizCode.BAD_REQUEST, '转存任务缺少分集载荷，无法续跑');
+    }
+
+    const existingJobs = this.parseJobs(row.jobs);
+    const done = this.transferDoneKeys(existingJobs);
+    const missing = payload.selected.filter((ep) => {
+      const downloadUrl =
+        (ep as { downloadUrl?: string }).downloadUrl ||
+        ep.sourceUrl ||
+        ep.webpageUrl;
+      return !this.isTransferItemDone(done, ep.index, downloadUrl);
+    });
+
+    if (!missing.length) {
+      const total = await this.prisma.episode.count({
+        where: { dramaId: row.dramaId },
+      });
+      await this.prisma.drama
+        .update({
+          where: { id: row.dramaId },
+          data: { totalEpisodes: total },
+        })
+        .catch(() => undefined);
+      return {
+        resumed: false as const,
+        reason: 'already_complete' as const,
+        dramaId: row.dramaId.toString(),
+        slug: row.slug,
+        missing: 0,
+        totalEpisodes: total,
+        parentJobId: row.id,
+      };
+    }
+
+    if (opts?.realignEpisodeNumbers !== false) {
+      await this.realignTransferEpisodeNumbers(row, existingJobs);
+    }
+
+    const preferR2 = row.preferR2;
+    const target = row.target === 'r2' ? 'r2' : 'local';
+    const newJobId = randomUUID();
+    const nextPayload: TransferPayload = {
+      ...payload,
+      actorId: actorId != null ? String(actorId) : payload.actorId,
+      selected: missing,
+      useSourceIndexAsEpisodeNumber: true,
+      resumeOf: row.id,
+    };
+
+    const created = await this.prisma.ytdlpTransferJob.create({
+      data: {
+        id: newJobId,
+        dramaId: row.dramaId,
+        slug: row.slug,
+        status: 'QUEUED',
+        target,
+        preferR2,
+        total: missing.length,
+        transferred: 0,
+        currentEpisode: null,
+        failedEpisodes: [],
+        jobs: [],
+        payload: nextPayload as any,
+        extractor: row.extractor,
+        kind: row.kind,
+        externalRef: row.externalRef,
+        sourceType: row.sourceType,
+      },
+    });
+
+    void this.runTransferJob(newJobId);
+    await this.pruneTransferJobs();
+
+    return {
+      resumed: true as const,
+      jobId: created.id,
+      parentJobId: row.id,
+      dramaId: row.dramaId.toString(),
+      slug: row.slug,
+      missing: missing.length,
+      missingIndexes: missing.map((m) => m.index),
+      target,
+      preferR2,
+      jobStatus: 'queued' as const,
+      async: true as const,
+    };
+  }
+
+  /** Move existing transferred episodes so episodeNumber === sourceIndex. */
+  private async realignTransferEpisodeNumbers(
+    row: { id: string; dramaId: bigint },
+    jobs: YtdlpTransferJobEntry[],
+  ) {
+    const withIndex = jobs.filter(
+      (j) => j.episodeId && j.sourceIndex != null && Number(j.sourceIndex) > 0,
+    );
+    if (!withIndex.length) return;
+
+    // Two-pass to satisfy @@unique([dramaId, episodeNumber]).
+    for (const j of withIndex) {
+      const sourceIndex = Number(j.sourceIndex);
+      await this.prisma.episode.update({
+        where: { id: BigInt(j.episodeId) },
+        data: { episodeNumber: 1_000_000 + sourceIndex },
+      });
+    }
+    for (const j of withIndex) {
+      const sourceIndex = Number(j.sourceIndex);
+      await this.prisma.episode.update({
+        where: { id: BigInt(j.episodeId) },
+        data: {
+          episodeNumber: sourceIndex,
+          title: `第 ${sourceIndex} 集`,
+        },
+      });
+    }
+
+    const realigned = jobs.map((j) =>
+      j.sourceIndex != null && Number(j.sourceIndex) > 0
+        ? { ...j, episodeNumber: Number(j.sourceIndex) }
+        : j,
+    );
+    await this.prisma.ytdlpTransferJob.update({
+      where: { id: row.id },
+      data: { jobs: realigned as any },
+    });
+
+    const total = await this.prisma.episode.count({ where: { dramaId: row.dramaId } });
+    await this.prisma.drama
+      .update({
+        where: { id: row.dramaId },
+        data: { totalEpisodes: total },
+      })
+      .catch(() => undefined);
+
+    this.logger.log(
+      `realigned ${withIndex.length} episode number(s) for drama=${row.dramaId} from transfer ${row.id}`,
+    );
+  }
+
+  private transferDoneKeys(jobs: YtdlpTransferJobEntry[]) {
+    const keys = new Set<string>();
+    for (const j of jobs) {
+      if (j.downloadUrl) keys.add(`dl:${j.downloadUrl}`);
+      if (j.sourceIndex != null && Number(j.sourceIndex) > 0) {
+        keys.add(`idx:${Number(j.sourceIndex)}`);
+      }
+    }
+    return keys;
+  }
+
+  private isTransferItemDone(
+    done: Set<string>,
+    sourceIndex: number,
+    downloadUrl: string,
+  ) {
+    if (downloadUrl && done.has(`dl:${downloadUrl}`)) return true;
+    if (sourceIndex > 0 && done.has(`idx:${sourceIndex}`)) return true;
+    return false;
+  }
+
   private async runTransferJob(jobId: string) {
     if (this.activeRuns.has(jobId)) return;
     this.activeRuns.add(jobId);
@@ -1314,16 +1501,18 @@ export class YtdlpImportService implements OnModuleInit {
       const actorId = payload.actorId != null ? BigInt(payload.actorId) : undefined;
       let jobs = this.parseJobs(row.jobs);
       let failedEpisodes = this.parseFailures(row.failedEpisodes);
-      const doneUrls = new Set(
-        jobs.map((j) => j.webpageUrl).filter((u): u is string => !!u),
-      );
+      // Dedup by downloadUrl + sourceIndex only — never by webpageUrl alone.
+      // Dramabox-style lists often share one episode page URL across many m3u8s.
+      const done = this.transferDoneKeys(jobs);
+      const useSourceIndex =
+        payload.useSourceIndexAsEpisodeNumber !== false || !!payload.resumeOf;
 
       for (const ep of payload.selected) {
         const downloadUrl =
           (ep as { downloadUrl?: string }).downloadUrl ||
           ep.sourceUrl ||
           ep.webpageUrl;
-        if (doneUrls.has(ep.webpageUrl) || doneUrls.has(downloadUrl)) continue;
+        if (this.isTransferItemDone(done, ep.index, downloadUrl)) continue;
 
         await this.prisma.ytdlpTransferJob.update({
           where: { id: jobId },
@@ -1331,6 +1520,24 @@ export class YtdlpImportService implements OnModuleInit {
         });
 
         try {
+          const episodeNumber = useSourceIndex ? ep.index : jobs.length + 1;
+
+          const occupied = await this.prisma.episode.findUnique({
+            where: {
+              dramaId_episodeNumber: {
+                dramaId: BigInt(payload.dramaId),
+                episodeNumber,
+              },
+            },
+            select: { id: true },
+          });
+          if (occupied) {
+            // Already present (e.g. after realign) — treat as done, skip download.
+            done.add(`idx:${ep.index}`);
+            if (downloadUrl) done.add(`dl:${downloadUrl}`);
+            continue;
+          }
+
           const downloaded = await this.provider.downloadToFile(
             downloadUrl,
             uploadDir,
@@ -1349,8 +1556,6 @@ export class YtdlpImportService implements OnModuleInit {
             }
           }
 
-          // Consecutive episode numbers for successful transfers only.
-          const episodeNumber = jobs.length + 1;
           const created = await this.episodes.create(
             payload.dramaId,
             {
@@ -1404,11 +1609,12 @@ export class YtdlpImportService implements OnModuleInit {
             filename: path.basename(absInUploads),
             size: downloaded.size,
             webpageUrl: ep.webpageUrl,
+            downloadUrl,
             sourceIndex: ep.index,
           };
           jobs = [...jobs, entry];
-          doneUrls.add(ep.webpageUrl);
-          doneUrls.add(downloadUrl);
+          done.add(`idx:${ep.index}`);
+          if (downloadUrl) done.add(`dl:${downloadUrl}`);
           failedEpisodes = failedEpisodes.filter(
             (f) => f.url !== ep.webpageUrl && f.url !== downloadUrl,
           );
@@ -1444,7 +1650,7 @@ export class YtdlpImportService implements OnModuleInit {
         }
       }
 
-      if (!jobs.length) {
+      if (!jobs.length && !payload.resumeOf) {
         await this.prisma.drama.delete({ where: { id: BigInt(payload.dramaId) } }).catch(() => undefined);
         await this.prisma.ytdlpTransferJob.update({
           where: { id: jobId },
@@ -1461,10 +1667,29 @@ export class YtdlpImportService implements OnModuleInit {
         return;
       }
 
+      if (!jobs.length && payload.resumeOf) {
+        await this.prisma.ytdlpTransferJob.update({
+          where: { id: jobId },
+          data: {
+            status: 'FAILED',
+            error: `续跑分集全部失败（${failedEpisodes.length}）`,
+            currentEpisode: null,
+            finishedAt: new Date(),
+            failedEpisodes: failedEpisodes as any,
+            transferred: 0,
+            jobs: [] as any,
+          },
+        });
+        return;
+      }
+
+      const totalEpisodes = await this.prisma.episode.count({
+        where: { dramaId: BigInt(payload.dramaId) },
+      });
       await this.prisma.drama
         .update({
           where: { id: BigInt(payload.dramaId) },
-          data: { totalEpisodes: jobs.length },
+          data: { totalEpisodes },
         })
         .catch(() => undefined);
 

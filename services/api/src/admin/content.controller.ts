@@ -1116,6 +1116,28 @@ export class ContentController {
     return ok(await this.ytdlp.getTransferJob(jobId));
   }
 
+  /**
+   * Resume a COMPLETED/FAILED transfer: realign episode numbers to sourceIndex
+   * (optional) and start a gap-fill job for selected items that never landed.
+   */
+  @Post('ytdlp/transfer/:jobId/resume')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async ytdlpTransferResume(
+    @Param('jobId') jobId: string,
+    @Body() body: { realignEpisodeNumbers?: boolean },
+    @Req() req: any,
+  ) {
+    return ok(
+      await this.ytdlp.resumeTransferJob(
+        jobId,
+        {
+          realignEpisodeNumbers: body?.realignEpisodeNumbers !== false,
+        },
+        getActor(req),
+      ),
+    );
+  }
+
   @Post('dramas/:id/ytdlp/append')
   @AdminRoles('SUPER_ADMIN', 'OPS')
   async ytdlpAppend(

@@ -1985,6 +1985,7 @@ export type YtdlpTransferJob = {
     filename: string;
     size: number;
     webpageUrl?: string;
+    downloadUrl?: string;
     sourceIndex?: number;
   }>;
   previewUrl?: string;
@@ -2063,6 +2064,31 @@ export async function adminYtdlpTransferJob(jobId: string) {
   return adminRequest<YtdlpTransferJob>(
     `/admin/ytdlp/transfer/${encodeURIComponent(jobId)}`,
   );
+}
+
+/** Gap-fill a completed/failed transfer (realign sourceIndex + download missing). */
+export async function adminYtdlpTransferResume(
+  jobId: string,
+  body?: { realignEpisodeNumbers?: boolean },
+) {
+  return adminRequest<{
+    resumed: boolean;
+    reason?: "already_complete";
+    jobId?: string;
+    parentJobId: string;
+    dramaId: string;
+    slug: string;
+    missing: number;
+    missingIndexes?: number[];
+    totalEpisodes?: number;
+    target?: "local" | "r2";
+    preferR2?: boolean;
+    jobStatus?: "queued";
+    async?: true;
+  }>(`/admin/ytdlp/transfer/${encodeURIComponent(jobId)}/resume`, {
+    method: "POST",
+    body: JSON.stringify(body ?? { realignEpisodeNumbers: true }),
+  });
 }
 
 export async function adminSettleT7(days = 0) {

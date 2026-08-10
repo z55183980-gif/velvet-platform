@@ -643,12 +643,33 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
 
               if (remote.status === "completed") {
                 finished = true;
+                // Server finished — leftover pending rows were skipped (e.g. bad
+                // webpageUrl dedup), not still running. Mark them so the panel
+                // does not stick on「转存进行中」forever at N/M.
+                const finalized = episodes.map((ep) =>
+                  ep.status === "pending" || ep.status === "uploading"
+                    ? {
+                        ...ep,
+                        status: "error" as const,
+                        error: ep.error || "未转存（服务端已结束）",
+                      }
+                    : ep,
+                );
+                const allOk = finalized.every(
+                  (ep) => ep.status === "done" || ep.status === "cancelled",
+                );
                 return {
                   ...j,
                   dramaId: remote.dramaId || j.dramaId,
-                  status: summarizeJobStatus(episodes),
-                  episodes,
-                  error: undefined,
+                  status: allOk
+                    ? "completed"
+                    : finalized.some((ep) => ep.status === "done")
+                      ? "failed"
+                      : "failed",
+                  episodes: finalized,
+                  error: allOk
+                    ? undefined
+                    : `部分分集未转入（成功 ${(remote.jobs || []).length}/${remote.total}）`,
                 };
               }
               if (remote.status === "failed") {
