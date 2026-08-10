@@ -25,6 +25,7 @@ import {
   extractEpisodeLinksFromHtml,
   extractMetaFromNextData,
   isDramaboxHost,
+  isNetshortHost,
   type ExtractedPageEpisode,
 } from './online-page-extract.util';
 import {
@@ -225,6 +226,7 @@ export class YtdlpImportService implements OnModuleInit {
     const candidates = expandDramaPageCandidates(pageUrl);
     const allowedCategories = await this.listCategorySlugs();
     const dramabox = isDramaboxHost(pageUrl);
+    const netshort = isNetshortHost(pageUrl);
 
     const episodeMap = new Map<number, ExtractedPageEpisode>();
     let bestMeta: {
@@ -338,8 +340,8 @@ export class YtdlpImportService implements OnModuleInit {
           pageUrl: bestHtmlUrl,
           pageText,
           allowedCategorySlugs: allowedCategories,
-          // DramaBox: keep synopsis language aligned with the page (usually EN).
-          ...(dramabox
+          // DramaBox / NetShort EN pages: keep synopsis language aligned with the page.
+          ...(dramabox || netshort
             ? { preferDescriptionLanguage: bestMeta.language || 'en' }
             : {}),
         });
@@ -351,11 +353,16 @@ export class YtdlpImportService implements OnModuleInit {
           coverUrl = extracted.coverUrl;
         }
         const llmDesc =
-          (dramabox
+          (dramabox || netshort
             ? extracted.descriptionEn || extracted.descriptionZh
             : extracted.descriptionZh || extracted.descriptionEn) || '';
         if (llmDesc) {
-          if (dramabox && descriptionZh && /[\u4e00-\u9fff]/.test(llmDesc) && !/[\u4e00-\u9fff]/.test(descriptionZh)) {
+          if (
+            (dramabox || netshort) &&
+            descriptionZh &&
+            /[\u4e00-\u9fff]/.test(llmDesc) &&
+            !/[\u4e00-\u9fff]/.test(descriptionZh)
+          ) {
             // Keep English page synopsis; ignore invented Chinese from LLM.
           } else {
             descriptionZh = llmDesc || descriptionZh;
@@ -402,6 +409,12 @@ export class YtdlpImportService implements OnModuleInit {
           (withMedia < episodes.length
             ? ` (${withMedia} with direct media, rest chapter pages)`
             : '');
+      } else if (netshort) {
+        notes =
+          `NetShort deterministic extract from ${fetchedOk} page(s); skipped LLM. ` +
+          `${episodes.length} episode page URL(s) for yt-dlp` +
+          (bestMeta.chapterCount ? ` (catalog ${bestMeta.chapterCount})` : '') +
+          '.';
       } else {
         notes = `Deterministic extract from ${fetchedOk} page(s); skipped LLM.`;
       }
@@ -420,7 +433,7 @@ export class YtdlpImportService implements OnModuleInit {
         if (resolved.via === 'llm' && resolved.model) {
           model = model || resolved.model;
         }
-        if (resolved.note && !dramabox) {
+        if (resolved.note && !dramabox && !netshort) {
           notes = notes ? `${notes} ${resolved.note}` : resolved.note;
         }
       }
@@ -499,7 +512,9 @@ export class YtdlpImportService implements OnModuleInit {
 
     this.logger.log(
       `aiExtract ${pageUrl} → ${episodes.length} eps via ${probe.extractor}` +
-        ` tags=${(tags || []).join(',') || '-'} host=${dramabox ? 'dramabox' : 'default'} (fetched=${fetchedOk})`,
+        ` tags=${(tags || []).join(',') || '-'} host=${
+          dramabox ? 'dramabox' : netshort ? 'netshort' : 'default'
+        } (fetched=${fetchedOk})`,
     );
     return probe;
   }

@@ -1,6 +1,6 @@
 /**
  * Deterministic helpers for Path B page extract.
- * Site rules are host-matched — do not apply DramaBox logic to ReelShort (or vice versa).
+ * Site rules are host-matched — do not cross-apply ReelShort / DramaBox / NetShort logic.
  */
 
 export type ExtractedPageEpisode = {
@@ -37,6 +37,19 @@ export function isDramaboxHost(pageUrl: string): boolean {
   }
 }
 
+export function isNetshortHost(pageUrl: string): boolean {
+  try {
+    const host = new URL(pageUrl).hostname.toLowerCase();
+    return (
+      host === 'netshort.com' ||
+      host === 'www.netshort.com' ||
+      host.endsWith('.netshort.com')
+    );
+  } catch {
+    return false;
+  }
+}
+
 function pushGenreLabel(out: string[], v: unknown) {
   if (typeof v === 'string' && v.trim()) out.push(v.trim());
   else if (Array.isArray(v)) {
@@ -49,6 +62,11 @@ function pushGenreLabel(out: string[], v: unknown) {
         if (name) out.push(name);
       }
     }
+  } else if (v && typeof v === 'object') {
+    // NetShort shortPlayLabels: { "Revenge": "/drama/...", ... }
+    for (const key of Object.keys(v as object)) {
+      if (key.trim()) out.push(key.trim());
+    }
   }
 }
 
@@ -56,6 +74,15 @@ function isLikelyCjkEpisodeTitle(title: string): boolean {
   return /第\s*\d+\s*[集话話]|第[一二三四五六七八九十百千零〇两兩]+[集话話]/.test(
     title,
   );
+}
+
+/** NetShort series key: strip locale prefix and optional -ep-N suffix. */
+function netshortSeriesKeyFromPath(pathname: string): string | null {
+  const cleaned = pathname.replace(/\/+$/, '');
+  const m = cleaned.match(
+    /^\/(?:[a-z]{2}\/)?(?:episode|full-episodes)\/(.+?)(?:-ep-\d+)?$/i,
+  );
+  return m?.[1] ? m[1] : null;
 }
 
 /** Expand episode/trailer URLs to listing pages (host-aware). */
@@ -82,6 +109,16 @@ export function expandDramaPageCandidates(pageUrl: string): string[] {
 
   // DramaBox: a single /episode/{bookId}/{chapterId} page embeds full chapterList — no rewrite.
   if (isDramaboxHost(pageUrl)) {
+    return out;
+  }
+
+  // NetShort (ReelShort-style): episode ↔ full-episodes for the same series key.
+  if (isNetshortHost(pageUrl)) {
+    const key = netshortSeriesKeyFromPath(path);
+    if (key) {
+      push(`${origin}/episode/${key}`);
+      push(`${origin}/full-episodes/${key}`);
+    }
     return out;
   }
 
@@ -161,6 +198,54 @@ function extractDramaboxEpisodeLinks(
   return [];
 }
 
+/**
+ * NetShort: /episode/{slug}-{id} (=EP1) and /episode/{slug}-{id}-ep-N (ReelShort-style page URLs).
+ * Prefer same-series key when pageUrl is known.
+ */
+function extractNetshortEpisodeLinks(
+  html: string,
+  origin: string,
+  pageUrl = '',
+): ExtractedPageEpisode[] {
+  let seriesKey: string | null = null;
+  try {
+    seriesKey = netshortSeriesKeyFromPath(new URL(pageUrl || origin).pathname);
+  } catch {
+    seriesKey = null;
+  }
+  // Also try recovering key from any full-episodes / episode href in HTML.
+  if (!seriesKey) {
+    const km = html.match(
+      /\/(?:[a-z]{2}\/)?(?:episode|full-episodes)\/([a-z0-9][^"'\\\s<>]*?\d{10,})(?:-ep-\d+)?/i,
+    );
+    if (km?.[1]) seriesKey = km[1].replace(/-ep-\d+$/i, '');
+  }
+
+  const map = new Map<number, string>();
+  const re =
+    /(?:https?:\/\/[^"'\\\s<>]+)?(\/(?:[a-z]{2}\/)?episode\/([^"'\\\s<>]+?))(?:-ep-(\d+))?\/?(?=["'\s?#<>]|$)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    const slugPart = String(m[2] || '')
+      .replace(/&amp;/g, '&')
+      .split(/[?#]/)[0]
+      .replace(/-ep-\d+$/i, '');
+    if (seriesKey && slugPart !== seriesKey) continue;
+    const n = m[3] ? Number(m[3]) : 1;
+    if (!Number.isFinite(n) || n < 1) continue;
+    const path = `/episode/${slugPart}${n > 1 ? `-ep-${n}` : ''}`;
+    if (!map.has(n)) map.set(n, `${origin}${path}`);
+  }
+
+  return [...map.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([episodeNumber, sourceUrl]) => ({
+      episodeNumber,
+      title: `EP${episodeNumber}`,
+      sourceUrl,
+    }));
+}
+
 /** Collect episode links from raw HTML (host-matched site rules). */
 export function extractEpisodeLinksFromHtml(
   html: string,
@@ -176,8 +261,159 @@ export function extractEpisodeLinksFromHtml(
   if (isDramaboxHost(pageUrl)) {
     return extractDramaboxEpisodeLinks(html, origin);
   }
+  if (isNetshortHost(pageUrl)) {
+    return extractNetshortEpisodeLinks(html, origin, pageUrl);
+  }
 
   return extractReelshortEpisodeLinks(html, origin);
+}
+
+function extractObjectAfterKey(html: string, key: string): any | null {
+  // RSC payloads often escape quotes as \\" — normalize first.
+  const unescaped = html.replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+  const marker = `"${key}":{`;
+  const start = unescaped.indexOf(marker);
+  if (start < 0) return null;
+  const objStart = unescaped.indexOf('{', start);
+  if (objStart < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = objStart; i < unescaped.length; i++) {
+    const ch = unescaped[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        try {
+          return JSON.parse(unescaped.slice(objStart, i + 1));
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function metaFromOgTags(html: string): PageMetaHints {
+  const meta: PageMetaHints = {};
+  const pick = (prop: string) => {
+    const re = new RegExp(
+      `(?:property|name)=["']${prop}["'][^>]*content=["']([^"']+)["']|content=["']([^"']+)["'][^>]*(?:property|name)=["']${prop}["']`,
+      'i',
+    );
+    const m = html.match(re);
+    return (m?.[1] || m?.[2] || '').trim();
+  };
+  const title = pick('og:title').replace(/\s*[|\-–].*$/, '').trim();
+  if (title) meta.title = title.slice(0, 80);
+  const desc = pick('og:description') || pick('description');
+  if (desc) {
+    meta.description = desc
+      .replace(/&#x27;/g, "'")
+      .replace(/&quot;/g, '"')
+      .replace(/&amp;/g, '&')
+      .slice(0, 300);
+  }
+  const cover = pick('og:image');
+  if (/^https?:\/\//i.test(cover)) meta.coverUrl = cover;
+  const keywords = pick('keywords');
+  if (keywords) {
+    const labels = keywords
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+    if (labels.length) meta.genreLabels = [...new Set(labels)].slice(0, 12);
+  }
+  return meta;
+}
+
+/**
+ * NetShort: parse shortPlayDetailVo from Next.js RSC HTML (no classic __NEXT_DATA__).
+ * Emit episode *page* URLs (ReelShort-style) for yt-dlp resolve — not CDN direct media.
+ */
+function extractNetshortFromHtml(
+  html: string,
+  pageUrl: string,
+): {
+  meta: PageMetaHints;
+  episodes: ExtractedPageEpisode[];
+} {
+  const meta: PageMetaHints = { ...metaFromOgTags(html) };
+  const episodes: ExtractedPageEpisode[] = [];
+  let origin = '';
+  try {
+    origin = new URL(pageUrl).origin;
+  } catch {
+    return { meta, episodes };
+  }
+
+  const vo = extractObjectAfterKey(html, 'shortPlayDetailVo');
+  if (vo && typeof vo === 'object') {
+    const title = String(vo.shortPlayName || '').trim();
+    if (title) meta.title = title.slice(0, 80);
+    const cover = String(vo.shortPlayCover || '').trim();
+    if (/^https?:\/\//i.test(cover)) meta.coverUrl = cover;
+    const desc = String(vo.shotIntroduce || '').trim();
+    if (desc) meta.description = desc.slice(0, 300);
+    meta.language = 'en';
+
+    const genreLabels: string[] = [];
+    pushGenreLabel(genreLabels, vo.shortPlayLabels);
+    if (genreLabels.length) meta.genreLabels = [...new Set(genreLabels)].slice(0, 12);
+    else if (meta.genreLabels?.length) {
+      // Fallback: og keywords, drop title-like first token when it matches the series name.
+      meta.genreLabels = meta.genreLabels
+        .filter((t) => t.toLowerCase() !== title.toLowerCase())
+        .slice(0, 12);
+    }
+
+    const basePath =
+      String(vo.shortPlayUrl || '').trim() ||
+      (() => {
+        const key = netshortSeriesKeyFromPath(new URL(pageUrl).pathname);
+        return key ? `/episode/${key}` : '';
+      })();
+    const list = Array.isArray(vo.videoEpisodeInfos) ? vo.videoEpisodeInfos : [];
+    if (list.length) meta.chapterCount = list.length;
+
+    for (const ch of list) {
+      if (!ch || typeof ch !== 'object') continue;
+      const episodeNumber = Number(ch.episodeNo);
+      if (!Number.isFinite(episodeNumber) || episodeNumber < 1) continue;
+      if (!basePath) continue;
+      const path =
+        episodeNumber === 1 ? basePath : `${basePath}-ep-${episodeNumber}`;
+      episodes.push({
+        episodeNumber,
+        title: `EP${episodeNumber}`,
+        sourceUrl: `${origin}${path.startsWith('/') ? path : `/${path}`}`,
+      });
+    }
+  }
+
+  // Href fallback when RSC blob missing / incomplete — still page URLs.
+  if (episodes.length < 2) {
+    for (const ep of extractNetshortEpisodeLinks(html, origin, pageUrl)) {
+      if (!episodes.some((e) => e.episodeNumber === ep.episodeNumber)) {
+        episodes.push(ep);
+      }
+    }
+    episodes.sort((a, b) => a.episodeNumber - b.episodeNumber);
+  }
+
+  return { meta, episodes };
 }
 
 function extractReelshortFromPageData(pageData: any): {
@@ -338,7 +574,7 @@ function extractDramaboxFromPageProps(
   return { meta, episodes };
 }
 
-/** Pull title/cover/desc (+ chapter list) from __NEXT_DATA__ using host-matched parser. */
+/** Pull title/cover/desc (+ episode list) using host-matched parsers. */
 export function extractMetaFromNextData(
   html: string,
   pageUrl = '',
@@ -347,6 +583,12 @@ export function extractMetaFromNextData(
   episodes: ExtractedPageEpisode[];
 } {
   const empty = { meta: {} as PageMetaHints, episodes: [] as ExtractedPageEpisode[] };
+
+  // NetShort has no classic __NEXT_DATA__; parse RSC + og tags instead.
+  if (pageUrl && isNetshortHost(pageUrl)) {
+    return extractNetshortFromHtml(html, pageUrl);
+  }
+
   const m = html.match(
     /<script[^>]*id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i,
   );
@@ -369,7 +611,7 @@ export function extractMetaFromNextData(
   return extractReelshortFromPageData(pageProps?.data);
 }
 
-/** Build LLM-friendly text: visible copy + hrefs + truncated __NEXT_DATA__. */
+/** Build LLM-friendly text: visible copy + hrefs + truncated page JSON. */
 export function buildExtractContext(html: string, pageUrl: string): string {
   const stripped = html
     .replace(/<script[\s\S]*?<\/script>/gi, ' ')
@@ -388,7 +630,11 @@ export function buildExtractContext(html: string, pageUrl: string): string {
   const next = html.match(
     /<script[^>]*id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i,
   );
-  const nextSnippet = next?.[1] ? next[1].slice(0, 40_000) : '';
+  let jsonSnippet = next?.[1] ? next[1].slice(0, 40_000) : '';
+  if (!jsonSnippet && isNetshortHost(pageUrl)) {
+    const vo = extractObjectAfterKey(html, 'shortPlayDetailVo');
+    if (vo) jsonSnippet = JSON.stringify(vo).slice(0, 40_000);
+  }
 
   return [
     `Page URL: ${pageUrl}`,
@@ -398,7 +644,9 @@ export function buildExtractContext(html: string, pageUrl: string): string {
     '',
     links ? `Episode hrefs found in HTML:\n${links}` : 'Episode hrefs found in HTML: (none)',
     '',
-    nextSnippet ? `__NEXT_DATA__ JSON (truncated):\n${nextSnippet}` : '',
+    jsonSnippet
+      ? `${next?.[1] ? '__NEXT_DATA__' : 'shortPlayDetailVo'} JSON (truncated):\n${jsonSnippet}`
+      : '',
   ]
     .join('\n')
     .slice(0, 80_000);
