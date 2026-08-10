@@ -1,5 +1,6 @@
 import { mapDrama } from "./api";
 import type { Category, Drama } from "./mock-data";
+import { resolveCategorySlug } from "./mock-data";
 import { serverApiGet } from "./ssr-api";
 
 /** Theater grid page size (API max 50). */
@@ -49,7 +50,7 @@ export async function loadTheaterInitial(searchParams: {
   q?: string | string[];
 }): Promise<TheaterInitial | null> {
   try {
-    const cat = one(searchParams.cat);
+    const cat = resolveCategorySlug(one(searchParams.cat));
     const sort = parseSort(searchParams.sort);
     const q = one(searchParams.q);
 

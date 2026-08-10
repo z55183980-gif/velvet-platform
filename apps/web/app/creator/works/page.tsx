@@ -15,7 +15,7 @@ export default function CreatorWorksPage() {
   const [dramas, setDramas] = useState<any[]>([]);
   const [titleEn, setTitleEn] = useState("");
   const [titleZh, setTitleZh] = useState("");
-  const [categorySlug, setCategorySlug] = useState("ngon_tinh");
+  const [categorySlug, setCategorySlug] = useState("romance");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 

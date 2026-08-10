@@ -214,7 +214,7 @@ model Session {
 ```prisma
 // ========== 分类（主数据，F9：slug + 双语名）==========
 model Category {
-  slug        String   @id                            // 'do_thi' | 'ngon_tinh' | ...
+  slug        String   @id                            // 'urban' | 'romance' | ...
   nameEn      String
   nameZh      String
   sortOrder   Int      @default(0)

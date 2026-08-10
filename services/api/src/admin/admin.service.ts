@@ -1208,7 +1208,9 @@ export class AdminService {
   ) {
     const cat = await this.prisma.category.create({
       data: {
-        slug: dto.slug,
+        slug: String(dto.slug || '')
+          .trim()
+          .toLowerCase(),
         nameEn: dto.nameEn.trim(),
         nameZh: dto.nameZh?.trim() || null,
         nameFr: dto.nameFr?.trim() || null,

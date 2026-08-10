@@ -9,19 +9,32 @@ export type CategoryInferHit = {
   source: 'page' | 'heuristic';
 };
 
-/** Default catalog slugs — used when DB list is empty or for tests. */
+/**
+ * Default catalog slugs — English snake_case.
+ * Used when DB list is empty or for tests.
+ */
 export const DEFAULT_CATEGORY_SLUGS = [
-  'do_thi',
-  'ngon_tinh',
-  'hanh_dong',
-  'hai_huoc',
-  'tam_ly',
-  'co_trang',
+  'urban',
+  'romance',
+  'action',
+  'comedy',
+  'psychological',
+  'costume',
 ] as const;
+
+/** Legacy Vietnamese romanization → current English slug (bookmarks / old imports). */
+export const LEGACY_CATEGORY_SLUG_ALIASES: Record<string, string> = {
+  do_thi: 'urban',
+  ngon_tinh: 'romance',
+  hanh_dong: 'action',
+  hai_huoc: 'comedy',
+  tam_ly: 'psychological',
+  co_trang: 'costume',
+};
 
 /** Keyword groups per slug (zh / en / common genre labels). Longer phrases first. */
 const KEYWORD_GROUPS: Record<string, string[]> = {
-  ngon_tinh: [
+  romance: [
     '甜宠',
     '言情',
     '恋爱',
@@ -30,22 +43,26 @@ const KEYWORD_GROUPS: Record<string, string[]> = {
     '总裁',
     '闪婚',
     '先婚后爱',
+    'ngôn tình',
+    'ngon tinh',
     'romance',
     'love story',
     'ceo romance',
     'romantic',
   ],
-  do_thi: [
+  urban: [
     '都市',
     '商战',
     '职场',
     '现代都市',
+    'đô thị',
+    'do thi',
     'urban',
     'city',
     'modern drama',
     'workplace',
   ],
-  hanh_dong: [
+  action: [
     '动作',
     '复仇',
     '杀手',
@@ -53,22 +70,26 @@ const KEYWORD_GROUPS: Record<string, string[]> = {
     '战争',
     '枪战',
     '武打',
+    'hành động',
+    'hanh dong',
     'action',
     'assassin',
     'revenge',
     'thriller action',
   ],
-  hai_huoc: [
+  comedy: [
     '喜剧',
     '搞笑',
     '欢喜',
     '轻松搞笑',
+    'hài hước',
+    'hai huoc',
     'comedy',
     'funny',
     'humor',
     'humour',
   ],
-  tam_ly: [
+  psychological: [
     '心理',
     '悬疑',
     '推理',
@@ -76,13 +97,15 @@ const KEYWORD_GROUPS: Record<string, string[]> = {
     '罪案',
     '犯罪',
     '重生复仇',
+    'tâm lý',
+    'tam ly',
     'psychological',
     'suspense',
     'mystery',
     'thriller',
     'crime',
   ],
-  co_trang: [
+  costume: [
     '古装',
     '宫廷',
     '穿越',
@@ -92,6 +115,8 @@ const KEYWORD_GROUPS: Record<string, string[]> = {
     '武侠',
     '王朝',
     '古代',
+    'cổ trang',
+    'co trang',
     'costume',
     'historical',
     'palace',
@@ -103,28 +128,46 @@ const KEYWORD_GROUPS: Record<string, string[]> = {
 
 /** Map free-form labels (page genres) onto catalog slugs. */
 const LABEL_ALIASES: Record<string, string> = {
-  都市: 'do_thi',
-  urban: 'do_thi',
-  city: 'do_thi',
-  言情: 'ngon_tinh',
-  romance: 'ngon_tinh',
-  romantic: 'ngon_tinh',
-  甜宠: 'ngon_tinh',
-  爱情: 'ngon_tinh',
-  动作: 'hanh_dong',
-  action: 'hanh_dong',
-  喜剧: 'hai_huoc',
-  comedy: 'hai_huoc',
-  心理: 'tam_ly',
-  悬疑: 'tam_ly',
-  psychological: 'tam_ly',
-  mystery: 'tam_ly',
-  thriller: 'tam_ly',
-  古装: 'co_trang',
-  costume: 'co_trang',
-  historical: 'co_trang',
-  xianxia: 'co_trang',
-  wuxia: 'co_trang',
+  都市: 'urban',
+  urban: 'urban',
+  city: 'urban',
+  'đô thị': 'urban',
+  'do thi': 'urban',
+  do_thi: 'urban',
+  言情: 'romance',
+  romance: 'romance',
+  romantic: 'romance',
+  甜宠: 'romance',
+  爱情: 'romance',
+  'ngôn tình': 'romance',
+  'ngon tinh': 'romance',
+  ngon_tinh: 'romance',
+  动作: 'action',
+  action: 'action',
+  'hành động': 'action',
+  'hanh dong': 'action',
+  hanh_dong: 'action',
+  喜剧: 'comedy',
+  comedy: 'comedy',
+  'hài hước': 'comedy',
+  'hai huoc': 'comedy',
+  hai_huoc: 'comedy',
+  心理: 'psychological',
+  悬疑: 'psychological',
+  psychological: 'psychological',
+  mystery: 'psychological',
+  thriller: 'psychological',
+  'tâm lý': 'psychological',
+  'tam ly': 'psychological',
+  tam_ly: 'psychological',
+  古装: 'costume',
+  costume: 'costume',
+  historical: 'costume',
+  xianxia: 'costume',
+  wuxia: 'costume',
+  'cổ trang': 'costume',
+  'co trang': 'costume',
+  co_trang: 'costume',
 };
 
 function normalizeText(raw: string): string {
@@ -132,6 +175,20 @@ function normalizeText(raw: string): string {
     .toLowerCase()
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+/** Resolve legacy VI slug or free-form label to the canonical English slug. */
+export function resolveCategorySlugAlias(raw: string): string {
+  const slug = String(raw || '').trim();
+  if (!slug) return '';
+  const lower = slug.toLowerCase();
+  return (
+    LEGACY_CATEGORY_SLUG_ALIASES[slug] ||
+    LEGACY_CATEGORY_SLUG_ALIASES[lower] ||
+    LABEL_ALIASES[slug] ||
+    LABEL_ALIASES[lower] ||
+    lower
+  );
 }
 
 /** Map a raw page genre/category label to a known slug when possible. */
@@ -146,6 +203,9 @@ export function mapGenreLabelToSlug(
   const lower = raw.toLowerCase();
   if (allowed.has(raw)) return raw;
   if (allowed.has(lower)) return lower;
+
+  const resolved = resolveCategorySlugAlias(raw);
+  if (resolved && allowed.has(resolved)) return resolved;
 
   const aliased = LABEL_ALIASES[raw] || LABEL_ALIASES[lower];
   if (aliased && allowed.has(aliased)) return aliased;
@@ -217,7 +277,7 @@ export function inferCategorySlug(opts: {
   return inferCategoryFromText(blob, allowed);
 }
 
-/** Keep only slugs that exist in the catalog. */
+/** Keep only slugs that exist in the catalog (accepts legacy VI aliases). */
 export function sanitizeCategorySlug(
   candidate: string | null | undefined,
   allowedSlugs: string[],
@@ -226,5 +286,7 @@ export function sanitizeCategorySlug(
   if (!slug) return undefined;
   const allowed = new Set(allowedSlugs.map((s) => s.trim()).filter(Boolean));
   if (allowed.has(slug)) return slug;
+  const resolved = resolveCategorySlugAlias(slug);
+  if (resolved && allowed.has(resolved)) return resolved;
   return mapGenreLabelToSlug(slug, [...allowed]);
 }

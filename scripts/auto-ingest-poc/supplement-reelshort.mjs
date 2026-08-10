@@ -27,7 +27,7 @@ loadEnvFile(join(__dirname, '.env'));
 loadEnvFile(join(__dirname, '../../services/api/.env'));
 
 const BASE = (process.env.API_BASE_URL || 'http://127.0.0.1:4000/api/v1').replace(/\/$/, '');
-const CATEGORY = process.env.POC_CATEGORY_SLUG || 'do_thi';
+const CATEGORY = process.env.POC_CATEGORY_SLUG || 'urban';
 const EP1 =
   process.argv[2] ||
   'https://www.reelshort.com/episodes/episode-1-i-ll-make-your-daddy-mine-6a50162231243f4ece0229b8-vwamf1tvt7';

@@ -26,6 +26,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Matches,
   Min,
   ValidateIf,
   ValidateNested,
@@ -160,7 +161,12 @@ class BannerDto {
 }
 
 class CategoryDto {
-  @IsNotEmpty() @IsString() slug!: string;
+  @IsNotEmpty()
+  @IsString()
+  @Matches(/^[a-z][a-z0-9_]{1,47}$/, {
+    message: 'slug must be English snake_case (e.g. romance)',
+  })
+  slug!: string;
   @IsNotEmpty() @IsString() nameEn!: string;
   @IsOptional() @IsString() nameZh?: string | null;
   @IsOptional() @IsString() nameFr?: string | null;

@@ -133,8 +133,9 @@ model Session {
   @@map("sessions")
 }
 
-// ========== 分类（主数据，F9：slug + 三语名；English 为主语言）==========
+// ========== 分类（主数据：English snake_case slug + 三语展示名）==========
 model Category {
+  /// Stable key for API / ?cat= — English snake_case (e.g. romance), not localized text.
   slug        String   @id
   nameEn      String
   nameZh      String?

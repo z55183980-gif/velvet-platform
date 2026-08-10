@@ -4,12 +4,12 @@ import * as crypto from 'crypto';
 const prisma = new PrismaClient();
 
 const categories = [
-  { slug: 'do_thi', nameEn: 'Urban', nameZh: '都市', nameFr: 'Urbain', sortOrder: 1 },
-  { slug: 'ngon_tinh', nameEn: 'Romance', nameZh: '言情', nameFr: 'Romance', sortOrder: 2 },
-  { slug: 'hanh_dong', nameEn: 'Action', nameZh: '动作', nameFr: 'Action', sortOrder: 3 },
-  { slug: 'hai_huoc', nameEn: 'Comedy', nameZh: '喜剧', nameFr: 'Comédie', sortOrder: 4 },
-  { slug: 'tam_ly', nameEn: 'Psychological', nameZh: '心理', nameFr: 'Psychologique', sortOrder: 5 },
-  { slug: 'co_trang', nameEn: 'Costume', nameZh: '古装', nameFr: 'Costume', sortOrder: 6 },
+  { slug: 'urban', nameEn: 'Urban', nameZh: '都市', nameFr: 'Urbain', sortOrder: 1 },
+  { slug: 'romance', nameEn: 'Romance', nameZh: '言情', nameFr: 'Romance', sortOrder: 2 },
+  { slug: 'action', nameEn: 'Action', nameZh: '动作', nameFr: 'Action', sortOrder: 3 },
+  { slug: 'comedy', nameEn: 'Comedy', nameZh: '喜剧', nameFr: 'Comédie', sortOrder: 4 },
+  { slug: 'psychological', nameEn: 'Psychological', nameZh: '心理', nameFr: 'Psychologique', sortOrder: 5 },
+  { slug: 'costume', nameEn: 'Costume', nameZh: '古装', nameFr: 'Costume', sortOrder: 6 },
 ];
 
 interface SeedDrama {
@@ -25,15 +25,15 @@ interface SeedDrama {
 }
 
 const dramas: SeedDrama[] = [
-  { titleEn: 'The Cold CEO', titleZh: '冷面总裁', descEn: 'An ordinary secretary and a cold-faced CEO.', descZh: '平凡秘书与冷面总裁的爱情故事。', category: 'ngon_tinh', episodes: 12, cover: 'https://picsum.photos/seed/d01/600/800', official: true, featured: true },
-  { titleEn: 'Love After One Night', titleZh: '一夜之后', descEn: 'After one drunken night, she carries the CEO\'s child.', descZh: '一夜醉酒后，她怀上了总裁的孩子。', category: 'ngon_tinh', episodes: 10, cover: 'https://picsum.photos/seed/d02/600/800', featured: true },
-  { titleEn: 'Battle in the Dark', titleZh: '暗夜之战', descEn: 'Underground forces wage a secret war for the city.', descZh: '盘踞城市的地下势力暗战。', category: 'hanh_dong', episodes: 14, cover: 'https://picsum.photos/seed/d03/600/800' },
-  { titleEn: 'Genius Doctor', titleZh: '天才医生', descEn: 'A gifted doctor with a mysterious past.', descZh: '拥有神秘过往的天才医生。', category: 'tam_ly', episodes: 11, cover: 'https://picsum.photos/seed/d04/600/800' },
-  { titleEn: 'Naughty Little Wife', titleZh: '调皮小妻', descEn: 'The hilarious everyday life of a young couple.', descZh: '年轻夫妻啼笑皆非的日常。', category: 'hai_huoc', episodes: 9, cover: 'https://picsum.photos/seed/d05/600/800', featured: true },
-  { titleEn: 'Secret Dynasty', titleZh: '秘境王朝', descEn: 'A journey to reclaim a lost kingdom.', descZh: '寻回失落王国的冒险旅程。', category: 'co_trang', episodes: 13, cover: 'https://picsum.photos/seed/d06/600/800', official: true },
-  { titleEn: 'Billion-Dollar Deal', titleZh: '亿万交易', descEn: 'Trillion-scale deals negotiated at the table.', descZh: '谈判桌上的千亿级商战。', category: 'do_thi', episodes: 12, cover: 'https://picsum.photos/seed/d07/600/800' },
-  { titleEn: 'Love Academy', titleZh: '恋爱学院', descEn: 'First flutters of love on campus.', descZh: '校园里最初的悸动。', category: 'ngon_tinh', episodes: 10, cover: 'https://picsum.photos/seed/d08/600/800' },
-  { titleEn: 'Lone Assassin', titleZh: '孤影杀手', descEn: 'An assassin seeking redemption.', descZh: '寻求救赎的孤独杀手。', category: 'hanh_dong', episodes: 11, cover: 'https://picsum.photos/seed/d09/600/800' },
+  { titleEn: 'The Cold CEO', titleZh: '冷面总裁', descEn: 'An ordinary secretary and a cold-faced CEO.', descZh: '平凡秘书与冷面总裁的爱情故事。', category: 'romance', episodes: 12, cover: 'https://picsum.photos/seed/d01/600/800', official: true, featured: true },
+  { titleEn: 'Love After One Night', titleZh: '一夜之后', descEn: 'After one drunken night, she carries the CEO\'s child.', descZh: '一夜醉酒后，她怀上了总裁的孩子。', category: 'romance', episodes: 10, cover: 'https://picsum.photos/seed/d02/600/800', featured: true },
+  { titleEn: 'Battle in the Dark', titleZh: '暗夜之战', descEn: 'Underground forces wage a secret war for the city.', descZh: '盘踞城市的地下势力暗战。', category: 'action', episodes: 14, cover: 'https://picsum.photos/seed/d03/600/800' },
+  { titleEn: 'Genius Doctor', titleZh: '天才医生', descEn: 'A gifted doctor with a mysterious past.', descZh: '拥有神秘过往的天才医生。', category: 'psychological', episodes: 11, cover: 'https://picsum.photos/seed/d04/600/800' },
+  { titleEn: 'Naughty Little Wife', titleZh: '调皮小妻', descEn: 'The hilarious everyday life of a young couple.', descZh: '年轻夫妻啼笑皆非的日常。', category: 'comedy', episodes: 9, cover: 'https://picsum.photos/seed/d05/600/800', featured: true },
+  { titleEn: 'Secret Dynasty', titleZh: '秘境王朝', descEn: 'A journey to reclaim a lost kingdom.', descZh: '寻回失落王国的冒险旅程。', category: 'costume', episodes: 13, cover: 'https://picsum.photos/seed/d06/600/800', official: true },
+  { titleEn: 'Billion-Dollar Deal', titleZh: '亿万交易', descEn: 'Trillion-scale deals negotiated at the table.', descZh: '谈判桌上的千亿级商战。', category: 'urban', episodes: 12, cover: 'https://picsum.photos/seed/d07/600/800' },
+  { titleEn: 'Love Academy', titleZh: '恋爱学院', descEn: 'First flutters of love on campus.', descZh: '校园里最初的悸动。', category: 'romance', episodes: 10, cover: 'https://picsum.photos/seed/d08/600/800' },
+  { titleEn: 'Lone Assassin', titleZh: '孤影杀手', descEn: 'An assassin seeking redemption.', descZh: '寻求救赎的孤独杀手。', category: 'action', episodes: 11, cover: 'https://picsum.photos/seed/d09/600/800' },
 ];
 
 function assertSeedAllowed() {
@@ -65,20 +65,26 @@ async function main() {
   // 始终确保默认管理员存在（幂等）
   await ensureBootstrapAdmin();
 
+  // Catalog is always refreshed (idempotent) so nameEn / slugs stay canonical.
+  for (const c of categories) {
+    await prisma.category.upsert({
+      where: { slug: c.slug },
+      create: c,
+      update: {
+        nameEn: c.nameEn,
+        nameZh: c.nameZh,
+        nameFr: c.nameFr,
+        sortOrder: c.sortOrder,
+      },
+    });
+  }
+
   // 幂等：已有短剧则跳过剧集种子
   const existing = await prisma.drama.count();
   if (existing > 0) {
     // eslint-disable-next-line no-console
     console.log('[seed] 已存在数据，跳过短剧种子（如需重置请清空数据库）');
     return;
-  }
-
-  for (const c of categories) {
-    await prisma.category.upsert({
-      where: { slug: c.slug },
-      create: c,
-      update: c,
-    });
   }
 
   const officialCreator = await prisma.creator.create({

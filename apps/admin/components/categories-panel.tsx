@@ -141,9 +141,13 @@ export function CategoriesPanel() {
           <Input
             className="mt-1"
             disabled={!!editSlug}
+            placeholder="romance"
             value={form.slug}
             onChange={(e) => setForm((f) => ({ ...f, slug: e.target.value }))}
           />
+          {!editSlug ? (
+            <span className="mt-1 block text-[11px] text-ink-faint">{t("slugHint")}</span>
+          ) : null}
         </label>
         <label className="text-caption text-ink-muted">
           {t("nameEnLabel")}

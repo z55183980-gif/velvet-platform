@@ -30,7 +30,7 @@ cp scripts/auto-ingest-poc/.env.example scripts/auto-ingest-poc/.env
 | `OPENAI_API_KEY` | Path B 用（可从本机 ZAI `.env` 复制） |
 | `OPENAI_BASE_URL` | 可选；兼容网关，默认官方 |
 | `OPENAI_MODEL` | 默认见 `.env` |
-| `POC_CATEGORY_SLUG` | 默认 `do_thi` |
+| `POC_CATEGORY_SLUG` | 默认 `urban` |
 
 也可复用 `services/api/.env` 里的 `ADMIN_BOOTSTRAP_*`（脚本会自动尝试加载该文件）。
 

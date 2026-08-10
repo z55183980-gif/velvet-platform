@@ -34,7 +34,7 @@ async function upsertDb() {
     let creator = await prisma.creator.findFirst({ orderBy: { id: "asc" } });
     if (!creator) throw new Error("local DB has no creators; run prisma seed first");
 
-    let categorySlug = "co_trang";
+    let categorySlug = "costume";
     const cat = await prisma.category.findUnique({ where: { slug: categorySlug } });
     if (!cat) {
       const any = await prisma.category.findFirst({ orderBy: { slug: "asc" } });

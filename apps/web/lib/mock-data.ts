@@ -1,4 +1,4 @@
-export type { Locale } from "./languages";
+﻿export type { Locale } from "./languages";
 import { pickTitleText, type Locale } from "./languages";
 import { publicTagsMatchQuery } from "./drama-tags";
 
@@ -65,13 +65,29 @@ export interface Drama {
 }
 
 export const categories: Category[] = [
-  { slug: "do_thi", nameEn: "Urban", nameZh: "都市", nameFr: "Urbain" },
-  { slug: "ngon_tinh", nameEn: "Romance", nameZh: "言情", nameFr: "Romance" },
-  { slug: "hanh_dong", nameEn: "Action", nameZh: "动作", nameFr: "Action" },
-  { slug: "hai_huoc", nameEn: "Comedy", nameZh: "喜剧", nameFr: "Comédie" },
-  { slug: "tam_ly", nameEn: "Psychological", nameZh: "心理", nameFr: "Psychologique" },
-  { slug: "co_trang", nameEn: "Costume", nameZh: "古装", nameFr: "Costume" },
+  { slug: "urban", nameEn: "Urban", nameZh: "都市", nameFr: "Urbain" },
+  { slug: "romance", nameEn: "Romance", nameZh: "言情", nameFr: "Romance" },
+  { slug: "action", nameEn: "Action", nameZh: "动作", nameFr: "Action" },
+  { slug: "comedy", nameEn: "Comedy", nameZh: "喜剧", nameFr: "Comédie" },
+  { slug: "psychological", nameEn: "Psychological", nameZh: "心理", nameFr: "Psychologique" },
+  { slug: "costume", nameEn: "Costume", nameZh: "古装", nameFr: "Costume" },
 ];
+
+/** Legacy Vietnamese romanization → English snake_case (bookmarks / old URLs). */
+const LEGACY_CATEGORY_SLUGS: Record<string, string> = {
+  do_thi: "urban",
+  ngon_tinh: "romance",
+  hanh_dong: "action",
+  hai_huoc: "comedy",
+  tam_ly: "psychological",
+  co_trang: "costume",
+};
+
+export function resolveCategorySlug(slug: string): string {
+  const raw = String(slug || "").trim();
+  if (!raw) return "";
+  return LEGACY_CATEGORY_SLUGS[raw] || LEGACY_CATEGORY_SLUGS[raw.toLowerCase()] || raw;
+}
 
 function makeEpisodes(count: number, freeCount: number, price: number): Episode[] {
   return Array.from({ length: count }, (_, i) => {
@@ -94,7 +110,7 @@ export const dramas: Drama[] = [
     titleZh: "冷面霸总突然追我",
     descEn: "She was just an ordinary secretary — until the all-powerful boss suddenly changed his attitude.",
     descZh: "她只是个普通秘书，直到那位至高无上的老板突然改变了态度。",
-    categorySlug: "ngon_tinh",
+    categorySlug: "romance",
     cover: ["#FF6A88", "#FF99AC"],
     isVip: false,
     rating: 4.9,
@@ -110,7 +126,7 @@ export const dramas: Drama[] = [
     titleZh: "五年后前妻归来",
     descEn: "He had forgotten her, but fate pulls them together once more.",
     descZh: "他已忘了她，但命运再次将两人拉近。",
-    categorySlug: "ngon_tinh",
+    categorySlug: "romance",
     cover: ["#6A5ACD", "#9D8DF1"],
     isVip: true,
     rating: 4.8,
@@ -126,7 +142,7 @@ export const dramas: Drama[] = [
     titleZh: "特警与女律师",
     descEn: "A murder case draws two parallel worlds together.",
     descZh: "一桩命案将两个平行世界拉到一起。",
-    categorySlug: "tam_ly",
+    categorySlug: "psychological",
     cover: ["#1F2937", "#374151"],
     isVip: false,
     rating: 4.7,
@@ -142,7 +158,7 @@ export const dramas: Drama[] = [
     titleZh: "市长与卖花女孩",
     descEn: "A love that crosses social classes under city lights.",
     descZh: "城市灯火下，一段跨越阶层的爱情。",
-    categorySlug: "do_thi",
+    categorySlug: "urban",
     cover: ["#F59E0B", "#FBBF24"],
     isVip: false,
     rating: 4.6,
@@ -158,7 +174,7 @@ export const dramas: Drama[] = [
     titleZh: "大佬伪装成办公室职员",
     descEn: "Nobody expected that quiet man to be the owner of the entire corporation.",
     descZh: "没人想到那个沉静的男人竟是整座集团的主人。",
-    categorySlug: "ngon_tinh",
+    categorySlug: "romance",
     cover: ["#0EA5E9", "#38BDF8"],
     isVip: true,
     rating: 4.9,
@@ -174,7 +190,7 @@ export const dramas: Drama[] = [
     titleZh: "新时代单亲妈妈",
     descEn: "She raises her child alone, but never bows to fate.",
     descZh: "她独自抚育孩子，却从未向命运低头。",
-    categorySlug: "hai_huoc",
+    categorySlug: "comedy",
     cover: ["#EC4899", "#F472B6"],
     isVip: false,
     rating: 4.5,
@@ -190,7 +206,7 @@ export const dramas: Drama[] = [
     titleZh: "卧底特工：最后一单",
     descEn: "He infiltrates a crime organization, but emotion changes everything.",
     descZh: "他潜入犯罪组织，却因情感让一切改变。",
-    categorySlug: "hanh_dong",
+    categorySlug: "action",
     cover: ["#7F1D1D", "#B91C1C"],
     isVip: false,
     rating: 4.8,
@@ -206,7 +222,7 @@ export const dramas: Drama[] = [
     titleZh: "墨家替嫁新娘",
     descEn: "The night before the wedding, the real bride vanishes and a stand-in walks into the elite household.",
     descZh: "婚礼前一晚，真新娘消失，替身踏入豪门。",
-    categorySlug: "ngon_tinh",
+    categorySlug: "romance",
     cover: ["#8B5CF6", "#A78BFA"],
     isVip: true,
     rating: 4.7,
@@ -222,7 +238,7 @@ export const dramas: Drama[] = [
     titleZh: "天才医生与女总裁",
     descEn: "In the operating room he is a savior; in life she holds the power.",
     descZh: "手术台上他是救星，生活里她掌握权柄。",
-    categorySlug: "do_thi",
+    categorySlug: "urban",
     cover: ["#10B981", "#34D399"],
     isVip: false,
     rating: 4.6,
@@ -259,7 +275,7 @@ export function categoryName(
       ""
     );
   }
-  const slug = slugOrCat || "";
+  const slug = resolveCategorySlug(slugOrCat || "");
   const cat = catalog.find((c) => c.slug === slug);
   if (!cat) return slug;
   return pickTitleText(locale, cat.nameEn, cat.nameZh || "", cat.nameFr);
@@ -274,7 +290,10 @@ export function mockHome(
   opts?: { category?: string; q?: string; sort?: "latest" | "hot" },
 ): { rows: Drama[]; total: number } {
   let list = dramas;
-  if (opts?.category) list = list.filter((d) => d.categorySlug === opts.category);
+  if (opts?.category) {
+    const cat = resolveCategorySlug(opts.category);
+    list = list.filter((d) => d.categorySlug === cat);
+  }
   if (opts?.q) {
     const q = opts.q.trim().toLowerCase();
     list = list.filter(

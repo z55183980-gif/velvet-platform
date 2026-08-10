@@ -43,7 +43,7 @@ loadEnvFile(join(__dirname, '../../services/api/.env'));
 function parseArgs(argv) {
   const out = {
     url: '',
-    category: process.env.POC_CATEGORY_SLUG || 'do_thi',
+    category: process.env.POC_CATEGORY_SLUG || 'urban',
     maxEpisodes: Number(process.env.POC_MAX_EPISODES || 20) || 20,
     forcePath: '', // 'a' | 'b' | ''
     dryRun: false,
@@ -69,7 +69,7 @@ function usage() {
   node scripts/auto-ingest-poc/ingest.mjs --url <pageUrl> [options]
 
 Options:
-  --category <slug>     Default: do_thi (or POC_CATEGORY_SLUG)
+  --category <slug>     Default: urban (or POC_CATEGORY_SLUG)
   --max-episodes <n>    Cap episodes (default 20)
   --force-path a|b      Skip auto fallback
   --dry-run             Probe/extract only; do not create drama

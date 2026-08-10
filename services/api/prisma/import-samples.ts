@@ -1,4 +1,4 @@
-import { PrismaClient } from '@prisma/client';
+﻿import { PrismaClient } from '@prisma/client';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -61,7 +61,7 @@ const DEFS: Record<string, Def> = {
     titleZh: '末世之约',
     descEn: 'The world collapses; survivors search for one last hope among the ruins.',
     descZh: '末世降临，幸存者在废墟中追寻最后的希望。',
-    category: 'tam_ly',
+    category: 'psychological',
     freeCount: 2,
     priceCredits: PAID_CREDITS,
     priceVnd: PAID_VND,
@@ -74,7 +74,7 @@ const DEFS: Record<string, Def> = {
     titleZh: '穿越修仙界，我靠手机忽悠全宗门',
     descEn: 'A modern man travels into a cultivation world with nothing but his phone.',
     descZh: '现代青年带着手机穿越修仙界，凭科技忽悠整个宗门。',
-    category: 'co_trang',
+    category: 'costume',
     freeCount: 2,
     priceCredits: PAID_CREDITS,
     priceVnd: PAID_VND,
@@ -86,7 +86,7 @@ const DEFS: Record<string, Def> = {
     titleZh: '青灯引僵',
     descEn: 'A blue lantern guides the sleeping undead back to the living world.',
     descZh: '一盏青灯，引动沉睡的僵尸归来。',
-    category: 'co_trang',
+    category: 'costume',
     freeCount: 1,
     priceCredits: PAID_CREDITS,
     priceVnd: PAID_VND,
@@ -97,7 +97,7 @@ const DEFS: Record<string, Def> = {
     titleZh: '魔兽争霸：霜狼之子',
     descEn: 'The frost-wolf legend rises again across the battlefields.',
     descZh: '霜狼之子在战场中觉醒，书写魔兽传奇。',
-    category: 'hanh_dong',
+    category: 'action',
     freeCount: 1,
     priceCredits: PAID_CREDITS,
     priceVnd: PAID_VND,
@@ -108,7 +108,7 @@ const DEFS: Record<string, Def> = {
     titleZh: '星际赘婿：地球男儿太抢手',
     descEn: 'An earthborn son-in-law shakes the entire galaxy.',
     descZh: '来自地球的赘婿，意外成为星际焦点。',
-    category: 'hanh_dong',
+    category: 'action',
     freeCount: 1,
     priceCredits: PAID_CREDITS,
     priceVnd: PAID_VND,
@@ -119,7 +119,7 @@ const DEFS: Record<string, Def> = {
     titleZh: '江西赶尸人',
     descEn: 'A corpse herder from Jiangxi walks through dark mountain villages at night.',
     descZh: '江西赶尸人，夜行于幽暗山村之间。',
-    category: 'co_trang',
+    category: 'costume',
     freeCount: 2,
     priceCredits: PAID_CREDITS,
     priceVnd: PAID_VND,
@@ -127,12 +127,12 @@ const DEFS: Record<string, Def> = {
 };
 
 const CATEGORIES = [
-  { slug: 'do_thi', nameEn: 'Urban', nameZh: '都市', nameFr: 'Urbain' },
-  { slug: 'ngon_tinh', nameEn: 'Romance', nameZh: '言情', nameFr: 'Romance' },
-  { slug: 'hanh_dong', nameEn: 'Action', nameZh: '动作', nameFr: 'Action' },
-  { slug: 'hai_huoc', nameEn: 'Comedy', nameZh: '喜剧', nameFr: 'Comédie' },
-  { slug: 'tam_ly', nameEn: 'Psychological', nameZh: '心理', nameFr: 'Psychologique' },
-  { slug: 'co_trang', nameEn: 'Costume', nameZh: '古装', nameFr: 'Costume' },
+  { slug: 'urban', nameEn: 'Urban', nameZh: '都市', nameFr: 'Urbain' },
+  { slug: 'romance', nameEn: 'Romance', nameZh: '言情', nameFr: 'Romance' },
+  { slug: 'action', nameEn: 'Action', nameZh: '动作', nameFr: 'Action' },
+  { slug: 'comedy', nameEn: 'Comedy', nameZh: '喜剧', nameFr: 'Comédie' },
+  { slug: 'psychological', nameEn: 'Psychological', nameZh: '心理', nameFr: 'Psychologique' },
+  { slug: 'costume', nameEn: 'Costume', nameZh: '古装', nameFr: 'Costume' },
 ];
 
 function numCmp(a: string, b: string) {

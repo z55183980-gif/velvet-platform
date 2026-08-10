@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { LockAccessService } from '../common/lock-access.service';
+import { resolveCategorySlugAlias } from '../admin/drama-category-infer.util';
 import { escapeIlikePattern, toPublicDramaTags } from './drama-tags';
 
 type FeedRankCache = {
@@ -31,7 +32,9 @@ export class DramasService {
     const page = opts.page || 1;
     const pageSize = opts.pageSize || 12;
     const where: any = { status: 'LIVE' };
-    if (opts.category) where.categorySlug = opts.category;
+    if (opts.category) {
+      where.categorySlug = resolveCategorySlugAlias(opts.category);
+    }
     if (opts.tag) where.tags = { has: opts.tag };
 
     const q = typeof opts.q === 'string' ? opts.q.trim() : '';

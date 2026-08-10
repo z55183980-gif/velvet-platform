@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """
 Build public sample vertical placeholder dramas on production:
   download open trailers/samples → 9:16 HLS → R2 → upsert 5 dramas × 3 eps
@@ -38,7 +38,7 @@ DRAMAS = [
         "titleVi": "Clip dọc · Neon",
         "descZh": "公开样片竖屏占位（W3C Sintel / SampleLib），仅供联调播放。",
         "descVi": "Placeholder dọc từ mẫu công khai, chỉ để kiểm thử phát.",
-        "categorySlug": "ngon_tinh",
+        "categorySlug": "romance",
         "tags": ["placeholder", "public", "vertical"],
     },
     {
@@ -56,7 +56,7 @@ DRAMAS = [
         "titleVi": "Clip dọc · Nhịp đô thị",
         "descZh": "公开样片竖屏占位（W3C Sintel / SampleLib），仅供联调播放。",
         "descVi": "Placeholder dọc từ mẫu công khai, chỉ để kiểm thử phát.",
-        "categorySlug": "do_thi",
+        "categorySlug": "urban",
         "tags": ["placeholder", "public", "vertical"],
     },
     {
@@ -65,7 +65,7 @@ DRAMAS = [
         "titleVi": "Clip dọc · Chuyển động",
         "descZh": "公开样片竖屏占位（W3C Sintel / SampleLib），仅供联调播放。",
         "descVi": "Placeholder dọc từ mẫu công khai, chỉ để kiểm thử phát.",
-        "categorySlug": "hanh_dong",
+        "categorySlug": "action",
         "tags": ["placeholder", "public", "vertical"],
     },
     {
@@ -74,7 +74,7 @@ DRAMAS = [
         "titleVi": "Clip dọc · Slice of life",
         "descZh": "公开样片竖屏占位（W3C Sintel / SampleLib），仅供联调播放。",
         "descVi": "Placeholder dọc từ mẫu công khai, chỉ để kiểm thử phát.",
-        "categorySlug": "ngon_tinh",
+        "categorySlug": "romance",
         "tags": ["placeholder", "public", "vertical"],
     },
 ]

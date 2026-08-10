@@ -6,6 +6,7 @@ import { useLocale } from "@/lib/i18n";
 import { DramaCard } from "@/components/drama-card";
 import { loadCategories, loadHome, loadHottest } from "@/lib/api";
 import type { Category, Drama } from "@/lib/mock-data";
+import { resolveCategorySlug } from "@/lib/mock-data";
 import { pickTitleText } from "@/lib/languages";
 import { cn } from "@/lib/utils";
 import { DataErrorState } from "@/components/data-error-state";
@@ -174,7 +175,7 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
       return;
     }
     const nextSort = params.get("sort");
-    setCat(params.get("cat") || "");
+    setCat(resolveCategorySlug(params.get("cat") || ""));
     setSort(nextSort === "latest" || nextSort === "hottest" ? nextSort : "hot");
     setQuery(params.get("q") || "");
     setQ(params.get("q")?.trim() || "");

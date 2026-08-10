@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Local-only fixture: pending KYC creators, PENDING withdraws, PENDING_REVIEW
  * unofficial dramas for Ops admin UI checks.
  *
@@ -44,12 +44,12 @@ const SEED_MARK = 'seed-local-pending';
 const TEST_PASSWORD = 'Test1234!';
 
 const CATEGORIES = [
-  { slug: 'do_thi', nameEn: 'Urban', nameZh: '都市', sortOrder: 1 },
-  { slug: 'ngon_tinh', nameEn: 'Romance', nameZh: '言情', sortOrder: 2 },
-  { slug: 'hanh_dong', nameEn: 'Action', nameZh: '动作', sortOrder: 3 },
-  { slug: 'hai_huoc', nameEn: 'Comedy', nameZh: '喜剧', sortOrder: 4 },
-  { slug: 'tam_ly', nameEn: 'Psychological', nameZh: '心理', sortOrder: 5 },
-  { slug: 'co_trang', nameEn: 'Costume', nameZh: '古装', sortOrder: 6 },
+  { slug: 'urban', nameEn: 'Urban', nameZh: '都市', sortOrder: 1 },
+  { slug: 'romance', nameEn: 'Romance', nameZh: '言情', sortOrder: 2 },
+  { slug: 'action', nameEn: 'Action', nameZh: '动作', sortOrder: 3 },
+  { slug: 'comedy', nameEn: 'Comedy', nameZh: '喜剧', sortOrder: 4 },
+  { slug: 'psychological', nameEn: 'Psychological', nameZh: '心理', sortOrder: 5 },
+  { slug: 'costume', nameEn: 'Costume', nameZh: '古装', sortOrder: 6 },
 ];
 
 function hashPassword(password) {
@@ -360,28 +360,28 @@ async function ensurePendingDramas() {
       slug: 'seed-pending-drama-01',
       titleEn: 'Seed Pending: Midnight Secret',
       titleZh: '种子待审·午夜秘密',
-      category: 'ngon_tinh',
+      category: 'romance',
       episodes: 3,
     },
     {
       slug: 'seed-pending-drama-02',
       titleEn: 'Seed Pending: City Chase',
       titleZh: '种子待审·都市追击',
-      category: 'hanh_dong',
+      category: 'action',
       episodes: 2,
     },
     {
       slug: 'seed-pending-drama-03',
       titleEn: 'Seed Pending: Laugh Track',
       titleZh: '种子待审·笑声不断',
-      category: 'hai_huoc',
+      category: 'comedy',
       episodes: 2,
     },
     {
       slug: 'seed-pending-drama-04',
       titleEn: 'Seed Pending: Palace Rumour',
       titleZh: '种子待审·宫廷传闻',
-      category: 'co_trang',
+      category: 'costume',
       episodes: 3,
     },
   ];
