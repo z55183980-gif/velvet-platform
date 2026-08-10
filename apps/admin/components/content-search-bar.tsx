@@ -10,7 +10,6 @@ export type ContentSort = "weight" | "latest" | "views" | "unlocks";
 export type ContentSearchFilters = {
   q: string;
   status: string;
-  categorySlug: string;
   creatorId: string;
   isOfficial: string;
   isFeatured: string;
@@ -22,13 +21,11 @@ export type ContentSearchFilters = {
   dateTo: string;
 };
 
-type CategoryOption = { slug: string; nameZh?: string | null; nameEn?: string; nameFr?: string | null };
 type CreatorOption = { id: string | number; displayName?: string };
 
 type ContentSearchBarProps = {
   value: ContentSearchFilters;
   onChange: (next: ContentSearchFilters) => void;
-  categories: CategoryOption[];
   creators?: CreatorOption[];
   statuses: string[];
   showAdd?: boolean;
@@ -43,7 +40,6 @@ const DEBOUNCE_MS = 300;
 function countActiveFilters(value: ContentSearchFilters) {
   let n = 0;
   if (value.status && value.status !== "ALL") n += 1;
-  if (value.categorySlug) n += 1;
   if (value.creatorId) n += 1;
   if (value.isOfficial) n += 1;
   if (value.isFeatured) n += 1;
@@ -55,7 +51,6 @@ function countActiveFilters(value: ContentSearchFilters) {
 export function ContentSearchBar({
   value,
   onChange,
-  categories,
   creators = [],
   statuses,
   showAdd = true,
@@ -117,7 +112,6 @@ export function ContentSearchBar({
     onChange({
       ...value,
       status: "ALL",
-      categorySlug: "",
       creatorId: "",
       isOfficial: "",
       isFeatured: "",
@@ -141,14 +135,6 @@ export function ContentSearchBar({
       key: "status",
       label: `${t("status")}: ${statusLabel(t, value.status)}`,
       clear: () => patch({ status: "ALL" }),
-    });
-  }
-  if (value.categorySlug) {
-    const category = categories.find((item) => item.slug === value.categorySlug);
-    chips.push({
-      key: "category",
-      label: `${t("category")}: ${category?.nameEn || category?.nameZh || category?.nameFr || value.categorySlug}`,
-      clear: () => patch({ categorySlug: "" }),
     });
   }
   if (value.creatorId) {
@@ -255,21 +241,6 @@ export function ContentSearchBar({
                     {statuses.map((status) => (
                       <option key={status} value={status}>
                         {status === "ALL" ? t("all") : statusLabel(t, status)}
-                      </option>
-                    ))}
-                  </Select>
-                </label>
-
-                <label className="block space-y-1">
-                  <span className="text-caption font-medium text-ink-muted">{t("category")}</span>
-                  <Select
-                    value={value.categorySlug}
-                    onChange={(e) => patch({ categorySlug: e.target.value })}
-                  >
-                    <option value="">{t("allCategories")}</option>
-                    {categories.map((category) => (
-                      <option key={category.slug} value={category.slug}>
-                        {category.nameEn || category.nameZh || category.nameFr}
                       </option>
                     ))}
                   </Select>

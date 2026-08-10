@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { LockAccessService } from '../common/lock-access.service';
 import { resolveCategorySlugAlias } from '../admin/drama-category-infer.util';
-import { escapeIlikePattern, toPublicDramaTags } from './drama-tags';
+import { escapeIlikePattern, isDramaSystemTag, toPublicDramaTags } from './drama-tags';
 
 type FeedRankCache = {
   at: number;
@@ -35,7 +35,14 @@ export class DramasService {
     if (opts.category) {
       where.categorySlug = resolveCategorySlugAlias(opts.category);
     }
-    if (opts.tag) where.tags = { has: opts.tag };
+    if (opts.tag) {
+      const parts = String(opts.tag)
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (parts.length === 1) where.tags = { has: parts[0] };
+      else if (parts.length > 1) where.tags = { hasEvery: parts };
+    }
 
     const q = typeof opts.q === 'string' ? opts.q.trim() : '';
     if (q) {
@@ -414,6 +421,28 @@ export class DramasService {
       where: { isActive: true },
       orderBy: { sortOrder: 'asc' },
     });
+  }
+
+  /** Distinct public (non-system) tags on LIVE dramas, most used first. */
+  async listPublicTags(): Promise<string[]> {
+    const rows = await this.prisma.$queryRaw<Array<{ tag: string }>>`
+      SELECT t.tag AS tag
+        FROM dramas d
+        CROSS JOIN LATERAL unnest(d.tags) AS t(tag)
+       WHERE d.status = 'LIVE'
+       GROUP BY t.tag
+       ORDER BY COUNT(*) DESC, t.tag ASC
+    `;
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const row of rows) {
+      const tag = String(row.tag || '').trim();
+      const key = tag.toLowerCase();
+      if (!tag || isDramaSystemTag(tag) || seen.has(key)) continue;
+      seen.add(key);
+      out.push(tag);
+    }
+    return out;
   }
 
   async listBanners() {

@@ -1,5 +1,42 @@
 /** Strip internal Drama.tags markers before showing on the consumer web. */
 
+/** Theater filter + Drama.tags `type:` values (admin content form). */
+export type DramaContentTypeSlug = "comic" | "live" | "ai";
+
+export const DRAMA_CONTENT_TYPES: Array<{
+  slug: DramaContentTypeSlug;
+  /** Exact tag stored on Drama.tags */
+  tag: string;
+}> = [
+  { slug: "comic", tag: "type:漫剧" },
+  { slug: "live", tag: "type:真人短剧" },
+  { slug: "ai", tag: "type:AI短剧" },
+];
+
+export function resolveContentTypeSlug(raw: string | null | undefined): DramaContentTypeSlug | "" {
+  const v = String(raw || "")
+    .trim()
+    .toLowerCase();
+  if (v === "comic" || v === "manga" || v === "漫剧") return "comic";
+  if (v === "live" || v === "live-action" || v === "真人" || v === "真人短剧") return "live";
+  if (v === "ai" || v === "ai剧" || v === "ai短剧") return "ai";
+  return "";
+}
+
+export function contentTypeTag(slug: DramaContentTypeSlug | ""): string | undefined {
+  if (!slug) return undefined;
+  return DRAMA_CONTENT_TYPES.find((c) => c.slug === slug)?.tag;
+}
+
+/** Compose API `tag` query (comma = AND / hasEvery) from content form + display tag. */
+export function composeDramaTagFilter(
+  contentType: DramaContentTypeSlug | "",
+  displayTag?: string | null,
+): string | undefined {
+  const parts = [contentTypeTag(contentType), String(displayTag || "").trim()].filter(Boolean);
+  return parts.length ? parts.join(",") : undefined;
+}
+
 const SYSTEM_TAG_PREFIXES = [
   "type:",
   "completion:",

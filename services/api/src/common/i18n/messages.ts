@@ -123,6 +123,8 @@ const en = {
   'validation.bannerDramaRequired': 'Banner must link to a live drama',
   'validation.bannerDramaNotLive': 'Only live (published) dramas can be used for banners',
   'validation.bannerDramaId': 'Invalid banner dramaId',
+  'validation.tagRequired': 'Tag name is required',
+  'validation.tagSystemForbidden': 'System tags cannot be renamed or deleted',
   'vipPlan.hasOrders': 'This VIP plan has related orders and cannot be deleted. Take it offline instead.',
   'topupPackage.hasOrders':
     'This credit pack has related orders and cannot be deleted. Take it offline instead.',
@@ -335,6 +337,8 @@ const zh: Record<MessageKey, string> = {
   'validation.bannerDramaRequired': '轮播必须关联已上架短剧',
   'validation.bannerDramaNotLive': '仅已上架短剧可用于首页轮播',
   'validation.bannerDramaId': '轮播短剧 ID 无效',
+  'validation.tagRequired': '请填写标签名',
+  'validation.tagSystemForbidden': '系统标签不可重命名或删除',
   'vipPlan.hasOrders': '该 VIP 套餐已有关联订单，无法删除，请改为下架。',
   'topupPackage.hasOrders': '该积分充值套餐已有关联订单，无法删除，请改为下架。',
 
@@ -538,6 +542,8 @@ const fr: Record<MessageKey, string> = {
   'validation.bannerDramaRequired': 'Le banner doit être lié à un drama publié',
   'validation.bannerDramaNotLive': 'Seuls les dramas publiés (LIVE) peuvent être utilisés',
   'validation.bannerDramaId': 'dramaId de banner invalide',
+  'validation.tagRequired': 'Le nom du tag est requis',
+  'validation.tagSystemForbidden': 'Les tags système ne peuvent pas être renommés ou supprimés',
   'vipPlan.hasOrders':
     'Ce forfait VIP a des commandes associées et ne peut pas être supprimé. Désactivez-le plutôt.',
   'topupPackage.hasOrders':

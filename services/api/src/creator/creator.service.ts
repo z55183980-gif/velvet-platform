@@ -399,8 +399,21 @@ export class CreatorService {
       if (!dto?.titleEn || !String(dto.titleEn).trim()) {
         throw new BizException(BizCode.BAD_REQUEST, '缺少必要字段 titleEn');
       }
-      if (!dto?.categorySlug || !String(dto.categorySlug).trim()) {
-        throw new BizException(BizCode.BAD_REQUEST, '缺少必要字段 categorySlug');
+      const requestedSlug = dto?.categorySlug ? String(dto.categorySlug).trim() : '';
+      let categorySlug = requestedSlug || 'romance';
+      let cat = await this.prisma.category.findUnique({ where: { slug: categorySlug } });
+      if (!cat) {
+        if (requestedSlug) {
+          throw new BizException(BizCode.BAD_REQUEST, `分类不存在: ${requestedSlug}`);
+        }
+        cat = await this.prisma.category.findFirst({
+          where: { isActive: true },
+          orderBy: { sortOrder: 'asc' },
+        });
+        if (!cat) {
+          throw new BizException(BizCode.BAD_REQUEST, '分类不存在: 请先 seed categories');
+        }
+        categorySlug = cat.slug;
       }
       const drama = await this.prisma.drama.create({
         data: {
@@ -411,7 +424,7 @@ export class CreatorService {
           titleFr: dto.titleFr != null ? String(dto.titleFr).trim() || null : null,
           descriptionEn: dto.descriptionEn,
           descriptionZh: dto.descriptionZh,
-          categorySlug: dto.categorySlug,
+          categorySlug,
           coverUrl: dto.coverUrl,
           freeEpisodeCount: dto.freeEpisodeCount ?? 3,
           // lockMode null = inherit global episodeLockMode

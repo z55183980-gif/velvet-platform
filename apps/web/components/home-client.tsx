@@ -65,8 +65,8 @@ type HomeSnapshot = {
 
 let homeSnapshot: HomeSnapshot | null = null;
 
-function homeKey(category?: string, q?: string, sort?: string) {
-  return `${category || ""}|${q || ""}|${sort || ""}`;
+function homeKey(q?: string, sort?: string) {
+  return `${q || ""}|${sort || ""}`;
 }
 
 function entryHasContent(entry: Pick<HomeCache, "heroSlides" | "hot" | "rows"> | null | undefined) {
@@ -147,12 +147,11 @@ function HomeInner({
   const { locale, t } = useLocale();
   const { mobile: isMobile, ready: mobileReady } = useIsMobile();
   const params = useSearchParams();
-  const category = params.get("cat") || undefined;
   const q = params.get("q") || undefined;
   const sortParam = params.get("sort");
   const sort = sortParam === "hot" || sortParam === "latest" ? sortParam : undefined;
-  const filtered = !!(category || q || sort);
-  const key = homeKey(category, q, sort);
+  const filtered = !!(q || sort);
+  const key = homeKey(q, sort);
 
   const initialSnapshotRef = useRef(homeSnapshot);
   const snap = initialSnapshotRef.current;
@@ -343,7 +342,7 @@ function HomeInner({
         if (filtered) {
           const [f, h] = await Promise.all([
             loadFeatured({ signal: ac.signal }),
-            loadHome(1, HOME_PAGE_SIZE, { category, q, sort, signal: ac.signal }),
+            loadHome(1, HOME_PAGE_SIZE, { q, sort, signal: ac.signal }),
           ]);
           if (!stillCurrent()) return;
           const feat = f.length ? f : h.rows.slice(0, 5);
@@ -435,7 +434,7 @@ function HomeInner({
     return () => ac.abort();
     // locale/t only affect labels — remapped in separate effect
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [category, q, sort, filtered, mobileReady, isMobile, reloadKey, key, persistCache]);
+  }, [q, sort, filtered, mobileReady, isMobile, reloadKey, key, persistCache]);
 
   // Remap hero titles when locale changes without refetching
   useEffect(() => {
@@ -461,7 +460,6 @@ function HomeInner({
     const timer = window.setTimeout(() => ac.abort(), 15_000);
     try {
       const h = await loadHome(nextPage, HOME_PAGE_SIZE, {
-        category: filtered ? category : undefined,
         q: filtered ? q : undefined,
         sort: filtered ? sort : "hot",
         signal: ac.signal,
@@ -504,7 +502,7 @@ function HomeInner({
       loadMoreLock.current = false;
       setLoadingMore(false);
     }
-  }, [mobileReady, isMobile, filtered, category, q, sort, key, persistCache]);
+  }, [mobileReady, isMobile, filtered, q, sort, key, persistCache]);
 
   useEffect(() => {
     const el = sentinelRef.current;
@@ -521,11 +519,10 @@ function HomeInner({
 
   const filterTitle = useMemo(() => {
     if (q) return `“${q}”`;
-    if (category) return t("sections.allCategories");
     if (sort === "latest") return t("sections.newReleases");
     if (sort === "hot") return t("sections.trending");
     return t("sections.trending");
-  }, [q, category, sort, t]);
+  }, [q, sort, t]);
 
   const gridDramas = hot.length > 0 ? hot : rows;
 

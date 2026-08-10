@@ -4,7 +4,8 @@ import Link from "next/link";
 import { Star } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { Badge } from "./ui/badge";
-import { categoryName, type Drama } from "@/lib/mock-data";
+import { type Drama } from "@/lib/mock-data";
+import { toPublicDramaTags } from "@/lib/drama-tags";
 import { pickTitleText } from "@/lib/languages";
 import { formatCredits, cn } from "@/lib/utils";
 import { SafeImage } from "@/components/safe-image";
@@ -28,7 +29,7 @@ export function DramaCard({
 }) {
   const { locale, t } = useLocale();
   const title = pickTitleText(locale, drama.titleEn, drama.titleZh, drama.titleFr);
-  const cat = categoryName(drama.category ?? drama.categorySlug, locale);
+  const tagLabel = toPublicDramaTags(drama.tags).slice(0, 2).join(" · ");
   const isFree = drama.freeCount > 0;
   const isGrid = variant === "grid";
 
@@ -105,13 +106,14 @@ export function DramaCard({
         </h3>
         {isGrid ? (
           <p className="mt-1.5 flex flex-wrap gap-1.5 text-[12px] text-ink-subtle">
-            <span>{cat}</span>
+            {tagLabel ? <span>{tagLabel}</span> : null}
             {drama.isVip ? <span>· {t("card.vip")}</span> : null}
             {isFree ? <span>· {t("card.firstEpisodesFree", { n: drama.freeCount })}</span> : null}
           </p>
         ) : !compact ? (
           <p className="mt-1.5 text-caption text-ink-muted">
-            {cat} · {drama.episodesCount} {t("card.episodes")}
+            {tagLabel ? `${tagLabel} · ` : ""}
+            {drama.episodesCount} {t("card.episodes")}
           </p>
         ) : null}
       </div>

@@ -7,23 +7,15 @@ import { buttonVariants } from "@/components/ui/button";
 import { creatorApi } from "@/lib/creator-api";
 import { formatApiError, useToast } from "@/components/toast";
 import { track } from "@/lib/track";
-import { categories, categoryName } from "@/lib/mock-data";
 
 export default function CreatorWorksPage() {
-  const { locale, t } = useLocale();
+  const { t } = useLocale();
   const toast = useToast();
   const [dramas, setDramas] = useState<any[]>([]);
   const [titleEn, setTitleEn] = useState("");
   const [titleZh, setTitleZh] = useState("");
-  const [categorySlug, setCategorySlug] = useState("romance");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-
-  const CATEGORIES = categories.map((c) => ({
-    slug: c.slug,
-    label: categoryName(c.slug, locale),
-  }));
-
   const fail = useCallback(
     (e: unknown, fallback: string) => {
       const msg = formatApiError(e, fallback);
@@ -53,9 +45,9 @@ export default function CreatorWorksPage() {
     try {
       await creatorApi("/dramas", {
         method: "POST",
-        body: JSON.stringify({ titleEn, titleZh: titleZh || titleEn, categorySlug }),
+        body: JSON.stringify({ titleEn, titleZh: titleZh || titleEn }),
       });
-      track("create_drama", { categorySlug });
+      track("create_drama", {});
       setTitleEn("");
       setTitleZh("");
       await reload();
@@ -146,17 +138,6 @@ export default function CreatorWorksPage() {
             value={titleZh}
             onChange={(e) => setTitleZh(e.target.value)}
           />
-          <select
-            className="rounded-md border border-line bg-surface px-3 py-2 text-body-sm text-ink"
-            value={categorySlug}
-            onChange={(e) => setCategorySlug(e.target.value)}
-          >
-            {CATEGORIES.map((c) => (
-              <option key={c.slug} value={c.slug}>
-                {c.label}
-              </option>
-            ))}
-          </select>
           <button
             type="button"
             disabled={busy}

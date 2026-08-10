@@ -11,7 +11,6 @@ import {
   adminDeleteDrama,
   adminDeleteEpisode,
   adminGetDrama,
-  adminListCategories,
   adminListCreators,
   adminListSettings,
   adminOfflineDrama,
@@ -136,7 +135,6 @@ type Drama = {
   episodes?: Episode[];
 };
 
-type Category = { slug: string; nameZh?: string | null; nameEn?: string; nameFr?: string | null };
 type CreatorOption = { id: string | number; displayName?: string };
 type DetailTab = "overview" | "info" | "episodes" | "policy";
 /** Marker returned by delete mutation so shared onSuccess skips detail refetch. */
@@ -329,7 +327,6 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
   });
 
   const detailQ = useQuery({ queryKey: ["admin", "drama", id], queryFn: () => adminGetDrama(id) as Promise<Drama> });
-  const categoriesQ = useQuery({ queryKey: ["admin", "categories"], queryFn: () => adminListCategories(true) as Promise<Category[]> });
   const creatorsQ = useQuery({
     queryKey: ["admin", "creators", "picker"],
     queryFn: async () => {
@@ -549,6 +546,7 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
         contentType,
         completion,
         creatorId,
+        categorySlug: _categorySlug,
         ...rest
       } = draft;
       const nextCreatorId = creatorId.trim();
@@ -862,7 +860,7 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
             {drama.isFeatured ? <span className="content-flag content-flag--brand"><Sparkles className="h-3 w-3" />{t("featuredFlag")}</span> : null}
           </div>
           <h1 className="mt-2 truncate text-[22px] font-bold tracking-tight text-ink">{drama.titleEn || drama.titleZh || drama.titleFr || "—"}</h1>
-          <p className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-ink-subtle"><span>{drama.slug}</span><span>·</span><span>{drama.creator?.displayName || "—"}</span><span>·</span><span>{drama.category?.nameEn || drama.category?.nameZh || drama.category?.nameFr || "—"}</span></p>
+          <p className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-ink-subtle"><span>{drama.slug}</span><span>·</span><span>{drama.creator?.displayName || "—"}</span></p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
           {(() => {
@@ -923,10 +921,10 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
         </div>
       </section>
 
-      {error || detailQ.error || categoriesQ.error ? (
+      {error || detailQ.error ? (
         <div className="content-inline-error">
           <AlertTriangle className="h-4 w-4" />
-          <span>{error || (detailQ.error as Error)?.message || (categoriesQ.error as Error)?.message}</span>
+          <span>{error || (detailQ.error as Error)?.message}</span>
         </div>
       ) : null}
 
@@ -1036,17 +1034,7 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
                 <p className="text-caption text-ink-subtle">{t("localeTitleFallbackHint")}</p>
               </div>
             </div>
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-              <FieldLabel label={t("category")} required>
-                <Select value={draft.categorySlug} onChange={(e) => setDraft((v) => ({ ...v, categorySlug: e.target.value }))}>
-                  <option value="">{t("selectCategory")}</option>
-                  {(categoriesQ.data ?? []).map((category) => (
-                    <option key={category.slug} value={category.slug}>
-                      {category.nameEn || category.nameZh || category.nameFr || category.slug}
-                    </option>
-                  ))}
-                </Select>
-              </FieldLabel>
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               <FieldLabel label={t("dramaCreator")}>
                 <Select
                   value={draft.creatorId}

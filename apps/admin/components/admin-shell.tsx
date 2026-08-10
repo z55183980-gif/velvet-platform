@@ -78,7 +78,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/content", key: "content", icon: Clapperboard, end: true },
       { href: "/content?view=pending", key: "contentPending", icon: ShieldCheck, end: true },
       { href: "/hottest", key: "hottest", icon: Flame, end: true },
-      { href: "/categories", key: "categories", icon: FolderTree, end: true },
+      { href: "/tags", key: "dramaTagsPage", icon: FolderTree, end: true },
     ],
   },
   {

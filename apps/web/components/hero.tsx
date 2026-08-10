@@ -4,7 +4,8 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Play } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
-import { categoryName, type Drama } from "@/lib/mock-data";
+import { type Drama } from "@/lib/mock-data";
+import { toPublicDramaTags } from "@/lib/drama-tags";
 import { pickContentText, pickTitleText, type Locale } from "@/lib/languages";
 import { heroObjectPosition } from "@/lib/hero-crop";
 import { cn } from "@/lib/utils";
@@ -35,9 +36,8 @@ export type HeroSlide = {
   focusY?: number;
 };
 
-function dramaTags(drama: Drama, locale: Locale, t: (k: string) => string): string[] {
-  const cat = categoryName(drama.category ?? drama.categorySlug, locale);
-  const tags = [cat];
+function dramaTags(drama: Drama, _locale: Locale, t: (k: string) => string): string[] {
+  const tags = [...toPublicDramaTags(drama.tags)];
   if (drama.isVip) tags.push(t("card.vip"));
   if (drama.freeCount > 0) tags.push(t("card.free"));
   tags.push(`${drama.episodesCount} ${t("card.episodes")}`);

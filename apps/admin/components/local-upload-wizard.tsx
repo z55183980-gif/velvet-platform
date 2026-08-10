@@ -4,7 +4,6 @@ import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState,
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   adminCreateOnlineDrama,
-  adminListCategories,
   adminListCreators,
   adminListSettings,
   adminStorageProbe,
@@ -74,7 +73,6 @@ import { isPlayableMediaUrl } from "@/lib/playable-url";
 import { useUploadQueue } from "@/lib/upload-queue";
 import { VIDEO_ACCEPT, isVideoFile } from "@/lib/video-formats";
 
-type Category = { slug: string; nameZh?: string | null; nameEn?: string; nameFr?: string | null };
 type CreatorOption = { id: string | number; displayName?: string };
 type DraftRecord = {
   id: string;
@@ -861,7 +859,6 @@ export const LocalUploadWizard = forwardRef<
     if (!en) return t("uploadBlockTitleEn");
     if (en.length > 40) return t("dramaTitleTooLong");
     if (titleZh.trim().length > 40) return t("dramaTitleTooLong");
-    if (!categorySlug) return t("uploadBlockCategory");
     if (descriptionEn.trim().length > 300) return t("dramaDescriptionTooLong");
     if (tags.length > MAX_DRAMA_TAGS) return t("dramaTagsTooMany");
     if (episodes.length < 1) return t("uploadBlockFiles");
@@ -946,10 +943,6 @@ export const LocalUploadWizard = forwardRef<
     };
   }, []);
 
-  const categoriesQ = useQuery({
-    queryKey: ["admin", "categories"],
-    queryFn: () => adminListCategories(true) as Promise<Category[]>,
-  });
   const creatorsQ = useQuery({
     queryKey: ["admin", "creators", "picker"],
     queryFn: async () => {
@@ -2681,25 +2674,6 @@ export const LocalUploadWizard = forwardRef<
                       />
                     </div>
                   </div>
-                  <label className="upload-field upload-field--compact upload-field--category">
-                    <span>
-                      {t("onlineCategory")} <b className="text-danger">*</b>
-                    </span>
-                    <Select
-                      required
-                      value={categorySlug}
-                      disabled={busy}
-                      aria-required="true"
-                      onChange={(e) => setCategorySlug(e.target.value)}
-                    >
-                      <option value="">{t("selectCategory")}</option>
-                      {(categoriesQ.data ?? []).map((c) => (
-                        <option key={c.slug} value={c.slug}>
-                          {c.nameEn || c.nameZh || c.nameFr || c.slug}
-                        </option>
-                      ))}
-                    </Select>
-                  </label>
                   <label className="upload-field upload-field--compact upload-field--creator">
                     <span>{t("dramaCreator")}</span>
                     <Select

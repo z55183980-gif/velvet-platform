@@ -323,7 +323,7 @@ class CreateOnlineDramaDto {
   @IsOptional() @IsString() slug?: string;
   @IsOptional() @IsString() descriptionZh?: string;
   @IsOptional() @IsString() descriptionEn?: string;
-  @IsNotEmpty() @IsString() categorySlug!: string;
+  @IsOptional() @IsString() categorySlug?: string;
   @IsOptional() @IsString() coverUrl?: string;
   @IsOptional() @IsString() creatorId?: string;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) freeEpisodeCount?: number;
@@ -349,7 +349,7 @@ class CreateLocalUploadDramaDto {
   @IsOptional() @IsString() slug?: string;
   @IsOptional() @IsString() descriptionZh?: string;
   @IsOptional() @IsString() descriptionEn?: string;
-  @IsNotEmpty() @IsString() categorySlug!: string;
+  @IsOptional() @IsString() categorySlug?: string;
   @IsOptional() @IsString() coverUrl?: string;
   @IsOptional() @IsString() creatorId?: string;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) freeEpisodeCount?: number;
@@ -1531,5 +1531,25 @@ export class ContentController {
   @Post('categories/:slug/delete')
   async deleteCategory(@Param('slug') slug: string, @Req() req: any) {
     return ok(await this.admin.deleteCategory(slug, getActor(req)));
+  }
+
+  @Get('drama-tags')
+  async listDramaTags() {
+    return ok(await this.admin.listDramaTags());
+  }
+
+  @Post('drama-tags/rename')
+  async renameDramaTag(
+    @Body() body: { from?: string; to?: string },
+    @Req() req: any,
+  ) {
+    return ok(
+      await this.admin.renameDramaTag(String(body?.from || ''), String(body?.to || ''), getActor(req)),
+    );
+  }
+
+  @Post('drama-tags/delete')
+  async deleteDramaTag(@Body() body: { tag?: string }, @Req() req: any) {
+    return ok(await this.admin.deleteDramaTag(String(body?.tag || ''), getActor(req)));
   }
 }

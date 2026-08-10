@@ -295,13 +295,41 @@ export async function loadCategories(opts?: { signal?: AbortSignal }): Promise<C
   );
 }
 
+/** Public display tags on LIVE dramas (system/meta tags stripped server-side). */
+export async function loadDramaTags(opts?: { signal?: AbortSignal }): Promise<string[]> {
+  return cachedGet(
+    "drama-tags",
+    60_000,
+    async () => {
+      try {
+        const list = await request<any[]>("/drama-tags");
+        return (Array.isArray(list) ? list : [])
+          .map((t) => String(t || "").trim())
+          .filter(Boolean);
+      } catch (err) {
+        if (isAbortError(err)) throw err;
+        if (process.env.NODE_ENV === "production") throw err;
+        return [];
+      }
+    },
+    opts?.signal,
+  );
+}
+
 export async function loadHome(
   page = 1,
   pageSize = 12,
-  opts?: { category?: string; q?: string; sort?: "latest" | "hot"; signal?: AbortSignal },
+  opts?: {
+    category?: string;
+    tag?: string;
+    q?: string;
+    sort?: "latest" | "hot";
+    signal?: AbortSignal;
+  },
 ): Promise<{ rows: Drama[]; total: number }> {
   const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   if (opts?.category) params.set("category", opts.category);
+  if (opts?.tag) params.set("tag", opts.tag);
   if (opts?.q) params.set("q", opts.q);
   if (opts?.sort) params.set("sort", opts.sort);
   const cacheKey = `dramas?${params.toString()}`;

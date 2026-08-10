@@ -58,6 +58,11 @@ export class DramasController {
     return ok(await this.dramas.listCategories());
   }
 
+  @Get('drama-tags')
+  async dramaTags() {
+    return ok(await this.dramas.listPublicTags());
+  }
+
   @Get('banners')
   async banners() {
     return ok(await this.dramas.listBanners());

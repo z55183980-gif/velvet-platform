@@ -26,7 +26,10 @@ import {
   LockAccessService,
   type LockAccessMode,
 } from '../common/lock-access.service';
-import { mergeDramaSourceTags } from '../dramas/drama-tags';
+import { mergeDramaSourceTags, isDramaSystemTag } from '../dramas/drama-tags';
+
+/** Silent default while Category FK remains required (no category UX). */
+const DEFAULT_CATEGORY_SLUG = 'romance';
 
 export interface LocalImportOptions {
   rootPath?: string;
@@ -69,7 +72,7 @@ export interface CreateOnlineDramaInput {
   slug?: string;
   descriptionZh?: string;
   descriptionEn?: string;
-  categorySlug: string;
+  categorySlug?: string;
   coverUrl?: string;
   /** Optional owner; when omitted, first KYC-approved (else any / Sample Studio) is used. */
   creatorId?: string;
@@ -94,7 +97,7 @@ export interface CreateLocalUploadDramaInput {
   slug?: string;
   descriptionZh?: string;
   descriptionEn?: string;
-  categorySlug: string;
+  categorySlug?: string;
   coverUrl?: string;
   /** Optional owner; when omitted, first KYC-approved (else any / Sample Studio) is used. */
   creatorId?: string;
@@ -1189,7 +1192,7 @@ export class AdminService {
     return { ok: true };
   }
 
-  // ============ Category CRUD ============
+  // ============ Category CRUD (legacy; UI replaced by drama tags) ============
   async listCategories(all = false) {
     const where = all ? undefined : { isActive: true };
     const rows = await this.prisma.category.findMany({
@@ -1268,6 +1271,118 @@ export class AdminService {
     return { ok: true };
   }
 
+  /** Resolve optional categorySlug → existing Category; empty → DEFAULT_CATEGORY_SLUG. */
+  private async resolveCategorySlugOrDefault(raw?: string | null): Promise<string> {
+    const requested = String(raw || '').trim();
+    const slug = requested || DEFAULT_CATEGORY_SLUG;
+    const cat = await this.prisma.category.findUnique({ where: { slug } });
+    if (!cat) {
+      if (requested) {
+        throw new BizException(BizCode.BAD_REQUEST, `分类不存在: ${requested}`);
+      }
+      // Default missing in DB — pick any active category.
+      const fallback = await this.prisma.category.findFirst({
+        where: { isActive: true },
+        orderBy: { sortOrder: 'asc' },
+      });
+      if (!fallback) {
+        throw new BizException(BizCode.BAD_REQUEST, '分类不存在: 请先 seed categories');
+      }
+      return fallback.slug;
+    }
+    return cat.slug;
+  }
+
+  // ============ Drama display tags (open-ended) ============
+  async listDramaTags() {
+    const rows = await this.prisma.$queryRaw<Array<{ tag: string; count: bigint }>>`
+      SELECT t.tag AS tag, COUNT(*)::bigint AS count
+        FROM dramas d
+        CROSS JOIN LATERAL unnest(d.tags) AS t(tag)
+       GROUP BY t.tag
+       ORDER BY COUNT(*) DESC, t.tag ASC
+    `;
+    const out: Array<{ tag: string; count: number }> = [];
+    const seen = new Set<string>();
+    for (const row of rows) {
+      const tag = String(row.tag || '').trim();
+      const key = tag.toLowerCase();
+      if (!tag || isDramaSystemTag(tag) || seen.has(key)) continue;
+      seen.add(key);
+      out.push({ tag, count: Number(row.count) || 0 });
+    }
+    return { rows: out, total: out.length };
+  }
+
+  async renameDramaTag(fromRaw: string, toRaw: string, actorId?: bigint) {
+    const from = String(fromRaw || '').trim();
+    const to = String(toRaw || '').trim();
+    if (!from || !to) {
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.tagRequired');
+    }
+    if (isDramaSystemTag(from) || isDramaSystemTag(to)) {
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.tagSystemForbidden');
+    }
+    if (from === to) return { ok: true, updated: 0 };
+
+    const dramas = await this.prisma.drama.findMany({
+      where: { tags: { has: from } },
+      select: { id: true, tags: true },
+    });
+    let updated = 0;
+    for (const d of dramas) {
+      const next: string[] = [];
+      const seen = new Set<string>();
+      for (const raw of d.tags || []) {
+        const t = raw === from ? to : raw;
+        const key = t.toLowerCase();
+        if (!t || seen.has(key)) continue;
+        seen.add(key);
+        next.push(t);
+      }
+      if (next.join('\0') === (d.tags || []).join('\0')) continue;
+      await this.prisma.drama.update({ where: { id: d.id }, data: { tags: next } });
+      updated += 1;
+    }
+    await this.audit.write({
+      actorId,
+      action: 'dramaTag.rename',
+      targetType: 'dramaTag',
+      targetId: from,
+      payload: { from, to, updated },
+    });
+    return { ok: true, updated };
+  }
+
+  async deleteDramaTag(tagRaw: string, actorId?: bigint) {
+    const tag = String(tagRaw || '').trim();
+    if (!tag) {
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.tagRequired');
+    }
+    if (isDramaSystemTag(tag)) {
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.tagSystemForbidden');
+    }
+    const dramas = await this.prisma.drama.findMany({
+      where: { tags: { has: tag } },
+      select: { id: true, tags: true },
+    });
+    let updated = 0;
+    for (const d of dramas) {
+      const next = (d.tags || []).filter((t) => t !== tag);
+      if (next.length === (d.tags || []).length) continue;
+      await this.prisma.drama.update({ where: { id: d.id }, data: { tags: next } });
+      updated += 1;
+    }
+    await this.audit.write({
+      actorId,
+      action: 'dramaTag.delete',
+      targetType: 'dramaTag',
+      targetId: tag,
+      payload: { tag, updated },
+    });
+    return { ok: true, updated };
+  }
+
   // ============ Drama 管理动作 ============
   async updateDrama(id: string, dto: any, actorId?: bigint) {
     const data: any = {};
@@ -1276,7 +1391,9 @@ export class AdminService {
     if (dto.titleFr != null) data.titleFr = String(dto.titleFr).trim() || null;
     if (dto.descriptionEn != null) data.descriptionEn = dto.descriptionEn;
     if (dto.descriptionZh != null) data.descriptionZh = dto.descriptionZh;
-    if (dto.categorySlug != null) data.categorySlug = dto.categorySlug;
+    if (dto.categorySlug != null && String(dto.categorySlug).trim()) {
+      data.categorySlug = await this.resolveCategorySlugOrDefault(dto.categorySlug);
+    }
     if (dto.creatorId !== undefined) {
       const explicit = String(dto.creatorId || '').trim();
       // Empty string = keep existing owner (optional field on edit).
@@ -1486,14 +1603,7 @@ export class AdminService {
     if (!titleEn) {
       throw new BizException(BizCode.BAD_REQUEST, '英文标题必填');
     }
-    const categorySlug = String(dto.categorySlug || '').trim();
-    if (!categorySlug) {
-      throw new BizException(BizCode.BAD_REQUEST, '分类必填');
-    }
-    const category = await this.prisma.category.findUnique({ where: { slug: categorySlug } });
-    if (!category) {
-      throw new BizException(BizCode.BAD_REQUEST, `分类不存在: ${categorySlug}`);
-    }
+    const categorySlug = await this.resolveCategorySlugOrDefault(dto.categorySlug);
     if (!Array.isArray(dto.episodes) || dto.episodes.length === 0) {
       throw new BizException(BizCode.BAD_REQUEST, '至少填写一集播放链接');
     }
@@ -1691,14 +1801,7 @@ export class AdminService {
     if (!titleEn) {
       throw new BizException(BizCode.BAD_REQUEST, '英文标题必填');
     }
-    const categorySlug = String(dto.categorySlug || '').trim();
-    if (!categorySlug) {
-      throw new BizException(BizCode.BAD_REQUEST, '分类必填');
-    }
-    const cat = await this.prisma.category.findUnique({ where: { slug: categorySlug } });
-    if (!cat) {
-      throw new BizException(BizCode.BAD_REQUEST, `分类不存在: ${categorySlug}`);
-    }
+    const categorySlug = await this.resolveCategorySlugOrDefault(dto.categorySlug);
 
     const titleZh = String(dto.titleZh || '').trim() || null;
     const titleFr = String(dto.titleFr || '').trim() || null;

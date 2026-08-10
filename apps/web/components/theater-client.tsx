@@ -1,13 +1,24 @@
 "use client";
 
-import { startTransition, useCallback, useEffect, useRef, useState } from "react";
-import { Search, X } from "lucide-react";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { ChevronDown, ChevronUp, Filter, Flame, Play, Search, X } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { DramaCard } from "@/components/drama-card";
-import { loadCategories, loadHome, loadHottest } from "@/lib/api";
-import type { Category, Drama } from "@/lib/mock-data";
-import { resolveCategorySlug } from "@/lib/mock-data";
-import { pickTitleText } from "@/lib/languages";
+import { loadDramaTags, loadHome } from "@/lib/api";
+import type { Drama } from "@/lib/mock-data";
+import {
+  composeDramaTagFilter,
+  DRAMA_CONTENT_TYPES,
+  resolveContentTypeSlug,
+  type DramaContentTypeSlug,
+} from "@/lib/drama-tags";
 import { cn } from "@/lib/utils";
 import { DataErrorState } from "@/components/data-error-state";
 import {
@@ -18,6 +29,7 @@ import {
 
 type SortMode = TheaterSortMode;
 type CacheKey = string;
+type ContentTypeFilter = DramaContentTypeSlug | "";
 
 type TheaterListCache = {
   rows: Drama[];
@@ -27,8 +39,8 @@ type TheaterListCache = {
 };
 
 type TheaterSnapshot = {
-  categories: Category[];
-  cat: string;
+  contentType: ContentTypeFilter;
+  tag: string;
   sort: SortMode;
   query: string;
   q: string;
@@ -42,8 +54,13 @@ type TheaterSnapshot = {
 
 let theaterSnapshot: TheaterSnapshot | null = null;
 
-function cacheKey(cat: string, sort: SortMode, q: string): CacheKey {
-  return `${cat || "__all__"}|${sort}|${q}`;
+function cacheKey(
+  contentType: ContentTypeFilter,
+  tag: string,
+  sort: SortMode,
+  q: string,
+): CacheKey {
+  return `${contentType || "__all__"}|${tag || "__notag__"}|${sort}|${q}`;
 }
 
 function computeHasMore(page: number, pageSize: number, loaded: number, total: number) {
@@ -67,12 +84,13 @@ function seedFromInitial(initial: TheaterInitial): TheaterListCache {
 }
 
 export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
-  const { locale, t } = useLocale();
+  const { t } = useLocale();
   const initialSnapshotRef = useRef(theaterSnapshot);
   const snap = initialSnapshotRef.current;
 
   const seedKey = cacheKey(
-    snap?.cat ?? initial?.cat ?? "",
+    snap?.contentType ?? initial?.contentType ?? "",
+    snap?.tag ?? initial?.tag ?? "",
     snap?.sort ?? initial?.sort ?? "hot",
     snap?.q ?? initial?.q ?? "",
   );
@@ -87,10 +105,10 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
       ? seedFromInitial(initial)
       : null;
 
-  const [categories, setCategories] = useState<Category[]>(
-    () => snap?.categories ?? initial?.categories ?? [],
+  const [contentType, setContentType] = useState<ContentTypeFilter>(
+    () => snap?.contentType ?? initial?.contentType ?? "",
   );
-  const [cat, setCat] = useState<string>(() => snap?.cat ?? initial?.cat ?? "");
+  const [tag, setTag] = useState(() => snap?.tag ?? initial?.tag ?? "");
   const [sort, setSort] = useState<SortMode>(() => snap?.sort ?? initial?.sort ?? "hot");
   const [query, setQuery] = useState(() => snap?.query ?? initial?.query ?? "");
   const [q, setQ] = useState(() => snap?.q ?? initial?.q ?? "");
@@ -104,6 +122,9 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
   const [loadError, setLoadError] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   const [urlReady, setUrlReady] = useState(() => !!snap || !!initial);
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [allTags, setAllTags] = useState<string[]>([]);
+  const [tagsLoading, setTagsLoading] = useState(false);
 
   const cacheRef = useRef<Map<CacheKey, TheaterListCache>>(
     snap?.cache ?? new Map(),
@@ -113,7 +134,6 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
   }
   const hasContentRef = useRef(!!seedList?.rows.length);
   const loadMoreLock = useRef(false);
-  /** Bumps on filter change so stale page-1/page-N responses cannot mix. */
   const listGenerationRef = useRef(0);
   const loadMoreAbortRef = useRef<AbortController | null>(null);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -125,7 +145,8 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
     initialLoading,
     refreshing,
     sort,
-    cat,
+    contentType,
+    tag,
     q,
   });
   listRef.current = {
@@ -136,12 +157,13 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
     initialLoading,
     refreshing,
     sort,
-    cat,
+    contentType,
+    tag,
     q,
   };
   const latestSnapshotRef = useRef({
-    categories,
-    cat,
+    contentType,
+    tag,
     sort,
     query,
     q,
@@ -151,8 +173,8 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
     hasMore,
   });
   latestSnapshotRef.current = {
-    categories,
-    cat,
+    contentType,
+    tag,
     sort,
     query,
     q,
@@ -164,18 +186,23 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const hasRouteState = params.has("cat") || params.has("sort") || params.has("q");
+    const hasRouteState =
+      params.has("type") ||
+      params.has("tag") ||
+      params.has("sort") ||
+      params.has("q") ||
+      params.has("cat");
     if (initialSnapshotRef.current && !hasRouteState) {
       setUrlReady(true);
       return;
     }
     if (!initialSnapshotRef.current && initial) {
-      // SSR already applied matching URL state
       setUrlReady(true);
       return;
     }
     const nextSort = params.get("sort");
-    setCat(resolveCategorySlug(params.get("cat") || ""));
+    setContentType(resolveContentTypeSlug(params.get("type") || ""));
+    setTag((params.get("tag") || "").trim());
     setSort(nextSort === "latest" || nextSort === "hottest" ? nextSort : "hot");
     setQuery(params.get("q") || "");
     setQ(params.get("q")?.trim() || "");
@@ -213,45 +240,52 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
   }, [query]);
 
   useEffect(() => {
-    if (categories.length > 0) return;
+    if (!filterOpen || allTags.length > 0) return;
     let cancelled = false;
-    loadCategories()
-      .then((c) => {
-        if (!cancelled) setCategories(c);
+    setTagsLoading(true);
+    loadDramaTags()
+      .then((list) => {
+        if (!cancelled) setAllTags(list);
       })
       .catch(() => {
-        if (!cancelled) setCategories([]);
+        if (!cancelled) setAllTags([]);
+      })
+      .finally(() => {
+        if (!cancelled) setTagsLoading(false);
       });
     return () => {
       cancelled = true;
     };
-  }, [categories.length]);
+  }, [filterOpen, allTags.length]);
 
   useEffect(() => {
     if (!urlReady) return;
     const params = new URLSearchParams(window.location.search);
-    if (cat) params.set("cat", cat);
-    else params.delete("cat");
+    params.delete("cat");
+    if (contentType) params.set("type", contentType);
+    else params.delete("type");
+    if (tag) params.set("tag", tag);
+    else params.delete("tag");
     if (sort !== "hot") params.set("sort", sort);
     else params.delete("sort");
     if (q) params.set("q", q);
     else params.delete("q");
     const search = params.toString();
     window.history.replaceState(null, "", `${window.location.pathname}${search ? `?${search}` : ""}`);
-  }, [cat, sort, q, urlReady]);
+  }, [contentType, tag, sort, q, urlReady]);
 
   useEffect(() => {
     if (!urlReady) return;
-    // Filter change: cancel in-flight page-N and release pagination lock.
     loadMoreAbortRef.current?.abort();
     loadMoreAbortRef.current = null;
     loadMoreLock.current = false;
     setLoadingMore(false);
 
-    const key = cacheKey(cat, sort, q);
+    const key = cacheKey(contentType, tag, sort, q);
     const cached = cacheRef.current.get(key);
     const ac = new AbortController();
     const generation = ++listGenerationRef.current;
+    const tagFilter = composeDramaTagFilter(contentType, tag);
 
     if (cached) {
       setRows(cached.rows);
@@ -261,8 +295,8 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
       hasContentRef.current = cached.rows.length > 0;
       setInitialLoading(false);
       setRefreshing(false);
-      // Keep already-paginated lists intact
-      if (cached.page > 1 || (sort === "hottest" && !cat && !q)) {
+      // Keep already-paginated lists; only refresh page-1 caches in background.
+      if (cached.page > 1) {
         return () => ac.abort();
       }
     } else if (!hasContentRef.current) {
@@ -279,25 +313,17 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
       listRef.current.page <= 1;
 
     setLoadError(false);
-    const load =
-      sort === "hottest" && !cat && !q
-        ? loadHottest({ signal: ac.signal }).then((list) => ({
-            rows: list,
-            total: list.length,
-            page: 1,
-            hasMore: false,
-          }))
-        : loadHome(1, THEATER_PAGE_SIZE, {
-            category: cat || undefined,
-            q: q || undefined,
-            sort: sort === "hottest" ? "hot" : sort,
-            signal: ac.signal,
-          }).then((r) => ({
-            rows: r.rows,
-            total: r.total,
-            page: 1,
-            hasMore: computeHasMore(1, THEATER_PAGE_SIZE, r.rows.length, r.total),
-          }));
+    const load = loadHome(1, THEATER_PAGE_SIZE, {
+      tag: tagFilter,
+      q: q || undefined,
+      sort: sort === "latest" ? "latest" : "hot",
+      signal: ac.signal,
+    }).then((r) => ({
+      rows: r.rows,
+      total: r.total,
+      page: 1,
+      hasMore: computeHasMore(1, THEATER_PAGE_SIZE, r.rows.length, r.total),
+    }));
 
     load
       .then((r) => {
@@ -329,16 +355,15 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
     return () => {
       ac.abort();
     };
-  }, [cat, sort, q, reloadKey, urlReady]);
+  }, [contentType, tag, sort, q, reloadKey, urlReady]);
 
   const loadMore = useCallback(async () => {
     const cur = listRef.current;
-    if (cur.sort === "hottest" && !cur.cat && !cur.q) return;
     if (!cur.hasMore || cur.initialLoading || cur.refreshing || loadMoreLock.current) return;
     loadMoreLock.current = true;
     setLoadingMore(true);
     const nextPage = cur.page + 1;
-    const key = cacheKey(cur.cat, cur.sort, cur.q);
+    const key = cacheKey(cur.contentType, cur.tag, cur.sort, cur.q);
     const generation = listGenerationRef.current;
     loadMoreAbortRef.current?.abort();
     const ac = new AbortController();
@@ -346,14 +371,14 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
     const timer = window.setTimeout(() => ac.abort(), 15_000);
     try {
       const h = await loadHome(nextPage, THEATER_PAGE_SIZE, {
-        category: cur.cat || undefined,
+        tag: composeDramaTagFilter(cur.contentType, cur.tag),
         q: cur.q || undefined,
-        sort: cur.sort === "hottest" ? "hot" : cur.sort,
+        sort: cur.sort === "latest" ? "latest" : "hot",
         signal: ac.signal,
       });
       if (ac.signal.aborted || listGenerationRef.current !== generation) return;
       const live = listRef.current;
-      if (cacheKey(live.cat, live.sort, live.q) !== key) return;
+      if (cacheKey(live.contentType, live.tag, live.sort, live.q) !== key) return;
       const merged = appendUnique(live.rows, h.rows);
       const nextTotal = h.total || live.total;
       const nextHasMore =
@@ -381,48 +406,55 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
   useEffect(() => {
     const el = sentinelRef.current;
     if (!el || !hasMore || initialLoading || !urlReady) return;
-    if (sort === "hottest" && !cat && !q) return;
     const io = new IntersectionObserver(
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) void loadMore();
       },
-      { root: null, rootMargin: "600px 0px", threshold: 0 },
+      { root: null, rootMargin: "800px 0px", threshold: 0 },
     );
     io.observe(el);
     return () => io.disconnect();
-  }, [hasMore, initialLoading, loadMore, urlReady, sort, cat, q, page]);
+  }, [hasMore, initialLoading, loadMore, urlReady, sort, contentType, tag, q, page, rows.length]);
 
   function selectAll() {
-    if (!cat && sort === "hot") return;
+    if (!contentType && sort === "hot" && !tag) return;
     startTransition(() => {
-      setCat("");
+      setContentType("");
+      setTag("");
       setSort("hot");
     });
   }
 
-  function selectLatest() {
-    if (!cat && sort === "latest") return;
+  function selectContentType(next: DramaContentTypeSlug) {
+    if (next === contentType && sort === "hot") return;
     startTransition(() => {
-      setCat("");
-      setSort("latest");
-    });
-  }
-
-  function selectHottest() {
-    if (!cat && sort === "hottest") return;
-    startTransition(() => {
-      setCat("");
-      setSort("hottest");
-    });
-  }
-
-  function selectCat(next: string) {
-    if (next === cat && sort === "hot") return;
-    startTransition(() => {
-      setCat(next);
+      setContentType(next);
       setSort("hot");
     });
   }
+
+  function selectRanking() {
+    if (sort === "hottest") return;
+    startTransition(() => setSort("hottest"));
+  }
+
+  function selectNew() {
+    if (sort === "latest") return;
+    startTransition(() => setSort("latest"));
+  }
+
+  function applyTag(next: string) {
+    startTransition(() => {
+      setTag(next);
+      setSort("hot");
+    });
+  }
+
+  const contentTypeLabel = (slug: DramaContentTypeSlug) => {
+    if (slug === "comic") return t("theater.typeComic");
+    if (slug === "live") return t("theater.typeLive");
+    return t("theater.typeAi");
+  };
 
   const showSkeleton = !urlReady || (initialLoading && rows.length === 0);
 
@@ -455,31 +487,62 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
         ) : null}
       </div>
 
-      {/*
-        Edge-bleed chip scroller: negative margin stays inside overflow-x-clip parent so
-        shrink-0 chips scroll in-place instead of widening the document (mobile shrink-to-fit).
-      */}
-      <div className="-mx-4 mb-6 min-w-0 md:mx-0">
+      <div className="-mx-4 mb-3 min-w-0 md:mx-0">
         <div className="flex gap-2 overflow-x-auto overscroll-x-contain px-4 pb-1 [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:flex-wrap md:overflow-visible md:px-0">
-          <Chip active={!cat && sort === "hot"} onClick={selectAll}>
+          <Chip active={!contentType && sort === "hot" && !tag} onClick={selectAll}>
             {t("theater.all")}
           </Chip>
-          <Chip active={!cat && sort === "latest"} onClick={selectLatest}>
-            {t("theater.latest")}
-          </Chip>
-          <Chip active={!cat && sort === "hottest"} onClick={selectHottest}>
-            {t("theater.hottest")}
-          </Chip>
-          {categories.map((c) => (
-            <Chip key={c.slug} active={cat === c.slug} onClick={() => selectCat(c.slug)}>
-              {pickTitleText(locale, c.nameEn, c.nameZh || "", c.nameFr)}
+          {DRAMA_CONTENT_TYPES.map((item) => (
+            <Chip
+              key={item.slug}
+              active={contentType === item.slug && sort === "hot"}
+              onClick={() => selectContentType(item.slug)}
+            >
+              {contentTypeLabel(item.slug)}
             </Chip>
           ))}
         </div>
       </div>
 
+      <div className="-mx-4 mb-3 min-w-0 md:mx-0">
+        <div className="flex gap-2 overflow-x-auto overscroll-x-contain px-4 pb-1 [-webkit-overflow-scrolling:touch] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden md:flex-wrap md:overflow-visible md:px-0">
+          <ActionPill
+            active={!!tag || filterOpen}
+            label={tag || t("theater.filter")}
+            onClick={() => setFilterOpen((open) => !open)}
+            iconBg="bg-[#7C5CFF]"
+            icon={<Filter className="h-3 w-3 text-white" strokeWidth={2.5} />}
+          />
+          <ActionPill
+            active={sort === "hottest"}
+            label={t("theater.ranking")}
+            onClick={selectRanking}
+            iconBg="bg-[#FF7A1A]"
+            icon={<Flame className="h-3 w-3 text-white" strokeWidth={2.5} />}
+          />
+          <ActionPill
+            active={sort === "latest"}
+            label={t("theater.newDramas")}
+            onClick={selectNew}
+            iconBg="bg-[#2EC8D8]"
+            icon={<Play className="h-3 w-3 fill-white text-white" strokeWidth={2.5} />}
+          />
+        </div>
+      </div>
+
+      <TagFilterPanel
+        open={filterOpen}
+        onClose={() => setFilterOpen(false)}
+        tags={allTags}
+        loading={tagsLoading}
+        selected={tag}
+        onSelect={applyTag}
+      />
+
+      <div className="mb-6" />
+
       {showSkeleton ? (
-        <div className="grid min-w-0 grid-cols-2 gap-3 md:grid-cols-4 md:gap-5 lg:grid-cols-5 xl:grid-cols-6">
+        <div className="grid min-w-0 grid-cols-3 gap-2 md:gap-4">
           {Array.from({ length: 12 }).map((_, i) => (
             <div key={i} className="aspect-[2/3] min-w-0 animate-pulse rounded-md bg-surface-2" />
           ))}
@@ -494,7 +557,7 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
         <>
           <div
             className={cn(
-              "grid min-w-0 grid-cols-2 gap-x-3 gap-y-5 transition-opacity duration-200 md:grid-cols-4 md:gap-x-5 md:gap-y-8 lg:grid-cols-5 xl:grid-cols-6",
+              "grid min-w-0 grid-cols-3 gap-x-2 gap-y-4 transition-opacity duration-200 md:gap-x-4 md:gap-y-6",
               refreshing && "pointer-events-none opacity-60",
             )}
             aria-busy={refreshing || loadingMore}
@@ -507,7 +570,7 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
           </div>
           <div ref={sentinelRef} className="h-px w-full" aria-hidden />
           {loadingMore ? (
-            <div className="mt-6 grid min-w-0 grid-cols-2 gap-3 md:grid-cols-4 md:gap-5 lg:grid-cols-5 xl:grid-cols-6">
+            <div className="mt-6 grid min-w-0 grid-cols-3 gap-2 md:gap-4">
               {Array.from({ length: 6 }).map((_, i) => (
                 <div key={i} className="aspect-[2/3] min-w-0 animate-pulse rounded-md bg-surface-2" />
               ))}
@@ -524,7 +587,7 @@ function Chip({
   active,
   onClick,
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
   active?: boolean;
   onClick: () => void;
 }) {
@@ -542,5 +605,155 @@ function Chip({
     >
       {children}
     </button>
+  );
+}
+
+function ActionPill({
+  label,
+  active,
+  onClick,
+  icon,
+  iconBg,
+}: {
+  label: string;
+  active?: boolean;
+  onClick: () => void;
+  icon: ReactNode;
+  iconBg: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        "inline-flex min-h-11 shrink-0 touch-manipulation items-center gap-2 rounded-full px-3.5 py-2 text-body-sm transition-colors",
+        active
+          ? "bg-surface-3 font-medium text-ink ring-1 ring-brand/50"
+          : "bg-surface-2 text-ink hover:bg-surface-3",
+      )}
+    >
+      <span className={cn("grid h-5 w-5 place-items-center rounded-[5px]", iconBg)}>{icon}</span>
+      <span className="max-w-[9rem] truncate">{label}</span>
+    </button>
+  );
+}
+
+/** Inline expand-down tag grid: 3 cols × 5 rows first, then “more” expands further. */
+function TagFilterPanel({
+  open,
+  onClose,
+  tags,
+  loading,
+  selected,
+  onSelect,
+}: {
+  open: boolean;
+  onClose: () => void;
+  tags: string[];
+  loading: boolean;
+  selected: string;
+  onSelect: (tag: string) => void;
+}) {
+  const { t } = useLocale();
+  const COLS = 3;
+  const ROWS_STEP = 5;
+  const [extraRows, setExtraRows] = useState(0);
+
+  useEffect(() => {
+    if (!open) setExtraRows(0);
+  }, [open]);
+
+  const visibleRows = ROWS_STEP + extraRows;
+  const visibleSlots = visibleRows * COLS;
+  // +1 for leading "All"
+  const totalItems = 1 + tags.length;
+  const hasMore = totalItems > visibleSlots;
+  const visibleTagCount = Math.max(0, visibleSlots - 1);
+  const visibleTags = tags.slice(0, visibleTagCount);
+
+  return (
+    <div
+      className={cn(
+        "grid transition-[grid-template-rows,opacity] duration-300 ease-out",
+        open ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0",
+      )}
+      aria-hidden={!open}
+    >
+      <div className="min-h-0 overflow-hidden">
+        <div className="relative -mx-4 bg-surface px-4 pb-2 pt-8 md:mx-0 md:rounded-xl">
+          <button
+            type="button"
+            onClick={onClose}
+            className="absolute right-3 top-2 grid h-8 w-8 place-items-center rounded-full text-ink-muted hover:bg-surface-2 hover:text-ink"
+            aria-label={t("theater.filterCollapse")}
+          >
+            <ChevronUp className="h-5 w-5" strokeWidth={2.25} />
+          </button>
+
+          {loading ? (
+            <div className="grid grid-cols-3 gap-2">
+              {Array.from({ length: COLS * ROWS_STEP }).map((_, i) => (
+                <div key={i} className="h-9 animate-pulse rounded-md bg-surface-2" />
+              ))}
+            </div>
+          ) : tags.length === 0 ? (
+            <p className="py-8 text-center text-body-sm text-ink-muted">{t("theater.filterEmpty")}</p>
+          ) : (
+            <>
+              <div
+                className="grid grid-cols-3 gap-2"
+                role="listbox"
+                aria-label={t("theater.filterTitle")}
+              >
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={!selected}
+                  onClick={() => onSelect("")}
+                  className={cn(
+                    "h-9 truncate rounded-md bg-surface-2 px-2 text-center text-[13px] transition-colors",
+                    !selected ? "font-medium text-brand" : "text-ink hover:bg-surface-3",
+                  )}
+                >
+                  {t("theater.all")}
+                </button>
+                {visibleTags.map((item) => {
+                  const active = selected === item;
+                  return (
+                    <button
+                      key={item}
+                      type="button"
+                      role="option"
+                      aria-selected={active}
+                      title={item}
+                      onClick={() => onSelect(item)}
+                      className={cn(
+                        "h-9 truncate rounded-md bg-surface-2 px-2 text-center text-[13px] transition-colors",
+                        active ? "font-medium text-brand" : "text-ink hover:bg-surface-3",
+                      )}
+                    >
+                      {item}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {hasMore ? (
+                <button
+                  type="button"
+                  onClick={() => setExtraRows((n) => n + ROWS_STEP)}
+                  className="mt-2 flex w-full items-center justify-center gap-1 rounded-md py-2 text-[13px] text-ink-muted transition-colors hover:bg-surface-2 hover:text-ink"
+                  aria-label={t("theater.filterExpand")}
+                >
+                  <span>{t("theater.filterExpand")}</span>
+                  <ChevronDown className="h-4 w-4" strokeWidth={2.25} />
+                </button>
+              ) : null}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }

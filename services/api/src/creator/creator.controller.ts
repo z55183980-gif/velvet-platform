@@ -127,9 +127,9 @@ class CreateDramaDto {
   @IsString()
   descriptionZh?: string;
 
-  @IsNotEmpty()
+  @IsOptional()
   @IsString()
-  categorySlug!: string;
+  categorySlug?: string;
 
   @IsOptional()
   @IsString()

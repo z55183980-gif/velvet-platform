@@ -49,7 +49,8 @@ import {
   unlockDrama,
 } from "@/lib/api";
 import { guestNeedsLoginForEpisode } from "@/lib/episode-membership";
-import { categoryName, episodeIsLandscape, type Drama, type Episode } from "@/lib/mock-data";
+import { episodeIsLandscape, type Drama, type Episode } from "@/lib/mock-data";
+import { toPublicDramaTags } from "@/lib/drama-tags";
 import { useGuestWatchQuota } from "@/lib/use-guest-watch-quota";
 import { canGoBackInApp } from "@/lib/nav-history";
 import { pickContentText, pickTitleText } from "@/lib/languages";
@@ -62,7 +63,6 @@ import {
 } from "@/lib/screen-orientation";
 import { SafeImage } from "@/components/safe-image";
 import { DataErrorState } from "@/components/data-error-state";
-import { toPublicDramaTags } from "@/lib/drama-tags";
 
 function isUrl(s: string) {
   return /^https?:\/\//.test(s) || s.startsWith("/");
@@ -917,9 +917,14 @@ export function DramaDetail({
   }, [playUrl, previewLimit, selected, isUnlocked, authReady, user, openLogin]);
 
   useEffect(() => {
-    if (!data?.drama.categorySlug) return;
+    if (!data?.drama.id) return;
     const ac = new AbortController();
-    loadHome(1, 12, { category: data.drama.categorySlug, sort: "hot", signal: ac.signal })
+    const primaryTag = toPublicDramaTags(data.drama.tags)[0];
+    loadHome(1, 12, {
+      tag: primaryTag || undefined,
+      sort: "hot",
+      signal: ac.signal,
+    })
       .then((r) => {
         if (ac.signal.aborted) return;
         setRelated((r.rows || []).filter((d) => d.id !== data.drama.id).slice(0, 8));
@@ -928,7 +933,7 @@ export function DramaDetail({
         if (!ac.signal.aborted) setRelated([]);
       });
     return () => ac.abort();
-  }, [data?.drama.categorySlug, data?.drama.id]);
+  }, [data?.drama.id, data?.drama.tags]);
 
   // Report watch progress so Me history + resume keep working
   useEffect(() => {
@@ -1353,7 +1358,7 @@ export function DramaDetail({
   const { drama } = data;
   const title = pickTitleText(locale, drama.titleEn, drama.titleZh, drama.titleFr);
   const desc = pickContentText(locale, drama.descEn, drama.descZh);
-  const cat = categoryName(drama.category ?? drama.categorySlug, locale);
+  const displayTags = toPublicDramaTags(drama.tags);
   const coverIsImg = isUrl(drama.cover[0]);
   const favoriteDramaId = drama.numericId || drama.id;
 
@@ -1518,11 +1523,7 @@ export function DramaDetail({
     } else openUnlockGate(ep);
   };
 
-  const tags = (() => {
-    const fromApi = toPublicDramaTags(drama.tags).slice(0, 4);
-    if (fromApi.length) return fromApi;
-    return cat ? [cat] : [];
-  })();
+  const tags = displayTags.slice(0, 4);
 
   /* ---- Watching: mobile vertical ---- */
   if (watching && isMobile) {
@@ -2597,8 +2598,7 @@ export function DramaDetail({
                   const rTitle = pickTitleText(locale, d.titleEn, d.titleZh, d.titleFr);
                   const rCover = isUrl(d.cover[0]);
                   const rTags = toPublicDramaTags(d.tags).slice(0, 3);
-                  const rCat = categoryName(d.category ?? d.categorySlug, locale);
-                  const chipTags = rTags.length ? rTags : rCat ? [rCat] : [];
+                  const chipTags = rTags;
                   return (
                     <Link key={d.id} href={`/drama/${d.id}`} className="min-w-0">
                       <div className="relative aspect-[3/4] overflow-hidden rounded-lg bg-white/[0.06]">

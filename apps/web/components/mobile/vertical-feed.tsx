@@ -28,7 +28,8 @@ import { FeedEpisodeBar } from "@/components/mobile/feed-episode-bar";
 import { useMobileFeedLock } from "@/components/mobile/mobile-feed-lock";
 import { getPlayUrl, loadDramaDetail, loadFeed, checkFavorite, addFavorite, removeFavorite, checkLike, addLike, removeLike, reportProgress, unlockDrama, type DramaDetailPayload } from "@/lib/api";
 import type { Drama, Episode } from "@/lib/mock-data";
-import { categoryName, episodeIsLandscape } from "@/lib/mock-data";
+import { episodeIsLandscape } from "@/lib/mock-data";
+import { toPublicDramaTags } from "@/lib/drama-tags";
 import { pickTitleText, type Locale } from "@/lib/languages";
 import { cn, formatCredits } from "@/lib/utils";
 import { useGuestWatchQuota } from "@/lib/use-guest-watch-quota";
@@ -256,7 +257,6 @@ function buildFeedMeta(
   t: (key: string, vars?: Record<string, string | number>) => string,
 ) {
   const title = pickTitleText(locale, drama.titleEn, drama.titleZh, drama.titleFr);
-  const catName = categoryName(drama.category ?? drama.categorySlug, locale);
   const ratingLabel = formatRating(drama.rating);
   const tags: { key: string; node: ReactNode }[] = [];
   if (ratingLabel) {
@@ -271,9 +271,9 @@ function buildFeedMeta(
     });
   }
   tags.push({ key: "season", node: t("feed.season", { n: 1 }) });
-  if (catName) tags.push({ key: "cat", node: catName });
-  const extraTag = (drama.tags || []).find((x) => x && x !== catName);
-  if (extraTag) tags.push({ key: "tag", node: extraTag });
+  for (const tag of toPublicDramaTags(drama.tags).slice(0, 2)) {
+    tags.push({ key: `tag-${tag}`, node: tag });
+  }
   const creator = drama.creator?.displayName?.trim();
   if (creator) {
     tags.push({ key: "cast", node: t("feed.actors", { names: creator }) });

@@ -15,7 +15,6 @@ import {
   adminApproveDrama,
   adminBatchDramaLifecycle,
   adminBatchDramas,
-  adminListCategories,
   adminListCreators,
   adminListDramas,
   adminRejectDrama,
@@ -59,7 +58,6 @@ type Drama = {
   createdAt?: string | null;
   _count?: { episodes?: number };
 };
-type Category = { slug: string; nameZh?: string; nameEn?: string; nameFr?: string };
 type Creator = { id: string | number; displayName?: string };
 type ContentModal = "detail";
 type ContentView = "all" | "latest" | "pending";
@@ -108,8 +106,7 @@ function filtersFromUrl(
   return {
     q: searchParams.get("q") || "",
     status: statuses.includes(status) ? status : "ALL",
-    categorySlug: searchParams.get("category") || "",
-    creatorId: searchParams.get("creator") || "",
+        creatorId: searchParams.get("creator") || "",
     isOfficial: official === "1" || official === "0" ? official : "",
     isFeatured: featured === "1" || featured === "0" ? featured : "",
     mediaKind:
@@ -261,7 +258,6 @@ function buildContentHref(opts: {
   page?: number;
   pageSize?: number;
   q?: string;
-  categorySlug?: string;
   creatorId?: string;
   isOfficial?: string;
   isFeatured?: string;
@@ -290,7 +286,6 @@ function buildContentHref(opts: {
   }
 
   if (opts.q) qs.set("q", opts.q);
-  if (opts.categorySlug) qs.set("category", opts.categorySlug);
   if (opts.creatorId) qs.set("creator", opts.creatorId);
   if (opts.isOfficial === "1" || opts.isOfficial === "0") qs.set("official", opts.isOfficial);
   if (opts.isFeatured === "1" || opts.isFeatured === "0") qs.set("featured", opts.isFeatured);
@@ -524,7 +519,7 @@ function AdminContentInner() {
 
   useEffect(() => {
     if (modalParam === "categories") {
-      router.replace("/categories");
+      router.replace("/tags");
       return;
     }
     if (modalParam !== "add") return;
@@ -565,7 +560,6 @@ function AdminContentInner() {
         page: next.page ?? page,
         pageSize: next.pageSize ?? pageSize,
         q: f.q,
-        categorySlug: f.categorySlug,
         creatorId: f.creatorId,
         isOfficial: f.isOfficial,
         isFeatured: f.isFeatured,
@@ -609,10 +603,6 @@ function AdminContentInner() {
     });
   }
 
-  const categoriesQ = useQuery({
-    queryKey: ["admin", "categories"],
-    queryFn: () => adminListCategories(true) as Promise<Category[]>,
-  });
   const creatorsQ = useQuery({
     queryKey: ["admin", "creators", "picker"],
     queryFn: async () => {
@@ -640,7 +630,6 @@ function AdminContentInner() {
       const result = await adminListDramas({
         q: filters.q || undefined,
         status: filters.status,
-        categorySlug: filters.categorySlug || undefined,
         creatorId: filters.creatorId || undefined,
         isOfficial: filters.isOfficial || undefined,
         isFeatured: filters.isFeatured || undefined,
@@ -1355,11 +1344,10 @@ function AdminContentInner() {
 
   return (
     <AdminShell title={title}>
-      {error || dramasQ.error || categoriesQ.error || creatorsQ.error ? (
+      {error || dramasQ.error || creatorsQ.error ? (
         <p className="mb-3 shrink-0 text-body-sm text-danger">
           {error ||
             (dramasQ.error as Error)?.message ||
-            (categoriesQ.error as Error)?.message ||
             (creatorsQ.error as Error)?.message}
         </p>
       ) : notice ? (
@@ -1369,7 +1357,6 @@ function AdminContentInner() {
       <ContentSearchBar
         value={filters}
         onChange={applyFilters}
-        categories={categoriesQ.data ?? []}
         creators={creatorsQ.data ?? []}
         statuses={statuses}
         showAdd={view !== "pending"}

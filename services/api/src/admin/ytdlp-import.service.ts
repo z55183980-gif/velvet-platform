@@ -695,7 +695,7 @@ export class YtdlpImportService implements OnModuleInit {
     return {};
   }
 
-  /** Prefer explicit category; if empty, infer from titles/descriptions. */
+  /** Prefer explicit category; if empty, infer from titles/descriptions; else default. */
   private async requireCategorySlug(opts: {
     categorySlug?: string;
     titleZh?: string;
@@ -709,7 +709,13 @@ export class YtdlpImportService implements OnModuleInit {
       description: opts.descriptionEn || opts.descriptionZh,
     });
     if (resolved.slug) return resolved.slug;
-    throw new BizException(BizCode.BAD_REQUEST, '请选择分类');
+    const fallback = await this.prisma.category.findFirst({
+      where: { isActive: true },
+      orderBy: { sortOrder: 'asc' },
+      select: { slug: true },
+    });
+    if (fallback?.slug) return fallback.slug;
+    return 'romance';
   }
 
   private authFromOpts(opts?: {

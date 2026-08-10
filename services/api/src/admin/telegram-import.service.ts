@@ -408,16 +408,25 @@ export class TelegramImportService implements OnModuleInit {
   }
 
   private async requireCategorySlug(slug?: string) {
-    const categorySlug = String(slug || '').trim();
-    if (!categorySlug) {
-      throw new BizException(BizCode.BAD_REQUEST, '请选择分类 categorySlug');
-    }
+    const requested = String(slug || '').trim();
+    const categorySlug = requested || 'romance';
     const cat = await this.prisma.category.findFirst({
       where: { slug: categorySlug },
       select: { slug: true },
     });
-    if (!cat) throw new BizException(BizCode.BAD_REQUEST, `分类不存在: ${categorySlug}`);
-    return cat.slug;
+    if (cat) return cat.slug;
+    if (requested) {
+      throw new BizException(BizCode.BAD_REQUEST, `分类不存在: ${requested}`);
+    }
+    const fallback = await this.prisma.category.findFirst({
+      where: { isActive: true },
+      orderBy: { sortOrder: 'asc' },
+      select: { slug: true },
+    });
+    if (!fallback) {
+      throw new BizException(BizCode.BAD_REQUEST, '分类不存在: 请先 seed categories');
+    }
+    return fallback.slug;
   }
 
   private async recoverPendingTransferJobs() {
