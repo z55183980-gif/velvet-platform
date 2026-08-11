@@ -8,6 +8,10 @@
  * HTTP uses system `curl` by default — Node's TLS fingerprint is blocked by Akamai
  * on sapi.dramaboxvideo.com (HTTP 403 HTML). Tests can inject `fetchImpl`.
  *
+ * Datacenter egress IPs are also blocked; set `DRAMABOX_HTTPS_PROXY` (http/https/socks5/
+ * socks5h URL) so curl exits via residential/mobile. Prefer `socks5h://` so DNS goes
+ * through the proxy.
+ *
  * Host-scoped — only call for dramabox.com / dramaboxapp.com page URLs.
  */
 import { execFile } from 'child_process';
@@ -308,6 +312,30 @@ function pickPlayUrl(chapter: ChapterEntry): { playUrl: string; quality?: number
   return best;
 }
 
+function resolveDramaboxCurlProxy(): string | undefined {
+  const raw = envTrim('DRAMABOX_HTTPS_PROXY') || envTrim('HTTPS_PROXY');
+  if (!raw) return undefined;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    throw new Error('DRAMABOX_HTTPS_PROXY 不是合法 URL');
+  }
+  const protocol = parsed.protocol.replace(/:$/, '').toLowerCase();
+  if (
+    protocol !== 'http' &&
+    protocol !== 'https' &&
+    protocol !== 'socks5' &&
+    protocol !== 'socks5h' &&
+    protocol !== 'socks4'
+  ) {
+    throw new Error(
+      `DRAMABOX_HTTPS_PROXY 协议不支持: ${protocol}（可用 http/https/socks5/socks5h）`,
+    );
+  }
+  return raw;
+}
+
 async function postViaCurl(
   url: string,
   headers: Record<string, string>,
@@ -325,6 +353,10 @@ async function postViaCurl(
     '--max-time',
     String(Math.max(1, Math.ceil(timeoutMs / 1000))),
   ];
+  const proxy = resolveDramaboxCurlProxy();
+  if (proxy) {
+    args.push('-x', proxy);
+  }
   for (const [key, value] of Object.entries(headers)) {
     args.push('-H', `${key}: ${value}`);
   }
