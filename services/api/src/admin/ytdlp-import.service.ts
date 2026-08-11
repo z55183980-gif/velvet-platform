@@ -208,6 +208,15 @@ export class YtdlpImportService implements OnModuleInit {
   }
 
   probe(url: string, auth?: YtdlpAuthOverride) {
+    // yt-dlp cannot enumerate NetShort's encrypted episode pages. Reuse the
+    // deterministic HTML/RSC catalog extractor; each page is resolved later.
+    if (isNetshortHost(url)) {
+      return this.aiExtract({
+        url,
+        cookiesFile: auth?.cookiesFile,
+        authBearer: auth?.bearerToken,
+      });
+    }
     return this.provider.probe(url, auth);
   }
 
@@ -235,6 +244,7 @@ export class YtdlpImportService implements OnModuleInit {
       description?: string;
       genreLabels?: string[];
       language?: string;
+      paidStart?: number;
       chapterCount?: number;
     } = {};
     let bestHtml = '';
@@ -286,6 +296,12 @@ export class YtdlpImportService implements OnModuleInit {
         bestMeta.description = meta.description;
       }
       if (meta.language && !bestMeta.language) bestMeta.language = meta.language;
+      if (
+        meta.paidStart &&
+        (!bestMeta.paidStart || meta.paidStart < bestMeta.paidStart)
+      ) {
+        bestMeta.paidStart = meta.paidStart;
+      }
       if (meta.chapterCount && !bestMeta.chapterCount) {
         bestMeta.chapterCount = meta.chapterCount;
       }
@@ -412,8 +428,9 @@ export class YtdlpImportService implements OnModuleInit {
       } else if (netshort) {
         notes =
           `NetShort deterministic extract from ${fetchedOk} page(s); skipped LLM. ` +
-          `${episodes.length} episode page URL(s) for yt-dlp` +
+          `${episodes.length} episode page URL(s) for encrypted API resolve` +
           (bestMeta.chapterCount ? ` (catalog ${bestMeta.chapterCount})` : '') +
+          (bestMeta.paidStart ? `; locked from EP${bestMeta.paidStart}` : '') +
           '.';
       } else {
         notes = `Deterministic extract from ${fetchedOk} page(s); skipped LLM.`;
@@ -474,6 +491,7 @@ export class YtdlpImportService implements OnModuleInit {
       htmlChars: number;
       textChars: number;
       resolvedFrom?: string[];
+      paidStart?: number;
       episodes: Array<
         YtdlpProbeResult['episodes'][number] & { sourceUrl?: string }
       >;
@@ -495,6 +513,7 @@ export class YtdlpImportService implements OnModuleInit {
       htmlChars: bestHtml.length,
       textChars: bestHtml ? buildExtractContext(bestHtml, bestHtmlUrl).length : 0,
       resolvedFrom: candidates,
+      paidStart: bestMeta.paidStart,
       episodes: episodes.map((ep) => {
         const mediaLike = /\.(m3u8|mp4|webm|mkv|mov|m4v)(\?|$)/i.test(ep.sourceUrl)
           || /\/(hls|playlist|index\.m3u8|master\.m3u8)\b/i.test(ep.sourceUrl);
@@ -566,7 +585,7 @@ export class YtdlpImportService implements OnModuleInit {
   }
 
   /**
-   * Batch-resolve episode page URLs via yt-dlp (used after AI extract).
+   * Batch-resolve episode page URLs (NetShort API or yt-dlp after AI extract).
    * Limited concurrency; skips URLs that already look like direct media.
    */
   async resolveBatch(opts: {
@@ -578,7 +597,15 @@ export class YtdlpImportService implements OnModuleInit {
   }) {
     const auth = this.authFromOpts(opts);
     const pref = opts.formatPreference || 'best_hls';
-    const hardCap = 40;
+    // NetShort catalogs commonly exceed the legacy 40-item batch ceiling.
+    // Keep bounded + low-concurrency, but allow one complete catalog pass.
+    const netshortBatch = (opts.episodes || []).some((episode) =>
+      isNetshortHost(String(episode.url || '')),
+    );
+    const dramaboxBatch = (opts.episodes || []).some((episode) =>
+      isDramaboxHost(String(episode.url || '')),
+    );
+    const hardCap = netshortBatch || dramaboxBatch ? 120 : 40;
     const max =
       opts.maxEpisodes && opts.maxEpisodes > 0
         ? Math.min(Math.floor(opts.maxEpisodes), hardCap)
@@ -612,7 +639,7 @@ export class YtdlpImportService implements OnModuleInit {
       while (cursor < items.length) {
         const i = cursor++;
         const ep = items[i];
-        if (/\.(m3u8|mp4|webm|mkv)(\?|$)/i.test(ep.url)) {
+        if (isPlayableMediaUrl(ep.url)) {
           resolved.push({
             index: ep.index,
             webpageUrl: ep.url,
@@ -862,7 +889,7 @@ export class YtdlpImportService implements OnModuleInit {
     const categorySlug = await this.requireCategorySlug(opts);
 
     const auth = this.authFromOpts(opts);
-    const probe = await this.provider.probe(pageUrl, auth);
+    const probe = await this.probe(pageUrl, auth);
     const externalRef = this.provider.externalRefFor(
       probe.webpageUrl,
       probe.extractor,
@@ -1000,7 +1027,7 @@ export class YtdlpImportService implements OnModuleInit {
       throw new BizException(BizCode.CONFLICT, '审核中或已上线作品不能追加公开资源');
     }
     const auth = this.authFromOpts(opts);
-    const probe = await this.provider.probe(opts.url, auth);
+    const probe = await this.probe(opts.url, auth);
     const limit = opts.maxEpisodes && opts.maxEpisodes > 0
       ? Math.min(Math.floor(opts.maxEpisodes), probe.episodes.length)
       : probe.episodes.length;
@@ -1146,7 +1173,7 @@ export class YtdlpImportService implements OnModuleInit {
       kind = selected.length > 1 ? 'playlist' : 'single';
     } else {
       if (!pageUrl) throw new BizException(BizCode.BAD_REQUEST, '请填写公开视频页链接');
-      const probe = await this.provider.probe(pageUrl, auth);
+      const probe = await this.probe(pageUrl, auth);
       if (!probe.episodes.length) {
         throw new BizException(BizCode.BAD_REQUEST, '未解析到分集，无法转存');
       }

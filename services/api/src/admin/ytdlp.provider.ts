@@ -16,8 +16,26 @@ import {
   verifyYtdlpSha256,
   ytdlpLocalFileName,
 } from './ytdlp-bootstrap.util';
+import {
+  isDramaboxCdnPlayUrl,
+  parseDramaboxEpisodePage,
+  resolveDramaboxPlayUrl,
+} from './dramabox-api.util';
+import {
+  parseNetshortEpisodePage,
+  resolveNetshortPlayUrl,
+} from './netshort-api.util';
 
 const execFileAsync = promisify(execFile);
+
+function isNetshortCdnPlayUrl(value: string): boolean {
+  try {
+    const host = new URL(value).hostname.toLowerCase();
+    return host === 'cfcdn.netshort.com' || host.endsWith('.cfcdn.netshort.com');
+  } catch {
+    return false;
+  }
+}
 
 export type YtdlpFormatPreference = 'best_hls' | 'best_mp4' | 'best';
 
@@ -427,6 +445,45 @@ export class YtdlpProvider implements OnModuleInit {
     };
   }
 
+  private async resolveNetshortEpisodePage(
+    pageUrl: string,
+    auth?: YtdlpAuthOverride,
+  ): Promise<string | null> {
+    if (!parseNetshortEpisodePage(pageUrl)) return null;
+    try {
+      const resolved = await resolveNetshortPlayUrl(pageUrl, {
+        bearerToken: auth?.bearerToken,
+      });
+      // Re-apply the public-IP/redirect target guard before yt-dlp or callers use it.
+      return await this.requireHttpUrl(resolved.playUrl);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new BizException(
+        BizCode.BAD_REQUEST,
+        `NetShort 解析失败: ${message}`,
+      );
+    }
+  }
+
+  private async resolveDramaboxEpisodePage(
+    pageUrl: string,
+    auth?: YtdlpAuthOverride,
+  ): Promise<string | null> {
+    if (!parseDramaboxEpisodePage(pageUrl)) return null;
+    try {
+      const resolved = await resolveDramaboxPlayUrl(pageUrl, {
+        bearerToken: auth?.bearerToken,
+      });
+      return await this.requireHttpUrl(resolved.playUrl);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new BizException(
+        BizCode.BAD_REQUEST,
+        `DramaBox 解析失败: ${message}`,
+      );
+    }
+  }
+
   async resolvePlayUrl(
     url: string,
     preference: YtdlpFormatPreference = 'best_hls',
@@ -434,6 +491,20 @@ export class YtdlpProvider implements OnModuleInit {
     auth?: YtdlpAuthOverride,
   ): Promise<string> {
     const pageUrl = await this.requireHttpUrl(url);
+    // Already-resolved playVoucher / Dramabox CDN: skip re-auth against page hosts.
+    if (isNetshortCdnPlayUrl(pageUrl) || isDramaboxCdnPlayUrl(pageUrl)) {
+      return pageUrl;
+    }
+
+    // NetShort episode pages are unsupported by yt-dlp; their encrypted API
+    // returns a signed, byte-range-capable MP4 directly.
+    const netshortPlayUrl = await this.resolveNetshortEpisodePage(pageUrl, auth);
+    if (netshortPlayUrl) return netshortPlayUrl;
+
+    // DramaBox VIP/free chapters: App chapterv2 API → signed CDN mp4.
+    const dramaboxPlayUrl = await this.resolveDramaboxEpisodePage(pageUrl, auth);
+    if (dramaboxPlayUrl) return dramaboxPlayUrl;
+
     const format = this.formatSelector(preference);
     const args = [
       ...this.authArgs(pageUrl, auth),
@@ -477,13 +548,32 @@ export class YtdlpProvider implements OnModuleInit {
     playlistIndex?: number,
     auth?: YtdlpAuthOverride,
   ): Promise<{ absPath: string; filename: string; size: number }> {
-    const pageUrl = await this.requireHttpUrl(url);
+    let pageUrl = await this.requireHttpUrl(url);
+    if (!isDramaboxCdnPlayUrl(pageUrl) && !isNetshortCdnPlayUrl(pageUrl)) {
+      const netshortPlayUrl = await this.resolveNetshortEpisodePage(
+        pageUrl,
+        auth,
+      );
+      if (netshortPlayUrl) pageUrl = netshortPlayUrl;
+      else {
+        const dramaboxPlayUrl = await this.resolveDramaboxEpisodePage(
+          pageUrl,
+          auth,
+        );
+        if (dramaboxPlayUrl) pageUrl = dramaboxPlayUrl;
+      }
+    }
+    // Do not forward a page/API bearer token to the resolved CDN host.
+    const resolvedCdn =
+      isNetshortCdnPlayUrl(pageUrl) || isDramaboxCdnPlayUrl(pageUrl);
+    const downloadAuth = resolvedCdn ? undefined : auth;
+    const effectivePlaylistIndex = resolvedCdn ? undefined : playlistIndex;
     fs.mkdirSync(outputDir, { recursive: true });
-    const stem = `${Date.now()}-${this.hashRef(pageUrl + String(playlistIndex || 0))}`;
+    const stem = `${Date.now()}-${this.hashRef(pageUrl + String(effectivePlaylistIndex || 0))}`;
     const template = path.join(outputDir, `${stem}.%(ext)s`);
     const format = this.downloadFormatSelector(preference);
     const args = [
-      ...this.authArgs(pageUrl, auth),
+      ...this.authArgs(pageUrl, downloadAuth),
       '-f',
       format,
       '-o',
@@ -497,8 +587,8 @@ export class YtdlpProvider implements OnModuleInit {
       '--print',
       'filepath',
     ];
-    if (playlistIndex && playlistIndex > 0) {
-      args.push('--playlist-items', String(playlistIndex));
+    if (effectivePlaylistIndex && effectivePlaylistIndex > 0) {
+      args.push('--playlist-items', String(effectivePlaylistIndex));
     } else {
       args.push('--no-playlist');
     }

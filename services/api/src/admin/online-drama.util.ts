@@ -7,7 +7,18 @@ const STREAM_PATH_RE = /\/(hls|playlist|index\.m3u8|master\.m3u8)\b/i;
 const EMBED_KEYS = ['url', 'src', 'playUrl', 'play_url', 'video', 'm3u8', 'media', 'videoUrl'];
 
 export function isPlayableMediaUrl(url: string): boolean {
-  return PLAYABLE_RE.test(url) || STREAM_PATH_RE.test(url);
+  if (PLAYABLE_RE.test(url) || STREAM_PATH_RE.test(url)) return true;
+  // NetShort playVoucher is an MP4 whose signed CDN path has no extension.
+  try {
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase();
+    if (host === 'cfcdn.netshort.com' || host.endsWith('.cfcdn.netshort.com')) {
+      return true;
+    }
+  } catch {
+    /* ignore */
+  }
+  return false;
 }
 
 /**
@@ -82,6 +93,15 @@ export function inferExternalUrlExpiry(url: string, fallbackMs = 2 * 60 * 60 * 1
       }
       const value = new Date(raw);
       if (Number.isFinite(value.getTime())) return value;
+    }
+    // NetShort CDN: auth_key=<unix>-<nonce>-...
+    const authKey = parsed.searchParams.get('auth_key');
+    if (authKey) {
+      const unix = Number(String(authKey).split('-')[0]);
+      if (Number.isFinite(unix) && unix > 1_000_000_000) {
+        const value = new Date(unix * 1000);
+        if (Number.isFinite(value.getTime())) return value;
+      }
     }
   } catch {
     // URL validation is handled by the caller.

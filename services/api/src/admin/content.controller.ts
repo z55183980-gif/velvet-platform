@@ -969,7 +969,7 @@ export class ContentController {
     }
   }
 
-  /** 公开链接解析（本地 yt-dlp，无需 API Key） */
+  /** 公开链接解析（NetShort 加密 API 或本地 yt-dlp） */
   @Get('ytdlp/status')
   @AdminRoles('SUPER_ADMIN', 'OPS')
   async ytdlpStatus() {
@@ -1041,7 +1041,7 @@ export class ContentController {
     );
   }
 
-  /** After AI extract: batch yt-dlp resolve episode page URLs → playable media URLs. */
+  /** After AI extract: provider-resolve episode pages → playable media URLs. */
   @Post('ytdlp/resolve-batch')
   @AdminRoles('SUPER_ADMIN', 'OPS')
   async ytdlpResolveBatch(@Body() dto: YtdlpResolveBatchDto) {

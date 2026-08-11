@@ -1847,6 +1847,8 @@ export async function adminYtdlpAiExtract(
     model?: string;
     htmlChars: number;
     textChars: number;
+    /** First episode locked for the current NetShort page session, when advertised. */
+    paidStart?: number;
     episodes: Array<{
       index: number;
       id: string;
@@ -1886,7 +1888,7 @@ export async function adminYtdlpInferCategory(body: {
   });
 }
 
-/** Batch yt-dlp resolve after AI extract (episode pages → playable URLs). */
+/** Batch provider resolve after AI extract (site API or yt-dlp → playable URLs). */
 export async function adminYtdlpResolveBatch(body: {
   episodes: Array<{ index?: number; url: string; playlistIndex?: number }>;
   formatPreference?: "best_hls" | "best_mp4" | "best";

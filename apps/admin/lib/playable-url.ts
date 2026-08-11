@@ -6,5 +6,12 @@ const STREAM_PATH_RE = /\/(hls|playlist|index\.m3u8|master\.m3u8)\b/i;
 export function isPlayableMediaUrl(url: string | undefined | null): boolean {
   const u = String(url || "").trim();
   if (!u) return false;
-  return PLAYABLE_RE.test(u) || STREAM_PATH_RE.test(u);
+  if (PLAYABLE_RE.test(u) || STREAM_PATH_RE.test(u)) return true;
+  try {
+    const parsed = new URL(u);
+    const host = parsed.hostname.toLowerCase();
+    return host === "cfcdn.netshort.com" || host.endsWith(".cfcdn.netshort.com");
+  } catch {
+    return false;
+  }
 }

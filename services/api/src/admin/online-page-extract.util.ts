@@ -341,7 +341,8 @@ function metaFromOgTags(html: string): PageMetaHints {
 
 /**
  * NetShort: parse shortPlayDetailVo from Next.js RSC HTML (no classic __NEXT_DATA__).
- * Emit episode *page* URLs (ReelShort-style) for yt-dlp resolve — not CDN direct media.
+ * Emit episode page URLs; playable MP4 is resolved later via NetShort encrypted API
+ * (`playVoucher`), not yt-dlp on the episode page.
  */
 function extractNetshortFromHtml(
   html: string,
@@ -393,6 +394,13 @@ function extractNetshortFromHtml(
       const episodeNumber = Number(ch.episodeNo);
       if (!Number.isFinite(episodeNumber) || episodeNumber < 1) continue;
       if (!basePath) continue;
+      // Detail list may include isLock for the current visitor session.
+      if (
+        ch.isLock === true &&
+        (!meta.paidStart || episodeNumber < meta.paidStart)
+      ) {
+        meta.paidStart = episodeNumber;
+      }
       const path =
         episodeNumber === 1 ? basePath : `${basePath}-ep-${episodeNumber}`;
       episodes.push({
