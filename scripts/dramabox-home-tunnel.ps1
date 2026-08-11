@@ -13,7 +13,8 @@
 #   pm2 restart velvet-api --update-env
 
 $ErrorActionPreference = 'Stop'
-$Port = if ($env:DRAMABOX_HOME_RELAY_PORT) { [int]$env:DRAMABOX_HOME_RELAY_PORT } else { 18080 }
+$Port = if ($env:DRAMABOX_HOME_RELAY_PORT) { [int]$env:DRAMABOX_HOME_RELAY_PORT } else { 18082 }
+$RemotePort = if ($env:DRAMABOX_REMOTE_RELAY_PORT) { [int]$env:DRAMABOX_REMOTE_RELAY_PORT } else { $Port }
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $RelayJs = Join-Path $PSScriptRoot 'dramabox-home-relay.mjs'
 $Remote = if ($env:DRAMABOX_TUNNEL_HOST) { $env:DRAMABOX_TUNNEL_HOST } else { 'starnexus-s4' }
@@ -38,12 +39,14 @@ try {
     throw "Relay process exited early (code $($relay.ExitCode))"
   }
 
-  Write-Host "[relay] ssh -R 127.0.0.1:$Port:127.0.0.1:$Port $Remote"
+  Write-Host "[relay] ssh -R 127.0.0.1:${RemotePort}:127.0.0.1:${Port} $Remote"
+  Write-Host "[relay] prod DRAMABOX_API_RELAY=http://127.0.0.1:${RemotePort}"
   Write-Host "[relay] keep this window open; Ctrl+C to stop"
   ssh -o ExitOnForwardFailure=yes `
-    -o ServerAliveInterval=30 `
-    -o ServerAliveCountMax=3 `
-    -N -R "127.0.0.1:${Port}:127.0.0.1:${Port}" `
+    -o ServerAliveInterval=20 `
+    -o ServerAliveCountMax=6 `
+    -o TCPKeepAlive=yes `
+    -N -R "127.0.0.1:${RemotePort}:127.0.0.1:${Port}" `
     $Remote
 }
 finally {
