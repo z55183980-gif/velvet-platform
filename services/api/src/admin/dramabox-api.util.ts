@@ -8,9 +8,10 @@
  * HTTP uses system `curl` by default — Node's TLS fingerprint is blocked by Akamai
  * on sapi.dramaboxvideo.com (HTTP 403 HTML). Tests can inject `fetchImpl`.
  *
- * Datacenter egress IPs are also blocked; set `DRAMABOX_HTTPS_PROXY` (http/https/socks5/
- * socks5h URL) so curl exits via residential/mobile. Prefer `socks5h://` so DNS goes
- * through the proxy.
+ * Datacenter egress IPs and curl JA3 are blocked by Akamai. Prefer
+ * `DRAMABOX_API_RELAY` (app-layer home relay over ssh -R) so HTTPS is re-issued
+ * on a residential machine. Optional `DRAMABOX_HTTPS_PROXY` still works for
+ * IP-only blocks when TLS fingerprint is accepted.
  *
  * Host-scoped — only call for dramabox.com / dramaboxapp.com page URLs.
  */
@@ -312,6 +313,20 @@ function pickPlayUrl(chapter: ChapterEntry): { playUrl: string; quality?: number
   return best;
 }
 
+function resolveDramaboxApiRelay(): string | undefined {
+  const raw = envTrim('DRAMABOX_API_RELAY');
+  if (!raw) return undefined;
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+      throw new Error('bad protocol');
+    }
+    return raw.replace(/\/$/, '');
+  } catch {
+    throw new Error('DRAMABOX_API_RELAY 不是合法 http(s) URL');
+  }
+}
+
 function resolveDramaboxCurlProxy(): string | undefined {
   const raw = envTrim('DRAMABOX_HTTPS_PROXY') || envTrim('HTTPS_PROXY');
   if (!raw) return undefined;
@@ -336,12 +351,66 @@ function resolveDramaboxCurlProxy(): string | undefined {
   return raw;
 }
 
+async function postViaHomeRelay(
+  url: string,
+  headers: Record<string, string>,
+  body: string,
+  timeoutMs: number,
+): Promise<{ status: number; text: string }> {
+  const relayBase = resolveDramaboxApiRelay();
+  if (!relayBase) {
+    throw new Error('DRAMABOX_API_RELAY 未配置');
+  }
+  const secret = envTrim('DRAMABOX_RELAY_SECRET');
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(timeoutMs + 5_000, 20_000));
+  try {
+    const res = await fetch(`${relayBase}/v1/forward`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(secret ? { authorization: `Bearer ${secret}` } : {}),
+      },
+      body: JSON.stringify({
+        url,
+        method: 'POST',
+        headers,
+        body,
+        timeoutMs,
+      }),
+      signal: controller.signal,
+    });
+    const payload = (await res.json()) as {
+      status?: number;
+      body?: string;
+      error?: string;
+    };
+    if (!res.ok) {
+      throw new Error(
+        `DramaBox home relay HTTP ${res.status}: ${payload.error || ''}`.slice(
+          0,
+          300,
+        ),
+      );
+    }
+    if (typeof payload.status !== 'number' || typeof payload.body !== 'string') {
+      throw new Error('DramaBox home relay 响应格式无效');
+    }
+    return { status: payload.status, text: payload.body };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function postViaCurl(
   url: string,
   headers: Record<string, string>,
   body: string,
   timeoutMs: number,
 ): Promise<{ status: number; text: string }> {
+  if (resolveDramaboxApiRelay()) {
+    return postViaHomeRelay(url, headers, body, timeoutMs);
+  }
   const args = [
     '-sS',
     '-w',

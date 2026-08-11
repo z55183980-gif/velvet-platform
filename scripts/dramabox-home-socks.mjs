@@ -6,7 +6,7 @@
  * Usage: node scripts/dramabox-home-socks.mjs
  * Env:   DRAMABOX_HOME_SOCKS_PORT=18080
  */
-const net = require('net');
+import net from 'net';
 
 const PORT = Number(process.env.DRAMABOX_HOME_SOCKS_PORT || 18080);
 const HOST = '127.0.0.1';
