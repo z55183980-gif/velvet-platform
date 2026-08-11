@@ -618,7 +618,6 @@ export async function resolveDramaboxPlayUrl(
 
   let index = 0;
   let loadDirection = 0;
-  let seen = 0;
   const chapterCountHint = 200;
   const visitedIndexes = new Set<number>();
 
@@ -668,11 +667,12 @@ export async function resolveDramaboxPlayUrl(
     }
 
     if (!list.length) break;
-    seen += list.length;
     const last = list[list.length - 1];
     const lastIndex = Number(last.chapterIndex);
     const total = Number(data.chapterCount) || chapterCountHint;
-    if (!Number.isFinite(lastIndex) || lastIndex + 1 >= total || seen >= total) {
+    // Do not stop on cumulative `seen` — batch/load windows overlap, so the
+    // summed list lengths can exceed chapterCount before the last window.
+    if (!Number.isFinite(lastIndex) || lastIndex + 1 >= total) {
       break;
     }
     index = lastIndex + 1;
