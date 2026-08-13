@@ -8,6 +8,8 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
+    /** Retry delay advertised by the server (for example HTTP Retry-After). */
+    public retryAfterMs?: number,
   ) {
     super(typeof message === "string" ? message : String(message ?? `HTTP ${status}`));
     this.name = "ApiError";

@@ -53,6 +53,8 @@ import { AdminOpsService } from './ops.service';
 import { YtdlpImportService } from './ytdlp-import.service';
 import { TelegramImportService } from './telegram-import.service';
 import { OpenaiService } from '../common/openai.service';
+import { SkipThrottle } from '@nestjs/throttler';
+import { SKIP_ALL_THROTTLES } from '../common/throttler-config';
 
 function getActor(req: any): bigint | undefined {
   return req?.adminId as bigint | undefined;
@@ -1172,6 +1174,7 @@ export class ContentController {
   }
 
   @Get('ytdlp/transfer/:jobId')
+  @SkipThrottle(SKIP_ALL_THROTTLES)
   @AdminRoles('SUPER_ADMIN', 'OPS')
   async ytdlpTransferJob(@Param('jobId') jobId: string) {
     return ok(await this.ytdlp.getTransferJob(jobId));
@@ -1250,6 +1253,7 @@ export class ContentController {
   }
 
   @Get('telegram/transfer/:jobId')
+  @SkipThrottle(SKIP_ALL_THROTTLES)
   @AdminRoles('SUPER_ADMIN', 'OPS')
   async telegramTransferJob(@Param('jobId') jobId: string) {
     return ok(await this.telegram.getTransferJob(jobId));

@@ -67,6 +67,16 @@ function adminAuthHeaders(): Record<string, string> {
   return headers;
 }
 
+function parseRetryAfterMs(response: Response): number | undefined {
+  const raw = response.headers.get("retry-after")?.trim();
+  if (!raw) return undefined;
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds * 1_000);
+  const at = Date.parse(raw);
+  if (!Number.isFinite(at)) return undefined;
+  return Math.max(0, at - Date.now());
+}
+
 export async function adminRequest<T = any>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     ...adminAuthHeaders(),
@@ -79,7 +89,11 @@ export async function adminRequest<T = any>(path: string, init?: RequestInit): P
   const res = await fetch(`${API_BASE}${path}`, { ...init, credentials: "include", headers });
   const json = (await res.json().catch(() => ({}))) as ApiEnvelope<T> & { message?: unknown };
   if (!res.ok) {
-    throw new ApiError(res.status, normalizeApiMessage(json.message, `HTTP ${res.status}`));
+    throw new ApiError(
+      res.status,
+      normalizeApiMessage(json.message, `HTTP ${res.status}`),
+      parseRetryAfterMs(res),
+    );
   }
   if (json.code !== 0) {
     throw new ApiError(json.code, normalizeApiMessage(json.message, `code ${json.code}`));
@@ -116,7 +130,7 @@ export async function adminDownloadBlob(
       const text = await res.text().catch(() => "");
       if (text.trim()) message = text.slice(0, 300);
     }
-    throw new ApiError(res.status, message);
+    throw new ApiError(res.status, message, parseRetryAfterMs(res));
   }
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);

@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isDramaSystemTag, toPublicDramaTags } from '../src/dramas/drama-tags';
+import {
+  isDramaSystemTag,
+  mergeDramaSourceTags,
+  toPublicDramaTags,
+} from '../src/dramas/drama-tags';
 
 test('strips member-facing operational tags regardless of case', () => {
   const tags = [
@@ -30,4 +34,13 @@ test('treats blank and workflow metadata as system tags', () => {
     assert.equal(isDramaSystemTag(tag), true);
   }
   assert.equal(isDramaSystemTag('Comedy'), false);
+});
+
+test('limits member-facing drama labels to six', () => {
+  const labels = ['One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven'];
+  assert.deepEqual(toPublicDramaTags(labels), labels.slice(0, 6));
+  assert.deepEqual(
+    mergeDramaSourceTags(['upload'], [...labels, 'type:真人短剧']),
+    ['upload', ...labels.slice(0, 6), 'type:真人短剧'],
+  );
 });

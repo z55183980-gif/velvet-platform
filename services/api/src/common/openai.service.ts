@@ -402,7 +402,7 @@ export class OpenaiService {
     for (const raw of tagsRaw) {
       const t = String(raw || '').trim();
       if (t && !tags.includes(t)) tags.push(t);
-      if (tags.length >= 12) break;
+      if (tags.length >= 6) break;
     }
 
     return {

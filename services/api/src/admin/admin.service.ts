@@ -1649,9 +1649,7 @@ export class AdminService {
         existing.tags,
         Array.isArray(dto.sourceTags) ? dto.sourceTags.map(String) : [],
       );
-      await this.ensureDramaTagLabels(
-        Array.isArray(dto.sourceTags) ? dto.sourceTags.map(String) : [],
-      );
+      await this.ensureDramaTagLabels(data.tags as string[]);
     }
     if (Object.keys(data).length === 0) {
       throw new BizException(BizCode.BAD_REQUEST, 'common.noFieldsToUpdate');
@@ -1900,7 +1898,7 @@ export class AdminService {
           sourceType: 'ONLINE',
           externalRef,
           tags: Array.isArray(dto.sourceTags) && dto.sourceTags.length
-            ? dto.sourceTags.map(String).filter(Boolean)
+            ? mergeDramaSourceTags([], dto.sourceTags.map(String))
             : externalRef.startsWith('manual:')
               ? ['manual', 'online']
               : [],
@@ -1941,7 +1939,7 @@ export class AdminService {
     });
 
     if (Array.isArray(dto.sourceTags) && dto.sourceTags.length) {
-      await this.ensureDramaTagLabels(dto.sourceTags.map(String));
+      await this.ensureDramaTagLabels(drama.tags);
     }
 
     await this.audit.write({
@@ -2021,8 +2019,8 @@ export class AdminService {
     const sourceType = dto.sourceType === 'LOCAL' ? 'LOCAL' : 'R2';
     const baseTags = sourceType === 'LOCAL' ? ['upload', 'local'] : ['upload', 'r2'];
     const extraTags = (dto.sourceTags || []).map(String).filter(Boolean);
-    const tags = [...baseTags, ...extraTags.filter((t) => !baseTags.includes(t))];
-    await this.ensureDramaTagLabels(extraTags);
+    const tags = mergeDramaSourceTags(baseTags, extraTags);
+    await this.ensureDramaTagLabels(tags);
 
     const drama = await this.prisma.drama.create({
       data: {

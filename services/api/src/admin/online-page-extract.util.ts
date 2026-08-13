@@ -371,7 +371,7 @@ export function extractReelshortFixedTagLabels(html: string): string[] {
     const label = decodeHtmlText(match[1] || '');
     if (!label || label.length > 60 || labels.includes(label)) continue;
     labels.push(label);
-    if (labels.length >= 12) break;
+    if (labels.length >= 6) break;
   }
   return labels;
 }

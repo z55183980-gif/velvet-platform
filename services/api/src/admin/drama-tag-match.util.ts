@@ -153,7 +153,7 @@ export function mapLabelsToExistingTags(
   opts?: { minScore?: number; max?: number },
 ): string[] {
   if (!Array.isArray(labels) || !labels.length || !catalog.length) return [];
-  const max = opts?.max && opts.max > 0 ? opts.max : 8;
+  const max = opts?.max && opts.max > 0 ? opts.max : 6;
   const out: string[] = [];
   const seen = new Set<string>();
 

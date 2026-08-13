@@ -1,6 +1,7 @@
 /** Payload for filling the local-upload main form from online probe/manual meta. */
 
 import { isPlayableMediaUrl } from "./playable-url";
+import { MAX_DRAMA_TAGS } from "./drama-tags";
 
 export type OnlineIngestForm = "r2" | "link";
 export type OnlineFormatPreference = "best_hls" | "best_mp4" | "best";
@@ -195,7 +196,7 @@ export function dramaInfoFromYtdlpProbe(
               .map((t) => String(t || "").trim())
               .filter(Boolean),
           ),
-        ].slice(0, 8)
+        ].slice(0, MAX_DRAMA_TAGS)
       : [];
     if (tags.length) payload.tags = tags;
     if (extras?.overwriteMeta) payload.overwriteMeta = true;

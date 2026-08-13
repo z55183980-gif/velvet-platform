@@ -325,12 +325,12 @@ export class YtdlpImportService implements OnModuleInit {
       if (meta.genreLabels?.length) {
         bestMeta.genreLabels = [
           ...new Set([...(bestMeta.genreLabels || []), ...meta.genreLabels]),
-        ].slice(0, 12);
+        ].slice(0, 6);
       }
       if (meta.fixedTagLabels?.length) {
         bestMeta.fixedTagLabels = [
           ...new Set([...(bestMeta.fixedTagLabels || []), ...meta.fixedTagLabels]),
-        ].slice(0, 12);
+        ].slice(0, 6);
       }
       for (const ep of nextEps) {
         // Prefer page hrefs for ReelShort (yt-dlp later); keep media URLs if no href.
@@ -412,7 +412,7 @@ export class YtdlpImportService implements OnModuleInit {
         // ReelShort exposes authoritative /tags/ anchors. Do not let an LLM
         // append speculative labels when deterministic fixed tags exist.
         if (extracted.tags?.length && !fixedTagLabels.length) {
-          tags = [...new Set([...tags, ...extracted.tags])].slice(0, 12);
+          tags = [...new Set([...tags, ...extracted.tags])].slice(0, 6);
         }
         const fromLlm = sanitizeCategorySlug(
           extracted.categorySlug,
@@ -513,7 +513,7 @@ export class YtdlpImportService implements OnModuleInit {
       const catalog = await this.prisma.dramaTagLabel.findMany({
         select: { key: true, nameEn: true, nameZh: true, nameFr: true },
       });
-      tags = mapLabelsToExistingTags(tags, catalog, { max: 8 });
+      tags = mapLabelsToExistingTags(tags, catalog, { max: 6 });
     }
 
     const probe: YtdlpProbeResult & {
@@ -543,7 +543,7 @@ export class YtdlpImportService implements OnModuleInit {
       titleZh: titleZh || undefined,
       titleEn: titleEn || undefined,
       categorySlug: categorySlug || undefined,
-      tags: tags.length ? tags.slice(0, 8) : undefined,
+      tags: tags.length ? tags.slice(0, 6) : undefined,
       notes: notes || undefined,
       model,
       htmlChars: bestHtml.length,

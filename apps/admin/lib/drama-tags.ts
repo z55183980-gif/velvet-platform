@@ -7,7 +7,7 @@ export const CONTENT_TYPE_VALUES: DramaContentType[] = ["漫剧", "真人短剧"
 export const COMPLETION_VALUES: DramaCompletion[] = ["连载中", "已完结"];
 export const DEFAULT_CONTENT_TYPE: DramaContentType = "真人短剧";
 export const DEFAULT_COMPLETION: DramaCompletion = "连载中";
-export const MAX_DRAMA_TAGS = 8;
+export const MAX_DRAMA_TAGS = 6;
 
 const META_TAG_SKIP = new Set(["upload", "r2", "transfer"]);
 

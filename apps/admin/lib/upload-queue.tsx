@@ -713,6 +713,24 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
             }
           } catch (e: unknown) {
             const status = Number((e as { status?: unknown })?.status || 0);
+            if (status === 429) {
+              // Status polling must never turn a healthy server-side task into a
+              // local failure. Respect Retry-After and keep monitoring.
+              const advertised = Number(
+                (e as { retryAfterMs?: unknown })?.retryAfterMs || 0,
+              );
+              pollFailures = 0;
+              await sleep(
+                Math.min(
+                  5 * 60_000,
+                  Math.max(
+                    5_000,
+                    Number.isFinite(advertised) && advertised > 0 ? advertised : 30_000,
+                  ),
+                ),
+              );
+              continue;
+            }
             pollFailures += 1;
             if (status === 401 || status === 403) {
               patchJob(jobId, (j) => ({

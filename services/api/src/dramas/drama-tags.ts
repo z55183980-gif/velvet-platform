@@ -29,6 +29,9 @@ const PROVENANCE_TAGS = new Set([
   'demo',
 ]);
 
+/** Maximum number of member-facing labels stored/exposed for one drama. */
+export const MAX_PUBLIC_DRAMA_TAGS = 6;
+
 /** Internal / provenance markers that must not appear on the public web. */
 export function isDramaSystemTag(tag: string): boolean {
   const t = String(tag || '').trim().toLowerCase();
@@ -51,6 +54,7 @@ export function toPublicDramaTags(tags: unknown): string[] {
     if (!t || isDramaSystemTag(t) || seen.has(key)) continue;
     seen.add(key);
     out.push(t);
+    if (out.length >= MAX_PUBLIC_DRAMA_TAGS) break;
   }
   return out;
 }
@@ -103,10 +107,15 @@ export function mergeDramaSourceTags(
     : [];
   const seen = new Set<string>();
   const out: string[] = [];
+  let displayCount = 0;
   for (const t of [...provenance, ...next]) {
-    if (seen.has(t)) continue;
-    seen.add(t);
+    const key = t.toLowerCase();
+    if (seen.has(key)) continue;
+    const system = isDramaSystemTag(t);
+    if (!system && displayCount >= MAX_PUBLIC_DRAMA_TAGS) continue;
+    seen.add(key);
     out.push(t);
+    if (!system) displayCount += 1;
   }
   return out;
 }
