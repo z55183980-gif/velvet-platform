@@ -87,17 +87,21 @@ function ProgressBar({ value, tone = "brand" }: { value: number; tone?: "brand" 
 
 function JobCard({ job, fullscreen = false }: { job: UploadJob; fullscreen?: boolean }) {
   const { t } = useI18n();
-  const { cancelJob, retryFailed, retryEpisode } = useUploadQueue();
+  const { cancelJob, dismissTransferJob, retryFailed, retryEpisode } = useUploadQueue();
   const isTransfer = job.kind === "ytdlp-transfer";
   const done = job.episodes.filter((ep) => ep.status === "done").length;
   const total = job.episodes.length;
   const failedEpisodes = job.episodes.filter((ep) => ep.status === "error");
   const failed = failedEpisodes.length;
   const inProgress = jobInProgress(job);
+  const canDismissTransfer =
+    isTransfer &&
+    (job.status === "completed" || job.status === "failed" || job.status === "cancelled");
   const canRetry =
     !isTransfer && job.episodes.some((ep) => ep.status === "error" || ep.status === "cancelled");
   /** null = follow default (expand only while in progress). */
   const [userExpanded, setUserExpanded] = useState<boolean | null>(null);
+  const [dismissing, setDismissing] = useState(false);
   const expanded = userExpanded ?? (inProgress || fullscreen);
   const downloadTotal = job.transferProgress?.total ?? total;
   const downloadDone = job.transferProgress?.transferred ?? done;
@@ -200,6 +204,33 @@ function JobCard({ job, fullscreen = false }: { job: UploadJob; fullscreen?: boo
             aria-label={isTransfer ? t("uploadTaskStopTracking") : t("uploadTaskCancel")}
           >
             <X className="h-3.5 w-3.5" />
+          </Button>
+        ) : null}
+        {canDismissTransfer ? (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="shrink-0 text-ink-muted hover:text-ink"
+            disabled={dismissing}
+            onClick={async (e) => {
+              e.stopPropagation();
+              setDismissing(true);
+              try {
+                await dismissTransferJob(job.id);
+              } catch {
+                // Keep the card visible when the server refuses the clear.
+              } finally {
+                setDismissing(false);
+              }
+            }}
+            title={t("uploadTaskDismiss")}
+            aria-label={t("uploadTaskDismiss")}
+          >
+            {dismissing ? (
+              <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <X className="h-3.5 w-3.5" />
+            )}
           </Button>
         ) : null}
       </div>

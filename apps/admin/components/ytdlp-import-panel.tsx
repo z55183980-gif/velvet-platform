@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import {
   adminStorageStatus,
+  adminYtdlpTransfer,
   adminTelegramStatus,
   adminYtdlpAppendTransfer,
   adminYtdlpAiExtract,
@@ -32,6 +33,7 @@ import {
 } from "@/lib/drama-info-fill";
 import { useI18n } from "@/lib/i18n";
 import { useUploadQueue } from "@/lib/upload-queue";
+import { composeDramaSourceTags } from "@/lib/drama-tags";
 import { isPlayableMediaUrl } from "@/lib/playable-url";
 import {
   WatermarkPositionEditor,
@@ -308,6 +310,7 @@ export function YtdlpImportPanel({
   const [transferCandidates, setTransferCandidates] = useState<
     CatalogResult["items"]
   >([]);
+  const [catalogBatchBusy, setCatalogBatchBusy] = useState(false);
   const catalogSelectedIds = transferCandidates.map((item) => item.id);
   const [epRangeStart, setEpRangeStart] = useState("");
   const [epRangeEnd, setEpRangeEnd] = useState("");
@@ -902,22 +905,97 @@ export function YtdlpImportPanel({
     });
   }
 
-  function openNextTransferCandidate() {
-    const next = transferCandidates[0];
-    if (!next || busy) return;
-    openCatalogDrama(next);
+  async function queueCatalogCandidates() {
+    if (busy || catalogBatchBusy || !transferCandidates.length) return;
+    const candidates = [...transferCandidates];
+    setCatalogBatchBusy(true);
+    setError(null);
+    setCatalogSyncNotice(null);
+    let queued = 0;
+    const failures: string[] = [];
+
+    for (const [index, item] of candidates.entries()) {
+      setCatalogSyncNotice(
+        t("ytdlpCatalogBatchProgress", {
+          done: String(index + 1),
+          total: String(candidates.length),
+          title: item.title,
+        }),
+      );
+      try {
+        const detail = await adminYtdlpAiExtract(item.webpageUrl, {
+          ...authPayload(),
+          skipAi: true,
+          sourceLanguage: dedicatedCatalogMode ? "en" : undefined,
+        });
+        const episodes = detail.episodes
+          .map((episode) => ({
+            episodeNumber: episode.index,
+            title: episode.title,
+            webpageUrl: episode.webpageUrl,
+            sourceUrl: episodeSourceUrl(episode),
+            playlistIndex: episodePlaylistIndex(episode),
+            durationSec: episode.durationSec,
+          }))
+          .filter((episode) => episode.webpageUrl || episode.sourceUrl);
+        if (!episodes.length) throw new Error(t("ytdlpCatalogNoEpisodes"));
+
+        const data = await adminYtdlpTransfer({
+          url: item.webpageUrl,
+          target: "r2",
+          titleEn: item.title,
+          coverUrl: item.coverUrl,
+          descriptionEn: item.description,
+          sourceTags: composeDramaSourceTags([], "真人短剧", item.completion || "连载中"),
+          lockMode: null,
+          formatPreference: formatPreference === "best_hls" ? "best" : formatPreference,
+          cookiesFile: cookiesFile.trim() || undefined,
+          authBearer: authBearer.trim() || undefined,
+          watermarkEnabled: watermark.enabled,
+          watermarkX: watermark.x,
+          watermarkY: watermark.y,
+          watermarkScale: watermark.scale,
+          episodes,
+        });
+        enqueueTransferJob({
+          title: item.title,
+          dramaId: data.id,
+          transferJobId: data.jobId,
+          totalEpisodes: data.totalEpisodes,
+          episodeTitles: episodes.map((episode) => ({
+            episodeNumber: episode.episodeNumber,
+            title: episode.title,
+          })),
+        });
+        queued += 1;
+        setTransferCandidates((prev) => prev.filter((candidate) => candidate.id !== item.id));
+      } catch (e: unknown) {
+        failures.push(`${item.title}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+
+    setCatalogBatchBusy(false);
+    setCatalogItem(null);
+    setCatalogDetailError(null);
+    setProbe(null);
+    if (failures.length) {
+      setError(
+        t("ytdlpCatalogBatchPartial", {
+          ok: String(queued),
+          fail: String(failures.length),
+          detail: failures.slice(0, 3).join("；"),
+        }),
+      );
+      setCatalogSyncNotice(null);
+    } else {
+      setCatalogSyncNotice(t("ytdlpCatalogBatchQueued", { n: String(queued) }));
+    }
   }
 
   function handleCatalogTransferQueued() {
     const currentId = catalogItem?.id;
     if (!currentId) return;
-    const remaining = transferCandidates.filter((item) => item.id !== currentId);
-    setTransferCandidates(remaining);
-    const next = remaining[0];
-    if (next) {
-      openCatalogDrama(next);
-      return;
-    }
+    setTransferCandidates((prev) => prev.filter((item) => item.id !== currentId));
     setCatalogItem(null);
     setCatalogDetailError(null);
     setProbe(null);
@@ -1257,6 +1335,7 @@ export function YtdlpImportPanel({
     resolveMut.isPending ||
     downloadingEpIndex != null ||
     cookieUploadBusy ||
+    catalogBatchBusy ||
     catalogUpdateMut.isPending;
   const showEmpty =
     !urlLooksTelegram && !catalog && !probe && !error && !aiExtractMut.isPending;
@@ -1683,7 +1762,7 @@ export function YtdlpImportPanel({
                     size="sm"
                     variant="primary"
                     disabled={busy || !transferCandidates.length}
-                    onClick={openNextTransferCandidate}
+                    onClick={() => void queueCatalogCandidates()}
                   >
                     {t("ytdlpCatalogTransfer", {
                       n: String(transferCandidates.length),

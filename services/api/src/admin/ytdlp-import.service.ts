@@ -1192,6 +1192,23 @@ export class YtdlpImportService implements OnModuleInit {
     return this.toPublicState(row as DbTransferRow);
   }
 
+  /**
+   * Remove a terminal transfer record from the operator task history.
+   * Media/episode records are intentionally left untouched; this only clears
+   * the orchestration status shown in the admin task panel.
+   */
+  async dismissTransferJob(jobId: string) {
+    const id = String(jobId || '').trim();
+    if (!id) throw new BizException(BizCode.BAD_REQUEST, '转存任务 ID 无效');
+    const row = await this.prisma.ytdlpTransferJob.findUnique({ where: { id } });
+    if (!row) throw new BizException(BizCode.NOT_FOUND, '转存任务不存在');
+    if (row.status === 'QUEUED' || row.status === 'RUNNING' || row.status === 'CANCEL_REQUESTED') {
+      throw new BizException(BizCode.CONFLICT, '转存任务仍在进行中，完成或取消后才能清除');
+    }
+    await this.prisma.ytdlpTransferJob.delete({ where: { id } });
+    return { id, dismissed: true as const };
+  }
+
   async importDrama(opts: YtdlpImportOptions, actorId?: bigint) {
     const pageUrl = String(opts.url || '').trim();
     if (!pageUrl) throw new BizException(BizCode.BAD_REQUEST, '请填写公开视频页链接');

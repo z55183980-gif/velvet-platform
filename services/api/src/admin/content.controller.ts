@@ -1231,6 +1231,12 @@ export class ContentController {
     return ok(await this.ytdlp.cancelTransferJob(jobId));
   }
 
+  @Post('ytdlp/transfer/:jobId/dismiss')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async ytdlpTransferDismiss(@Param('jobId') jobId: string) {
+    return ok(await this.ytdlp.dismissTransferJob(jobId));
+  }
+
   @Get('telegram/status')
   @AdminRoles('SUPER_ADMIN', 'OPS')
   async telegramStatus() {

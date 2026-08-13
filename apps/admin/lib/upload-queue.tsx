@@ -19,6 +19,7 @@ import {
   adminUpdateDrama,
   adminUploadImage,
   adminYtdlpTransferCancel,
+  adminYtdlpTransferDismiss,
   adminYtdlpTransferJobs,
   adminYtdlpTransferJob,
 } from "@velvet/api-client";
@@ -159,6 +160,8 @@ type UploadQueueContextValue = {
   retryEpisode: (jobId: string, episodeId: string) => void;
   retryFailed: (jobId: string) => void;
   dismissJob: (jobId: string) => void;
+  /** Remove a finished server-side transfer from the persisted task history. */
+  dismissTransferJob: (jobId: string) => Promise<void>;
   clearFinished: () => void;
 };
 
@@ -1222,6 +1225,25 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
     setJobs((prev) => prev.filter((j) => j.id !== jobId));
   }, []);
 
+  const dismissTransferJob = useCallback(async (jobId: string) => {
+    const job = jobsRef.current.find((j) => j.id === jobId);
+    if (
+      !job ||
+      job.kind !== "ytdlp-transfer" ||
+      !job.transferJobId ||
+      job.status === "queued" ||
+      job.status === "running"
+    ) {
+      return;
+    }
+    await adminYtdlpTransferDismiss(job.transferJobId);
+    cancelledRef.current.delete(jobId);
+    filesRef.current.delete(jobId);
+    const next = jobsRef.current.filter((j) => j.id !== jobId);
+    jobsRef.current = next;
+    setJobs(next);
+  }, []);
+
   const clearFinished = useCallback(() => {
     setJobs((prev) => {
       const keep: UploadJob[] = [];
@@ -1283,6 +1305,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
       retryEpisode,
       retryFailed,
       dismissJob,
+      dismissTransferJob,
       clearFinished,
     }),
     [
@@ -1297,6 +1320,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
       retryEpisode,
       retryFailed,
       dismissJob,
+      dismissTransferJob,
       clearFinished,
     ],
   );

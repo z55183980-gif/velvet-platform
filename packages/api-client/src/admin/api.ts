@@ -2262,6 +2262,14 @@ export async function adminYtdlpTransferCancel(jobId: string) {
   );
 }
 
+/** Permanently remove a finished transfer task from the admin task history. */
+export async function adminYtdlpTransferDismiss(jobId: string) {
+  return adminRequest<{ id: string; dismissed: true }>(
+    `/admin/ytdlp/transfer/${encodeURIComponent(jobId)}/dismiss`,
+    { method: "POST" },
+  );
+}
+
 /** Gap-fill a completed/failed transfer (realign sourceIndex + download missing). */
 export async function adminYtdlpTransferResume(
   jobId: string,
