@@ -386,6 +386,10 @@ class YtdlpAiExtractDto extends YtdlpAuthFields {
   @IsOptional() @Type(() => Number) @IsNumber() @Min(1) @Max(120) maxEpisodes?: number;
 }
 
+class YtdlpCatalogDto extends YtdlpAuthFields {
+  @IsNotEmpty() @IsString() url!: string;
+}
+
 class YtdlpInferCategoryDto {
   @IsOptional() @IsString() categorySlug?: string;
   @IsOptional() @IsString() title?: string;
@@ -1001,6 +1005,19 @@ export class ContentController {
       await this.ytdlp.aiExtract({
         url: dto.url,
         maxEpisodes: dto.maxEpisodes,
+        cookiesFile: dto.cookiesFile,
+        authBearer: dto.authBearer,
+      }),
+    );
+  }
+
+  /** ReelShort /tags/... list page → selectable independent dramas. */
+  @Post('ytdlp/catalog')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async ytdlpCatalog(@Body() dto: YtdlpCatalogDto) {
+    return ok(
+      await this.ytdlp.discoverCatalog({
+        url: dto.url,
         cookiesFile: dto.cookiesFile,
         authBearer: dto.authBearer,
       }),

@@ -30,8 +30,10 @@ import {
   expandDramaPageCandidates,
   extractEpisodeLinksFromHtml,
   extractMetaFromNextData,
+  extractReelshortDramaCatalog,
   isDramaboxHost,
   isNetshortHost,
+  isReelshortCatalogUrl,
   isReelshortHost,
   type ExtractedPageEpisode,
 } from './online-page-extract.util';
@@ -236,6 +238,53 @@ export class YtdlpImportService implements OnModuleInit {
     return this.provider.probe(url, auth);
   }
 
+  /** Discover independent dramas from one ReelShort /tags/... catalog page. */
+  async discoverCatalog(opts: {
+    url: string;
+    cookiesFile?: string;
+    authBearer?: string;
+  }) {
+    const pageUrl = await this.provider.assertSafePageUrl(opts.url);
+    if (!isReelshortCatalogUrl(pageUrl)) {
+      throw new BizException(
+        BizCode.BAD_REQUEST,
+        '当前仅支持识别 ReelShort /tags/... 剧目列表页',
+      );
+    }
+
+    const auth = this.authFromOpts(opts);
+    const page = await safeFetchPublicText(pageUrl, {
+      headers: this.provider.buildPageFetchHeaders(pageUrl, auth),
+      timeoutMs: 12_000,
+      maxBytes: 4 * 1024 * 1024,
+      maxRedirects: 3,
+    });
+    if (page.status < 200 || page.status >= 300 || !page.text) {
+      throw new BizException(
+        BizCode.BAD_REQUEST,
+        `抓取剧目列表失败: HTTP ${page.status || 'empty'}`,
+      );
+    }
+
+    const catalog = extractReelshortDramaCatalog(page.text, page.finalUrl);
+    if (!catalog?.items.length) {
+      throw new BizException(
+        BizCode.BAD_REQUEST,
+        '未从该列表页识别到剧目，请确认页面可访问或上传对应 cookies',
+      );
+    }
+
+    this.logger.log(
+      `discoverCatalog ${pageUrl} → ${catalog.items.length} dramas ` +
+        `(page=${catalog.page}/${catalog.totalPages})`,
+    );
+    return {
+      source: 'catalog' as const,
+      webpageUrl: page.finalUrl,
+      ...catalog,
+    };
+  }
+
   /**
    * Path B: fetch public page HTML → deterministic episode href extract (+ OpenAI meta fallback).
    * Site parsers are host-matched (ReelShort vs DramaBox). Tags come from page labels when present.
@@ -263,6 +312,7 @@ export class YtdlpImportService implements OnModuleInit {
       language?: string;
       paidStart?: number;
       chapterCount?: number;
+      completion?: '已完结' | '连载中';
     } = {};
     let bestHtml = '';
     let bestHtmlUrl = pageUrl;
@@ -321,6 +371,9 @@ export class YtdlpImportService implements OnModuleInit {
       }
       if (meta.chapterCount && !bestMeta.chapterCount) {
         bestMeta.chapterCount = meta.chapterCount;
+      }
+      if (meta.completion && !bestMeta.completion) {
+        bestMeta.completion = meta.completion;
       }
       if (meta.genreLabels?.length) {
         bestMeta.genreLabels = [
@@ -528,6 +581,7 @@ export class YtdlpImportService implements OnModuleInit {
       textChars: number;
       resolvedFrom?: string[];
       paidStart?: number;
+      completion?: '已完结' | '连载中';
       episodes: Array<
         YtdlpProbeResult['episodes'][number] & { sourceUrl?: string }
       >;
@@ -550,6 +604,7 @@ export class YtdlpImportService implements OnModuleInit {
       textChars: bestHtml ? buildExtractContext(bestHtml, bestHtmlUrl).length : 0,
       resolvedFrom: candidates,
       paidStart: bestMeta.paidStart,
+      completion: bestMeta.completion,
       episodes: episodes.map((ep) => {
         const mediaLike = /\.(m3u8|mp4|webm|mkv|mov|m4v)(\?|$)/i.test(ep.sourceUrl)
           || /\/(hls|playlist|index\.m3u8|master\.m3u8)\b/i.test(ep.sourceUrl);

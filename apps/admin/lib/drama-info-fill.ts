@@ -2,6 +2,7 @@
 
 import { isPlayableMediaUrl } from "./playable-url";
 import { MAX_DRAMA_TAGS } from "./drama-tags";
+import type { DramaCompletion } from "./drama-tags";
 
 export type OnlineIngestForm = "r2" | "link";
 export type OnlineFormatPreference = "best_hls" | "best_mp4" | "best";
@@ -54,6 +55,7 @@ export type DramaInfoFillPayload = {
   /** Optional Chinese synopsis; probe only sets this when description is CJK. */
   descriptionZh?: string;
   totalEpisodes?: number;
+  completion?: DramaCompletion;
   /** @deprecated Prefer tags — kept for soft DB default only. */
   categorySlug?: string;
   /** Display tags inferred from page genres / AI extract. */
@@ -84,6 +86,7 @@ type ProbeLike = {
   description?: string | null;
   categorySlug?: string | null;
   tags?: string[] | null;
+  completion?: DramaCompletion | null;
   source?: "ai" | "ytdlp" | "telegram" | string | null;
   channel?: string | null;
   episodes?: ProbeEpisodeLike[] | null;
@@ -199,6 +202,7 @@ export function dramaInfoFromYtdlpProbe(
         ].slice(0, MAX_DRAMA_TAGS)
       : [];
     if (tags.length) payload.tags = tags;
+    if (probe.completion) payload.completion = probe.completion;
     if (extras?.overwriteMeta) payload.overwriteMeta = true;
   }
 

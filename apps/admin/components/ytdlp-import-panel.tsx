@@ -6,6 +6,7 @@ import {
   adminStorageStatus,
   adminTelegramStatus,
   adminYtdlpAiExtract,
+  adminYtdlpCatalog,
   adminYtdlpDownloadEpisode,
   adminYtdlpPreviewFrame,
   adminYtdlpProbe,
@@ -36,6 +37,7 @@ import {
 } from "@/components/telegram-import-panel";
 
 type AiProbeResult = Awaited<ReturnType<typeof adminYtdlpAiExtract>>;
+type CatalogResult = Awaited<ReturnType<typeof adminYtdlpCatalog>>;
 type YtProbeResult = Awaited<ReturnType<typeof adminYtdlpProbe>>;
 type ProbeResult = AiProbeResult | YtProbeResult;
 type FormatPreference = "best_hls" | "best_mp4" | "best";
@@ -75,6 +77,18 @@ function guessHostnameFromUrl(raw: string): string {
   }
 }
 
+function isReelshortCatalogUrl(raw: string): boolean {
+  try {
+    const parsed = new URL(raw.trim());
+    return (
+      /(^|\.)reelshort\.com$/i.test(parsed.hostname) &&
+      /^\/(?:[a-z]{2}\/)?tags(?:\/|$)/i.test(parsed.pathname)
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
  * 在线资源准备：公开页解析或手动粘贴直链。
  * 不在弹窗内创建剧集；把信息与片源配置回填主窗口，由主窗口统一提交。
@@ -103,6 +117,11 @@ export function YtdlpImportPanel({
   const [manualDirty, setManualDirty] = useState(false);
   const [url, setUrl] = useState("");
   const [probe, setProbe] = useState<ProbeResult | null>(null);
+  const [catalog, setCatalog] = useState<CatalogResult | null>(null);
+  const [catalogItem, setCatalogItem] = useState<
+    CatalogResult["items"][number] | null
+  >(null);
+  const [catalogDetailError, setCatalogDetailError] = useState<string | null>(null);
   const [epRangeStart, setEpRangeStart] = useState("");
   const [epRangeEnd, setEpRangeEnd] = useState("");
   const [formatPreference, setFormatPreference] = useState<FormatPreference>("best");
@@ -152,7 +171,9 @@ export function YtdlpImportPanel({
     !!telegramStatusQ.data?.enabled &&
     !!telegramStatusQ.data?.health?.authorized;
 
-  const parseDirty = Boolean(url.trim() || probe || epRangeStart.trim() || epRangeEnd.trim());
+  const parseDirty = Boolean(
+    url.trim() || catalog || probe || epRangeStart.trim() || epRangeEnd.trim(),
+  );
   const dirty = parseDirty || manualDirty;
 
   useEffect(() => {
@@ -170,6 +191,9 @@ export function YtdlpImportPanel({
 
   function clearUrlInput() {
     setUrl("");
+    setCatalog(null);
+    setCatalogItem(null);
+    setCatalogDetailError(null);
     setProbe(null);
     setPreviewEpIndex(null);
     setPreviewUrl(null);
@@ -191,6 +215,9 @@ export function YtdlpImportPanel({
   // Switching into TG mode: drop yt-dlp/ai probe UI state.
   useEffect(() => {
     if (!urlLooksTelegram) return;
+    setCatalog(null);
+    setCatalogItem(null);
+    setCatalogDetailError(null);
     setProbe(null);
     setPreviewEpIndex(null);
     setPreviewUrl(null);
@@ -463,10 +490,19 @@ export function YtdlpImportPanel({
     }
   }
 
-  const aiExtractMut = useMutation({
-    mutationFn: () => {
-      const u = url.trim();
+  const aiExtractMut = useMutation<
+    AiProbeResult | CatalogResult,
+    Error,
+    string | undefined
+  >({
+    mutationFn: (targetUrl?: string) => {
+      const u = (targetUrl ?? url).trim();
       if (!u) throw new Error(t("ytdlpNeedUrl"));
+      if (isReelshortCatalogUrl(u)) {
+        return adminYtdlpCatalog(u, {
+          ...authPayload(),
+        });
+      }
       return adminYtdlpAiExtract(u, {
         ...authPayload(),
       });
@@ -477,11 +513,38 @@ export function YtdlpImportPanel({
       setPreviewUrl(null);
       setApplied(false);
       setResolveProgress(null);
-      setProbe(data);
+      if (data.source === "catalog") {
+        setCatalog(data);
+        setCatalogItem(null);
+        setCatalogDetailError(null);
+        setProbe(null);
+      } else {
+        setCatalog(null);
+        setProbe(data);
+      }
     },
     onError: (e: Error) => {
       setApplied(false);
       setError(e.message);
+    },
+  });
+
+  const catalogDetailMut = useMutation({
+    mutationFn: (item: CatalogResult["items"][number]) =>
+      adminYtdlpAiExtract(item.webpageUrl, {
+        ...authPayload(),
+      }),
+    onSuccess: (data) => {
+      setCatalogDetailError(null);
+      setProbe(data);
+      setPreviewEpIndex(null);
+      setPreviewUrl(null);
+      setApplied(false);
+      setResolveProgress(null);
+    },
+    onError: (e: Error) => {
+      setProbe(null);
+      setCatalogDetailError(e.message);
     },
   });
 
@@ -813,13 +876,14 @@ export function YtdlpImportPanel({
 
   const busy =
     aiExtractMut.isPending ||
+    catalogDetailMut.isPending ||
     resolveQueueBusy ||
     downloadQueueBusy ||
     resolveMut.isPending ||
     downloadingEpIndex != null ||
     cookieUploadBusy;
   const showEmpty =
-    !urlLooksTelegram && !probe && !error && !aiExtractMut.isPending;
+    !urlLooksTelegram && !catalog && !probe && !error && !aiExtractMut.isPending;
   const selectedCount = selectedIndexes.length;
   const allSelected = !!probe && selectedCount === probe.episodes.length && probe.episodes.length > 0;
 
@@ -1037,7 +1101,7 @@ export function YtdlpImportPanel({
                     if (telegramReady) setTgProbeRequestKey((k) => k + 1);
                     return;
                   }
-                  aiExtractMut.mutate();
+                  aiExtractMut.mutate(undefined);
                 }}
               />
               {urlLooksTelegram ? (
@@ -1061,10 +1125,14 @@ export function YtdlpImportPanel({
                   }
                   disabled={!url.trim() || busy || !configured}
                   title={t("ytdlpAiExtractHint")}
-                  onClick={() => aiExtractMut.mutate()}
+                  onClick={() => aiExtractMut.mutate(undefined)}
                 >
                   {aiExtractMut.isPending
-                    ? t("ytdlpAiExtractBusy")
+                    ? isReelshortCatalogUrl(url)
+                      ? t("ytdlpCatalogBusy")
+                      : t("ytdlpAiExtractBusy")
+                    : catalog
+                      ? t("ytdlpCatalogDone")
                     : isAiProbe(probe)
                       ? t("ytdlpAiExtractDone")
                       : t("ytdlpAiExtract")}
@@ -1128,11 +1196,101 @@ export function YtdlpImportPanel({
         )}
       </PanelTag>
 
+      {ingestTab === "parse" && !urlLooksTelegram && catalog ? (
+        <section className="upload-panel space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h4 className="font-semibold">
+                {t("ytdlpCatalogTitle", { title: catalog.title })}
+              </h4>
+              <p className="text-caption text-ink-muted">
+                {t("ytdlpCatalogSummary", {
+                  page: String(catalog.page),
+                  pages: String(catalog.totalPages),
+                  count: String(catalog.items.length),
+                  total: String(catalog.totalItems),
+                })}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={busy || !catalog.prevPageUrl}
+                onClick={() => {
+                  if (!catalog.prevPageUrl) return;
+                  setUrl(catalog.prevPageUrl);
+                  aiExtractMut.mutate(catalog.prevPageUrl);
+                }}
+              >
+                {t("ytdlpCatalogPrev")}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={busy || !catalog.nextPageUrl}
+                onClick={() => {
+                  if (!catalog.nextPageUrl) return;
+                  setUrl(catalog.nextPageUrl);
+                  aiExtractMut.mutate(catalog.nextPageUrl);
+                }}
+              >
+                {t("ytdlpCatalogNext")}
+              </Button>
+            </div>
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            {catalog.items.map((item) => (
+              <button
+                type="button"
+                key={item.id}
+                className="flex min-w-0 gap-3 rounded-xl border border-line/70 bg-surface-1 p-3 text-left transition hover:border-brand/40 hover:bg-surface-2 disabled:opacity-60"
+                disabled={busy}
+                onClick={() => {
+                  setCatalogItem(item);
+                  setCatalogDetailError(null);
+                  setProbe(null);
+                  catalogDetailMut.mutate(item);
+                }}
+              >
+                {item.coverUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={item.coverUrl}
+                    alt=""
+                    className="h-24 w-16 shrink-0 rounded-lg object-cover"
+                  />
+                ) : null}
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <h5 className="line-clamp-2 text-body-sm font-semibold">
+                    {item.title}
+                  </h5>
+                  {item.chapterCount ? (
+                    <p className="text-caption text-ink-subtle">
+                      {t("importEpisodeCount", { n: item.chapterCount })}
+                    </p>
+                  ) : null}
+                  {item.description ? (
+                    <p className="mt-1 line-clamp-2 text-caption text-ink-muted">
+                      {item.description}
+                    </p>
+                  ) : null}
+                  <span className="mt-auto pt-2 text-caption font-medium text-brand">
+                    {t("ytdlpCatalogViewEpisodes")}
+                  </span>
+                </div>
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       {ingestTab === "parse" && error ? (
         <p className="text-body-sm text-danger">{error}</p>
       ) : null}
 
-      {ingestTab === "parse" && !urlLooksTelegram && probe ? (
+      {ingestTab === "parse" && !urlLooksTelegram && !catalog && probe ? (
         <div className="upload-panel space-y-4">
           <div className="flex flex-wrap gap-3">
             {"coverUrl" in probe && probe.coverUrl ? (
@@ -1462,6 +1620,105 @@ export function YtdlpImportPanel({
           </div>
         </div>
       ) : null}
+
+      <GlassModal
+        open={!!catalogItem}
+        onClose={() => {
+          setCatalogItem(null);
+          setCatalogDetailError(null);
+          setProbe(null);
+        }}
+        size="xl"
+        title={catalogItem?.title || t("ytdlpCatalogEpisodeModalTitle")}
+      >
+        {catalogDetailMut.isPending ? (
+          <div className="py-10 text-center text-body-sm text-ink-muted">
+            {t("ytdlpCatalogEpisodeLoading")}
+          </div>
+        ) : catalogDetailError ? (
+          <p className="rounded-lg bg-danger-soft p-3 text-body-sm text-danger">
+            {catalogDetailError}
+          </p>
+        ) : probe && catalogItem ? (
+          <div className="space-y-4">
+            <div className="flex gap-3">
+              {"coverUrl" in probe && probe.coverUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={probe.coverUrl}
+                  alt=""
+                  className="h-28 w-20 shrink-0 rounded-lg object-cover"
+                />
+              ) : catalogItem.coverUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={catalogItem.coverUrl}
+                  alt=""
+                  className="h-28 w-20 shrink-0 rounded-lg object-cover"
+                />
+              ) : null}
+              <div className="min-w-0">
+                <h4 className="font-semibold">{probe.title}</h4>
+                <p className="text-caption text-ink-muted">
+                  {t("importEpisodeCount", { n: probe.episodes.length })}
+                </p>
+                {"description" in probe && probe.description ? (
+                  <p className="mt-2 line-clamp-3 text-body-sm text-ink-muted">
+                    {probe.description}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+
+            <div>
+              <h5 className="mb-2 text-body-sm font-medium">
+                {t("ytdlpCatalogEpisodeModalTitle")}
+              </h5>
+              <div className="grid max-h-[24rem] gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
+                {probe.episodes.map((ep) => (
+                  <div
+                    key={`${ep.index}:${ep.id}`}
+                    className="flex min-w-0 items-center gap-3 rounded-lg border border-line/70 bg-surface-1 px-3 py-2.5"
+                  >
+                    <span className="flex h-7 min-w-7 shrink-0 items-center justify-center rounded-full bg-brand-soft px-1 text-caption font-semibold text-brand">
+                      {ep.index}
+                    </span>
+                    <span className="min-w-0 truncate text-body-sm" title={ep.title}>
+                      {ep.title || `EP${ep.index}`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-line/60 pt-3">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  setCatalogItem(null);
+                  setCatalogDetailError(null);
+                  setProbe(null);
+                }}
+              >
+                {t("close")}
+              </Button>
+              <Button
+                size="sm"
+                variant="primary"
+                onClick={() => {
+                  setUrl(catalogItem.webpageUrl);
+                  setCatalog(null);
+                  setCatalogItem(null);
+                  setCatalogDetailError(null);
+                }}
+              >
+                {t("ytdlpCatalogUseDrama")}
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </GlassModal>
 
       <GlassModal
         open={!!previewUrl}

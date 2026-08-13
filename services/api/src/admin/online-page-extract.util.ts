@@ -9,6 +9,25 @@ export type ExtractedPageEpisode = {
   sourceUrl: string;
 };
 
+export type ExtractedDramaCatalogItem = {
+  id: string;
+  title: string;
+  webpageUrl: string;
+  coverUrl?: string;
+  description?: string;
+  chapterCount?: number;
+};
+
+export type ExtractedDramaCatalog = {
+  title: string;
+  page: number;
+  totalPages: number;
+  totalItems: number;
+  prevPageUrl?: string;
+  nextPageUrl?: string;
+  items: ExtractedDramaCatalogItem[];
+};
+
 export type PageMetaHints = {
   title?: string;
   coverUrl?: string;
@@ -21,6 +40,8 @@ export type PageMetaHints = {
   language?: string;
   paidStart?: number;
   chapterCount?: number;
+  /** ReelShort detail `update_status`: 1 = completed, every other present value = ongoing. */
+  completion?: '已完结' | '连载中';
 };
 
 export function isDramaboxHost(pageUrl: string): boolean {
@@ -350,6 +371,16 @@ export function isReelshortHost(pageUrl: string): boolean {
   }
 }
 
+/** ReelShort tag/category pages contain multiple independent dramas, not episodes. */
+export function isReelshortCatalogUrl(pageUrl: string): boolean {
+  if (!isReelshortHost(pageUrl)) return false;
+  try {
+    return /^\/(?:[a-z]{2}\/)?tags(?:\/|$)/i.test(new URL(pageUrl).pathname);
+  } catch {
+    return false;
+  }
+}
+
 function decodeHtmlText(raw: string): string {
   return raw
     .replace(/<[^>]+>/g, ' ')
@@ -360,6 +391,102 @@ function decodeHtmlText(raw: string): string {
     .replace(/&gt;/gi, '>')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+function absoluteHttpUrl(raw: unknown, pageUrl: string): string | undefined {
+  const value = String(raw || '').trim();
+  if (!value) return undefined;
+  try {
+    const resolved = new URL(value, pageUrl);
+    return /^https?:$/i.test(resolved.protocol) ? resolved.toString() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Parse a ReelShort /tags/... page into selectable dramas for one catalog page. */
+export function extractReelshortDramaCatalog(
+  html: string,
+  pageUrl: string,
+): ExtractedDramaCatalog | null {
+  if (!isReelshortCatalogUrl(pageUrl)) return null;
+  const next = String(html || '').match(
+    /<script[^>]*id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i,
+  );
+  if (!next?.[1]) return null;
+
+  let data: any;
+  try {
+    data = JSON.parse(next[1]);
+  } catch {
+    return null;
+  }
+
+  const pageProps = data?.props?.pageProps;
+  const tagBooks = pageProps?.tagBooks;
+  const books = Array.isArray(tagBooks?.books) ? tagBooks.books : [];
+  if (!books.length) return null;
+
+  // The catalog JSON has book ids but no canonical slug. Recover the exact
+  // /movie/... href emitted by SSR HTML and match it by the trailing book id.
+  const hrefById = new Map<string, string>();
+  const hrefRe = /<a\b[^>]*href=["']([^"']*\/movie\/[^"']*?([a-f0-9]{24})\/?(?:[?#][^"']*)?)["'][^>]*>/gi;
+  let hrefMatch: RegExpExecArray | null;
+  while ((hrefMatch = hrefRe.exec(html))) {
+    const id = String(hrefMatch[2] || '').toLowerCase();
+    const url = absoluteHttpUrl(hrefMatch[1], pageUrl);
+    if (id && url && !hrefById.has(id)) hrefById.set(id, url);
+  }
+
+  const items: ExtractedDramaCatalogItem[] = [];
+  const seen = new Set<string>();
+  for (const book of books) {
+    if (!book || typeof book !== 'object') continue;
+    const id = String(book.book_id || '').trim().toLowerCase();
+    const title = String(book.book_title || '').trim();
+    const webpageUrl = hrefById.get(id);
+    if (!id || !title || !webpageUrl || seen.has(id)) continue;
+    seen.add(id);
+    const coverUrl = absoluteHttpUrl(book.book_pic, pageUrl);
+    const description = String(book.special_desc || book.book_desc || '').trim();
+    const chapterCount = Number(book.chapter_count);
+    items.push({
+      id,
+      title: title.slice(0, 120),
+      webpageUrl,
+      ...(coverUrl ? { coverUrl } : {}),
+      ...(description ? { description: description.slice(0, 500) } : {}),
+      ...(Number.isFinite(chapterCount) && chapterCount > 0
+        ? { chapterCount: Math.floor(chapterCount) }
+        : {}),
+    });
+  }
+  if (!items.length) return null;
+
+  const pathTitle = String(pageProps?.path || '')
+    .split('/')
+    .filter(Boolean)
+    .pop()
+    ?.replace(/[-_]+/g, ' ')
+    .replace(/\b\w/g, (ch: string) => ch.toUpperCase());
+  const title = String(tagBooks?.tag_name || pathTitle || 'ReelShort').trim();
+  const page = Number(pageProps?.page ?? tagBooks?.page);
+  const totalPages = Number(pageProps?.totalPage);
+  const totalItems = Number(pageProps?.total ?? tagBooks?.total_items);
+
+  return {
+    title,
+    page: Number.isFinite(page) && page > 0 ? Math.floor(page) : 1,
+    totalPages:
+      Number.isFinite(totalPages) && totalPages > 0 ? Math.floor(totalPages) : 1,
+    totalItems:
+      Number.isFinite(totalItems) && totalItems >= 0
+        ? Math.floor(totalItems)
+        : items.length,
+    prevPageUrl: absoluteHttpUrl(pageProps?.prevPageLink, pageUrl),
+    nextPageUrl: absoluteHttpUrl(pageProps?.nextPageLink, pageUrl),
+    items,
+  };
 }
 
 /** Extract ReelShort's visible fixed tag links without semantic guessing. */
@@ -480,6 +607,9 @@ function extractReelshortFromPageData(pageData: any): {
   if (Number(pageData.paid_start) > 0) meta.paidStart = Number(pageData.paid_start);
   if (Number(pageData.chapter_count) > 0) {
     meta.chapterCount = Number(pageData.chapter_count);
+  }
+  if (Object.prototype.hasOwnProperty.call(pageData, 'update_status')) {
+    meta.completion = Number(pageData.update_status) === 1 ? '已完结' : '连载中';
   }
 
   const genreLabels: string[] = [];

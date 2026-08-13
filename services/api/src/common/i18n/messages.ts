@@ -126,6 +126,7 @@ const en = {
   'validation.tagRequired': 'Tag name is required',
   'validation.tagSystemForbidden': 'System tags cannot be renamed or deleted',
   'validation.tagExists': 'Tag already exists',
+  'validation.tagNotFound': 'Tag does not exist or was deleted: {tag}. Select it again or create it first.',
   'vipPlan.hasOrders': 'This VIP plan has related orders and cannot be deleted. Take it offline instead.',
   'topupPackage.hasOrders':
     'This credit pack has related orders and cannot be deleted. Take it offline instead.',
@@ -341,6 +342,7 @@ const zh: Record<MessageKey, string> = {
   'validation.tagRequired': '请填写标签名',
   'validation.tagSystemForbidden': '系统标签不可重命名或删除',
   'validation.tagExists': '标签已存在',
+  'validation.tagNotFound': '标签不存在或已被删除：{tag}，请重新选择或先创建标签。',
   'vipPlan.hasOrders': '该 VIP 套餐已有关联订单，无法删除，请改为下架。',
   'topupPackage.hasOrders': '该积分充值套餐已有关联订单，无法删除，请改为下架。',
 
@@ -547,6 +549,7 @@ const fr: Record<MessageKey, string> = {
   'validation.tagRequired': 'Le nom du tag est requis',
   'validation.tagSystemForbidden': 'Les tags système ne peuvent pas être renommés ou supprimés',
   'validation.tagExists': 'Ce tag existe déjà',
+  'validation.tagNotFound': "Le tag n’existe pas ou a été supprimé : {tag}. Sélectionnez-le à nouveau ou créez-le d’abord.",
   'vipPlan.hasOrders':
     'Ce forfait VIP a des commandes associées et ne peut pas être supprimé. Désactivez-le plutôt.',
   'topupPackage.hasOrders':

@@ -1850,6 +1850,8 @@ export async function adminYtdlpAiExtract(
     textChars: number;
     /** First episode locked for the current NetShort page session, when advertised. */
     paidStart?: number;
+    /** ReelShort detail completion derived from update_status. */
+    completion?: "已完结" | "连载中";
     episodes: Array<{
       index: number;
       id: string;
@@ -1867,6 +1869,38 @@ export async function adminYtdlpAiExtract(
       maxEpisodes: opts?.maxEpisodes,
       cookiesFile: opts?.cookiesFile,
       authBearer: opts?.authBearer,
+    }),
+  });
+}
+
+/** Discover dramas from one ReelShort /tags/... catalog page. */
+export async function adminYtdlpCatalog(
+  url: string,
+  auth?: { cookiesFile?: string; authBearer?: string },
+) {
+  return adminRequest<{
+    source: "catalog";
+    webpageUrl: string;
+    title: string;
+    page: number;
+    totalPages: number;
+    totalItems: number;
+    prevPageUrl?: string;
+    nextPageUrl?: string;
+    items: Array<{
+      id: string;
+      title: string;
+      webpageUrl: string;
+      coverUrl?: string;
+      description?: string;
+      chapterCount?: number;
+    }>;
+  }>("/admin/ytdlp/catalog", {
+    method: "POST",
+    body: JSON.stringify({
+      url,
+      cookiesFile: auth?.cookiesFile,
+      authBearer: auth?.authBearer,
     }),
   });
 }

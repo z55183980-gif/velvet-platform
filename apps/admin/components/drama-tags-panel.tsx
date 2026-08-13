@@ -64,7 +64,11 @@ export function DramaTagsPanel() {
     mutationFn: (tag: string) => adminDeleteDramaTag(tag),
     onSuccess: async () => {
       setErr(null);
-      await qc.invalidateQueries({ queryKey: ["admin", "drama-tags"] });
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["admin", "drama-tags"] }),
+        qc.invalidateQueries({ queryKey: ["admin", "dramas"] }),
+        qc.invalidateQueries({ queryKey: ["admin", "drama"] }),
+      ]);
     },
     onError: (e: Error) => setErr(e.message),
   });

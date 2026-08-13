@@ -1311,6 +1311,34 @@ export class AdminService {
     }
   }
 
+  /**
+   * Editing an existing drama may only reference labels that still exist.
+   * This prevents a stale editor tab from silently recreating a label after an
+   * administrator deleted and detached it. New labels must go through the
+   * explicit drama-tag creation endpoint first.
+   */
+  private async assertDramaTagLabelsExist(tags: string[]) {
+    const keys = [
+      ...new Set(
+        tags
+          .map((t) => String(t || '').trim())
+          .filter((t) => t && !isDramaSystemTag(t)),
+      ),
+    ];
+    if (keys.length === 0) return;
+
+    const labels = await this.prisma.dramaTagLabel.findMany({
+      select: { key: true },
+    });
+    const existing = new Set(labels.map((label) => label.key.trim().toLowerCase()));
+    const missing = keys.find((key) => !existing.has(key.toLowerCase()));
+    if (missing) {
+      throw new BizException(BizCode.BAD_REQUEST, 'validation.tagNotFound', undefined, {
+        tag: missing,
+      });
+    }
+  }
+
   async listDramaTags() {
     const rows = await this.prisma.$queryRaw<Array<{ tag: string; count: bigint }>>`
       SELECT t.tag AS tag, COUNT(*)::bigint AS count
@@ -1534,18 +1562,34 @@ export class AdminService {
     if (isDramaSystemTag(tag)) {
       throw new BizException(BizCode.BAD_REQUEST, 'validation.tagSystemForbidden');
     }
-    const dramas = await this.prisma.drama.findMany({
-      where: { tags: { has: tag } },
-      select: { id: true, tags: true },
+    const normalized = tag.toLowerCase();
+    const updated = await this.prisma.$transaction(async (tx) => {
+      // PostgreSQL array `has` is case-sensitive. Use a case-insensitive lookup
+      // so legacy casing variants are detached together and cannot reappear.
+      const dramas = await tx.$queryRaw<Array<{ id: bigint; tags: string[] }>>`
+        SELECT d.id, d.tags
+          FROM dramas d
+         WHERE EXISTS (
+           SELECT 1
+             FROM unnest(d.tags) AS t(tag)
+            WHERE lower(btrim(t.tag)) = ${normalized}
+         )
+      `;
+      let count = 0;
+      for (const d of dramas) {
+        const next = (d.tags || []).filter(
+          (item) => String(item || '').trim().toLowerCase() !== normalized,
+        );
+        if (next.length === (d.tags || []).length) continue;
+        await tx.drama.update({ where: { id: d.id }, data: { tags: next } });
+        count += 1;
+      }
+      await tx.$executeRaw`
+        DELETE FROM drama_tag_labels
+         WHERE lower(btrim(key)) = ${normalized}
+      `;
+      return count;
     });
-    let updated = 0;
-    for (const d of dramas) {
-      const next = (d.tags || []).filter((t) => t !== tag);
-      if (next.length === (d.tags || []).length) continue;
-      await this.prisma.drama.update({ where: { id: d.id }, data: { tags: next } });
-      updated += 1;
-    }
-    await this.prisma.dramaTagLabel.delete({ where: { key: tag } }).catch(() => undefined);
     await this.audit.write({
       actorId,
       action: 'dramaTag.delete',
@@ -1649,7 +1693,7 @@ export class AdminService {
         existing.tags,
         Array.isArray(dto.sourceTags) ? dto.sourceTags.map(String) : [],
       );
-      await this.ensureDramaTagLabels(data.tags as string[]);
+      await this.assertDramaTagLabelsExist(data.tags as string[]);
     }
     if (Object.keys(data).length === 0) {
       throw new BizException(BizCode.BAD_REQUEST, 'common.noFieldsToUpdate');

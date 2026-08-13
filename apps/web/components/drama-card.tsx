@@ -104,7 +104,7 @@ export function DramaCard({
           className={cn(
             "font-semibold text-ink transition-colors group-hover:text-brand",
             isGrid
-              ? "line-clamp-1 text-[14px] leading-snug"
+              ? "min-h-10 line-clamp-2 text-[14px] leading-5"
               : compact
                 ? "line-clamp-2 text-body-sm"
                 : "line-clamp-2 text-h4",
