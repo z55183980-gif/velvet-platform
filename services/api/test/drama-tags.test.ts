@@ -30,7 +30,17 @@ test('keeps display labels and deduplicates them case-insensitively', () => {
 });
 
 test('treats blank and workflow metadata as system tags', () => {
-  for (const tag of ['', ' ', 'workflow:review', 'visibility:public', 'orientation:portrait']) {
+  for (const tag of [
+    '',
+    ' ',
+    'workflow:review',
+    'visibility:public',
+    'orientation:portrait',
+    'episode-list',
+    'telegram',
+    'tg:channel',
+    'seg:300',
+  ]) {
     assert.equal(isDramaSystemTag(tag), true);
   }
   assert.equal(isDramaSystemTag('Comedy'), false);
@@ -43,4 +53,20 @@ test('limits member-facing drama labels to six', () => {
     mergeDramaSourceTags(['upload'], [...labels, 'type:真人短剧']),
     ['upload', ...labels.slice(0, 6), 'type:真人短剧'],
   );
+});
+
+test('preserves namespaced provenance without exposing it publicly', () => {
+  const merged = mergeDramaSourceTags(
+    ['upload', 'source:episode-list', 'tg:channel', 'seg:300'],
+    ['Romance', 'type:真人短剧'],
+  );
+  assert.deepEqual(merged, [
+    'upload',
+    'source:episode-list',
+    'tg:channel',
+    'seg:300',
+    'Romance',
+    'type:真人短剧',
+  ]);
+  assert.deepEqual(toPublicDramaTags(merged), ['Romance']);
 });

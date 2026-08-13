@@ -110,10 +110,15 @@ export class DramasService {
            OR EXISTS (
              SELECT 1
                FROM unnest(d.tags) AS t(tag)
-              WHERE t.tag NOT IN ('upload', 'r2', 'transfer', 'ytdlp')
-                AND t.tag NOT LIKE 'ytdlp%'
-                AND t.tag NOT LIKE 'type:%'
-                AND t.tag NOT LIKE 'completion:%'
+              WHERE lower(t.tag) NOT IN (
+                      'upload', 'r2', 'transfer', 'ytdlp', 'telegram', 'episode-list'
+                    )
+                AND lower(t.tag) NOT LIKE 'ytdlp%'
+                AND lower(t.tag) NOT LIKE 'type:%'
+                AND lower(t.tag) NOT LIKE 'completion:%'
+                AND lower(t.tag) NOT LIKE 'source:%'
+                AND lower(t.tag) NOT LIKE 'tg:%'
+                AND lower(t.tag) NOT LIKE 'seg:%'
                 AND (
                   t.tag ILIKE ${pattern} ESCAPE '\'
                   OR EXISTS (

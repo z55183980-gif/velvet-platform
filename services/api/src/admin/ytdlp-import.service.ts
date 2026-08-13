@@ -1185,7 +1185,7 @@ export class YtdlpImportService implements OnModuleInit {
         externalRef,
         sourceTags: [
           'ytdlp',
-          probe.extractor,
+          `source:${probe.extractor}`,
           `ytdlp:${probe.id}`,
           ...(probe.tags || []),
         ],
@@ -1445,7 +1445,7 @@ export class YtdlpImportService implements OnModuleInit {
           'ytdlp',
           'transfer',
           target,
-          extractor,
+          `source:${extractor}`,
           `ytdlp:${probeId}`,
           ...(opts.sourceTags || []),
         ],

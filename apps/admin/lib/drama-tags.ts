@@ -9,7 +9,13 @@ export const DEFAULT_CONTENT_TYPE: DramaContentType = "真人短剧";
 export const DEFAULT_COMPLETION: DramaCompletion = "连载中";
 export const MAX_DRAMA_TAGS = 6;
 
-const META_TAG_SKIP = new Set(["upload", "r2", "transfer"]);
+const META_TAG_SKIP = new Set([
+  "upload",
+  "r2",
+  "transfer",
+  "telegram",
+  "episode-list",
+]);
 
 const CONTENT_TYPE_ALIASES: Record<string, DramaContentType> = {
   漫剧: "漫剧",
@@ -53,7 +59,12 @@ export function parseDramaTags(tags: string[] | undefined) {
       completion = normalizeCompletion(tag.slice("completion:".length));
       continue;
     }
-    if (META_TAG_SKIP.has(tag) || tag.startsWith("ytdlp")) continue;
+    if (
+      META_TAG_SKIP.has(tag.toLowerCase()) ||
+      tag.toLowerCase().startsWith("ytdlp") ||
+      tag.toLowerCase().startsWith("tg:") ||
+      tag.toLowerCase().startsWith("seg:")
+    ) continue;
     displayTags.push(tag);
   }
   return { contentType, completion, displayTags };

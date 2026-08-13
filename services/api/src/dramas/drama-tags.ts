@@ -12,6 +12,8 @@ const SYSTEM_TAG_PREFIXES = [
   'visibility:',
   'workflow:',
   'ytdlp',
+  'tg:',
+  'seg:',
 ] as const;
 const PROVENANCE_TAGS = new Set([
   'upload',
@@ -27,6 +29,8 @@ const PROVENANCE_TAGS = new Set([
   'smoke',
   'online',
   'demo',
+  'telegram',
+  'episode-list',
 ]);
 
 /** Maximum number of member-facing labels stored/exposed for one drama. */
@@ -100,7 +104,14 @@ export function mergeDramaSourceTags(
   const prev = Array.isArray(existing) ? existing.map(String) : [];
   const provenance = prev.filter((t) => {
     const s = t.trim();
-    return PROVENANCE_TAGS.has(s) || s.startsWith('ytdlp');
+    const lower = s.toLowerCase();
+    return (
+      PROVENANCE_TAGS.has(lower) ||
+      lower.startsWith('ytdlp') ||
+      lower.startsWith('source:') ||
+      lower.startsWith('tg:') ||
+      lower.startsWith('seg:')
+    );
   });
   const next = Array.isArray(sourceTags)
     ? sourceTags.map((t) => String(t).trim()).filter(Boolean)

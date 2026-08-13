@@ -55,6 +55,8 @@ const SYSTEM_TAG_PREFIXES = [
   "visibility:",
   "workflow:",
   "ytdlp",
+  "tg:",
+  "seg:",
 ] as const;
 const SYSTEM_TAG_EXACT = new Set([
   "upload",
@@ -70,6 +72,8 @@ const SYSTEM_TAG_EXACT = new Set([
   "smoke",
   "online",
   "demo",
+  "telegram",
+  "episode-list",
 ]);
 
 export function isDramaSystemTag(tag: string): boolean {
