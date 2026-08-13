@@ -341,7 +341,7 @@ export class OpenaiService {
     const langHint = localized
       ? preferLang.startsWith('zh')
         ? ' descriptionEn may be empty; descriptionZh must stay in the page language (Simplified Chinese). Do not invent English when the page is Chinese. tags = genre/label strings from the page.'
-        : ' descriptionEn must match the page language (usually English). Do NOT invent a Chinese synopsis when the page introduction is English. descriptionZh may be empty. tags = genre/label strings from the page (e.g. Sweet Love, Revenge).'
+        : ' descriptionEn must match the page language (usually English). Do NOT invent a Chinese synopsis when the page introduction is English. descriptionZh and titleZh must be empty; do not translate the source title or synopsis. tags = genre/label strings from the page (e.g. Sweet Love, Revenge).'
       : '';
 
     const system =

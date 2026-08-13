@@ -35,6 +35,7 @@ import {
   isNetshortHost,
   isReelshortCatalogUrl,
   isReelshortHost,
+  type ExtractedDramaCatalogItem,
   type ExtractedPageEpisode,
 } from './online-page-extract.util';
 import {
@@ -44,6 +45,10 @@ import {
 } from './drama-category-infer.util';
 import { mapLabelsToExistingTags } from './drama-tag-match.util';
 import { safeFetchPublicText } from '../common/safe-http-fetch';
+import {
+  deriveTransferProgress,
+  type TransferTranscodeStatus,
+} from './transfer-progress.util';
 
 export type YtdlpImportOptions = {
   url: string;
@@ -94,6 +99,9 @@ export type YtdlpEpisodeFailure = {
   episodeNumber: number;
   url: string;
   error: string;
+  stage?: 'download' | 'transcode' | 'stalled' | 'drama_skipped';
+  attempts?: number;
+  episodeId?: string;
 };
 
 export type YtdlpTransferJobEntry = {
@@ -106,6 +114,10 @@ export type YtdlpTransferJobEntry = {
   /** Actual download target — required for correct resume / dedup. */
   downloadUrl?: string;
   sourceIndex?: number;
+  /** Live status joined from MediaTranscodeJob / Episode when polling. */
+  transcodeStatus?: 'pending' | 'queued' | 'processing' | 'completed' | 'failed';
+  transcodeError?: string;
+  transcodeAttempts?: number;
 };
 
 export type YtdlpTransferJobState = {
@@ -113,13 +125,27 @@ export type YtdlpTransferJobState = {
   dramaId: string;
   slug: string;
   status: 'queued' | 'running' | 'completed' | 'failed' | 'cancel_requested' | 'cancelled';
+  /** Download orchestration status before live transcode aggregation. */
+  transferStatus: 'queued' | 'running' | 'completed' | 'failed' | 'cancel_requested' | 'cancelled';
+  phase: 'queued' | 'transferring' | 'transcoding' | 'completed' | 'failed' | 'cancelled';
   target: 'local' | 'r2';
   preferR2: boolean;
   total: number;
   transferred: number;
   currentEpisode: number | null;
+  /** Original selected source indexes, including episodes not downloaded yet. */
+  selectedEpisodes: Array<{ episodeNumber: number; title?: string }>;
   failedEpisodes: YtdlpEpisodeFailure[];
   jobs: YtdlpTransferJobEntry[];
+  transcode: {
+    total: number;
+    pending: number;
+    queued: number;
+    processing: number;
+    completed: number;
+    failed: number;
+    settled: boolean;
+  };
   previewUrl?: string;
   extractor?: string;
   kind?: 'single' | 'playlist';
@@ -189,6 +215,13 @@ export class YtdlpImportService implements OnModuleInit {
   private readonly logger = new Logger(YtdlpImportService.name);
   /** In-process lock so recover + concurrent poll doesn't double-run. */
   private readonly activeRuns = new Set<string>();
+  /**
+   * Persistent jobs live in Postgres; this pump only grants one local execution
+   * slot at a time. A job keeps that slot until all of its transcodes settle.
+   */
+  private transferQueueRunning = false;
+  private transferQueueRetryTimer?: NodeJS.Timeout;
+  private readonly transferEpisodeMaxAttempts = 3;
   private readonly transferEpisodeHardCap = 120;
   private readonly transferFileHardCap = 4 * 1024 * 1024 * 1024;
   private readonly transferTotalHardCap = 100 * 1024 * 1024 * 1024;
@@ -206,10 +239,9 @@ export class YtdlpImportService implements OnModuleInit {
   ) {}
 
   async onModuleInit() {
-    // Defer slightly so the HTTP server can bind first.
-    setTimeout(() => {
-      void this.recoverPendingTransferJobs();
-    }, 1500);
+    // Restore stale RUNNING rows before HTTP requests can enqueue new work.
+    // The pump itself starts asynchronously and does not delay server binding.
+    await this.recoverPendingTransferJobs();
   }
 
   async status() {
@@ -278,11 +310,67 @@ export class YtdlpImportService implements OnModuleInit {
       `discoverCatalog ${pageUrl} → ${catalog.items.length} dramas ` +
         `(page=${catalog.page}/${catalog.totalPages})`,
     );
+    const items = await this.attachCatalogSyncState(catalog.items);
     return {
       source: 'catalog' as const,
       webpageUrl: page.finalUrl,
       ...catalog,
+      items,
     };
+  }
+
+  private stableReelshortExternalRef(pageUrl: string) {
+    const probeId = `ai:${Buffer.from(pageUrl).toString('base64url').slice(0, 24)}`;
+    return this.provider.externalRefFor(pageUrl, 'html', probeId);
+  }
+
+  private async attachCatalogSyncState(
+    items: ExtractedDramaCatalogItem[],
+  ): Promise<ExtractedDramaCatalogItem[]> {
+    if (!items.length) return items;
+    const refs = items.map((item) => this.stableReelshortExternalRef(item.webpageUrl));
+    const titles = [...new Set(items.map((item) => item.title).filter(Boolean))];
+    const dramas = await this.prisma.drama.findMany({
+      where: {
+        sourceType: { in: ['R2', 'LOCAL'] },
+        OR: [
+          { externalRef: { in: refs } },
+          { titleEn: { in: titles }, tags: { has: 'transfer' } },
+        ],
+      },
+      select: {
+        id: true,
+        titleEn: true,
+        externalRef: true,
+        totalEpisodes: true,
+        _count: { select: { episodes: true } },
+      },
+    });
+    const byRef = new Map(
+      dramas
+        .filter((drama) => drama.externalRef)
+        .map((drama) => [drama.externalRef!, drama] as const),
+    );
+    const byTitle = new Map(dramas.map((drama) => [drama.titleEn.trim(), drama] as const));
+    return items.map((item) => {
+      const drama =
+        byRef.get(this.stableReelshortExternalRef(item.webpageUrl)) ||
+        byTitle.get(item.title.trim());
+      if (!drama) return item;
+      const syncedEpisodes = Math.max(
+        Number(drama._count.episodes) || 0,
+        Number(drama.totalEpisodes) || 0,
+      );
+      return {
+        ...item,
+        synced: true,
+        syncedDramaId: drama.id.toString(),
+        syncedEpisodes,
+        updateAvailable:
+          item.completion === '连载中' &&
+          Number(item.chapterCount) > syncedEpisodes,
+      };
+    });
   }
 
   /**
@@ -294,6 +382,10 @@ export class YtdlpImportService implements OnModuleInit {
     maxEpisodes?: number;
     cookiesFile?: string;
     authBearer?: string;
+    /** Return deterministic page metadata without waiting for the LLM pass. */
+    skipAi?: boolean;
+    /** Keep AI metadata in the source language instead of translating it. */
+    sourceLanguage?: 'en' | 'zh';
   }) {
     const pageUrl = await this.provider.assertSafePageUrl(opts.url);
     const auth = this.authFromOpts(opts);
@@ -410,6 +502,7 @@ export class YtdlpImportService implements OnModuleInit {
       : [...(bestMeta.genreLabels || [])];
 
     const needLlm =
+      !opts.skipAi &&
       this.openai.isConfigured() &&
       (episodes.length < 2 || !titleEn || !descriptionZh);
 
@@ -434,22 +527,30 @@ export class YtdlpImportService implements OnModuleInit {
           pageUrl: bestHtmlUrl,
           pageText,
           allowedCategorySlugs: allowedCategories,
-          // DramaBox / NetShort EN pages: keep synopsis language aligned with the page.
-          ...(dramabox || netshort
-            ? { preferDescriptionLanguage: bestMeta.language || 'en' }
-            : {}),
+          // Dedicated RS detail can explicitly keep source-language metadata.
+          ...(opts.sourceLanguage
+            ? { preferDescriptionLanguage: opts.sourceLanguage }
+            : dramabox || netshort
+              ? { preferDescriptionLanguage: bestMeta.language || 'en' }
+              : {}),
         });
         model = extracted.model;
         notes = extracted.notes || '';
-        if (extracted.titleZh) titleZh = extracted.titleZh;
+        if (extracted.titleZh && opts.sourceLanguage !== 'en') {
+          titleZh = extracted.titleZh;
+        }
         if (extracted.titleEn) titleEn = extracted.titleEn || titleEn;
         if (extracted.coverUrl && /^https?:\/\//i.test(extracted.coverUrl)) {
           coverUrl = extracted.coverUrl;
         }
         const llmDesc =
-          (dramabox || netshort
-            ? extracted.descriptionEn || extracted.descriptionZh
-            : extracted.descriptionZh || extracted.descriptionEn) || '';
+          (opts.sourceLanguage === 'en'
+            ? extracted.descriptionEn
+            : opts.sourceLanguage === 'zh'
+              ? extracted.descriptionZh
+              : dramabox || netshort
+                ? extracted.descriptionEn || extracted.descriptionZh
+                : extracted.descriptionZh || extracted.descriptionEn) || '';
         if (llmDesc) {
           if (
             (dramabox || netshort) &&
@@ -518,7 +619,7 @@ export class YtdlpImportService implements OnModuleInit {
     }
 
     // Soft category for DB FK only — UI backfills tags instead of category.
-    if (!categorySlug) {
+    if (!categorySlug && !opts.skipAi) {
       const resolved = await this.resolveCategorySlug({
         title: titleZh || titleEn || bestMeta.title,
         description: descriptionZh || bestMeta.description,
@@ -1054,6 +1155,20 @@ export class YtdlpImportService implements OnModuleInit {
     return this.toPublicState(job as DbTransferRow);
   }
 
+  /** List recent transfer jobs so operators can recover failure records after a browser refresh. */
+  async listTransferJobs(opts?: {
+    status?: DbTransferRow['status'];
+    limit?: number;
+  }): Promise<YtdlpTransferJobState[]> {
+    const limit = Math.min(100, Math.max(1, Math.floor(Number(opts?.limit) || 30)));
+    const rows = await this.prisma.ytdlpTransferJob.findMany({
+      where: opts?.status ? { status: opts.status } : undefined,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit,
+    });
+    return Promise.all(rows.map((row) => this.toPublicState(row as DbTransferRow)));
+  }
+
   async cancelTransferJob(jobId: string) {
     const id = String(jobId || '').trim();
     if (!id) throw new BizException(BizCode.BAD_REQUEST, '转存任务 ID 无效');
@@ -1202,6 +1317,136 @@ export class YtdlpImportService implements OnModuleInit {
       kind: probe.kind,
       resolvedEpisodes: episodes.length,
       failedEpisodes: errors,
+    };
+  }
+
+  /** Check a synced hosted drama for newly released episodes and queue only the gap. */
+  async appendTransferToDrama(
+    dramaId: string,
+    opts: Pick<YtdlpImportOptions, 'url' | 'maxEpisodes' | 'formatPreference' | 'cookiesFile' | 'authBearer'>,
+    actorId?: bigint,
+  ) {
+    const drama = await this.prisma.drama.findUnique({
+      where: { id: BigInt(dramaId) },
+      select: {
+        id: true,
+        slug: true,
+        sourceType: true,
+        status: true,
+        externalRef: true,
+        totalEpisodes: true,
+      },
+    });
+    if (!drama) throw new BizException(BizCode.NOT_FOUND, 'drama.notFound');
+    if (drama.sourceType !== 'R2' && drama.sourceType !== 'LOCAL') {
+      throw new BizException(BizCode.BAD_REQUEST, '仅支持已转存剧集检查更新');
+    }
+    if (drama.status === 'PENDING_REVIEW') {
+      throw new BizException(BizCode.CONFLICT, '剧集审核中，暂不能追加分集');
+    }
+
+    const pageUrl = String(opts.url || '').trim();
+    if (!pageUrl) throw new BizException(BizCode.BAD_REQUEST, '请填写源站剧集地址');
+    const auth = this.authFromOpts(opts);
+    const probe = isReelshortHost(pageUrl)
+      ? await this.aiExtract({
+          url: pageUrl,
+          cookiesFile: opts.cookiesFile,
+          authBearer: opts.authBearer,
+          skipAi: true,
+          sourceLanguage: 'en',
+        })
+      : await this.probe(pageUrl, auth);
+    const maxEpisode = await this.prisma.episode.aggregate({
+      where: { dramaId: drama.id },
+      _max: { episodeNumber: true },
+    });
+    const existingMax = Math.max(
+      Number(maxEpisode._max.episodeNumber) || 0,
+      Number(drama.totalEpisodes) || 0,
+    );
+    const limit =
+      opts.maxEpisodes && opts.maxEpisodes > 0
+        ? Math.min(Math.floor(opts.maxEpisodes), probe.episodes.length)
+        : probe.episodes.length;
+    const selected = probe.episodes
+      .filter((episode) => episode.index > existingMax)
+      .slice(0, limit)
+      .map((episode) => ({
+        index: episode.index,
+        id: episode.id,
+        title: episode.title,
+        webpageUrl: episode.webpageUrl,
+        downloadUrl: episode.webpageUrl,
+        playlistIndex: episode.playlistIndex,
+        durationSec: episode.durationSec ?? null,
+      }));
+    if (!selected.length) {
+      return {
+        dramaId: drama.id.toString(),
+        jobStatus: 'completed' as const,
+        target: drama.sourceType === 'R2' ? ('r2' as const) : ('local' as const),
+        addedEpisodes: 0,
+        totalEpisodes: existingMax,
+        updateAvailable: false,
+        episodeTitles: [] as Array<{ episodeNumber: number; title?: string }>,
+      };
+    }
+
+    const storage = this.upload.storageStatus();
+    const target = drama.sourceType === 'R2' ? 'r2' : 'local';
+    if (target === 'r2' && !storage.r2Configured) {
+      throw new BizException(BizCode.BAD_REQUEST, 'R2 未配置凭证，无法追加转存');
+    }
+    if (!(await this.upload.detectFfmpeg())) {
+      throw new BizException(BizCode.BAD_REQUEST, '未检测到 ffmpeg，无法追加转存');
+    }
+    const jobId = randomUUID();
+    const payload: TransferPayload = {
+      preference:
+        opts.formatPreference === 'best_hls'
+          ? 'best'
+          : opts.formatPreference || 'best',
+      preferR2: target === 'r2',
+      dramaId: drama.id.toString(),
+      actorId: actorId != null ? String(actorId) : undefined,
+      cookiesFile: opts.cookiesFile?.trim() || undefined,
+      authBearerEnc: this.encryptBearer(opts.authBearer),
+      selected,
+      useSourceIndexAsEpisodeNumber: true,
+    };
+    const row = await this.prisma.ytdlpTransferJob.create({
+      data: {
+        id: jobId,
+        dramaId: drama.id,
+        slug: drama.slug,
+        status: 'QUEUED',
+        target,
+        preferR2: target === 'r2',
+        total: selected.length,
+        transferred: 0,
+        failedEpisodes: [],
+        jobs: [],
+        payload: payload as any,
+        extractor: probe.extractor,
+        kind: selected.length > 1 ? 'playlist' : 'single',
+        externalRef: drama.externalRef,
+        sourceType: drama.sourceType,
+      },
+    });
+    this.kickTransferQueue();
+    return {
+      dramaId: drama.id.toString(),
+      jobId: row.id,
+      jobStatus: 'queued' as const,
+      target: target as 'local' | 'r2',
+      addedEpisodes: selected.length,
+      totalEpisodes: existingMax + selected.length,
+      updateAvailable: true,
+      episodeTitles: selected.map((episode) => ({
+        episodeNumber: episode.index,
+        title: episode.title,
+      })),
     };
   }
 
@@ -1398,7 +1643,9 @@ export class YtdlpImportService implements OnModuleInit {
       refUrl = probe.webpageUrl || pageUrl;
     }
 
-    const externalRef = this.provider.externalRefFor(refUrl, extractor, probeId);
+    const externalRef = isReelshortHost(pageUrl)
+      ? this.stableReelshortExternalRef(pageUrl)
+      : this.provider.externalRefFor(refUrl, extractor, probeId);
 
     const existing = await this.prisma.drama.findFirst({
       where: { externalRef } as any,
@@ -1472,28 +1719,38 @@ export class YtdlpImportService implements OnModuleInit {
       useSourceIndexAsEpisodeNumber: true,
     };
 
-    const row = await this.prisma.ytdlpTransferJob.create({
-      data: {
-        id: jobId,
-        dramaId: BigInt(drama.id),
-        slug: drama.slug,
-        status: 'QUEUED',
-        target,
-        preferR2,
-        total: selected.length,
-        transferred: 0,
-        currentEpisode: null,
-        failedEpisodes: [],
-        jobs: [],
-        payload: payload as any,
-        extractor,
-        kind,
-        externalRef,
-        sourceType: drama.sourceType,
-      },
-    });
+    let row;
+    try {
+      row = await this.prisma.ytdlpTransferJob.create({
+        data: {
+          id: jobId,
+          dramaId: BigInt(drama.id),
+          slug: drama.slug,
+          status: 'QUEUED',
+          target,
+          preferR2,
+          total: selected.length,
+          transferred: 0,
+          currentEpisode: null,
+          failedEpisodes: [],
+          jobs: [],
+          payload: payload as any,
+          extractor,
+          kind,
+          externalRef,
+          sourceType: drama.sourceType,
+        },
+      });
+    } catch (error) {
+      // Compensate the already-created shell if the orchestration row cannot
+      // be persisted; otherwise it would remain as an untracked empty draft.
+      await this.prisma.drama
+        .delete({ where: { id: BigInt(drama.id) } })
+        .catch(() => undefined);
+      throw error;
+    }
 
-    void this.runTransferJob(jobId);
+    this.kickTransferQueue();
     await this.pruneTransferJobs();
 
     return {
@@ -1570,39 +1827,32 @@ export class YtdlpImportService implements OnModuleInit {
 
   private async recoverPendingTransferJobs() {
     try {
-      let recovered = 0;
-      const pendingIds: string[] = [];
-      let skip = 0;
-      while (true) {
-        const pending = await this.prisma.ytdlpTransferJob.findMany({
-          where: {
-            status: { in: ['QUEUED', 'RUNNING'] },
-            // Telegram jobs are recovered by TelegramImportService.
-            NOT: { extractor: 'telegram' },
-          },
-          orderBy: { createdAt: 'asc' },
-          take: 20,
-          skip,
-          select: { id: true },
-        });
-        if (!pending.length) break;
-        pendingIds.push(...pending.map((job) => job.id));
-        skip += pending.length;
-        if (pending.length < 20) break;
+      const recovered = await this.prisma.ytdlpTransferJob.updateMany({
+        where: {
+          status: 'RUNNING',
+          // Telegram jobs are recovered by TelegramImportService.
+          NOT: { extractor: 'telegram' },
+        },
+        data: { status: 'QUEUED', currentEpisode: null },
+      });
+      // A cancellation requested immediately before shutdown must not remain
+      // stuck forever after restart.
+      await this.prisma.ytdlpTransferJob.updateMany({
+        where: {
+          status: 'CANCEL_REQUESTED',
+          NOT: { extractor: 'telegram' },
+        },
+        data: { status: 'CANCELLED', currentEpisode: null, finishedAt: new Date() },
+      });
+      const queued = await this.prisma.ytdlpTransferJob.count({
+        where: { status: 'QUEUED', NOT: { extractor: 'telegram' } },
+      });
+      this.kickTransferQueue();
+      if (recovered.count || queued) {
+        this.logger.log(
+          `restored serial ytdlp queue: ${recovered.count} interrupted, ${queued} queued`,
+        );
       }
-      for (const id of pendingIds) {
-        const job = await this.prisma.ytdlpTransferJob.findUnique({ where: { id } });
-        if (!job || (job.status !== 'QUEUED' && job.status !== 'RUNNING')) continue;
-        if (job.status === 'RUNNING') {
-          await this.prisma.ytdlpTransferJob.updateMany({
-            where: { id: job.id, status: 'RUNNING' },
-            data: { status: 'QUEUED', currentEpisode: null },
-          });
-        }
-        void this.runTransferJob(job.id);
-        recovered += 1;
-      }
-      if (recovered) this.logger.log(`recovered ${recovered} ytdlp transfer job(s)`);
     } catch (e: any) {
       this.logger.warn(`transfer job recover skipped: ${e?.message || e}`);
     }
@@ -1697,7 +1947,7 @@ export class YtdlpImportService implements OnModuleInit {
       },
     });
 
-    void this.runTransferJob(newJobId);
+    this.kickTransferQueue();
     await this.pruneTransferJobs();
 
     return {
@@ -1788,6 +2038,273 @@ export class YtdlpImportService implements OnModuleInit {
     return false;
   }
 
+  /** Wake the database-backed FIFO without tying execution to an HTTP request. */
+  private kickTransferQueue(delayMs = 0) {
+    if (this.transferQueueRunning || this.transferQueueRetryTimer) return;
+    this.transferQueueRetryTimer = setTimeout(() => {
+      this.transferQueueRetryTimer = undefined;
+      void this.pumpTransferQueue();
+    }, delayMs);
+  }
+
+  /** Atomically claim the single global serial slot across API instances. */
+  private async claimNextTransferJob(): Promise<string | null> {
+    const rows = await this.prisma.$queryRaw<Array<{ id: string }>>`
+      UPDATE "ytdlp_transfer_jobs"
+      SET "status" = 'RUNNING',
+          "startedAt" = COALESCE("startedAt", NOW()),
+          "attempts" = "attempts" + 1
+      WHERE "id" = (
+        SELECT candidate."id"
+        FROM "ytdlp_transfer_jobs" candidate
+        WHERE candidate."status" = 'QUEUED'
+          AND (candidate."extractor" IS NULL OR candidate."extractor" <> 'telegram')
+          AND NOT EXISTS (
+            SELECT 1
+            FROM "ytdlp_transfer_jobs" running
+            WHERE running."status" = 'RUNNING'
+              AND (running."extractor" IS NULL OR running."extractor" <> 'telegram')
+          )
+        ORDER BY candidate."createdAt" ASC, candidate."id" ASC
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING "id"
+    `;
+    return rows[0]?.id || null;
+  }
+
+  /**
+   * Run exactly one ReelShort/yt-dlp transfer at a time. Rows stay QUEUED in
+   * Postgres until selected, so a closed admin page does not affect execution.
+   */
+  private async pumpTransferQueue() {
+    if (this.transferQueueRunning) return;
+      this.transferQueueRunning = true;
+    try {
+      while (true) {
+        const nextId = await this.claimNextTransferJob();
+        if (!nextId) break;
+        await this.runTransferJob(nextId);
+      }
+    } catch (e: any) {
+      this.logger.error(`serial transfer queue stopped: ${e?.message || e}`);
+    } finally {
+      this.transferQueueRunning = false;
+      // Covers a submission racing with the final empty read and also retries
+      // temporary database/provider failures without a browser being open.
+      const queued = await this.prisma.ytdlpTransferJob
+        .count({
+          where: { status: 'QUEUED', NOT: { extractor: 'telegram' } },
+        })
+        .catch(() => 0);
+      if (queued > 0) this.kickTransferQueue(3000);
+    }
+  }
+
+  /** Hold the serial slot until every transcode belonging to this drama settles. */
+  private async waitForTransferTranscodes(jobId: string) {
+    let progressSignature = '';
+    let lastProgressAt = Date.now();
+    while (true) {
+      try {
+        const row = await this.prisma.ytdlpTransferJob.findUnique({
+          where: { id: jobId },
+        });
+        if (!row) return { failed: 0 };
+        const state = await this.toPublicState(row as DbTransferRow);
+        if (state.transcode.total === 0 || state.transcode.settled) {
+          return {
+            failed: state.transcode.failed,
+            failures: this.transcodeFailureList(state),
+          };
+        }
+        if (state.transcode.failed > 0) {
+          const skipped = await this.upload.skipQueuedTranscodeJobs(
+            state.jobs
+              .filter(
+                (job) =>
+                  job.transcodeStatus === 'queued' ||
+                  job.transcodeStatus === 'pending',
+              )
+              .map((job) => job.jobId)
+              .filter((id) => id && id !== 'existing'),
+            '同剧已有分集最终失败，整部剧已跳过并转人工处理',
+          );
+          if (skipped > 0) {
+            this.logger.warn(
+              `transfer job ${jobId} skipped ${skipped} queued transcode(s) after first final failure`,
+            );
+          }
+        }
+
+        const nextSignature = state.jobs
+          .map(
+            (job) =>
+              `${job.jobId}:${job.transcodeStatus || 'pending'}:${job.transcodeAttempts || 0}`,
+          )
+          .join('|');
+        if (nextSignature !== progressSignature) {
+          progressSignature = nextSignature;
+          lastProgressAt = Date.now();
+        } else if (Date.now() - lastProgressAt >= this.transferTranscodeStallMs()) {
+          await this.failStalledTransferTranscodes(jobId, state);
+          lastProgressAt = Date.now();
+        }
+      } catch (e: any) {
+        // A short database outage must not release the slot and overlap the
+        // next drama with transcodes that may still be running.
+        this.logger.warn(
+          `transcode wait poll failed for ${jobId}; retrying: ${e?.message || e}`,
+        );
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 3000));
+    }
+  }
+
+  /** Strict serial episode gate: do not start the next download until this transcode settles. */
+  private async waitForTransferredEpisode(
+    entry: YtdlpTransferJobEntry,
+  ): Promise<YtdlpEpisodeFailure | null> {
+    while (true) {
+      const [media, episode] = await Promise.all([
+        entry.jobId && entry.jobId !== 'existing'
+          ? this.prisma.mediaTranscodeJob.findUnique({
+              where: { id: entry.jobId },
+              select: { status: true, error: true, attempts: true },
+            })
+          : null,
+        /^\d+$/.test(entry.episodeId)
+          ? this.prisma.episode.findUnique({
+              where: { id: BigInt(entry.episodeId) },
+              select: { transcodeStatus: true },
+            })
+          : null,
+      ]);
+      const status = media?.status || episode?.transcodeStatus || 'PENDING';
+      if (status === 'COMPLETED') return null;
+      if (status === 'FAILED' || (entry.jobId === 'existing' && !media)) {
+        return {
+          episodeNumber: Number(entry.sourceIndex || entry.episodeNumber),
+          episodeId: entry.episodeId,
+          url: entry.downloadUrl || entry.webpageUrl || '',
+          error:
+            media?.error ||
+            (entry.jobId === 'existing'
+              ? '分集缺少可恢复的转码任务，整部剧已跳过'
+              : '转码失败'),
+          stage: 'transcode',
+          attempts: Math.max(0, Number(media?.attempts || 0)),
+        };
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 3000));
+    }
+  }
+
+  private transferTranscodeStallMs() {
+    const configured = Number(
+      this.config.get<string>('TRANSFER_TRANSCODE_STALL_MINUTES') ||
+        process.env.TRANSFER_TRANSCODE_STALL_MINUTES ||
+        '180',
+    );
+    const attemptTimeout = Number(
+      this.config.get<string>('TRANSCODE_ATTEMPT_TIMEOUT_MINUTES') ||
+        process.env.TRANSCODE_ATTEMPT_TIMEOUT_MINUTES ||
+        '60',
+    );
+    const configuredAttempts = Number(
+      this.config.get<string>('TRANSCODE_MAX_ATTEMPTS') ||
+        process.env.TRANSCODE_MAX_ATTEMPTS ||
+        '3',
+    );
+    const safeAttemptMinutes = Math.min(
+      360,
+      Math.max(10, Number.isFinite(attemptTimeout) ? Math.floor(attemptTimeout) : 60),
+    );
+    const safeAttempts = Math.min(
+      5,
+      Math.max(
+        1,
+        Number.isFinite(configuredAttempts) ? Math.floor(configuredAttempts) : 3,
+      ),
+    );
+    // Never let the orchestration watchdog expire while bounded ffmpeg retries
+    // are still legitimately running.
+    const retryWindowMinutes = safeAttemptMinutes * safeAttempts + 15;
+    const minutes = Math.min(
+      48 * 60,
+      Math.max(
+        30,
+        retryWindowMinutes,
+        Number.isFinite(configured) ? Math.floor(configured) : 180,
+      ),
+    );
+    return minutes * 60_000;
+  }
+
+  private transcodeFailureList(
+    state: YtdlpTransferJobState,
+  ): YtdlpEpisodeFailure[] {
+    return state.jobs
+      .filter((job) => job.transcodeStatus === 'failed')
+      .map((job) => ({
+        episodeNumber: Number(job.sourceIndex || job.episodeNumber),
+        episodeId: job.episodeId,
+        url: job.downloadUrl || job.webpageUrl || '',
+        error: job.transcodeError || '转码失败',
+        stage: job.transcodeError?.includes('整部剧已跳过')
+          ? ('drama_skipped' as const)
+          : job.transcodeError?.includes('无进展')
+            ? ('stalled' as const)
+            : ('transcode' as const),
+        attempts: Math.max(0, Number(job.transcodeAttempts || 0)),
+      }));
+  }
+
+  private async failStalledTransferTranscodes(
+    jobId: string,
+    state: YtdlpTransferJobState,
+  ) {
+    const unsettled = state.jobs.filter(
+      (job) =>
+        job.transcodeStatus !== 'completed' && job.transcodeStatus !== 'failed',
+    );
+    if (!unsettled.length) return;
+    const minutes = Math.round(this.transferTranscodeStallMs() / 60_000);
+    const error = `转码超过 ${minutes} 分钟无进展，已跳过并转人工处理`;
+    const mediaJobIds = unsettled
+      .map((job) => job.jobId)
+      .filter((id) => id && id !== 'existing');
+    const episodeIds = unsettled
+      .map((job) => job.episodeId)
+      .filter((id) => /^\d+$/.test(id))
+      .map((id) => BigInt(id));
+
+    await Promise.all([
+      mediaJobIds.length
+        ? this.prisma.mediaTranscodeJob.updateMany({
+            where: {
+              id: { in: mediaJobIds },
+              status: { in: ['QUEUED', 'PROCESSING'] },
+            },
+            data: { status: 'FAILED', error, finishedAt: new Date() },
+          })
+        : Promise.resolve(),
+      episodeIds.length
+        ? this.prisma.episode.updateMany({
+            where: {
+              id: { in: episodeIds },
+              transcodeStatus: { in: ['PENDING', 'PROCESSING'] },
+            },
+            data: { transcodeStatus: 'FAILED' },
+          })
+        : Promise.resolve(),
+    ]);
+    this.logger.error(
+      `transfer job ${jobId} released ${unsettled.length} stalled transcode episode(s) for manual handling`,
+    );
+  }
+
   private async runTransferJob(jobId: string) {
     if (this.activeRuns.has(jobId)) return;
     this.activeRuns.add(jobId);
@@ -1810,18 +2327,19 @@ export class YtdlpImportService implements OnModuleInit {
         return;
       }
 
-      // Cross-instance claim: only one worker can transition QUEUED → RUNNING.
-      // The in-process Set remains useful as a cheap duplicate guard, but is
-      // not relied upon for correctness.
-      const claimed = await this.prisma.ytdlpTransferJob.updateMany({
-        where: { id: jobId, status: 'QUEUED' },
-        data: {
-          status: 'RUNNING',
-          startedAt: row.startedAt ?? new Date(),
-          attempts: { increment: 1 },
-        },
-      });
-      if (claimed.count !== 1) return;
+      // The queue pump atomically claims QUEUED → RUNNING with a database-wide
+      // serial-slot check. Keep a fallback claim for any legacy/direct caller.
+      if (row.status === 'QUEUED') {
+        const claimed = await this.prisma.ytdlpTransferJob.updateMany({
+          where: { id: jobId, status: 'QUEUED' },
+          data: {
+            status: 'RUNNING',
+            startedAt: row.startedAt ?? new Date(),
+            attempts: { increment: 1 },
+          },
+        });
+        if (claimed.count !== 1) return;
+      }
 
       // Migrate legacy plaintext payloads on first claim. New rows never
       // persist the bearer token in clear text.
@@ -1850,23 +2368,53 @@ export class YtdlpImportService implements OnModuleInit {
       const useSourceIndex =
         payload.useSourceIndexAsEpisodeNumber !== false || !!payload.resumeOf;
 
-      for (const ep of payload.selected) {
+      episodeLoop: for (const ep of payload.selected) {
         if (await this.isTransferCancelRequested(jobId)) {
-          await this.markTransferCancelled(jobId);
-          return;
+          break;
         }
         const downloadUrl =
           (ep as { downloadUrl?: string }).downloadUrl ||
           ep.sourceUrl ||
           ep.webpageUrl;
-        if (this.isTransferItemDone(done, ep.index, downloadUrl)) continue;
+        if (this.isTransferItemDone(done, ep.index, downloadUrl)) {
+          // On API restart, the download may already be committed while its
+          // transcode is still queued/processing. Preserve the per-episode
+          // gate before advancing to the next source episode.
+          const recoveredEntry = jobs.find(
+            (entry) =>
+              Number(entry.sourceIndex || entry.episodeNumber) === ep.index ||
+              (!!downloadUrl && entry.downloadUrl === downloadUrl),
+          );
+          if (recoveredEntry) {
+            const recoveredFailure =
+              await this.waitForTransferredEpisode(recoveredEntry);
+            if (recoveredFailure) {
+              failedEpisodes = [
+                ...failedEpisodes.filter(
+                  (failure) =>
+                    failure.episodeNumber !== recoveredFailure.episodeNumber,
+                ),
+                recoveredFailure,
+              ];
+              await this.prisma.ytdlpTransferJob.update({
+                where: { id: jobId },
+                data: { failedEpisodes: failedEpisodes as any },
+              });
+              break episodeLoop;
+            }
+          }
+          continue;
+        }
 
         await this.prisma.ytdlpTransferJob.update({
           where: { id: jobId },
           data: { currentEpisode: ep.index },
         });
 
-        try {
+        for (let attempt = 1; attempt <= this.transferEpisodeMaxAttempts; attempt += 1) {
+          let stagedVideoPath: string | undefined;
+          let episodeCommitted = false;
+          try {
           const episodeNumber = useSourceIndex ? ep.index : jobs.length + 1;
 
           const occupied = await this.prisma.episode.findUnique({
@@ -1922,7 +2470,22 @@ export class YtdlpImportService implements OnModuleInit {
               where: { id: jobId },
               data: { jobs: jobs as any, transferred: jobs.length },
             });
-            continue;
+            const occupiedFailure = await this.waitForTransferredEpisode(entry);
+            if (occupiedFailure) {
+              failedEpisodes = [
+                ...failedEpisodes.filter(
+                  (failure) =>
+                    failure.episodeNumber !== occupiedFailure.episodeNumber,
+                ),
+                occupiedFailure,
+              ];
+              await this.prisma.ytdlpTransferJob.update({
+                where: { id: jobId },
+                data: { failedEpisodes: failedEpisodes as any },
+              });
+              break episodeLoop;
+            }
+            continue episodeLoop;
           }
 
           this.assertTransferDiskHeadroom(uploadDir);
@@ -1933,6 +2496,7 @@ export class YtdlpImportService implements OnModuleInit {
             ep.playlistIndex,
             this.payloadAuth(payload),
           );
+          stagedVideoPath = downloaded.absPath;
           if (downloaded.size > this.transferFileHardCap) {
             try { fs.unlinkSync(downloaded.absPath); } catch { /* best effort */ }
             throw new BizException(BizCode.BAD_REQUEST, '单集文件超过转存大小上限');
@@ -1952,6 +2516,7 @@ export class YtdlpImportService implements OnModuleInit {
               /* ignore */
             }
           }
+          stagedVideoPath = absInUploads;
 
           const created = await this.episodes.create(
             payload.dramaId,
@@ -1964,6 +2529,9 @@ export class YtdlpImportService implements OnModuleInit {
             },
             actorId,
           );
+          // From this point on the file is owned by the episode/recovery path;
+          // retain it if thumbnail or transcode enqueueing fails.
+          episodeCommitted = true;
 
           // Default episode poster: ffmpeg first frame → permanent covers/ asset.
           const thumbnailUrl = await this.autoEpisodeThumbnailFromVideo(
@@ -1992,10 +2560,6 @@ export class YtdlpImportService implements OnModuleInit {
             },
           });
 
-          if (await this.isTransferCancelRequested(jobId)) {
-            await this.markTransferCancelled(jobId);
-            return;
-          }
           const mediaJob = await this.upload.enqueueTranscode(relativePath, created.id, {
             preferR2: payload.preferR2,
             watermarkEnabled: !!payload.watermarkEnabled,
@@ -2034,21 +2598,70 @@ export class YtdlpImportService implements OnModuleInit {
           if (!row.previewUrl) {
             row.previewUrl = previewUrl;
           }
-        } catch (e: any) {
-          this.logger.warn(`transfer ep ${ep.index} failed: ${e?.message || e}`);
-          failedEpisodes = [
-            ...failedEpisodes,
-            {
-              episodeNumber: ep.index,
-              url: downloadUrl,
-              error: e?.message || 'download failed',
-            },
-          ];
-          await this.prisma.ytdlpTransferJob.update({
-            where: { id: jobId },
-            data: { failedEpisodes: failedEpisodes as any },
-          });
+          const transcodeFailure = await this.waitForTransferredEpisode(entry);
+          if (transcodeFailure) {
+            failedEpisodes = [
+              ...failedEpisodes.filter(
+                (failure) =>
+                  failure.episodeNumber !== transcodeFailure.episodeNumber,
+              ),
+              transcodeFailure,
+            ];
+            await this.prisma.ytdlpTransferJob.update({
+              where: { id: jobId },
+              data: { failedEpisodes: failedEpisodes as any },
+            });
+            break episodeLoop;
+          }
+            break;
+          } catch (e: any) {
+            if (!episodeCommitted && stagedVideoPath) {
+              try {
+                if (fs.existsSync(stagedVideoPath)) fs.unlinkSync(stagedVideoPath);
+              } catch {
+                // Best-effort cleanup; the retry/failure record remains authoritative.
+              }
+            }
+            const error = e?.message || 'download failed';
+            if (await this.isTransferCancelRequested(jobId)) {
+              break;
+            }
+            if (attempt < this.transferEpisodeMaxAttempts) {
+              const delayMs = 2_000 * 2 ** (attempt - 1);
+              this.logger.warn(
+                `transfer ep ${ep.index} attempt=${attempt}/${this.transferEpisodeMaxAttempts} failed; retrying in ${delayMs}ms: ${error}`,
+              );
+              await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+              continue;
+            }
+            this.logger.warn(
+              `transfer ep ${ep.index} final failure after ${attempt} attempts; aborting drama: ${error}`,
+            );
+            failedEpisodes = [
+              ...failedEpisodes.filter(
+                (failure) => failure.episodeNumber !== ep.index,
+              ),
+              {
+                episodeNumber: ep.index,
+                url: downloadUrl,
+                error,
+                stage: 'download',
+                attempts: attempt,
+              },
+            ];
+            await this.prisma.ytdlpTransferJob.update({
+              where: { id: jobId },
+              data: { failedEpisodes: failedEpisodes as any },
+            });
+            break episodeLoop;
+          }
         }
+      }
+
+      const cancelRequestedAfterDownloads = await this.isTransferCancelRequested(jobId);
+      if (cancelRequestedAfterDownloads && !jobs.length) {
+        await this.markTransferCancelled(jobId);
+        return;
       }
 
       if (!jobs.length && !payload.resumeOf) {
@@ -2057,7 +2670,7 @@ export class YtdlpImportService implements OnModuleInit {
           where: { id: jobId },
           data: {
             status: 'FAILED',
-            error: `全部分集下载失败（${failedEpisodes.length}）`,
+            error: `分集最终失败，整部剧已跳过并转人工处理`,
             currentEpisode: null,
             finishedAt: new Date(),
             failedEpisodes: failedEpisodes as any,
@@ -2073,7 +2686,7 @@ export class YtdlpImportService implements OnModuleInit {
           where: { id: jobId },
           data: {
             status: 'FAILED',
-            error: `续跑分集全部失败（${failedEpisodes.length}）`,
+            error: `续跑分集最终失败，整部剧已跳过并转人工处理`,
             currentEpisode: null,
             finishedAt: new Date(),
             failedEpisodes: failedEpisodes as any,
@@ -2094,20 +2707,45 @@ export class YtdlpImportService implements OnModuleInit {
         })
         .catch(() => undefined);
 
-      if (await this.isTransferCancelRequested(jobId)) {
-        await this.markTransferCancelled(jobId);
-        return;
-      }
-
+      // Keep the database job RUNNING while transcodes are queued/processing.
+      // Recovery therefore restores the same drama before taking the next one.
       await this.prisma.ytdlpTransferJob.update({
         where: { id: jobId },
         data: {
-          status: 'COMPLETED',
           currentEpisode: null,
           transferred: jobs.length,
           jobs: jobs as any,
           failedEpisodes: failedEpisodes as any,
+        },
+      });
+
+      const transcode = await this.waitForTransferTranscodes(jobId);
+      const failureByEpisode = new Map<number, YtdlpEpisodeFailure>();
+      for (const failure of [
+        ...failedEpisodes,
+        ...(transcode.failures || []),
+      ]) {
+        failureByEpisode.set(failure.episodeNumber, failure);
+      }
+      failedEpisodes = [...failureByEpisode.values()].sort(
+        (a, b) => a.episodeNumber - b.episodeNumber,
+      );
+      const cancelRequested = await this.isTransferCancelRequested(jobId);
+      const hasFinalFailures = failedEpisodes.length > 0;
+      await this.prisma.ytdlpTransferJob.update({
+        where: { id: jobId },
+        data: {
+          status: cancelRequested
+            ? 'CANCELLED'
+            : hasFinalFailures
+              ? 'FAILED'
+              : 'COMPLETED',
+          currentEpisode: null,
+          failedEpisodes: failedEpisodes as any,
           finishedAt: new Date(),
+          ...(hasFinalFailures && !cancelRequested
+            ? { error: `整部剧因分集失败已跳过，需人工处理` }
+            : {}),
         },
       });
     } catch (e: any) {
@@ -2149,7 +2787,7 @@ export class YtdlpImportService implements OnModuleInit {
     }
   }
 
-  private toPublicState(row: DbTransferRow): YtdlpTransferJobState {
+  private async toPublicState(row: DbTransferRow): Promise<YtdlpTransferJobState> {
     const statusMap = {
       QUEUED: 'queued',
       RUNNING: 'running',
@@ -2158,18 +2796,110 @@ export class YtdlpImportService implements OnModuleInit {
       CANCEL_REQUESTED: 'cancel_requested',
       CANCELLED: 'cancelled',
     } as const;
+    const transferStatus = statusMap[row.status];
+    const storedJobs = this.parseJobs(row.jobs);
+    const payload = row.payload as TransferPayload;
+    const selectedEpisodes = Array.isArray(payload?.selected)
+      ? payload.selected.map((episode) => ({
+          episodeNumber: Number(episode.index),
+          title: episode.title,
+        }))
+      : [];
+    const mediaJobIds = [
+      ...new Set(
+        storedJobs
+          .map((job) => String(job.jobId || '').trim())
+          .filter((id) => id && id !== 'existing'),
+      ),
+    ];
+    const episodeIds = [
+      ...new Set(
+        storedJobs
+          .map((job) => String(job.episodeId || '').trim())
+          .filter((id) => /^\d+$/.test(id)),
+      ),
+    ];
+    const [mediaJobs, episodes] = await Promise.all([
+      mediaJobIds.length
+        ? this.prisma.mediaTranscodeJob.findMany({
+            where: { id: { in: mediaJobIds } },
+            select: { id: true, status: true, error: true, attempts: true },
+          })
+        : [],
+      episodeIds.length
+        ? this.prisma.episode.findMany({
+            where: { id: { in: episodeIds.map((id) => BigInt(id)) } },
+            select: { id: true, transcodeStatus: true },
+          })
+        : [],
+    ]);
+    const mediaRows = mediaJobs as Array<{
+      id: string;
+      status: string;
+      error: string | null;
+      attempts: number;
+    }>;
+    const episodeRows = episodes as Array<{
+      id: bigint;
+      transcodeStatus: string;
+    }>;
+    const mediaById = new Map(
+      mediaRows.map((job) => [job.id, job] as const),
+    );
+    const episodeById = new Map(
+      episodeRows.map((episode) => [episode.id.toString(), episode] as const),
+    );
+    const jobs = storedJobs.map((entry) => {
+      const media = mediaById.get(entry.jobId);
+      const episode = episodeById.get(entry.episodeId);
+      const rawStatus = media?.status || episode?.transcodeStatus || 'PENDING';
+      const transcodeStatus =
+        rawStatus === 'COMPLETED'
+          ? ('completed' as const)
+          : rawStatus === 'FAILED'
+            ? ('failed' as const)
+            : rawStatus === 'PROCESSING'
+              ? ('processing' as const)
+              : rawStatus === 'QUEUED'
+                ? ('queued' as const)
+                : ('pending' as const);
+      return {
+        ...entry,
+        transcodeStatus,
+        transcodeAttempts: media?.attempts,
+        ...(media?.error ? { transcodeError: media.error } : {}),
+      };
+    });
+    const failures = this.parseFailures(row.failedEpisodes);
+    const failedEpisodeCount = new Set(
+      failures.map((failure) => failure.episodeNumber),
+    ).size;
+    const downloadsSettled =
+      (row.status === 'RUNNING' || row.status === 'CANCEL_REQUESTED') &&
+      row.currentEpisode == null &&
+      storedJobs.length > 0 &&
+      (row.status === 'CANCEL_REQUESTED' ||
+        row.transferred + failedEpisodeCount >= row.total);
+    const { status, phase, transcode } = deriveTransferProgress(
+      downloadsSettled ? 'completed' : transferStatus,
+      jobs.map((job) => job.transcodeStatus as TransferTranscodeStatus),
+    );
     return {
       id: row.id,
       dramaId: row.dramaId.toString(),
       slug: row.slug,
-      status: statusMap[row.status],
+      status,
+      transferStatus,
+      phase,
       target: row.target === 'r2' ? 'r2' : 'local',
       preferR2: row.preferR2,
       total: row.total,
       transferred: row.transferred,
       currentEpisode: row.currentEpisode,
-      failedEpisodes: this.parseFailures(row.failedEpisodes),
-      jobs: this.parseJobs(row.jobs),
+      selectedEpisodes,
+      failedEpisodes: failures,
+      jobs,
+      transcode,
       previewUrl: row.previewUrl || undefined,
       extractor: row.extractor || undefined,
       kind: row.kind === 'playlist' || row.kind === 'single' ? row.kind : undefined,

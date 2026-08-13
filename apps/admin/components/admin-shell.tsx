@@ -30,6 +30,7 @@ import {
   Menu,
   MessageSquareWarning,
   Plus,
+  RefreshCw,
   Settings2,
   Activity,
   ShieldCheck,
@@ -75,6 +76,7 @@ const NAV_GROUPS: NavGroup[] = [
     titleKey: "navContent",
     items: [
       { href: "/content/add", key: "contentAdd", icon: Plus, end: true },
+      { href: "/rs-sync", key: "rsDramaSync", icon: RefreshCw, end: true },
       { href: "/content", key: "content", icon: Clapperboard, end: true },
       { href: "/content?view=pending", key: "contentPending", icon: ShieldCheck, end: true },
       { href: "/hottest", key: "hottest", icon: Flame, end: true },

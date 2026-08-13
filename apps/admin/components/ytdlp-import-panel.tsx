@@ -2,9 +2,11 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
+import { RefreshCw } from "lucide-react";
 import {
   adminStorageStatus,
   adminTelegramStatus,
+  adminYtdlpAppendTransfer,
   adminYtdlpAiExtract,
   adminYtdlpCatalog,
   adminYtdlpDownloadEpisode,
@@ -18,6 +20,10 @@ import {
 import { Button, Input, Select } from "@velvet/ui";
 import { StreamPreview } from "@/components/stream-preview";
 import { GlassModal } from "@/components/glass-modal";
+import {
+  LocalUploadWizard,
+  type LocalUploadWizardHandle,
+} from "@/components/local-upload-wizard";
 import { OnlineDramaForm } from "@/components/online-drama-form";
 import {
   dramaInfoFromYtdlpProbe,
@@ -25,6 +31,7 @@ import {
   type OnlineIngestForm,
 } from "@/lib/drama-info-fill";
 import { useI18n } from "@/lib/i18n";
+import { useUploadQueue } from "@/lib/upload-queue";
 import { isPlayableMediaUrl } from "@/lib/playable-url";
 import {
   WatermarkPositionEditor,
@@ -89,6 +96,162 @@ function isReelshortCatalogUrl(raw: string): boolean {
   }
 }
 
+type CatalogItem = CatalogResult["items"][number];
+const RS_CATALOG_CACHE_KEY = "velvet-admin-rs-catalog-v1";
+// v2 invalidates earlier caches that were populated with translated metadata.
+const RS_DRAMA_INFO_CACHE_KEY = "velvet-admin-rs-drama-info-v2";
+const RS_DRAMA_INFO_CACHE_LIMIT = 24;
+
+type RsDramaInfoCacheEntry = {
+  webpageUrl: string;
+  probe: ProbeResult;
+  cachedAt: number;
+};
+
+function readRsDramaInfoCache(): RsDramaInfoCacheEntry[] {
+  try {
+    const raw = window.localStorage.getItem(RS_DRAMA_INFO_CACHE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (entry): entry is RsDramaInfoCacheEntry =>
+        !!entry &&
+        typeof entry === "object" &&
+        typeof (entry as RsDramaInfoCacheEntry).webpageUrl === "string" &&
+        Array.isArray((entry as RsDramaInfoCacheEntry).probe?.episodes),
+    );
+  } catch {
+    window.localStorage.removeItem(RS_DRAMA_INFO_CACHE_KEY);
+    return [];
+  }
+}
+
+function readCachedRsDramaInfo(webpageUrl: string): ProbeResult | null {
+  return (
+    readRsDramaInfoCache().find((entry) => entry.webpageUrl === webpageUrl)
+      ?.probe ?? null
+  );
+}
+
+function readCachedRsDramaInfoUpdatedAt(webpageUrl: string): number | null {
+  const entry = readRsDramaInfoCache().find(
+    (value) => value.webpageUrl === webpageUrl,
+  );
+  return entry && Number.isFinite(entry.cachedAt) ? entry.cachedAt : null;
+}
+
+function formatRefreshTime(timestamp: number | null, locale: "zh" | "en") {
+  if (!timestamp) return null;
+  try {
+    return new Intl.DateTimeFormat(locale === "zh" ? "zh-CN" : "en-US", {
+      dateStyle: "short",
+      timeStyle: "medium",
+    }).format(new Date(timestamp));
+  } catch {
+    return new Date(timestamp).toLocaleString();
+  }
+}
+
+function cacheRsDramaInfo(webpageUrl: string, probe: ProbeResult) {
+  try {
+    const entries = readRsDramaInfoCache().filter(
+      (entry) => entry.webpageUrl !== webpageUrl,
+    );
+    entries.unshift({ webpageUrl, probe, cachedAt: Date.now() });
+    window.localStorage.setItem(
+      RS_DRAMA_INFO_CACHE_KEY,
+      JSON.stringify(entries.slice(0, RS_DRAMA_INFO_CACHE_LIMIT)),
+    );
+  } catch {
+    // The current detail remains usable when browser storage is unavailable.
+  }
+}
+
+function CatalogDramaEditor({
+  item,
+  probe,
+  ingestForm,
+  formatPreference,
+  cookiesFile,
+  authBearer,
+  watermark,
+  onTransferQueued,
+}: {
+  item: CatalogItem;
+  probe: ProbeResult;
+  ingestForm: OnlineIngestForm;
+  formatPreference: FormatPreference;
+  cookiesFile?: string;
+  authBearer?: string;
+  watermark: WatermarkPlacement;
+  onTransferQueued?: () => void;
+}) {
+  const wizardRef = useRef<LocalUploadWizardHandle>(null);
+
+  useEffect(() => {
+    // ReelShort's catalog payload contains the synopsis, while the fast detail
+    // probe may omit it. Merge the catalog fallback before mapping into the
+    // shared wizard so the description is filled even from cached/fast probes.
+    const probeDescription =
+      "description" in probe && typeof probe.description === "string"
+        ? probe.description.trim()
+        : "";
+    const probeWithCatalogDescription =
+      probeDescription || !item.description?.trim()
+        ? probe
+        : { ...probe, description: item.description.trim() };
+    const probeCompletion =
+      "completion" in probe &&
+      (probe.completion === "已完结" || probe.completion === "连载中")
+        ? probe.completion
+        : undefined;
+    const probeWithCatalogMeta =
+      probeCompletion || !item.completion
+        ? probeWithCatalogDescription
+        : { ...probeWithCatalogDescription, completion: item.completion };
+    wizardRef.current?.applyDramaInfo(
+      dramaInfoFromYtdlpProbe(probeWithCatalogMeta, {
+        pageUrl: item.webpageUrl,
+        ingestForm,
+        provider: "ytdlp",
+        formatPreference,
+        episodeIndexes: probe.episodes.map((episode) => episode.index),
+        cookiesFile,
+        authBearer,
+        watermarkEnabled: ingestForm === "r2" ? watermark.enabled : false,
+        watermarkX: watermark.x,
+        watermarkY: watermark.y,
+        watermarkScale: watermark.scale,
+        includeMeta: true,
+        includeOnline: true,
+        overwriteMeta: true,
+      }),
+    );
+  }, [
+    authBearer,
+    cookiesFile,
+    formatPreference,
+    ingestForm,
+    item.completion,
+    item.description,
+    item.webpageUrl,
+    probe,
+    watermark.enabled,
+    watermark.scale,
+    watermark.x,
+    watermark.y,
+  ]);
+
+  return (
+    <LocalUploadWizard
+      ref={wizardRef}
+      presentation="info-policy"
+      onTransferQueued={onTransferQueued ? () => onTransferQueued() : undefined}
+    />
+  );
+}
+
 /**
  * 在线资源准备：公开页解析或手动粘贴直链。
  * 不在弹窗内创建剧集；把信息与片源配置回填主窗口，由主窗口统一提交。
@@ -99,6 +262,11 @@ export function YtdlpImportPanel({
   onFillDramaInfo,
   ingestTab: ingestTabProp,
   onIngestTabChange,
+  initialUrl = "",
+  autoLoadInitialUrl = false,
+  enableCatalogMultiSelect = false,
+  catalogCardsOpenEditor = false,
+  dedicatedCatalogMode = false,
 }: {
   onDirtyChange?: (dirty: boolean) => void;
   embedded?: boolean;
@@ -106,22 +274,41 @@ export function YtdlpImportPanel({
   /** When set with onIngestTabChange, tabs are controlled by the parent (e.g. modal title). */
   ingestTab?: IngestTab;
   onIngestTabChange?: (tab: IngestTab) => void;
+  initialUrl?: string;
+  /** Discover a supplied catalog URL once when the panel opens. */
+  autoLoadInitialUrl?: boolean;
+  enableCatalogMultiSelect?: boolean;
+  /** RS sync only: clicking a catalog card opens drama info + playback policy. */
+  catalogCardsOpenEditor?: boolean;
+  /** RS sync only: parse-only UI, compact auth control, explicit catalog start. */
+  dedicatedCatalogMode?: boolean;
 } = {}) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const qc = useQueryClient();
+  const { enqueueTransferJob } = useUploadQueue();
   const [ingestTabUncontrolled, setIngestTabUncontrolled] = useState<IngestTab>("parse");
-  const ingestTab = ingestTabProp ?? ingestTabUncontrolled;
+  const ingestTab = dedicatedCatalogMode
+    ? "parse"
+    : ingestTabProp ?? ingestTabUncontrolled;
   const setIngestTab = onIngestTabChange ?? setIngestTabUncontrolled;
   const tabsInParent = ingestTabProp != null && onIngestTabChange != null;
   const [ingestForm, setIngestForm] = useState<OnlineIngestForm>("r2");
   const [manualDirty, setManualDirty] = useState(false);
-  const [url, setUrl] = useState("");
+  const [url, setUrl] = useState(initialUrl);
   const [probe, setProbe] = useState<ProbeResult | null>(null);
   const [catalog, setCatalog] = useState<CatalogResult | null>(null);
   const [catalogItem, setCatalogItem] = useState<
     CatalogResult["items"][number] | null
   >(null);
   const [catalogDetailError, setCatalogDetailError] = useState<string | null>(null);
+  const [catalogSyncNotice, setCatalogSyncNotice] = useState<string | null>(null);
+  const [catalogLastRefreshedAt, setCatalogLastRefreshedAt] = useState<number | null>(null);
+  const [catalogDetailLastRefreshedAt, setCatalogDetailLastRefreshedAt] =
+    useState<number | null>(null);
+  const [transferCandidates, setTransferCandidates] = useState<
+    CatalogResult["items"]
+  >([]);
+  const catalogSelectedIds = transferCandidates.map((item) => item.id);
   const [epRangeStart, setEpRangeStart] = useState("");
   const [epRangeEnd, setEpRangeEnd] = useState("");
   const [formatPreference, setFormatPreference] = useState<FormatPreference>("best");
@@ -152,6 +339,10 @@ export function YtdlpImportPanel({
   const resolveAbortRef = useRef(false);
   const downloadAbortRef = useRef(false);
   const probeSelectKeyRef = useRef("");
+  const initialLoadStartedRef = useRef(false);
+  const catalogCacheRestoredRef = useRef(false);
+  const probeRef = useRef<ProbeResult | null>(null);
+  probeRef.current = probe;
 
   const statusQ = useQuery({
     queryKey: ["admin", "ytdlp", "status"],
@@ -194,6 +385,7 @@ export function YtdlpImportPanel({
     setCatalog(null);
     setCatalogItem(null);
     setCatalogDetailError(null);
+    setTransferCandidates([]);
     setProbe(null);
     setPreviewEpIndex(null);
     setPreviewUrl(null);
@@ -514,6 +706,7 @@ export function YtdlpImportPanel({
       setApplied(false);
       setResolveProgress(null);
       if (data.source === "catalog") {
+        setCatalogLastRefreshedAt(Date.now());
         setCatalog(data);
         setCatalogItem(null);
         setCatalogDetailError(null);
@@ -530,23 +723,205 @@ export function YtdlpImportPanel({
   });
 
   const catalogDetailMut = useMutation({
-    mutationFn: (item: CatalogResult["items"][number]) =>
-      adminYtdlpAiExtract(item.webpageUrl, {
+    mutationFn: (input: {
+      item: CatalogResult["items"][number];
+      fast?: boolean;
+    }) =>
+      adminYtdlpAiExtract(input.item.webpageUrl, {
         ...authPayload(),
+        skipAi: input.fast,
+        sourceLanguage: dedicatedCatalogMode ? "en" : undefined,
       }),
-    onSuccess: (data) => {
+    onSuccess: (data, input) => {
       setCatalogDetailError(null);
       setProbe(data);
+      setCatalogDetailLastRefreshedAt(Date.now());
+      if (dedicatedCatalogMode) {
+        cacheRsDramaInfo(input.item.webpageUrl, data);
+      }
       setPreviewEpIndex(null);
       setPreviewUrl(null);
       setApplied(false);
       setResolveProgress(null);
     },
     onError: (e: Error) => {
-      setProbe(null);
+      if (!probeRef.current) setProbe(null);
       setCatalogDetailError(e.message);
     },
   });
+
+  const catalogUpdateMut = useMutation({
+    mutationFn: (item: CatalogResult["items"][number]) =>
+      adminYtdlpAppendTransfer({
+        dramaId: item.syncedDramaId || "",
+        url: item.webpageUrl,
+        formatPreference,
+        ...authPayload(),
+      }),
+    onSuccess: (data, item) => {
+      if (data.jobId && data.addedEpisodes > 0) {
+        enqueueTransferJob({
+          title: item.title,
+          dramaId: data.dramaId,
+          transferJobId: data.jobId,
+          totalEpisodes: data.addedEpisodes,
+          episodeTitles: data.episodeTitles,
+        });
+        setCatalogSyncNotice(
+          t("ytdlpCatalogUpdateQueued", { n: String(data.addedEpisodes) }),
+        );
+      } else {
+        setCatalogSyncNotice(t("ytdlpCatalogNoUpdates"));
+      }
+      setCatalog((prev) =>
+        prev
+          ? {
+              ...prev,
+              items: prev.items.map((value) =>
+                value.id === item.id
+                  ? {
+                      ...value,
+                      synced: true,
+                      syncedEpisodes: data.totalEpisodes,
+                      updateAvailable: false,
+                    }
+                  : value,
+              ),
+            }
+          : prev,
+      );
+    },
+    onError: (e: Error) => {
+      setCatalogSyncNotice(null);
+      setError(e.message);
+    },
+  });
+
+  useEffect(() => {
+    const sourceUrl = initialUrl.trim();
+    if (
+      !autoLoadInitialUrl ||
+      !sourceUrl ||
+      initialLoadStartedRef.current
+    ) {
+      return;
+    }
+    initialLoadStartedRef.current = true;
+    aiExtractMut.mutate(sourceUrl);
+  }, [aiExtractMut, autoLoadInitialUrl, initialUrl]);
+
+  useEffect(() => {
+    if (!dedicatedCatalogMode || catalogCacheRestoredRef.current) return;
+    catalogCacheRestoredRef.current = true;
+    try {
+      const raw = window.localStorage.getItem(RS_CATALOG_CACHE_KEY);
+      if (!raw) return;
+      const cached = JSON.parse(raw) as {
+        url?: unknown;
+        catalog?: Partial<CatalogResult>;
+        cachedAt?: unknown;
+      };
+      if (
+        cached.catalog?.source !== "catalog" ||
+        !Array.isArray(cached.catalog.items)
+      ) {
+        return;
+      }
+      setCatalog(cached.catalog as CatalogResult);
+      setCatalogLastRefreshedAt(
+        typeof cached.cachedAt === "number" ? cached.cachedAt : null,
+      );
+      if (typeof cached.url === "string" && cached.url.trim()) {
+        setUrl(cached.url);
+      }
+    } catch {
+      window.localStorage.removeItem(RS_CATALOG_CACHE_KEY);
+    }
+  }, [dedicatedCatalogMode]);
+
+  useEffect(() => {
+    if (!dedicatedCatalogMode || !catalog) return;
+    try {
+      window.localStorage.setItem(
+        RS_CATALOG_CACHE_KEY,
+        JSON.stringify({
+          url: catalog.webpageUrl,
+          catalog,
+          cachedAt: Date.now(),
+        }),
+      );
+    } catch {
+      // The live catalog remains usable when browser storage is unavailable.
+    }
+  }, [catalog, dedicatedCatalogMode, url]);
+
+  function openCatalogDrama(item: CatalogResult["items"][number]) {
+    setCatalogItem(item);
+    setCatalogDetailError(null);
+    const cached = dedicatedCatalogMode
+      ? readCachedRsDramaInfo(item.webpageUrl)
+      : null;
+    setCatalogDetailLastRefreshedAt(
+      dedicatedCatalogMode
+        ? readCachedRsDramaInfoUpdatedAt(item.webpageUrl)
+        : null,
+    );
+    setProbe(cached);
+    probeRef.current = cached;
+    if (cached) return;
+    catalogDetailMut.mutate({ item, fast: true });
+  }
+
+  function refreshCatalogDrama() {
+    if (!catalogItem || catalogDetailMut.isPending) return;
+    setCatalogDetailError(null);
+    catalogDetailMut.mutate({ item: catalogItem, fast: false });
+  }
+
+  function toggleCatalogDrama(item: CatalogResult["items"][number]) {
+    setTransferCandidates((prev) =>
+      prev.some((value) => value.id === item.id)
+        ? prev.filter((value) => value.id !== item.id)
+        : [...prev, item],
+    );
+  }
+
+  function toggleCatalogPageSelection() {
+    if (!catalog) return;
+    const pageIds = catalog.items.map((item) => item.id);
+    if (!pageIds.length) return;
+    const allSelected = pageIds.every((id) => catalogSelectedIds.includes(id));
+    setTransferCandidates((prev) => {
+      if (allSelected) {
+        const pageIdSet = new Set(pageIds);
+        return prev.filter((item) => !pageIdSet.has(item.id));
+      }
+      const byId = new Map(prev.map((item) => [item.id, item]));
+      for (const item of catalog.items) byId.set(item.id, item);
+      return [...byId.values()];
+    });
+  }
+
+  function openNextTransferCandidate() {
+    const next = transferCandidates[0];
+    if (!next || busy) return;
+    openCatalogDrama(next);
+  }
+
+  function handleCatalogTransferQueued() {
+    const currentId = catalogItem?.id;
+    if (!currentId) return;
+    const remaining = transferCandidates.filter((item) => item.id !== currentId);
+    setTransferCandidates(remaining);
+    const next = remaining[0];
+    if (next) {
+      openCatalogDrama(next);
+      return;
+    }
+    setCatalogItem(null);
+    setCatalogDetailError(null);
+    setProbe(null);
+  }
 
   const resolveMut = useMutation({
     mutationFn: async (ep: ProbeResult["episodes"][number]) => {
@@ -881,11 +1256,108 @@ export function YtdlpImportPanel({
     downloadQueueBusy ||
     resolveMut.isPending ||
     downloadingEpIndex != null ||
-    cookieUploadBusy;
+    cookieUploadBusy ||
+    catalogUpdateMut.isPending;
   const showEmpty =
     !urlLooksTelegram && !catalog && !probe && !error && !aiExtractMut.isPending;
   const selectedCount = selectedIndexes.length;
   const allSelected = !!probe && selectedCount === probe.episodes.length && probe.episodes.length > 0;
+
+  const authSettingsContent = (
+    <div className="space-y-3">
+      {dedicatedCatalogMode ? (
+        <label className="block space-y-1 text-caption text-ink-muted">
+          <span>{t("ytdlpSourceUrlLabel")}</span>
+          <Input
+            value={url}
+            disabled={!configured || busy}
+            placeholder={t("ytdlpUrlPlaceholder")}
+            onChange={(e) => {
+              setUrl(e.target.value);
+              setApplied(false);
+            }}
+          />
+        </label>
+      ) : null}
+      <p className="text-caption text-ink-muted">{t("ytdlpAuthHint")}</p>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <label className="space-y-1 text-caption text-ink-muted">
+          <span>{t("ytdlpAuthCookiesSelect")}</span>
+          <Select
+            value={cookiesFile}
+            disabled={!configured || busy}
+            onChange={(e) => setCookiesFile(e.target.value)}
+          >
+            <option value="">{t("ytdlpAuthCookiesAuto")}</option>
+            {hostCookieFiles.map((f) => (
+              <option key={f} value={f}>
+                {f}
+              </option>
+            ))}
+            {cookiesFile && !hostCookieFiles.includes(cookiesFile) ? (
+              <option value={cookiesFile}>{cookiesFile}</option>
+            ) : null}
+          </Select>
+        </label>
+        <label className="space-y-1 text-caption text-ink-muted">
+          <span>{t("ytdlpAuthBearer")}</span>
+          <Input
+            type="password"
+            autoComplete="off"
+            placeholder="Bearer token"
+            value={authBearer}
+            disabled={!configured || busy}
+            onChange={(e) => setAuthBearer(e.target.value)}
+          />
+        </label>
+      </div>
+      <div className="flex flex-wrap items-end gap-2">
+        <label className="min-w-[10rem] flex-1 space-y-1 text-caption text-ink-muted">
+          <span>{t("ytdlpAuthHostname")}</span>
+          <Input
+            placeholder="reelshort.com"
+            value={cookieHost}
+            disabled={!configured || busy}
+            onChange={(e) => setCookieHost(e.target.value)}
+            onFocus={() => {
+              if (!cookieHost.trim() && url.trim()) {
+                setCookieHost(guessHostnameFromUrl(url));
+              }
+            }}
+          />
+        </label>
+        <label className="inline-flex cursor-pointer items-center">
+          <input
+            type="file"
+            accept=".txt,text/plain"
+            className="hidden"
+            disabled={!configured || busy}
+            onChange={(e) => {
+              const f = e.target.files?.[0] || null;
+              void onCookieFilePicked(f);
+              e.target.value = "";
+            }}
+          />
+          <span className="inline-flex h-9 items-center rounded-md border border-line bg-white px-3 text-body-sm text-ink hover:bg-surface-2">
+            {cookieUploadBusy ? t("ytdlpAuthUploading") : t("ytdlpAuthUpload")}
+          </span>
+        </label>
+      </div>
+      {authInfo ? (
+        <p className="break-all text-caption text-ink-subtle">
+          {t("ytdlpAuthStatusLine", {
+            cookies: authInfo.globalCookiesConfigured
+              ? t("ytdlpAuthYes")
+              : t("ytdlpAuthNo"),
+            bearer: authInfo.bearerConfigured
+              ? t("ytdlpAuthYes")
+              : t("ytdlpAuthNo"),
+            files: String(hostCookieFiles.length),
+          })}
+        </p>
+      ) : null}
+    </div>
+  );
 
   const panelClass = embedded
     ? "space-y-3"
@@ -895,8 +1367,28 @@ export function YtdlpImportPanel({
   return (
     <div className="space-y-4">
       <PanelTag className={panelClass}>
-        {ingestTab === "parse" && configured ? (
-          <div className="flex justify-end">
+        {ingestTab === "parse" && (configured || dedicatedCatalogMode) ? (
+          <div className="flex justify-end gap-2">
+            {dedicatedCatalogMode ? (
+              <button
+                type="button"
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-line/60 bg-white px-2.5 py-1 text-caption text-ink-muted hover:bg-surface-2"
+                onClick={() => setAuthOpen(true)}
+                title={authReady ? t("ytdlpAuthReady") : t("ytdlpAuthOptional")}
+              >
+                <span
+                  className="inline-block h-1.5 w-1.5 rounded-full"
+                  style={{
+                    background: authReady
+                      ? "var(--color-success)"
+                      : "var(--color-ink-subtle)",
+                  }}
+                  aria-hidden
+                />
+                {t("ytdlpAuthTitle")}
+              </button>
+            ) : null}
+            {configured ? (
             <button
               type="button"
               className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-line/60 bg-white px-2.5 py-1 text-caption text-ink-muted hover:bg-surface-2"
@@ -913,10 +1405,36 @@ export function YtdlpImportPanel({
                 {engineOpen ? "▾" : "▸"}
               </span>
             </button>
+            ) : null}
+            {dedicatedCatalogMode ? (
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-brand/30 bg-brand px-3 py-1 text-caption font-medium text-white shadow-sm transition hover:-translate-y-px hover:bg-brand-strong hover:shadow-md disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={!url.trim() || busy || !configured}
+                  onClick={() => aiExtractMut.mutate(undefined)}
+                >
+                  <RefreshCw
+                    className={aiExtractMut.isPending ? "h-3.5 w-3.5 animate-spin" : "h-3.5 w-3.5"}
+                    aria-hidden
+                  />
+                  {aiExtractMut.isPending
+                    ? t("ytdlpCatalogRefreshBusy")
+                    : t("ytdlpCatalogRefresh")}
+                </button>
+                {formatRefreshTime(catalogLastRefreshedAt, locale) ? (
+                  <span className="text-caption text-ink-subtle">
+                    {t("ytdlpLastRefresh", {
+                      time: formatRefreshTime(catalogLastRefreshedAt, locale)!,
+                    })}
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         ) : null}
 
-        {tabsInParent ? null : (
+        {tabsInParent || dedicatedCatalogMode ? null : (
           <div className="seg-tabs" role="tablist" aria-label={t("contentOnlineRef")}>
             {(
               [
@@ -968,6 +1486,16 @@ export function YtdlpImportPanel({
               </p>
             ) : null}
 
+            {dedicatedCatalogMode ? (
+              <GlassModal
+                open={authOpen}
+                onClose={() => setAuthOpen(false)}
+                title={t("ytdlpAuthTitle")}
+                size="md"
+              >
+                {authSettingsContent}
+              </GlassModal>
+            ) : (
             <div className="rounded-lg border border-line/70 bg-surface-2/40 px-3 py-2.5 space-y-2">
               <button
                 type="button"
@@ -998,89 +1526,13 @@ export function YtdlpImportPanel({
                 <p className="text-caption text-ink-muted">{t("ytdlpAuthHint")}</p>
               ) : (
                 <div className="space-y-3 border-t border-line/50 pt-2.5">
-                  <p className="text-caption text-ink-muted">{t("ytdlpAuthHint")}</p>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <label className="space-y-1 text-caption text-ink-muted">
-                      <span>{t("ytdlpAuthCookiesSelect")}</span>
-                      <Select
-                        value={cookiesFile}
-                        disabled={!configured || busy}
-                        onChange={(e) => setCookiesFile(e.target.value)}
-                      >
-                        <option value="">{t("ytdlpAuthCookiesAuto")}</option>
-                        {hostCookieFiles.map((f) => (
-                          <option key={f} value={f}>
-                            {f}
-                          </option>
-                        ))}
-                        {cookiesFile && !hostCookieFiles.includes(cookiesFile) ? (
-                          <option value={cookiesFile}>{cookiesFile}</option>
-                        ) : null}
-                      </Select>
-                    </label>
-                    <label className="space-y-1 text-caption text-ink-muted">
-                      <span>{t("ytdlpAuthBearer")}</span>
-                      <Input
-                        type="password"
-                        autoComplete="off"
-                        placeholder="Bearer token"
-                        value={authBearer}
-                        disabled={!configured || busy}
-                        onChange={(e) => setAuthBearer(e.target.value)}
-                      />
-                    </label>
-                  </div>
-                  <div className="flex flex-wrap items-end gap-2">
-                    <label className="min-w-[10rem] flex-1 space-y-1 text-caption text-ink-muted">
-                      <span>{t("ytdlpAuthHostname")}</span>
-                      <Input
-                        placeholder="reelshort.com"
-                        value={cookieHost}
-                        disabled={!configured || busy}
-                        onChange={(e) => setCookieHost(e.target.value)}
-                        onFocus={() => {
-                          if (!cookieHost.trim() && url.trim()) {
-                            setCookieHost(guessHostnameFromUrl(url));
-                          }
-                        }}
-                      />
-                    </label>
-                    <label className="inline-flex cursor-pointer items-center">
-                      <input
-                        type="file"
-                        accept=".txt,text/plain"
-                        className="hidden"
-                        disabled={!configured || busy}
-                        onChange={(e) => {
-                          const f = e.target.files?.[0] || null;
-                          void onCookieFilePicked(f);
-                          e.target.value = "";
-                        }}
-                      />
-                      <span className="inline-flex h-9 items-center rounded-md border border-line bg-white px-3 text-body-sm text-ink hover:bg-surface-2">
-                        {cookieUploadBusy
-                          ? t("ytdlpAuthUploading")
-                          : t("ytdlpAuthUpload")}
-                      </span>
-                    </label>
-                  </div>
-                  {authInfo ? (
-                    <p className="break-all text-caption text-ink-subtle">
-                      {t("ytdlpAuthStatusLine", {
-                        cookies: authInfo.globalCookiesConfigured
-                          ? t("ytdlpAuthYes")
-                          : t("ytdlpAuthNo"),
-                        bearer: authInfo.bearerConfigured
-                          ? t("ytdlpAuthYes")
-                          : t("ytdlpAuthNo"),
-                        files: String(hostCookieFiles.length),
-                      })}
-                    </p>
-                  ) : null}
+                  {authSettingsContent}
                 </div>
               )}
             </div>
+            )}
 
+            {dedicatedCatalogMode ? null : (
             <div className="flex flex-wrap items-end gap-2">
               <Input
                 className="min-w-[20rem] flex-1"
@@ -1114,7 +1566,7 @@ export function YtdlpImportPanel({
                 >
                   {t("telegramProbe")}
                 </Button>
-              ) : (
+              ) : dedicatedCatalogMode ? null : (
                 <Button
                   size="sm"
                   variant={isAiProbe(probe) ? "secondary" : "primary"}
@@ -1144,6 +1596,7 @@ export function YtdlpImportPanel({
                 </Button>
               ) : null}
             </div>
+            )}
 
             {urlLooksTelegram ? (
               <TelegramImportPanel
@@ -1168,7 +1621,7 @@ export function YtdlpImportPanel({
               </p>
             ) : null}
 
-            {showEmpty ? (
+            {!dedicatedCatalogMode && showEmpty ? (
               <div className="online-empty">
                 <p className="online-empty__title">{t("onlineEmptyTitle")}</p>
                 <div className="online-empty__steps">
@@ -1212,7 +1665,32 @@ export function YtdlpImportPanel({
                 })}
               </p>
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
+              {enableCatalogMultiSelect ? (
+                <>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={busy || !catalog.items.length}
+                    onClick={toggleCatalogPageSelection}
+                  >
+                    {catalog.items.every((item) => catalogSelectedIds.includes(item.id))
+                      ? t("ytdlpCatalogClearPage")
+                      : t("ytdlpCatalogSelectPage")}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="primary"
+                    disabled={busy || !transferCandidates.length}
+                    onClick={openNextTransferCandidate}
+                  >
+                    {t("ytdlpCatalogTransfer", {
+                      n: String(transferCandidates.length),
+                    })}
+                  </Button>
+                </>
+              ) : null}
               <Button
                 size="sm"
                 variant="ghost"
@@ -1240,48 +1718,165 @@ export function YtdlpImportPanel({
             </div>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            {catalog.items.map((item) => (
-              <button
-                type="button"
-                key={item.id}
-                className="flex min-w-0 gap-3 rounded-xl border border-line/70 bg-surface-1 p-3 text-left transition hover:border-brand/40 hover:bg-surface-2 disabled:opacity-60"
-                disabled={busy}
-                onClick={() => {
-                  setCatalogItem(item);
-                  setCatalogDetailError(null);
-                  setProbe(null);
-                  catalogDetailMut.mutate(item);
-                }}
-              >
-                {item.coverUrl ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={item.coverUrl}
-                    alt=""
-                    className="h-24 w-16 shrink-0 rounded-lg object-cover"
-                  />
-                ) : null}
-                <div className="flex min-w-0 flex-1 flex-col">
-                  <h5 className="line-clamp-2 text-body-sm font-semibold">
-                    {item.title}
+          {enableCatalogMultiSelect && transferCandidates.length ? (
+            <div className="rounded-xl border border-brand/25 bg-brand-soft/40 p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-3">
+                  <h5 className="text-body-sm font-semibold text-ink">
+                    {t("ytdlpCatalogCandidateTitle")}
                   </h5>
-                  {item.chapterCount ? (
-                    <p className="text-caption text-ink-subtle">
-                      {t("importEpisodeCount", { n: item.chapterCount })}
-                    </p>
-                  ) : null}
-                  {item.description ? (
-                    <p className="mt-1 line-clamp-2 text-caption text-ink-muted">
-                      {item.description}
-                    </p>
-                  ) : null}
-                  <span className="mt-auto pt-2 text-caption font-medium text-brand">
-                    {t("ytdlpCatalogViewEpisodes")}
+                  <span className="text-caption text-ink-muted">
+                    {t("ytdlpCatalogCandidateCount", {
+                      n: String(transferCandidates.length),
+                    })}
                   </span>
                 </div>
-              </button>
-            ))}
+              </div>
+              <p className="mb-2 text-caption text-ink-muted">
+                {t("ytdlpCatalogNextTransferHint")}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {transferCandidates.map((item) => (
+                  <div
+                    key={item.id}
+                    className="inline-flex max-w-full items-center overflow-hidden rounded-lg border border-line/70 bg-white"
+                  >
+                    <button
+                      type="button"
+                      className="max-w-64 truncate px-2.5 py-1.5 text-left text-caption font-medium text-ink hover:text-brand"
+                      title={item.title}
+                      disabled={busy}
+                      onClick={() => openCatalogDrama(item)}
+                    >
+                      {item.title}
+                    </button>
+                    <button
+                      type="button"
+                      className="border-l border-line/70 px-2 py-1.5 text-caption text-ink-muted hover:bg-danger-soft hover:text-danger"
+                      aria-label={t("ytdlpCatalogRemoveCandidate", {
+                        title: item.title,
+                      })}
+                      onClick={() =>
+                        setTransferCandidates((prev) =>
+                          prev.filter((candidate) => candidate.id !== item.id),
+                        )
+                      }
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {catalogSyncNotice ? (
+            <p className="rounded-lg border border-success/25 bg-success-soft px-3 py-2 text-body-sm text-success">
+              {catalogSyncNotice}
+            </p>
+          ) : null}
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            {catalog.items.map((item) => {
+              const selected = catalogSelectedIds.includes(item.id);
+              const staged = transferCandidates.some(
+                (candidate) => candidate.id === item.id,
+              );
+              return (
+              <article
+                key={item.id}
+                className={[
+                  "relative flex min-w-0 gap-3 rounded-xl border bg-surface-1 p-3 text-left transition hover:border-brand/40 hover:bg-surface-2",
+                  selected ? "border-brand ring-1 ring-brand/20" : "border-line/70",
+                ].join(" ")}
+              >
+                {enableCatalogMultiSelect ? (
+                  <label
+                    className="absolute right-3 top-3 z-10 flex cursor-pointer items-center gap-1.5 rounded-md bg-white/95 px-2 py-1 text-caption text-ink-muted shadow-sm"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected}
+                      disabled={busy}
+                      onChange={() => toggleCatalogDrama(item)}
+                    />
+                    {staged
+                      ? t("ytdlpCatalogCandidateAdded")
+                      : t("ytdlpCatalogSelect")}
+                  </label>
+                ) : null}
+                <button
+                  type="button"
+                  className="flex min-w-0 flex-1 gap-3 text-left disabled:opacity-60"
+                  disabled={busy}
+                  onClick={() => openCatalogDrama(item)}
+                >
+                  {item.coverUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={item.coverUrl}
+                      alt=""
+                      className="h-24 w-16 shrink-0 rounded-lg object-cover"
+                    />
+                  ) : null}
+                  <div className="flex min-w-0 flex-1 flex-col pr-20">
+                    <h5 className="line-clamp-2 text-body-sm font-semibold">
+                      {item.title}
+                    </h5>
+                    {item.synced ? (
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-caption">
+                        <span className="rounded-full bg-success-soft px-2 py-0.5 font-medium text-success">
+                          {t("ytdlpCatalogSynced")}
+                        </span>
+                        {item.syncedEpisodes ? (
+                          <span className="text-ink-subtle">
+                            {t("ytdlpCatalogSyncedEpisodes", {
+                              n: String(item.syncedEpisodes),
+                            })}
+                          </span>
+                        ) : null}
+                        {item.updateAvailable ? (
+                          <span className="rounded-full bg-warning-soft px-2 py-0.5 font-medium text-warning">
+                            {t("ytdlpCatalogUpdateAvailable")}
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {item.chapterCount ? (
+                      <p className="text-caption text-ink-subtle">
+                        {t("importEpisodeCount", { n: item.chapterCount })}
+                      </p>
+                    ) : null}
+                    {item.description ? (
+                      <p className="mt-1 line-clamp-2 text-caption text-ink-muted">
+                        {item.description}
+                      </p>
+                    ) : null}
+                    <span className="mt-auto pt-2 text-caption font-medium text-brand">
+                      {catalogCardsOpenEditor
+                        ? t("ytdlpCatalogConfigureDrama")
+                        : t("ytdlpCatalogViewEpisodes")}
+                    </span>
+                  </div>
+                </button>
+                {item.synced && item.completion === "连载中" ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    className="absolute bottom-3 right-3 z-10 h-8 px-2 text-caption"
+                    disabled={busy || catalogUpdateMut.isPending}
+                    onClick={() => catalogUpdateMut.mutate(item)}
+                  >
+                    {catalogUpdateMut.isPending &&
+                    catalogUpdateMut.variables?.id === item.id
+                      ? t("ytdlpCatalogCheckingUpdate")
+                      : t("ytdlpCatalogCheckUpdate")}
+                  </Button>
+                ) : null}
+              </article>
+              );
+            })}
           </div>
         </section>
       ) : null}
@@ -1631,14 +2226,60 @@ export function YtdlpImportPanel({
         size="xl"
         title={catalogItem?.title || t("ytdlpCatalogEpisodeModalTitle")}
       >
-        {catalogDetailMut.isPending ? (
+        {catalogDetailMut.isPending && !probe ? (
           <div className="py-10 text-center text-body-sm text-ink-muted">
             {t("ytdlpCatalogEpisodeLoading")}
           </div>
-        ) : catalogDetailError ? (
+        ) : catalogDetailError && !probe ? (
           <p className="rounded-lg bg-danger-soft p-3 text-body-sm text-danger">
             {catalogDetailError}
           </p>
+        ) : probe && catalogItem && catalogCardsOpenEditor ? (
+          <div className="space-y-3">
+            <div className="flex items-center justify-end gap-2">
+              {catalogDetailError ? (
+                <p className="mr-auto text-caption text-danger">
+                  {catalogDetailError}
+                </p>
+              ) : null}
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={catalogDetailMut.isPending}
+                onClick={refreshCatalogDrama}
+              >
+                <RefreshCw
+                  className={
+                    catalogDetailMut.isPending
+                      ? "h-3.5 w-3.5 animate-spin"
+                      : "h-3.5 w-3.5"
+                  }
+                  aria-hidden
+                />
+                {catalogDetailMut.isPending
+                  ? t("ytdlpCatalogRefreshBusy")
+                  : t("ytdlpCatalogRefreshDrama")}
+              </Button>
+              {formatRefreshTime(catalogDetailLastRefreshedAt, locale) ? (
+                <span className="text-caption text-ink-subtle">
+                  {t("ytdlpLastRefresh", {
+                    time: formatRefreshTime(catalogDetailLastRefreshedAt, locale)!,
+                  })}
+                </span>
+              ) : null}
+            </div>
+            <CatalogDramaEditor
+              key={catalogItem.id}
+              item={catalogItem}
+              probe={probe}
+              ingestForm={ingestForm}
+              formatPreference={formatPreference}
+              cookiesFile={cookiesFile.trim() || undefined}
+              authBearer={authBearer.trim() || undefined}
+              watermark={watermark}
+              onTransferQueued={handleCatalogTransferQueued}
+            />
+          </div>
         ) : probe && catalogItem ? (
           <div className="space-y-4">
             <div className="flex gap-3">

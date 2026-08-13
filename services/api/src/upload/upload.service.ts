@@ -852,12 +852,24 @@ export class UploadService implements OnModuleInit {
     if (job.status === 'completed' || job.status === 'failed') {
       return;
     }
-
-    job.status = 'processing';
-    await this.prisma.mediaTranscodeJob.update({
+    // A drama-level fail-fast may mark this queued job FAILED from the API
+    // process while a dedicated BullMQ worker still has an old in-memory copy.
+    const persisted = await this.prisma.mediaTranscodeJob.findUnique({
       where: { id: jobId },
+      select: { status: true, error: true },
+    });
+    if (!persisted || persisted.status === 'COMPLETED' || persisted.status === 'FAILED') {
+      job.status = persisted?.status === 'COMPLETED' ? 'completed' : 'failed';
+      job.error = persisted?.error || job.error;
+      return;
+    }
+
+    const claimed = await this.prisma.mediaTranscodeJob.updateMany({
+      where: { id: jobId, status: 'QUEUED' },
       data: { status: 'PROCESSING', startedAt: new Date(), attempts: { increment: 1 }, error: null },
     });
+    if (claimed.count !== 1) return;
+    job.status = 'processing';
 
     if (job.episodeId) {
       await this.prisma.episode
@@ -870,30 +882,13 @@ export class UploadService implements OnModuleInit {
 
     const ffmpeg = await this.detectFfmpeg();
     if (!ffmpeg) {
-      job.status = 'failed';
-      job.error = 'ffmpeg not found';
-      await this.persistFinishedJob(job);
-      if (job.episodeId) {
-        await this.prisma.episode
-          .update({
-            where: { id: BigInt(job.episodeId) },
-            data: { transcodeStatus: 'FAILED' },
-          })
-          .catch(() => undefined);
-      }
+      await this.retryOrFailTranscode(job, 'ffmpeg not found');
       return;
     }
 
     const inputAbs = this.resolveAbs(job.inputRel);
     if (!fs.existsSync(inputAbs)) {
-      job.status = 'failed';
-      job.error = 'input missing';
-      await this.persistFinishedJob(job);
-      if (job.episodeId) {
-        await this.prisma.episode
-          .update({ where: { id: BigInt(job.episodeId) }, data: { transcodeStatus: 'FAILED' } })
-          .catch(() => undefined);
-      }
+      await this.retryOrFailTranscode(job, 'input missing');
       return;
     }
 
@@ -923,17 +918,7 @@ export class UploadService implements OnModuleInit {
             ? false
             : this.r2.isEnabled() && this.r2.hasCredentials();
       if (job.preferR2 === true && !this.r2.hasCredentials()) {
-        job.status = 'failed';
-        job.error = 'R2 credentials not configured';
-        await this.persistFinishedJob(job);
-        if (job.episodeId) {
-          await this.prisma.episode
-            .update({
-              where: { id: BigInt(job.episodeId) },
-              data: { transcodeStatus: 'FAILED' },
-            })
-            .catch(() => undefined);
-        }
+        await this.retryOrFailTranscode(job, 'R2 credentials not configured');
         return;
       }
       if (pushR2) {
@@ -984,19 +969,122 @@ export class UploadService implements OnModuleInit {
         });
       }
     } catch (e: any) {
-      job.status = 'failed';
-      job.error = e?.message || String(e);
-      await this.persistFinishedJob(job).catch(() => undefined);
+      await this.retryOrFailTranscode(job, e?.message || String(e));
+    }
+  }
+
+  /** Fail queued (not active) transcodes when one episode aborts its whole drama. */
+  async skipQueuedTranscodeJobs(jobIds: string[], reason: string) {
+    const ids = [...new Set(jobIds.map((id) => String(id || '').trim()).filter(Boolean))];
+    if (!ids.length) return 0;
+    const queuedRows = await this.prisma.mediaTranscodeJob.findMany({
+      where: { id: { in: ids }, status: 'QUEUED' },
+      select: { id: true, episodeId: true },
+    });
+    if (!queuedRows.length) return 0;
+    const queuedIds = queuedRows.map((row) => row.id);
+    const queuedSet = new Set(queuedIds);
+    for (let i = this.queue.length - 1; i >= 0; i -= 1) {
+      if (queuedSet.has(this.queue[i])) this.queue.splice(i, 1);
+    }
+    for (const id of queuedIds) {
+      const memoryJob = this.jobs.get(id);
+      if (memoryJob?.status === 'queued') {
+        memoryJob.status = 'failed';
+        memoryJob.error = reason;
+      }
+    }
+    await this.prisma.mediaTranscodeJob.updateMany({
+      where: { id: { in: queuedIds }, status: 'QUEUED' },
+      data: { status: 'FAILED', error: reason, finishedAt: new Date() },
+    });
+    const skippedRows = await this.prisma.mediaTranscodeJob.findMany({
+      where: { id: { in: queuedIds }, status: 'FAILED', error: reason },
+      select: { id: true, episodeId: true },
+    });
+    const episodeIds = skippedRows
+      .map((row) => row.episodeId)
+      .filter((id): id is bigint => id != null);
+    if (episodeIds.length) {
+      await this.prisma.episode.updateMany({
+        where: { id: { in: episodeIds }, transcodeStatus: 'PENDING' },
+        data: { transcodeStatus: 'FAILED' },
+      });
+    }
+    return skippedRows.length;
+  }
+
+  /**
+   * Retry media failures inside the persistent job so inline and BullMQ modes
+   * behave identically. Only the final attempt becomes FAILED.
+   */
+  private async retryOrFailTranscode(job: TranscodeJob, error: string) {
+    const saved = await this.prisma.mediaTranscodeJob.findUnique({
+      where: { id: job.id },
+      select: { attempts: true },
+    });
+    const attempts = Math.max(1, Number(saved?.attempts || 1));
+    const configured = Number(
+      this.config.get<string>('TRANSCODE_MAX_ATTEMPTS') ||
+        process.env.TRANSCODE_MAX_ATTEMPTS ||
+        '3',
+    );
+    const maxAttempts = Math.min(
+      5,
+      Math.max(1, Number.isFinite(configured) ? Math.floor(configured) : 3),
+    );
+
+    job.error = error;
+    if (attempts < maxAttempts) {
+      job.status = 'queued';
+      await this.prisma.mediaTranscodeJob.update({
+        where: { id: job.id },
+        data: { status: 'QUEUED', error, finishedAt: null },
+      });
       if (job.episodeId) {
         await this.prisma.episode
           .update({
             where: { id: BigInt(job.episodeId) },
-            data: { transcodeStatus: 'FAILED' },
+            data: { transcodeStatus: 'PENDING' },
           })
           .catch(() => undefined);
       }
-      this.logger.error(`transcode fail job=${jobId}: ${job.error}`);
+      const configuredBaseDelay = Number(
+        this.config.get<string>('TRANSCODE_RETRY_BASE_MS') ||
+          process.env.TRANSCODE_RETRY_BASE_MS ||
+          '5000',
+      );
+      const baseDelayMs = Math.min(
+        60_000,
+        Math.max(
+          1,
+          Number.isFinite(configuredBaseDelay)
+            ? Math.floor(configuredBaseDelay)
+            : 5_000,
+        ),
+      );
+      const delayMs = Math.min(60_000, baseDelayMs * 2 ** (attempts - 1));
+      this.logger.warn(
+        `transcode retry job=${job.id} attempt=${attempts}/${maxAttempts} in ${delayMs}ms: ${error}`,
+      );
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+      await this.processTranscodeJob(job.id);
+      return;
     }
+
+    job.status = 'failed';
+    await this.persistFinishedJob(job).catch(() => undefined);
+    if (job.episodeId) {
+      await this.prisma.episode
+        .update({
+          where: { id: BigInt(job.episodeId) },
+          data: { transcodeStatus: 'FAILED' },
+        })
+        .catch(() => undefined);
+    }
+    this.logger.error(
+      `transcode final failure job=${job.id} attempts=${attempts}/${maxAttempts}: ${error}`,
+    );
   }
 
   /**
@@ -1504,12 +1592,37 @@ export class UploadService implements OnModuleInit {
           ];
       const child = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
       let stderr = '';
+      let timedOut = false;
+      const configuredTimeoutMinutes = Number(
+        this.config.get<string>('TRANSCODE_ATTEMPT_TIMEOUT_MINUTES') ||
+          process.env.TRANSCODE_ATTEMPT_TIMEOUT_MINUTES ||
+          '60',
+      );
+      const timeoutMinutes = Math.min(
+        360,
+        Math.max(
+          10,
+          Number.isFinite(configuredTimeoutMinutes)
+            ? Math.floor(configuredTimeoutMinutes)
+            : 60,
+        ),
+      );
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        child.kill('SIGKILL');
+      }, timeoutMinutes * 60_000);
       child.stderr.on('data', (d) => {
         stderr += d.toString();
       });
-      child.on('error', reject);
+      child.on('error', (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      });
       child.on('close', (code) => {
-        if (code === 0) resolve();
+        clearTimeout(timeout);
+        if (timedOut) {
+          reject(new Error(`ffmpeg timed out after ${timeoutMinutes} minutes`));
+        } else if (code === 0) resolve();
         else reject(new Error(`ffmpeg exit ${code}: ${stderr.slice(-500)}`));
       });
     });

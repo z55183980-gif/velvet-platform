@@ -57,6 +57,17 @@ test('ReelShort non-1 update_status maps to ongoing', () => {
   }
 });
 
+test('ReelShort missing update_status defaults to ongoing', () => {
+  const html = `<script id="__NEXT_DATA__">${JSON.stringify({
+    props: { pageProps: { data: { book_title: 'No status' } } },
+  })}</script>`;
+  const { meta } = extractMetaFromNextData(
+    html,
+    'https://www.reelshort.com/movie/no-status-635a3436503d9c47e1014621',
+  );
+  assert.equal(meta.completion, '连载中');
+});
+
 test('ReelShort /tags/ pages are identified without matching drama pages', () => {
   assert.equal(
     isReelshortCatalogUrl('https://www.reelshort.com/tags/story-beats'),
@@ -94,6 +105,7 @@ test('ReelShort catalog parser returns independent selectable dramas and paging'
                 book_pic: 'https://img.example/cover.jpg',
                 special_desc: 'A revenge story.',
                 chapter_count: 55,
+                update_status: 1,
               },
             ],
           },
@@ -121,6 +133,7 @@ test('ReelShort catalog parser returns independent selectable dramas and paging'
       coverUrl: 'https://img.example/cover.jpg',
       description: 'A revenge story.',
       chapterCount: 55,
+      completion: '已完结',
     },
   ]);
 });

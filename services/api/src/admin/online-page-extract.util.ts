@@ -16,6 +16,12 @@ export type ExtractedDramaCatalogItem = {
   coverUrl?: string;
   description?: string;
   chapterCount?: number;
+  /** ReelShort catalog status: 1 = completed, other values = ongoing. */
+  completion?: '已完结' | '连载中';
+  synced?: boolean;
+  syncedDramaId?: string;
+  syncedEpisodes?: number;
+  updateAvailable?: boolean;
 };
 
 export type ExtractedDramaCatalog = {
@@ -450,6 +456,10 @@ export function extractReelshortDramaCatalog(
     const coverUrl = absoluteHttpUrl(book.book_pic, pageUrl);
     const description = String(book.special_desc || book.book_desc || '').trim();
     const chapterCount = Number(book.chapter_count);
+    const completion =
+      Number(book.update_status) === 1
+        ? ('已完结' as const)
+        : ('连载中' as const);
     items.push({
       id,
       title: title.slice(0, 120),
@@ -459,6 +469,7 @@ export function extractReelshortDramaCatalog(
       ...(Number.isFinite(chapterCount) && chapterCount > 0
         ? { chapterCount: Math.floor(chapterCount) }
         : {}),
+      completion,
     });
   }
   if (!items.length) return null;
@@ -608,9 +619,8 @@ function extractReelshortFromPageData(pageData: any): {
   if (Number(pageData.chapter_count) > 0) {
     meta.chapterCount = Number(pageData.chapter_count);
   }
-  if (Object.prototype.hasOwnProperty.call(pageData, 'update_status')) {
-    meta.completion = Number(pageData.update_status) === 1 ? '已完结' : '连载中';
-  }
+  // ReelShort: only numeric 1 means completed; missing/other values remain ongoing.
+  meta.completion = Number(pageData.update_status) === 1 ? '已完结' : '连载中';
 
   const genreLabels: string[] = [];
   pushGenreLabel(genreLabels, pageData.book_type);

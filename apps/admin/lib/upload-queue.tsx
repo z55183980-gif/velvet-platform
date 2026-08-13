@@ -19,8 +19,10 @@ import {
   adminUpdateDrama,
   adminUploadImage,
   adminYtdlpTransferCancel,
+  adminYtdlpTransferJobs,
   adminYtdlpTransferJob,
 } from "@velvet/api-client";
+import type { YtdlpTransferJob } from "@velvet/api-client";
 import { captureVideoFirstFrameWithMeta } from "@/lib/capture-video-frame";
 
 export type UploadEpStatus = "pending" | "uploading" | "done" | "error" | "cancelled";
@@ -58,6 +60,9 @@ export type UploadEpisodeSnapshot = {
   thumbnailUrl?: string;
   status: UploadEpStatus;
   error?: string;
+  failureStage?: "download" | "transcode" | "stalled" | "drama_skipped";
+  failureAttempts?: number;
+  transferStage?: "transfer" | "transcode-queued" | "transcoding";
 };
 
 export type UploadJob = {
@@ -70,6 +75,21 @@ export type UploadJob = {
   preferDirect: boolean;
   /** Server-side ytdlp transfer job id (kind === "ytdlp-transfer"). */
   transferJobId?: string;
+  transferPhase?: "queued" | "transferring" | "transcoding" | "completed" | "failed" | "cancelled";
+  transferProgress?: {
+    total: number;
+    transferred: number;
+    currentEpisode: number | null;
+    failed: number;
+  };
+  transcodeProgress?: {
+    total: number;
+    pending: number;
+    queued: number;
+    processing: number;
+    completed: number;
+    failed: number;
+  };
   createDrama?: UploadCreateDramaMeta;
   appendSourceTags?: string[];
   /** After all uploads succeed, wait for transcode then call online. */
@@ -133,6 +153,8 @@ type UploadQueueContextValue = {
   enqueueJob: (input: EnqueueUploadJobInput) => string;
   /** Monitor a server-side ytdlp → R2/local transfer in the task panel. */
   enqueueTransferJob: (input: EnqueueTransferJobInput) => string;
+  /** Restore recent server-side transfer jobs after a browser refresh. */
+  refreshServerTransferJobs: () => Promise<number>;
   cancelJob: (jobId: string) => void;
   retryEpisode: (jobId: string, episodeId: string) => void;
   retryFailed: (jobId: string) => void;
@@ -152,6 +174,7 @@ const PUBLISH_READY_TIMEOUT_MS = 30 * 60_000;
 const PUBLISH_POLL_MS = 3_000;
 /** Poll interval for server-side ytdlp transfer progress. */
 const TRANSFER_POLL_MS = 2_500;
+const TRANSFER_TASK_STORAGE_KEY = "velvet-admin-transfer-tasks-v1";
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -247,10 +270,105 @@ function summarizeJobStatus(episodes: UploadEpisodeSnapshot[]): UploadJobStatus 
   return "failed";
 }
 
+function transferJobFromRemote(remote: YtdlpTransferJob): UploadJob {
+  const total = Math.max(0, Math.floor(Number(remote.total) || 0));
+  const rows = new Map<number, { title: string; status: UploadEpStatus; error?: string }>();
+  for (const selected of remote.selectedEpisodes || []) {
+    const episodeNumber = Number(selected.episodeNumber);
+    if (!Number.isFinite(episodeNumber) || episodeNumber <= 0) continue;
+    rows.set(episodeNumber, {
+      title: (selected.title || "").trim(),
+      status: "pending",
+    });
+  }
+  for (const entry of remote.jobs || []) {
+    const episodeNumber = Number(entry.sourceIndex ?? entry.episodeNumber);
+    if (!Number.isFinite(episodeNumber) || episodeNumber <= 0) continue;
+    const status: UploadEpStatus =
+      entry.transcodeStatus === "completed"
+        ? "done"
+        : entry.transcodeStatus === "failed"
+          ? "error"
+          : entry.transcodeStatus
+            ? "uploading"
+            : "pending";
+    rows.set(episodeNumber, {
+      title: rows.get(episodeNumber)?.title || "",
+      status,
+      error: entry.transcodeError || undefined,
+    });
+  }
+  for (const failure of remote.failedEpisodes || []) {
+    const episodeNumber = Number(failure.episodeNumber);
+    if (!Number.isFinite(episodeNumber) || episodeNumber <= 0) continue;
+    rows.set(episodeNumber, {
+      title: rows.get(episodeNumber)?.title || "",
+      status: "error",
+      error: failure.error,
+    });
+  }
+  if (!rows.size) {
+    for (let i = 1; i <= total; i += 1) rows.set(i, { title: "", status: "pending" });
+  } else {
+    let next = 1;
+    while (rows.size < total) {
+      if (!rows.has(next)) rows.set(next, { title: "", status: "pending" });
+      next += 1;
+    }
+  }
+  const episodes = [...rows.entries()]
+    .sort(([a], [b]) => a - b)
+    .slice(0, total)
+    .map(([episodeNumber, row]) => ({
+      id: `${remote.id}-ep-${episodeNumber}`,
+      fileName: row.title || `ep${episodeNumber}`,
+      fileSize: 0,
+      title: row.title,
+      episodeNumber,
+      isFree: true,
+      previewSeconds: 0,
+      priceCredits: 0,
+      status: row.status,
+      error: row.error,
+    }));
+  return {
+    id: `transfer-remote-${remote.id}`,
+    title: remote.slug || `Transfer ${remote.id}`,
+    dramaId: remote.dramaId,
+    kind: "ytdlp-transfer",
+    mode: "new",
+    preferDirect: true,
+    transferJobId: remote.id,
+    transferPhase: remote.phase,
+    transferProgress: {
+      total,
+      transferred: Number(remote.transferred) || 0,
+    currentEpisode: remote.currentEpisode == null ? null : Number(remote.currentEpisode),
+      failed: remote.failedEpisodes?.length || 0,
+    },
+    transcodeProgress: remote.transcode,
+    status:
+      remote.status === "completed"
+        ? "completed"
+        : remote.status === "cancelled"
+          ? "cancelled"
+          : remote.status === "failed"
+            ? "failed"
+            : remote.status === "queued"
+              ? "queued"
+              : "running",
+    createdAt: Date.parse(remote.createdAt) || Date.now(),
+    updatedAt: Date.parse(remote.updatedAt) || Date.now(),
+    error: remote.error,
+    episodes,
+  };
+}
+
 export function UploadQueueProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
   const [jobs, setJobs] = useState<UploadJob[]>([]);
   const [panelOpen, setPanelOpen] = useState(false);
+  const [transferStorageHydrated, setTransferStorageHydrated] = useState(false);
   const filesRef = useRef<FileBucket>(new Map());
   const runningRef = useRef(new Set<string>());
   const transferRunningRef = useRef(new Set<string>());
@@ -258,6 +376,47 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
   jobsRef.current = jobs;
   const cancelledRef = useRef(new Set<string>());
   const pumpRef = useRef<() => void>(() => undefined);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(TRANSFER_TASK_STORAGE_KEY);
+      const parsed = raw ? (JSON.parse(raw) as UploadJob[]) : [];
+      const restored = Array.isArray(parsed)
+        ? parsed
+            .filter(
+              (job) =>
+                job &&
+                job.kind === "ytdlp-transfer" &&
+                typeof job.transferJobId === "string" &&
+                Array.isArray(job.episodes),
+            )
+            .slice(0, 30)
+        : [];
+      if (restored.length) {
+        jobsRef.current = restored;
+        setJobs(restored);
+      }
+    } catch {
+      window.localStorage.removeItem(TRANSFER_TASK_STORAGE_KEY);
+    } finally {
+      setTransferStorageHydrated(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!transferStorageHydrated) return;
+    const transfers = jobs
+      .filter((job) => job.kind === "ytdlp-transfer")
+      .slice(0, 30);
+    try {
+      window.localStorage.setItem(
+        TRANSFER_TASK_STORAGE_KEY,
+        JSON.stringify(transfers),
+      );
+    } catch {
+      // Storage quota/privacy mode must not interrupt server-side transfers.
+    }
+  }, [jobs, transferStorageHydrated]);
 
   const patchJob = useCallback((jobId: string, patch: (job: UploadJob) => UploadJob) => {
     const next = jobsRef.current.map((job) => {
@@ -606,17 +765,18 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
             pollFailures = 0;
             // Server writes consecutive drama episodeNumbers into jobs[]; sourceIndex
             // keeps the staged / selected index that matches our panel rows.
-            const doneNums = new Set(
-              (remote.jobs || []).map((entry) =>
+            const transcodeByNum = new Map(
+              (remote.jobs || []).map((entry) => [
                 Number(
                   entry.sourceIndex != null ? entry.sourceIndex : entry.episodeNumber,
                 ),
-              ),
+                entry,
+              ]),
             );
             const failMap = new Map(
               (remote.failedEpisodes || []).map((f) => [
                 Number(f.episodeNumber),
-                String(f.error || "failed"),
+                f,
               ]),
             );
             const current =
@@ -624,19 +784,74 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
 
             let finished = false;
             patchJob(jobId, (j) => {
-              const episodes = j.episodes.map((ep) => {
+              const transferProgress = {
+                total: Number(remote.total || 0),
+                transferred: Number(remote.transferred || 0),
+                currentEpisode: remote.currentEpisode == null
+                  ? null
+                  : Number(remote.currentEpisode),
+                failed: (remote.failedEpisodes || []).length,
+              };
+            const episodes = j.episodes.map((ep) => {
                 if (failMap.has(ep.episodeNumber)) {
+                  const failure = failMap.get(ep.episodeNumber)!;
                   return {
                     ...ep,
                     status: "error" as const,
-                    error: failMap.get(ep.episodeNumber),
+                    error: String(failure.error || "failed"),
+                    failureStage: failure.stage,
+                    failureAttempts: failure.attempts,
                   };
                 }
-                if (doneNums.has(ep.episodeNumber)) {
-                  return { ...ep, status: "done" as const, error: undefined };
+                const transcode = transcodeByNum.get(ep.episodeNumber);
+                if (transcode?.transcodeStatus === "completed") {
+                  return {
+                    ...ep,
+                    status: "done" as const,
+                    error: undefined,
+                    failureStage: undefined,
+                    failureAttempts: undefined,
+                    transferStage: undefined,
+                  };
+                }
+                if (transcode?.transcodeStatus === "failed") {
+                  return {
+                    ...ep,
+                    status: "error" as const,
+                    error: transcode.transcodeError || "转码失败",
+                    failureStage: transcode.transcodeError?.includes("无进展")
+                      ? ("stalled" as const)
+                      : ("transcode" as const),
+                    failureAttempts: transcode.transcodeAttempts,
+                    transferStage: undefined,
+                  };
+                }
+                if (transcode?.transcodeStatus === "processing") {
+                  return {
+                    ...ep,
+                    status: "uploading" as const,
+                    error: undefined,
+                    transferStage: "transcoding" as const,
+                  };
+                }
+                if (
+                  transcode?.transcodeStatus === "queued" ||
+                  transcode?.transcodeStatus === "pending"
+                ) {
+                  return {
+                    ...ep,
+                    status: "uploading" as const,
+                    error: undefined,
+                    transferStage: "transcode-queued" as const,
+                  };
                 }
                 if (current != null && current === ep.episodeNumber) {
-                  return { ...ep, status: "uploading" as const, error: undefined };
+                  return {
+                    ...ep,
+                    status: "uploading" as const,
+                    error: undefined,
+                    transferStage: "transfer" as const,
+                  };
                 }
                 if (ep.status === "done" || ep.status === "error" || ep.status === "cancelled") {
                   return ep;
@@ -670,6 +885,9 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
                       ? "failed"
                       : "failed",
                   episodes: finalized,
+                  transferPhase: remote.phase,
+                  transferProgress,
+                  transcodeProgress: remote.transcode,
                   error: allOk
                     ? undefined
                     : `部分分集未转入（成功 ${(remote.jobs || []).length}/${remote.total}）`,
@@ -682,7 +900,14 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
                   dramaId: remote.dramaId || j.dramaId,
                   status: "failed" as const,
                   episodes,
-                  error: remote.error || "Transfer failed",
+                  transferPhase: remote.phase,
+                  transferProgress,
+                  transcodeProgress: remote.transcode,
+                  error:
+                    remote.error ||
+                    (remote.transcode.failed > 0
+                      ? `${remote.transcode.failed} 集转码失败`
+                      : "Transfer failed"),
                 };
               }
               if (remote.status === "cancel_requested" || remote.status === "cancelled") {
@@ -692,14 +917,20 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
                   dramaId: remote.dramaId || j.dramaId,
                   status: "cancelled" as const,
                   episodes,
+                  transferPhase: remote.phase,
+                  transferProgress,
+                  transcodeProgress: remote.transcode,
                   error: remote.status === "cancel_requested" ? "取消请求已提交" : undefined,
                 };
               }
               return {
                 ...j,
                 dramaId: remote.dramaId || j.dramaId,
-                status: "running" as const,
+                status: remote.status === "queued" ? ("queued" as const) : ("running" as const),
                 episodes,
+                transferPhase: remote.phase,
+                transferProgress,
+                transcodeProgress: remote.transcode,
                 error: undefined,
               };
             });
@@ -834,12 +1065,15 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
   const enqueueTransferJob = useCallback((input: EnqueueTransferJobInput) => {
     const id = `transfer-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const total = Math.max(0, Math.floor(input.totalEpisodes));
-    const titleByNum = new Map(
-      (input.episodeTitles || []).map((ep) => [ep.episodeNumber, (ep.title || "").trim()]),
-    );
-    const episodes: UploadEpisodeSnapshot[] = Array.from({ length: total }, (_, i) => {
-      const episodeNumber = i + 1;
-      const title = titleByNum.get(episodeNumber) || "";
+    const titleRows: Array<{ episodeNumber: number; title?: string }> =
+      input.episodeTitles || [];
+    const fallbackRows: Array<{ episodeNumber: number; title?: string }> =
+      Array.from({ length: total }, (_, i) => ({ episodeNumber: i + 1 }));
+    const episodes: UploadEpisodeSnapshot[] = (titleRows.length ? titleRows : fallbackRows)
+      .slice(0, total)
+      .map((row, i) => {
+      const episodeNumber = Number(row.episodeNumber) > 0 ? Number(row.episodeNumber) : i + 1;
+      const title = (row.title || "").trim();
       return {
         id: `${id}-ep-${episodeNumber}`,
         fileName: title || `ep${episodeNumber}`,
@@ -862,6 +1096,13 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
       mode: "new",
       preferDirect: true,
       transferJobId: input.transferJobId,
+      transferPhase: "queued",
+      transferProgress: {
+        total,
+        transferred: 0,
+        currentEpisode: null,
+        failed: 0,
+      },
       status: "queued",
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -875,6 +1116,36 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
     setPanelOpen(true);
     return id;
   }, []);
+
+  const refreshServerTransferJobs = useCallback(async () => {
+    const remoteJobs = await adminYtdlpTransferJobs({ limit: 30 });
+    const existingTransferIds = new Set(
+      jobsRef.current
+        .filter((job) => job.kind === "ytdlp-transfer" && job.transferJobId)
+        .map((job) => job.transferJobId),
+    );
+    const restored = remoteJobs
+      .filter((remote) => remote.status !== "completed" && remote.status !== "cancelled")
+      .filter((remote) => !existingTransferIds.has(remote.id))
+      .map(transferJobFromRemote);
+    if (restored.length) {
+      setJobs((prev) => {
+        const next = [...restored, ...prev].slice(0, 30);
+        jobsRef.current = next;
+        return next;
+      });
+      setPanelOpen(true);
+    }
+    return restored.length;
+  }, []);
+
+  useEffect(() => {
+    if (!transferStorageHydrated) return;
+    // Recover server-side jobs automatically so a fresh browser session still
+    // exposes the failure list and active queue without requiring a hidden
+    // panel to be opened first.
+    void refreshServerTransferJobs().catch(() => undefined);
+  }, [refreshServerTransferJobs, transferStorageHydrated]);
 
   const cancelJob = useCallback((jobId: string) => {
     cancelledRef.current.add(jobId);
@@ -959,6 +1230,13 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
           keep.push(job);
           continue;
         }
+        // Keep failed server-side transfers visible: their final failure list
+        // is the operator's handoff record and must not disappear when the
+        // panel is closed. They can still be dismissed explicitly.
+        if (job.kind === "ytdlp-transfer" && job.status === "failed") {
+          keep.push(job);
+          continue;
+        }
         filesRef.current.delete(job.id);
       }
       jobsRef.current = keep;
@@ -1000,6 +1278,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
       browserActiveCount,
       enqueueJob,
       enqueueTransferJob,
+      refreshServerTransferJobs,
       cancelJob,
       retryEpisode,
       retryFailed,
@@ -1013,6 +1292,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
       browserActiveCount,
       enqueueJob,
       enqueueTransferJob,
+      refreshServerTransferJobs,
       cancelJob,
       retryEpisode,
       retryFailed,

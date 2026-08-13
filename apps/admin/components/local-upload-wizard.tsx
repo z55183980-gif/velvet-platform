@@ -174,6 +174,8 @@ type EpisodeDraft = {
   messageId?: number;
   /** yt-dlp playlist entry index when applicable. */
   playlistIndex?: number;
+  /** Original source episode number, preserved for sparse selections. */
+  sourceIndex?: number;
   title: string;
   isFree: boolean;
   previewSeconds: number;
@@ -345,8 +347,21 @@ export const LocalUploadWizard = forwardRef<
   {
     /** 打开「在线入库」弹窗（由 ContentAddPanel 托管） */
     onRequestOnline?: () => void;
+    /** RS 同步卡片弹窗仅展示剧集信息、播放策略与提交操作。 */
+    presentation?: "full" | "info-policy";
+    /** Called after a server-side transfer is accepted by the API. */
+    onTransferQueued?: (data: {
+      id: string;
+      jobId: string;
+      totalEpisodes: number;
+      title: string;
+      episodeTitles: Array<{ episodeNumber: number; title?: string }>;
+    }) => void;
   }
->(function LocalUploadWizard({ onRequestOnline }, ref) {
+>(function LocalUploadWizard(
+  { onRequestOnline, presentation = "full", onTransferQueued },
+  ref,
+) {
   const { t } = useI18n();
   const router = useRouter();
   const qc = useQueryClient();
@@ -522,6 +537,10 @@ export const LocalUploadWizard = forwardRef<
               webpageUrl,
               messageId: ep.messageId,
               playlistIndex: ep.playlistIndex,
+              sourceIndex:
+                typeof ep.episodeNumber === "number" && ep.episodeNumber > 0
+                  ? Math.floor(ep.episodeNumber)
+                  : i + 1,
               title: title.slice(0, 80),
               isFree: true,
               previewSeconds: 0,
@@ -935,7 +954,6 @@ export const LocalUploadWizard = forwardRef<
     }
     return null;
   }, [
-    categorySlug,
     descriptionEn,
     episodes,
     onlineIngest,
@@ -1711,8 +1729,12 @@ export const LocalUploadWizard = forwardRef<
           : undefined;
       const pageUrl = onlineIngest?.pageUrl?.trim() || "";
 
-      if (onlineIngest?.ingestForm === "r2") {
-        if (onlineIngest.provider === "telegram") {
+      // The RS sync detail editor is transfer-only. Keep it on the R2 path even
+      // if an older/stale staged payload does not carry the ingest form flag;
+      // otherwise the generic online-create branch would navigate to drama
+      // details after submit.
+      if (onlineIngest?.ingestForm === "r2" || presentation === "info-policy") {
+        if (onlineIngest?.provider === "telegram") {
           const ingest = onlineIngestRef.current ?? onlineIngest;
           const channel =
             ingest.telegramChannel?.trim() ||
@@ -1720,8 +1742,8 @@ export const LocalUploadWizard = forwardRef<
             linkEps.find((ep) => ep.webpageUrl)?.webpageUrl ||
             "";
           const transferEps = linkEps
-            .map((ep, i) => ({
-              episodeNumber: i + 1,
+          .map((ep, i) => ({
+            episodeNumber: ep.sourceIndex ?? i + 1,
               title: ep.title,
               webpageUrl: ep.webpageUrl?.trim() || undefined,
               messageId: ep.messageId,
@@ -1795,7 +1817,7 @@ export const LocalUploadWizard = forwardRef<
         }
         const transferEps = linkEps
           .map((ep, i) => ({
-            episodeNumber: i + 1,
+            episodeNumber: ep.sourceIndex ?? i + 1,
             title: ep.title,
             webpageUrl: ep.webpageUrl?.trim() || undefined,
             sourceUrl: ep.sourceUrl?.trim() || undefined,
@@ -1817,11 +1839,11 @@ export const LocalUploadWizard = forwardRef<
           creatorId: creatorId.trim() || undefined,
           maxEpisodes: max,
           formatPreference:
-            onlineIngest.formatPreference === "best_hls"
+            (onlineIngest?.formatPreference || "best") === "best_hls"
               ? "best"
-              : onlineIngest.formatPreference || "best",
-          cookiesFile: onlineIngest.cookiesFile,
-          authBearer: onlineIngest.authBearer,
+              : onlineIngest?.formatPreference || "best",
+          cookiesFile: onlineIngest?.cookiesFile,
+          authBearer: onlineIngest?.authBearer,
           freeEpisodeCount: (() => {
             try {
               return resolvePolicyForTotal(transferEps.length || max || 0).freeCount;
@@ -1935,6 +1957,13 @@ export const LocalUploadWizard = forwardRef<
     onSuccess: async (data) => {
       setError(null);
       if (data.kind === "transfer") {
+        onTransferQueued?.({
+          id: data.id,
+          jobId: data.jobId,
+          totalEpisodes: data.n,
+          title: data.title,
+          episodeTitles: data.episodeTitles,
+        });
         enqueueTransferJob({
           title: data.title,
           dramaId: data.id,
@@ -2132,6 +2161,7 @@ export const LocalUploadWizard = forwardRef<
 
   return (
     <div className="space-y-4">
+      {presentation === "full" ? (
       <div className="flex flex-wrap items-center justify-between gap-2">
         {showDrafts ? (
           <p className="text-body-sm text-ink-muted">{t("draftBoxHint")}</p>
@@ -2150,6 +2180,7 @@ export const LocalUploadWizard = forwardRef<
           )}
         </Button>
       </div>
+      ) : null}
 
       {showDrafts ? (
         <section className="upload-panel space-y-3">
@@ -2225,6 +2256,7 @@ export const LocalUploadWizard = forwardRef<
         </div>
       ) : null}
 
+      {presentation === "full" ? (
       <section className="upload-panel space-y-4">
         <div className="upload-panel__head">
           <div>
@@ -2533,8 +2565,10 @@ export const LocalUploadWizard = forwardRef<
             )}
           </div>
       </section>
+      ) : null}
 
-      {onlineIngest?.ingestForm === "r2" || fileEpisodeCount > 0 ? (
+      {presentation === "full" &&
+      (onlineIngest?.ingestForm === "r2" || fileEpisodeCount > 0) ? (
         <section className="upload-panel space-y-3">
           <div className="upload-panel__head">
             <div>
@@ -2650,6 +2684,23 @@ export const LocalUploadWizard = forwardRef<
                   </div>
                 </div>
 
+                <label className="upload-field">
+                  <span>
+                    {t("onlineDescEn")}
+                    <em className="float-right not-italic text-ink-subtle">
+                      {descriptionEn.length}/300
+                    </em>
+                  </span>
+                  <textarea
+                    className="content-textarea upload-info-desc"
+                    rows={3}
+                    maxLength={300}
+                    value={descriptionEn}
+                    disabled={busy}
+                    onChange={(e) => setDescriptionEn(e.target.value)}
+                  />
+                </label>
+
                 <div className="upload-info-row upload-info-row--meta">
                   <div className="upload-field upload-field--tags">
                     <span>
@@ -2738,22 +2789,6 @@ export const LocalUploadWizard = forwardRef<
                   </div>
                 </div>
 
-                <label className="upload-field">
-                  <span>
-                    {t("onlineDescEn")}
-                    <em className="float-right not-italic text-ink-subtle">
-                      {descriptionEn.length}/300
-                    </em>
-                  </span>
-                  <textarea
-                    className="content-textarea upload-info-desc"
-                    rows={3}
-                    maxLength={300}
-                    value={descriptionEn}
-                    disabled={busy}
-                    onChange={(e) => setDescriptionEn(e.target.value)}
-                  />
-                </label>
               </div>
 
               <div className="upload-info-layout__cover">

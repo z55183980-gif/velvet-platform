@@ -1827,6 +1827,10 @@ export async function adminYtdlpAiExtract(
     maxEpisodes?: number;
     cookiesFile?: string;
     authBearer?: string;
+    /** Skip the optional OpenAI metadata pass for fast catalog detail loading. */
+    skipAi?: boolean;
+    /** Keep AI metadata in the source page language (RS detail uses English). */
+    sourceLanguage?: "en" | "zh";
   },
 ) {
   return adminRequest<{
@@ -1869,6 +1873,8 @@ export async function adminYtdlpAiExtract(
       maxEpisodes: opts?.maxEpisodes,
       cookiesFile: opts?.cookiesFile,
       authBearer: opts?.authBearer,
+      skipAi: opts?.skipAi,
+      sourceLanguage: opts?.sourceLanguage,
     }),
   });
 }
@@ -1894,6 +1900,11 @@ export async function adminYtdlpCatalog(
       coverUrl?: string;
       description?: string;
       chapterCount?: number;
+      completion?: "已完结" | "连载中";
+      synced?: boolean;
+      syncedDramaId?: string;
+      syncedEpisodes?: number;
+      updateAvailable?: boolean;
     }>;
   }>("/admin/ytdlp/catalog", {
     method: "POST",
@@ -2067,12 +2078,34 @@ export type YtdlpTransferJob = {
     | "failed"
     | "cancel_requested"
     | "cancelled";
+  transferStatus:
+    | "queued"
+    | "running"
+    | "completed"
+    | "failed"
+    | "cancel_requested"
+    | "cancelled";
+  phase:
+    | "queued"
+    | "transferring"
+    | "transcoding"
+    | "completed"
+    | "failed"
+    | "cancelled";
   target: "local" | "r2";
   preferR2: boolean;
   total: number;
   transferred: number;
   currentEpisode: number | null;
-  failedEpisodes: Array<{ episodeNumber: number; url: string; error: string }>;
+  selectedEpisodes: Array<{ episodeNumber: number; title?: string }>;
+  failedEpisodes: Array<{
+    episodeNumber: number;
+    url: string;
+    error: string;
+    stage?: "download" | "transcode" | "stalled" | "drama_skipped";
+    attempts?: number;
+    episodeId?: string;
+  }>;
   jobs: Array<{
     episodeId: string;
     episodeNumber: number;
@@ -2082,7 +2115,19 @@ export type YtdlpTransferJob = {
     webpageUrl?: string;
     downloadUrl?: string;
     sourceIndex?: number;
+    transcodeStatus?: "pending" | "queued" | "processing" | "completed" | "failed";
+    transcodeError?: string;
+    transcodeAttempts?: number;
   }>;
+  transcode: {
+    total: number;
+    pending: number;
+    queued: number;
+    processing: number;
+    completed: number;
+    failed: number;
+    settled: boolean;
+  };
   previewUrl?: string;
   extractor?: string;
   kind?: "single" | "playlist";
@@ -2162,9 +2207,51 @@ export async function adminYtdlpTransfer(body: {
   });
 }
 
+export async function adminYtdlpAppendTransfer(body: {
+  dramaId: string;
+  url: string;
+  maxEpisodes?: number;
+  formatPreference?: "best_hls" | "best_mp4" | "best";
+  cookiesFile?: string;
+  authBearer?: string;
+}) {
+  return adminRequest<{
+    dramaId: string;
+    jobId?: string;
+    jobStatus: "queued" | "running" | "completed";
+    target: "local" | "r2";
+    addedEpisodes: number;
+    totalEpisodes: number;
+    updateAvailable: boolean;
+    episodeTitles: Array<{ episodeNumber: number; title?: string }>;
+  }>(`/admin/dramas/${encodeURIComponent(body.dramaId)}/ytdlp/append-transfer`, {
+    method: "POST",
+    body: JSON.stringify({
+      url: body.url,
+      maxEpisodes: body.maxEpisodes,
+      formatPreference: body.formatPreference,
+      cookiesFile: body.cookiesFile,
+      authBearer: body.authBearer,
+    }),
+  });
+}
+
 export async function adminYtdlpTransferJob(jobId: string) {
   return adminRequest<YtdlpTransferJob>(
     `/admin/ytdlp/transfer/${encodeURIComponent(jobId)}`,
+  );
+}
+
+export async function adminYtdlpTransferJobs(opts?: {
+  status?: YtdlpTransferJob['status'];
+  limit?: number;
+}) {
+  const params = new URLSearchParams();
+  if (opts?.status) params.set('status', opts.status.toUpperCase());
+  if (opts?.limit != null) params.set('limit', String(opts.limit));
+  const query = params.toString();
+  return adminRequest<YtdlpTransferJob[]>(
+    `/admin/ytdlp/transfers${query ? `?${query}` : ''}`,
   );
 }
 

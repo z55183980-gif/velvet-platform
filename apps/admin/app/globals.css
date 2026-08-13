@@ -3053,6 +3053,27 @@
     overflow: hidden;
   }
 
+  .upload-task-dock.is-fullscreen {
+    inset: 0;
+    width: 100vw;
+    max-width: none;
+    display: grid;
+    place-items: center;
+    padding: clamp(0.5rem, 1.5vw, 1.25rem);
+    background: rgba(15, 20, 25, 0.38);
+    backdrop-filter: blur(7px);
+    -webkit-backdrop-filter: blur(7px);
+    z-index: 80;
+  }
+
+  .upload-task-panel.is-fullscreen {
+    width: min(96rem, 100%);
+    height: 100%;
+    max-height: none;
+    border-radius: 1.1rem;
+    background: rgba(248, 249, 251, 0.99);
+  }
+
   .upload-task-panel__head {
     display: flex;
     align-items: flex-start;
@@ -3083,6 +3104,15 @@
     display: flex;
     flex-direction: column;
     gap: 0.55rem;
+  }
+
+  .upload-task-panel.is-fullscreen .upload-task-panel__list {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(34rem, 100%), 1fr));
+    align-content: start;
+    align-items: start;
+    gap: 0.8rem;
+    padding: 0.9rem;
   }
 
   .upload-task-panel__foot {
@@ -3146,6 +3176,139 @@
     padding-right: 0.15rem;
   }
 
+  .upload-task-card.is-fullscreen-view .upload-task-card__eps {
+    max-height: min(36vh, 22rem);
+  }
+
+  .upload-task-progress-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.45rem;
+    margin-top: 0.6rem;
+  }
+
+  .upload-task-card.is-fullscreen-view .upload-task-progress-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.65rem;
+  }
+
+  .upload-task-progress {
+    min-width: 0;
+    padding: 0.6rem 0.65rem;
+    border: 1px solid rgba(15, 20, 25, 0.06);
+    border-radius: 0.65rem;
+    background: rgba(15, 20, 25, 0.025);
+  }
+
+  .upload-task-progress__label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    font-size: 0.72rem;
+    color: var(--color-ink-muted);
+  }
+
+  .upload-task-progress__label strong {
+    flex-shrink: 0;
+    font-size: 0.74rem;
+    font-weight: 700;
+    color: var(--color-ink);
+  }
+
+  .upload-task-progress__track {
+    display: block;
+    height: 0.38rem;
+    margin-top: 0.42rem;
+    overflow: hidden;
+    border-radius: 999px;
+    background: rgba(15, 20, 25, 0.09);
+  }
+
+  .upload-task-progress__fill {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--color-brand, #a20d2b);
+    transition: width 260ms ease;
+  }
+
+  .upload-task-progress__fill.is-ok {
+    background: #15946b;
+  }
+
+  .upload-task-progress p {
+    margin-top: 0.35rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.68rem;
+    color: var(--color-ink-subtle);
+  }
+
+  .upload-task-failures {
+    margin-top: 0.6rem;
+    padding: 0.65rem;
+    border: 1px solid rgba(190, 18, 60, 0.18);
+    border-radius: 0.7rem;
+    background: rgba(255, 241, 244, 0.78);
+  }
+
+  .upload-task-failures__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    font-size: 0.74rem;
+    color: var(--color-danger, #be123c);
+  }
+
+  .upload-task-failures__head strong {
+    font-weight: 700;
+  }
+
+  .upload-task-failures ul {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    max-height: 9rem;
+    margin-top: 0.5rem;
+    overflow-y: auto;
+  }
+
+  .upload-task-failures li {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr);
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.35rem 0.45rem;
+    border-radius: 0.5rem;
+    background: rgba(255, 255, 255, 0.72);
+    font-size: 0.7rem;
+  }
+
+  .upload-task-failures__episode {
+    font-weight: 700;
+    color: var(--color-ink);
+  }
+
+  .upload-task-failures__stage {
+    color: var(--color-danger, #be123c);
+  }
+
+  .upload-task-failures__reason {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--color-ink-muted);
+  }
+
+  .upload-task-failures > p {
+    margin-top: 0.45rem;
+    font-size: 0.67rem;
+    color: var(--color-ink-subtle);
+  }
+
   .upload-task-ep {
     display: flex;
     align-items: center;
@@ -3186,6 +3349,20 @@
 
   .upload-task-clear-btn:active {
     filter: brightness(0.96);
+  }
+
+  @media (max-width: 640px) {
+    .upload-task-card.is-fullscreen-view .upload-task-progress-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .upload-task-dock.is-fullscreen {
+      padding: 0;
+    }
+
+    .upload-task-panel.is-fullscreen {
+      border-radius: 0;
+    }
   }
 }
 

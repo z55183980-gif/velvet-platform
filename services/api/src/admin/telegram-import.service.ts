@@ -18,6 +18,7 @@ import type {
   YtdlpTransferJobEntry,
   YtdlpTransferJobState,
 } from './ytdlp-import.service';
+import { YtdlpImportService } from './ytdlp-import.service';
 import { requireSecret } from '../common/security-config';
 import { signMediaPath } from '../common/media-sign.util';
 
@@ -80,6 +81,7 @@ export class TelegramImportService implements OnModuleInit {
     private readonly upload: UploadService,
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly ytdlp: YtdlpImportService,
   ) {}
 
   onModuleInit() {
@@ -161,7 +163,9 @@ export class TelegramImportService implements OnModuleInit {
     if (!job || job.extractor !== 'telegram') {
       throw new BizException(BizCode.NOT_FOUND, '转存任务不存在或已过期');
     }
-    return this.toPublicState(job as DbTransferRow);
+    // Use the shared live transfer + transcode aggregation so Telegram and
+    // yt-dlp tasks report identical progress semantics.
+    return this.ytdlp.getTransferJob(jobId);
   }
 
   async transferDrama(
@@ -755,36 +759,6 @@ export class TelegramImportService implements OnModuleInit {
   private parseFailures(raw: unknown): YtdlpEpisodeFailure[] {
     if (!Array.isArray(raw)) return [];
     return raw.filter(Boolean) as YtdlpEpisodeFailure[];
-  }
-
-  private toPublicState(row: DbTransferRow): YtdlpTransferJobState {
-    const statusMap = {
-      QUEUED: 'queued',
-      RUNNING: 'running',
-      COMPLETED: 'completed',
-      FAILED: 'failed',
-    } as const;
-    return {
-      id: row.id,
-      dramaId: row.dramaId.toString(),
-      slug: row.slug,
-      status: statusMap[row.status],
-      target: row.target === 'r2' ? 'r2' : 'local',
-      preferR2: row.preferR2,
-      total: row.total,
-      transferred: row.transferred,
-      currentEpisode: row.currentEpisode,
-      failedEpisodes: this.parseFailures(row.failedEpisodes),
-      jobs: this.parseJobs(row.jobs),
-      previewUrl: row.previewUrl || undefined,
-      extractor: row.extractor || undefined,
-      kind: row.kind === 'playlist' || row.kind === 'single' ? row.kind : undefined,
-      externalRef: row.externalRef || undefined,
-      sourceType: row.sourceType || undefined,
-      error: row.error || undefined,
-      createdAt: row.createdAt.toISOString(),
-      updatedAt: row.updatedAt.toISOString(),
-    };
   }
 
   private async autoEpisodeThumbnailFromVideo(

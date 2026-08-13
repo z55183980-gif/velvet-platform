@@ -18,6 +18,9 @@ const nextConfig = {
   poweredByHeader: false,
   transpilePackages: ["@velvet/ui", "@velvet/api-client", "@velvet/validators"],
   trailingSlash: false,
+  experimental: {
+    proxyTimeout: 180_000,
+  },
   async headers() {
     return [
       {

@@ -1,13 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Check,
   ChevronDown,
   ChevronRight,
   ChevronUp,
   LoaderCircle,
+  Maximize2,
+  Minimize2,
+  RefreshCw,
   RotateCcw,
   Upload,
   X,
@@ -66,19 +69,46 @@ function jobInProgress(job: UploadJob) {
   return job.status === "queued" || job.status === "running";
 }
 
-function JobCard({ job }: { job: UploadJob }) {
+function progressPercent(done: number, total: number) {
+  if (total <= 0) return 0;
+  return Math.max(0, Math.min(100, Math.round((done / total) * 100)));
+}
+
+function ProgressBar({ value, tone = "brand" }: { value: number; tone?: "brand" | "ok" }) {
+  return (
+    <span className="upload-task-progress__track" aria-hidden>
+      <span
+        className={cn("upload-task-progress__fill", tone === "ok" && "is-ok")}
+        style={{ width: `${value}%` }}
+      />
+    </span>
+  );
+}
+
+function JobCard({ job, fullscreen = false }: { job: UploadJob; fullscreen?: boolean }) {
   const { t } = useI18n();
   const { cancelJob, retryFailed, retryEpisode } = useUploadQueue();
   const isTransfer = job.kind === "ytdlp-transfer";
   const done = job.episodes.filter((ep) => ep.status === "done").length;
   const total = job.episodes.length;
-  const failed = job.episodes.filter((ep) => ep.status === "error").length;
+  const failedEpisodes = job.episodes.filter((ep) => ep.status === "error");
+  const failed = failedEpisodes.length;
   const inProgress = jobInProgress(job);
   const canRetry =
     !isTransfer && job.episodes.some((ep) => ep.status === "error" || ep.status === "cancelled");
   /** null = follow default (expand only while in progress). */
   const [userExpanded, setUserExpanded] = useState<boolean | null>(null);
-  const expanded = userExpanded ?? inProgress;
+  const expanded = userExpanded ?? (inProgress || fullscreen);
+  const downloadTotal = job.transferProgress?.total ?? total;
+  const downloadDone = job.transferProgress?.transferred ?? done;
+  const downloadFailed = job.transferProgress?.failed ?? failed;
+  const transcodeSettled = job.transcodeProgress
+    ? job.transcodeProgress.completed + job.transcodeProgress.failed
+    : done + failed;
+  const transcodeTotal = job.transcodeProgress?.total ?? total;
+  const downloadProcessed = downloadDone + downloadFailed;
+  const downloadPercent = progressPercent(downloadProcessed, downloadTotal);
+  const transcodePercent = progressPercent(transcodeSettled, transcodeTotal);
 
   const statusLabel =
     !job.dramaId && (job.status === "queued" || job.status === "running")
@@ -91,7 +121,9 @@ function JobCard({ job }: { job: UploadJob }) {
         ? t("uploadTaskQueued")
         : job.status === "running"
           ? isTransfer
-            ? t("ytdlpTransferProgress")
+            ? job.transferPhase === "transcoding"
+              ? t("uploadTaskTranscodeProgress")
+              : t("ytdlpTransferProgress")
             : t("uploadTaskRunning")
           : job.status === "completed"
             ? job.publishStatus === "published"
@@ -115,7 +147,13 @@ function JobCard({ job }: { job: UploadJob }) {
           : jobStatusTone(job.status);
 
   return (
-    <article className={cn("upload-task-card", expanded && "is-expanded")}>
+    <article
+      className={cn(
+        "upload-task-card",
+        expanded && "is-expanded",
+        fullscreen && "is-fullscreen-view",
+      )}
+    >
       <div className="upload-task-card__head">
         <button
           type="button"
@@ -137,6 +175,16 @@ function JobCard({ job }: { job: UploadJob }) {
               {job.publishWhenReady ? ` · ${t("uploadTaskWillPublish")}` : ""}
               {" · "}
               {t("uploadProgressLabel", { done, total })}
+              {isTransfer && job.transcodeProgress?.total
+                ? ` · ${t("uploadTaskTranscodeSummary", {
+                    done: String(job.transcodeProgress.completed),
+                    total: String(job.transcodeProgress.total),
+                    queued: String(
+                      job.transcodeProgress.pending + job.transcodeProgress.queued,
+                    ),
+                    processing: String(job.transcodeProgress.processing),
+                  })}`
+                : ""}
               {failed ? ` · ${t("uploadTaskFailedCount", { n: failed })}` : ""}
             </p>
           </div>
@@ -158,6 +206,47 @@ function JobCard({ job }: { job: UploadJob }) {
 
       {expanded ? (
         <>
+          <div className="upload-task-progress-grid">
+            <div className="upload-task-progress">
+              <div className="upload-task-progress__label">
+                <span>{isTransfer ? t("uploadTaskDownloadStage") : t("uploadTaskUploadStage")}</span>
+                <strong>
+                  {downloadProcessed}/{downloadTotal} · {downloadPercent}%
+                </strong>
+              </div>
+              <ProgressBar value={downloadPercent} />
+              <p>
+                {job.transferProgress?.currentEpisode
+                  ? t("uploadTaskCurrentEpisode", { n: job.transferProgress.currentEpisode })
+                  : job.status === "queued"
+                    ? t("uploadTaskWaitingSerialQueue")
+                    : downloadFailed > 0
+                      ? t("uploadTaskFailedCount", { n: downloadFailed })
+                      : t("uploadTaskStageSettled")}
+              </p>
+            </div>
+            {isTransfer ? (
+              <div className="upload-task-progress">
+                <div className="upload-task-progress__label">
+                  <span>{t("uploadTaskTranscodeStage")}</span>
+                  <strong>
+                    {transcodeSettled}/{transcodeTotal} · {transcodePercent}%
+                  </strong>
+                </div>
+                <ProgressBar value={transcodePercent} tone="ok" />
+                <p>
+                  {job.transcodeProgress
+                    ? t("uploadTaskTranscodeDetail", {
+                        pending: job.transcodeProgress.pending + job.transcodeProgress.queued,
+                        processing: job.transcodeProgress.processing,
+                        failed: job.transcodeProgress.failed,
+                      })
+                    : t("uploadTaskTranscodePendingDetail")}
+                </p>
+              </div>
+            ) : null}
+          </div>
+
           {job.error ? <p className="content-inline-error mt-2 text-caption">{job.error}</p> : null}
           {job.publishError && job.publishStatus === "failed" ? (
             <p className="content-inline-error mt-2 text-caption">
@@ -167,6 +256,40 @@ function JobCard({ job }: { job: UploadJob }) {
                   ? t("uploadTaskPublishFailed")
                   : job.publishError}
             </p>
+          ) : null}
+
+          {isTransfer && failedEpisodes.length > 0 ? (
+            <section className="upload-task-failures" aria-label={t("uploadTaskManualListTitle")}>
+              <div className="upload-task-failures__head">
+                <strong>{t("uploadTaskManualListTitle")}</strong>
+                <span>{t("uploadTaskManualListCount", { n: failedEpisodes.length })}</span>
+              </div>
+              <ul className="scrollbar-thin">
+                {failedEpisodes.map((ep) => (
+                  <li key={`failure-${ep.id}`}>
+                    <span className="upload-task-failures__episode">
+                      {t("localWizardEpisodeNumLabel", { n: ep.episodeNumber })}
+                    </span>
+                    <span className="upload-task-failures__stage">
+                      {ep.failureStage === "download"
+                        ? t("uploadTaskFailureDownload")
+                        : ep.failureStage === "drama_skipped"
+                          ? t("uploadTaskFailureDramaSkipped")
+                        : ep.failureStage === "stalled"
+                          ? t("uploadTaskFailureStalled")
+                          : t("uploadTaskFailureTranscode")}
+                      {ep.failureAttempts
+                        ? ` · ${t("uploadTaskFailureAttempts", { n: ep.failureAttempts })}`
+                        : ""}
+                    </span>
+                    <span className="upload-task-failures__reason">
+                      {ep.error || t("uploadTaskFailureUnknown")}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <p>{t("uploadTaskManualListHint")}</p>
+            </section>
           ) : null}
 
           <ul className="upload-task-card__eps scrollbar-thin">
@@ -191,9 +314,13 @@ function JobCard({ job }: { job: UploadJob }) {
                   {ep.status === "error" ? <XCircle className="h-3 w-3" /> : null}
                   {ep.status === "pending"
                     ? t("uploadTaskEpPending")
-                    : ep.status === "uploading"
+                      : ep.status === "uploading"
                       ? isTransfer
-                        ? t("uploadTaskEpTransferring")
+                        ? ep.transferStage === "transcoding"
+                          ? t("uploadTaskEpTranscoding")
+                          : ep.transferStage === "transcode-queued"
+                            ? t("uploadTaskEpTranscodeQueued")
+                            : t("uploadTaskEpTransferring")
                         : t("uploadTaskEpUploading")
                       : ep.status === "done"
                         ? t("uploadTaskEpDone")
@@ -255,21 +382,59 @@ function JobCard({ job }: { job: UploadJob }) {
 
 export function UploadTaskPanel() {
   const { t } = useI18n();
-  const { jobs, panelOpen, setPanelOpen, activeCount, browserActiveCount, clearFinished } =
+  const {
+    jobs,
+    panelOpen,
+    setPanelOpen,
+    activeCount,
+    browserActiveCount,
+    clearFinished,
+    refreshServerTransferJobs,
+  } =
     useUploadQueue();
   const hasJobs = jobs.length > 0;
+  const [fullscreen, setFullscreen] = useState(false);
+  const [refreshingServer, setRefreshingServer] = useState(false);
+
+  useEffect(() => {
+    if (!fullscreen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setFullscreen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [fullscreen]);
 
   if (!hasJobs && !panelOpen) return null;
 
-  const collapseToFab = () => setPanelOpen(false);
+  const collapseToFab = () => {
+    setFullscreen(false);
+    setPanelOpen(false);
+  };
   const closePanel = () => {
     // Drop settled records only; in-flight jobs keep running and show as FAB.
     clearFinished();
+    setFullscreen(false);
     setPanelOpen(false);
   };
 
+  const restoreServerJobs = async () => {
+    if (refreshingServer) return;
+    setRefreshingServer(true);
+    try {
+      await refreshServerTransferJobs();
+    } finally {
+      setRefreshingServer(false);
+    }
+  };
+
   return (
-    <div className="upload-task-dock">
+    <div className={cn("upload-task-dock", fullscreen && "is-fullscreen")}>
       {!panelOpen ? (
         <button
           type="button"
@@ -282,13 +447,45 @@ export function UploadTaskPanel() {
           {activeCount > 0 ? <span className="upload-task-fab__badge">{activeCount}</span> : null}
         </button>
       ) : (
-        <section className="upload-task-panel" aria-label={t("uploadTaskPanelTitle")}>
+        <section
+          className={cn("upload-task-panel", fullscreen && "is-fullscreen")}
+          aria-label={t("uploadTaskPanelTitle")}
+          aria-modal={fullscreen || undefined}
+          role={fullscreen ? "dialog" : undefined}
+        >
           <header className="upload-task-panel__head">
             <div>
               <h2>{t("uploadTaskPanelTitle")}</h2>
               <p>{t("uploadTaskPanelHint")}</p>
             </div>
             <div className="flex shrink-0 items-center gap-0.5">
+              <button
+                type="button"
+                className="grid h-8 w-8 place-items-center rounded-lg text-ink-muted hover:bg-white/60 hover:text-ink disabled:opacity-50"
+                onClick={() => void restoreServerJobs()}
+                disabled={refreshingServer}
+                aria-label={t("uploadTaskRefreshServer")}
+                title={t("uploadTaskRefreshServer")}
+              >
+                <RefreshCw className={cn("h-4 w-4", refreshingServer && "animate-spin")} />
+              </button>
+              <button
+                type="button"
+                className="grid h-8 w-8 place-items-center rounded-lg text-ink-muted hover:bg-white/60 hover:text-ink"
+                onClick={() => setFullscreen((value) => !value)}
+                aria-label={
+                  fullscreen ? t("uploadTaskExitFullscreen") : t("uploadTaskFullscreen")
+                }
+                title={
+                  fullscreen ? t("uploadTaskExitFullscreen") : t("uploadTaskFullscreen")
+                }
+              >
+                {fullscreen ? (
+                  <Minimize2 className="h-4 w-4" />
+                ) : (
+                  <Maximize2 className="h-4 w-4" />
+                )}
+              </button>
               <button
                 type="button"
                 className="grid h-8 w-8 place-items-center rounded-lg text-ink-muted hover:bg-white/60 hover:text-ink"
@@ -315,7 +512,7 @@ export function UploadTaskPanel() {
           ) : (
             <div className="upload-task-panel__list scrollbar-thin">
               {jobs.map((job) => (
-                <JobCard key={job.id} job={job} />
+                <JobCard key={job.id} job={job} fullscreen={fullscreen} />
               ))}
             </div>
           )}

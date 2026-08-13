@@ -384,6 +384,11 @@ class YtdlpProbeDto extends YtdlpAuthFields {
 class YtdlpAiExtractDto extends YtdlpAuthFields {
   @IsNotEmpty() @IsString() url!: string;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(1) @Max(120) maxEpisodes?: number;
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true' || value === 1)
+  @IsBoolean()
+  skipAi?: boolean;
+  @IsOptional() @IsIn(['en', 'zh']) sourceLanguage?: 'en' | 'zh';
 }
 
 class YtdlpCatalogDto extends YtdlpAuthFields {
@@ -494,6 +499,13 @@ class YtdlpTransferDto extends YtdlpAuthFields {
 class YtdlpAppendDto extends YtdlpAuthFields {
   @IsNotEmpty() @IsString() url!: string;
   @IsOptional() @Type(() => Number) @IsNumber() @Min(1) maxEpisodes?: number;
+  @IsOptional() @IsIn(['best_hls', 'best_mp4', 'best'])
+  formatPreference?: 'best_hls' | 'best_mp4' | 'best';
+}
+
+class YtdlpAppendTransferDto extends YtdlpAuthFields {
+  @IsNotEmpty() @IsString() url!: string;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) @Max(120) maxEpisodes?: number;
   @IsOptional() @IsIn(['best_hls', 'best_mp4', 'best'])
   formatPreference?: 'best_hls' | 'best_mp4' | 'best';
 }
@@ -1007,6 +1019,8 @@ export class ContentController {
         maxEpisodes: dto.maxEpisodes,
         cookiesFile: dto.cookiesFile,
         authBearer: dto.authBearer,
+        skipAi: dto.skipAi,
+        sourceLanguage: dto.sourceLanguage,
       }),
     );
   }
@@ -1197,6 +1211,20 @@ export class ContentController {
     return ok(await this.ytdlp.getTransferJob(jobId));
   }
 
+  @Get('ytdlp/transfers')
+  @SkipThrottle(SKIP_ALL_THROTTLES)
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async ytdlpTransfers(@Query('status') status?: string, @Query('limit') limit?: string) {
+    const allowed = new Set(['QUEUED', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCEL_REQUESTED', 'CANCELLED']);
+    const normalized = String(status || '').trim().toUpperCase();
+    return ok(
+      await this.ytdlp.listTransferJobs({
+        status: allowed.has(normalized) ? (normalized as any) : undefined,
+        limit: limit ? Number(limit) : undefined,
+      }),
+    );
+  }
+
   @Post('ytdlp/transfer/:jobId/cancel')
   @AdminRoles('SUPER_ADMIN', 'OPS')
   async ytdlpTransferCancel(@Param('jobId') jobId: string) {
@@ -1306,6 +1334,28 @@ export class ContentController {
     @Req() req: any,
   ) {
     return ok(await this.ytdlp.appendToDrama(id, dto, getActor(req)));
+  }
+
+  @Post('dramas/:id/ytdlp/append-transfer')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async ytdlpAppendTransfer(
+    @Param('id') id: string,
+    @Body() dto: YtdlpAppendTransferDto,
+    @Req() req: any,
+  ) {
+    return ok(
+      await this.ytdlp.appendTransferToDrama(
+        id,
+        {
+          url: dto.url,
+          maxEpisodes: dto.maxEpisodes,
+          formatPreference: dto.formatPreference,
+          cookiesFile: dto.cookiesFile,
+          authBearer: dto.authBearer,
+        },
+        getActor(req),
+      ),
+    );
   }
 
   @Post('dramas/hottest/reorder')

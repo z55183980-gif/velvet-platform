@@ -41,11 +41,19 @@ export function contentAddQuery(sel: ContentAddSelection): string {
 export function ContentAddPanel({
   tab: controlledTab,
   onSelectionChange,
+  initialOnlineUrl,
+  autoLoadInitialOnlineUrl = false,
+  enableCatalogMultiSelect = false,
 }: {
   tab?: ContentAddTab;
   /** @deprecated ignored */
   method?: string;
   onSelectionChange?: (sel: ContentAddSelection) => void;
+  /** Optional fixed source used by dedicated ingest entry points. */
+  initialOnlineUrl?: string;
+  autoLoadInitialOnlineUrl?: boolean;
+  /** RS sync page: allow several dramas to be staged as transfer candidates. */
+  enableCatalogMultiSelect?: boolean;
 } = {}) {
   const { t } = useI18n();
   const wizardRef = useRef<LocalUploadWizardHandle>(null);
@@ -151,6 +159,9 @@ export function ContentAddPanel({
               onIngestTabChange={setOnlineIngestTab}
               onDirtyChange={markDirty}
               onFillDramaInfo={fillDramaInfo}
+              initialUrl={initialOnlineUrl}
+              autoLoadInitialUrl={autoLoadInitialOnlineUrl}
+              enableCatalogMultiSelect={enableCatalogMultiSelect}
             />
           ) : null}
         </div>
