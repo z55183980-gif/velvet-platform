@@ -10,6 +10,7 @@ import {
   adminYtdlpPreviewFrame,
   adminYtdlpProbe,
   adminYtdlpResolve,
+  adminYtdlpResolveBatch,
   adminYtdlpStatus,
   adminYtdlpUploadCookies,
 } from "@velvet/api-client";
@@ -608,28 +609,14 @@ export function YtdlpImportPanel({
     const fails: { index: number; error: string }[] = [];
     let episodes = probe.episodes;
 
+    const unresolved: Array<{ ep: ProbeResult["episodes"][number]; url: string }> = [];
     for (const ep of queue) {
-      if (resolveAbortRef.current) break;
-      setResolveProgress(
-        t("ytdlpResolveBatchProgress", {
-          done: String(done),
-          total: String(queue.length),
-        }) + ` · #${ep.index}`,
-      );
-
       const existing = episodeSourceUrl(ep);
       if (isPlayableMediaUrl(existing)) {
         ok += 1;
         done += 1;
-        setResolveProgress(
-          t("ytdlpResolveBatchProgress", {
-            done: String(done),
-            total: String(queue.length),
-          }),
-        );
         continue;
       }
-
       const pageUrl = (ep.webpageUrl || existing || "").trim();
       if (!pageUrl) {
         fail += 1;
@@ -637,43 +624,61 @@ export function YtdlpImportPanel({
         fails.push({ index: ep.index, error: "missing url" });
         continue;
       }
+      unresolved.push({ ep, url: pageUrl });
+    }
 
+    for (let offset = 0; offset < unresolved.length; offset += 20) {
+      if (resolveAbortRef.current) break;
+      const chunk = unresolved.slice(offset, offset + 20);
+      setResolveProgress(
+        t("ytdlpResolveBatchProgress", {
+          done: String(done),
+          total: String(queue.length),
+        }) + ` · #${chunk[0]?.ep.index ?? ""}`,
+      );
       try {
-        const data = await adminYtdlpResolve({
-          url: pageUrl,
+        const data = await adminYtdlpResolveBatch({
+          episodes: chunk.map(({ ep, url }) => ({
+            index: ep.index,
+            url,
+            playlistIndex: episodePlaylistIndex(ep),
+          })),
           formatPreference,
-          playlistIndex: episodePlaylistIndex(ep),
           ...authPayload(),
         });
-        episodes = episodes.map((row) =>
-          row.index === ep.index
+        const resolvedByIndex = new Map(data.resolved.map((item) => [item.index, item]));
+        const failedByIndex = new Map(data.failed.map((item) => [item.index, item.error]));
+        episodes = episodes.map((row) => {
+          const resolved = resolvedByIndex.get(row.index);
+          return resolved
             ? {
                 ...row,
-                sourceUrl: data.playUrl,
+                sourceUrl: resolved.playUrl,
                 candidateCount: Math.max(row.candidateCount || 0, 1),
               }
-            : row,
-        ) as ProbeResult["episodes"];
+            : row;
+        }) as ProbeResult["episodes"];
+        for (const { ep } of chunk) {
+          if (resolvedByIndex.has(ep.index)) ok += 1;
+          else {
+            fail += 1;
+            fails.push({ index: ep.index, error: failedByIndex.get(ep.index) || "resolve failed" });
+          }
+          done += 1;
+        }
         setProbe((prev) => {
           if (!prev) return prev;
           const extractor = prev.extractor.includes("+ytdlp")
             ? prev.extractor
             : `${prev.extractor}+ytdlp`;
-          return {
-            ...prev,
-            extractor,
-            episodes,
-          } as ProbeResult;
+          return { ...prev, extractor, episodes } as ProbeResult;
         });
-        ok += 1;
       } catch (e: unknown) {
-        fail += 1;
-        fails.push({
-          index: ep.index,
-          error: e instanceof Error ? e.message : String(e),
-        });
+        fail += chunk.length;
+        done += chunk.length;
+        const error = e instanceof Error ? e.message : String(e);
+        fails.push(...chunk.map(({ ep }) => ({ index: ep.index, error })));
       }
-      done += 1;
       setResolveProgress(
         t("ytdlpResolveBatchProgress", {
           done: String(done),

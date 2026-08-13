@@ -10,7 +10,9 @@ import { pickTitleText } from "@/lib/languages";
 import { cn } from "@/lib/utils";
 
 const SEG_SIZE = 30;
-const SIDEBAR_SEG = 15;
+// Keep desktop theater episode groups aligned with the PC playback layout.
+// Each tab now represents up to thirty episodes (1-30, 31-60, ...).
+const SIDEBAR_SEG = 30;
 
 function VipLockBadge({ className }: { className?: string }) {
   return (

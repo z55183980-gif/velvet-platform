@@ -1807,6 +1807,7 @@ export const LocalUploadWizard = forwardRef<
           titleEn: englishTitle,
           coverUrl: coverUrl.trim() || undefined,
           descriptionEn: descriptionEn.trim() || undefined,
+          sourceTags: composeDramaSourceTags(tags, contentType, completion),
           creatorId: creatorId.trim() || undefined,
           maxEpisodes: max,
           formatPreference:
@@ -1912,6 +1913,7 @@ export const LocalUploadWizard = forwardRef<
         lockMode: policy.createLockMode ?? undefined,
         buyoutCredits: policy.buyoutCredits,
         status: "DRAFT",
+        sourceTags: [...composeDramaSourceTags(tags, contentType, completion), "online"],
         relaxedPlayUrl: false,
         episodes: playable.map((ep, i) => {
           const n = i + 1;

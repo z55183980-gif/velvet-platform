@@ -19,6 +19,7 @@ import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { Transform, Type } from 'class-transformer';
 import {
   ArrayMinSize,
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsIn,
@@ -333,6 +334,7 @@ class CreateOnlineDramaDto {
   @IsOptional() @IsIn(['DRAFT'])
   status?: 'DRAFT';
   @IsOptional() @IsString() externalRef?: string;
+  @IsOptional() @IsArray() @IsString({ each: true }) sourceTags?: string[];
   /** Accept signed/CDN URLs without media extension (same as yt-dlp import). */
   @IsOptional() @IsBoolean() relaxedPlayUrl?: boolean;
   @IsArray()
@@ -379,7 +381,7 @@ class YtdlpProbeDto extends YtdlpAuthFields {
 
 class YtdlpAiExtractDto extends YtdlpAuthFields {
   @IsNotEmpty() @IsString() url!: string;
-  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) maxEpisodes?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) @Max(120) maxEpisodes?: number;
 }
 
 class YtdlpInferCategoryDto {
@@ -420,7 +422,7 @@ class YtdlpResolveBatchDto extends YtdlpAuthFields {
   formatPreference?: 'best_hls' | 'best_mp4' | 'best';
 
   /** Max items to resolve (default: all, hard-capped server-side). */
-  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) maxEpisodes?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) @Max(120) maxEpisodes?: number;
 }
 
 class YtdlpBrowserDownloadDto extends YtdlpAuthFields {
@@ -462,16 +464,18 @@ class YtdlpTransferDto extends YtdlpAuthFields {
   @IsOptional() @IsString() descriptionEn?: string;
   @IsOptional() @IsString() descriptionZh?: string;
   @IsOptional() @IsString() creatorId?: string;
-  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) maxEpisodes?: number;
+  @IsOptional() @Type(() => Number) @IsNumber() @Min(1) @Max(120) maxEpisodes?: number;
   @IsOptional() @IsIn(['best_hls', 'best_mp4', 'best'])
   formatPreference?: 'best_hls' | 'best_mp4' | 'best';
   @IsOptional() @Type(() => Number) @IsNumber() @Min(0) freeEpisodeCount?: number;
   @IsOptional() @IsIn(['FREE_FIRST_N', 'VIP_ALL', 'ALL_FREE', 'INHERIT'])
   lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE' | 'INHERIT' | null;
   @IsOptional() buyoutCredits?: number | string | null;
+  @IsOptional() @IsArray() @IsString({ each: true }) sourceTags?: string[];
   /** Explicit episode list — skips playlist probe; honors AI/manual selection. */
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(120)
   @ValidateNested({ each: true })
   @Type(() => YtdlpTransferEpisodeDto)
   episodes?: YtdlpTransferEpisodeDto[];
@@ -1122,7 +1126,8 @@ export class ContentController {
       String(file.originalname || '')
         .replace(/\.txt$/i, '')
         .trim();
-    return ok(await this.ytdlp.saveCookies(hostname, file.buffer));
+    const saved = await this.ytdlp.saveCookies(hostname, file.buffer);
+    return ok({ filename: saved.filename, bytes: saved.bytes });
   }
 
   @Post('ytdlp/import')
@@ -1170,6 +1175,12 @@ export class ContentController {
   @AdminRoles('SUPER_ADMIN', 'OPS')
   async ytdlpTransferJob(@Param('jobId') jobId: string) {
     return ok(await this.ytdlp.getTransferJob(jobId));
+  }
+
+  @Post('ytdlp/transfer/:jobId/cancel')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async ytdlpTransferCancel(@Param('jobId') jobId: string) {
+    return ok(await this.ytdlp.cancelTransferJob(jobId));
   }
 
   @Get('telegram/status')

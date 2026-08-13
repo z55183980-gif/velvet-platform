@@ -15,6 +15,8 @@ export type PageMetaHints = {
   description?: string;
   /** Free-form genre / tag labels from page JSON when present. */
   genreLabels?: string[];
+  /** Exact ReelShort /tags/ anchor labels; never pass through fuzzy matching. */
+  fixedTagLabels?: string[];
   /** Page/content language hint (e.g. en, zh). */
   language?: string;
   paidStart?: number;
@@ -339,6 +341,41 @@ function metaFromOgTags(html: string): PageMetaHints {
   return meta;
 }
 
+export function isReelshortHost(pageUrl: string): boolean {
+  try {
+    const host = new URL(pageUrl).hostname.toLowerCase();
+    return host === 'reelshort.com' || host === 'www.reelshort.com' || host.endsWith('.reelshort.com');
+  } catch {
+    return false;
+  }
+}
+
+function decodeHtmlText(raw: string): string {
+  return raw
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Extract ReelShort's visible fixed tag links without semantic guessing. */
+export function extractReelshortFixedTagLabels(html: string): string[] {
+  const labels: string[] = [];
+  const re = /<a\b[^>]*href=["'][^"']*\/tags\/[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(String(html || '')))) {
+    const label = decodeHtmlText(match[1] || '');
+    if (!label || label.length > 60 || labels.includes(label)) continue;
+    labels.push(label);
+    if (labels.length >= 12) break;
+  }
+  return labels;
+}
+
 /**
  * NetShort: parse shortPlayDetailVo from Next.js RSC HTML (no classic __NEXT_DATA__).
  * Emit episode page URLs; playable MP4 is resolved later via NetShort encrypted API
@@ -600,7 +637,12 @@ export function extractMetaFromNextData(
   const m = html.match(
     /<script[^>]*id=["']__NEXT_DATA__["'][^>]*>([\s\S]*?)<\/script>/i,
   );
-  if (!m?.[1]) return empty;
+  if (!m?.[1]) {
+    const fixedTags = isReelshortHost(pageUrl)
+      ? extractReelshortFixedTagLabels(html)
+      : [];
+    return fixedTags.length ? { meta: { fixedTagLabels: fixedTags }, episodes: [] } : empty;
+  }
 
   let data: any;
   try {
@@ -615,8 +657,13 @@ export function extractMetaFromNextData(
     return extractDramaboxFromPageProps(pageProps, pageUrl);
   }
 
-  // Default / ReelShort: pageProps.data.book_title / chapter_list
-  return extractReelshortFromPageData(pageProps?.data);
+  // Default / ReelShort: pageProps.data.book_title / chapter_list.
+  const parsed = extractReelshortFromPageData(pageProps?.data);
+  const fixedTags = isReelshortHost(pageUrl)
+    ? extractReelshortFixedTagLabels(html)
+    : [];
+  if (fixedTags.length) parsed.meta.fixedTagLabels = fixedTags;
+  return parsed;
 }
 
 /** Build LLM-friendly text: visible copy + hrefs + truncated page JSON. */

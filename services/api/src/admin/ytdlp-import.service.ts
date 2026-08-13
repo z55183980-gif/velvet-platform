@@ -1,6 +1,12 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { randomUUID, createHash } from 'crypto';
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+  randomUUID,
+} from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { PrismaService } from '../prisma/prisma.service';
@@ -26,6 +32,7 @@ import {
   extractMetaFromNextData,
   isDramaboxHost,
   isNetshortHost,
+  isReelshortHost,
   type ExtractedPageEpisode,
 } from './online-page-extract.util';
 import {
@@ -33,6 +40,7 @@ import {
   inferCategorySlug,
   sanitizeCategorySlug,
 } from './drama-category-infer.util';
+import { mapLabelsToExistingTags } from './drama-tag-match.util';
 import { safeFetchPublicText } from '../common/safe-http-fetch';
 
 export type YtdlpImportOptions = {
@@ -65,6 +73,8 @@ export type YtdlpTransferOptions = YtdlpImportOptions & {
   target: 'local' | 'r2';
   /** When set, skip yt-dlp playlist probe and transfer these episodes only. */
   episodes?: YtdlpTransferEpisodeInput[];
+  /** Display tags selected by the operator or extracted from the source page. */
+  sourceTags?: string[];
   coverUrl?: string;
   /** Primary synopsis (English). Legacy clients may send descriptionZh only. */
   descriptionEn?: string;
@@ -100,7 +110,7 @@ export type YtdlpTransferJobState = {
   id: string;
   dramaId: string;
   slug: string;
-  status: 'queued' | 'running' | 'completed' | 'failed';
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancel_requested' | 'cancelled';
   target: 'local' | 'r2';
   preferR2: boolean;
   total: number;
@@ -124,7 +134,9 @@ type TransferPayload = {
   dramaId: string;
   actorId?: string;
   cookiesFile?: string;
+  /** Legacy plaintext field; new jobs use authBearerEnc. */
   authBearer?: string;
+  authBearerEnc?: string;
   watermarkEnabled?: boolean;
   watermarkX?: number;
   watermarkY?: number;
@@ -151,7 +163,7 @@ type DbTransferRow = {
   id: string;
   dramaId: bigint;
   slug: string;
-  status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED';
+  status: 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCEL_REQUESTED' | 'CANCELLED';
   target: string;
   preferR2: boolean;
   total: number;
@@ -175,6 +187,10 @@ export class YtdlpImportService implements OnModuleInit {
   private readonly logger = new Logger(YtdlpImportService.name);
   /** In-process lock so recover + concurrent poll doesn't double-run. */
   private readonly activeRuns = new Set<string>();
+  private readonly transferEpisodeHardCap = 120;
+  private readonly transferFileHardCap = 4 * 1024 * 1024 * 1024;
+  private readonly transferTotalHardCap = 100 * 1024 * 1024 * 1024;
+  private readonly transferMinFreeBytes = 5 * 1024 * 1024 * 1024;
 
   constructor(
     private readonly provider: YtdlpProvider,
@@ -210,7 +226,7 @@ export class YtdlpImportService implements OnModuleInit {
   probe(url: string, auth?: YtdlpAuthOverride) {
     // yt-dlp cannot enumerate NetShort's encrypted episode pages. Reuse the
     // deterministic HTML/RSC catalog extractor; each page is resolved later.
-    if (isNetshortHost(url)) {
+    if (isNetshortHost(url) || isReelshortHost(url)) {
       return this.aiExtract({
         url,
         cookiesFile: auth?.cookiesFile,
@@ -243,6 +259,7 @@ export class YtdlpImportService implements OnModuleInit {
       coverUrl?: string;
       description?: string;
       genreLabels?: string[];
+      fixedTagLabels?: string[];
       language?: string;
       paidStart?: number;
       chapterCount?: number;
@@ -310,6 +327,11 @@ export class YtdlpImportService implements OnModuleInit {
           ...new Set([...(bestMeta.genreLabels || []), ...meta.genreLabels]),
         ].slice(0, 12);
       }
+      if (meta.fixedTagLabels?.length) {
+        bestMeta.fixedTagLabels = [
+          ...new Set([...(bestMeta.fixedTagLabels || []), ...meta.fixedTagLabels]),
+        ].slice(0, 12);
+      }
       for (const ep of nextEps) {
         // Prefer page hrefs for ReelShort (yt-dlp later); keep media URLs if no href.
         if (!episodeMap.has(ep.episodeNumber)) episodeMap.set(ep.episodeNumber, ep);
@@ -329,7 +351,10 @@ export class YtdlpImportService implements OnModuleInit {
     let descriptionZh = bestMeta.description || '';
     let coverUrl = bestMeta.coverUrl || '';
     let categorySlug = '';
-    let tags = [...(bestMeta.genreLabels || [])];
+    const fixedTagLabels = [...(bestMeta.fixedTagLabels || [])];
+    let tags = fixedTagLabels.length
+      ? fixedTagLabels
+      : [...(bestMeta.genreLabels || [])];
 
     const needLlm =
       this.openai.isConfigured() &&
@@ -384,7 +409,9 @@ export class YtdlpImportService implements OnModuleInit {
             descriptionZh = llmDesc || descriptionZh;
           }
         }
-        if (extracted.tags?.length) {
+        // ReelShort exposes authoritative /tags/ anchors. Do not let an LLM
+        // append speculative labels when deterministic fixed tags exist.
+        if (extracted.tags?.length && !fixedTagLabels.length) {
           tags = [...new Set([...tags, ...extracted.tags])].slice(0, 12);
         }
         const fromLlm = sanitizeCategorySlug(
@@ -479,6 +506,15 @@ export class YtdlpImportService implements OnModuleInit {
     }
 
     const title = (titleEn || titleZh || bestMeta.title || `AI extract`).trim();
+
+    // Remap free-form page/LLM genres onto the closest existing dictionary keys.
+    // Unknown / weak matches are dropped — never invent new DramaTagLabel rows here.
+    if (tags.length && !fixedTagLabels.length) {
+      const catalog = await this.prisma.dramaTagLabel.findMany({
+        select: { key: true, nameEn: true, nameZh: true, nameFr: true },
+      });
+      tags = mapLabelsToExistingTags(tags, catalog, { max: 8 });
+    }
 
     const probe: YtdlpProbeResult & {
       source: 'ai';
@@ -815,6 +851,86 @@ export class YtdlpImportService implements OnModuleInit {
     };
   }
 
+  private transferSecretKey(): Buffer {
+    const configured =
+      this.config.get<string>('YTDLP_PAYLOAD_KEY')?.trim() ||
+      this.config.get<string>('JWT_SECRET')?.trim();
+    const secret = requireSecret('YTDLP_PAYLOAD_KEY', configured, 'dev-ytdlp-payload-key');
+    return createHash('sha256').update(secret).digest();
+  }
+
+  private encryptBearer(value?: string): string | undefined {
+    const token = String(value || '').trim();
+    if (!token) return undefined;
+    const iv = randomBytes(12);
+    const cipher = createCipheriv('aes-256-gcm', this.transferSecretKey(), iv);
+    const encrypted = Buffer.concat([cipher.update(token, 'utf8'), cipher.final()]);
+    const tag = cipher.getAuthTag();
+    return `v1.${iv.toString('base64url')}.${tag.toString('base64url')}.${encrypted.toString('base64url')}`;
+  }
+
+  private decryptBearer(value?: string): string | undefined {
+    const raw = String(value || '').trim();
+    if (!raw) return undefined;
+    if (!raw.startsWith('v1.')) return raw; // legacy rows; scrubbed after claim
+    const [, ivRaw, tagRaw, dataRaw] = raw.split('.');
+    try {
+      const decipher = createDecipheriv(
+        'aes-256-gcm',
+        this.transferSecretKey(),
+        Buffer.from(ivRaw, 'base64url'),
+      );
+      decipher.setAuthTag(Buffer.from(tagRaw, 'base64url'));
+      return Buffer.concat([
+        decipher.update(Buffer.from(dataRaw, 'base64url')),
+        decipher.final(),
+      ]).toString('utf8');
+    } catch {
+      throw new BizException(BizCode.BAD_REQUEST, '转存任务认证信息已失效，请重新提交');
+    }
+  }
+
+  private payloadAuth(payload: TransferPayload) {
+    return this.authFromOpts({
+      cookiesFile: payload.cookiesFile,
+      authBearer: this.decryptBearer(payload.authBearerEnc || payload.authBearer),
+    });
+  }
+
+  private capTransferEpisodes(value: number | undefined, available: number): number {
+    const requested = value && value > 0 ? Math.floor(value) : available;
+    return Math.min(requested, available, this.transferEpisodeHardCap);
+  }
+
+  private async isTransferCancelRequested(jobId: string): Promise<boolean> {
+    const row = await this.prisma.ytdlpTransferJob.findUnique({
+      where: { id: jobId },
+      select: { status: true },
+    });
+    return row?.status === 'CANCEL_REQUESTED' || row?.status === 'CANCELLED';
+  }
+
+  private async markTransferCancelled(jobId: string) {
+    await this.prisma.ytdlpTransferJob.updateMany({
+      where: { id: jobId, status: { in: ['CANCEL_REQUESTED', 'RUNNING', 'QUEUED'] } },
+      data: { status: 'CANCELLED', currentEpisode: null, finishedAt: new Date() },
+    });
+  }
+
+  private assertTransferDiskHeadroom(dir: string) {
+    const statfsSync = (fs as typeof fs & { statfsSync?: (path: string) => { bavail: number; bsize: number } }).statfsSync;
+    if (!statfsSync) return;
+    try {
+      const stat = statfsSync(dir);
+      const free = Number(stat.bavail) * Number(stat.bsize);
+      if (Number.isFinite(free) && free < this.transferMinFreeBytes) {
+        throw new BizException(BizCode.BAD_REQUEST, '磁盘剩余空间不足，无法继续转存');
+      }
+    } catch (e) {
+      if (e instanceof BizException) throw e;
+    }
+  }
+
   /**
    * Download one public-page item via yt-dlp into a temp file for browser attachment download.
    * Caller must delete absPath after the response finishes.
@@ -881,6 +997,29 @@ export class YtdlpImportService implements OnModuleInit {
     });
     if (!job) throw new BizException(BizCode.NOT_FOUND, '转存任务不存在或已过期');
     return this.toPublicState(job as DbTransferRow);
+  }
+
+  async cancelTransferJob(jobId: string) {
+    const id = String(jobId || '').trim();
+    if (!id) throw new BizException(BizCode.BAD_REQUEST, '转存任务 ID 无效');
+    const queued = await this.prisma.ytdlpTransferJob.updateMany({
+      where: { id, status: 'QUEUED' },
+      data: { status: 'CANCELLED', currentEpisode: null, finishedAt: new Date() },
+    });
+    const result = queued.count
+      ? queued
+      : await this.prisma.ytdlpTransferJob.updateMany({
+          where: { id, status: 'RUNNING' },
+          data: { status: 'CANCEL_REQUESTED', currentEpisode: null },
+        });
+    if (!result.count) {
+      const row = await this.prisma.ytdlpTransferJob.findUnique({ where: { id } });
+      if (!row) throw new BizException(BizCode.NOT_FOUND, '转存任务不存在');
+      return this.toPublicState(row as DbTransferRow);
+    }
+    const row = await this.prisma.ytdlpTransferJob.findUnique({ where: { id } });
+    if (!row) throw new BizException(BizCode.NOT_FOUND, '转存任务不存在');
+    return this.toPublicState(row as DbTransferRow);
   }
 
   async importDrama(opts: YtdlpImportOptions, actorId?: bigint) {
@@ -989,7 +1128,12 @@ export class YtdlpImportService implements OnModuleInit {
         // 拉取的第三方内容必须先完成来源/可播审核，不允许直接上线。
         status: 'DRAFT',
         externalRef,
-        sourceTags: ['ytdlp', probe.extractor, `ytdlp:${probe.id}`],
+        sourceTags: [
+          'ytdlp',
+          probe.extractor,
+          `ytdlp:${probe.id}`,
+          ...(probe.tags || []),
+        ],
         relaxedPlayUrl: true,
         episodes,
       },
@@ -1158,10 +1302,7 @@ export class YtdlpImportService implements OnModuleInit {
     let refUrl = pageUrl;
 
     if (explicit.length) {
-      const limit =
-        opts.maxEpisodes && opts.maxEpisodes > 0
-          ? Math.min(opts.maxEpisodes, explicit.length)
-          : explicit.length;
+      const limit = this.capTransferEpisodes(opts.maxEpisodes, explicit.length);
       selected = explicit.slice(0, limit);
       if (!refUrl) refUrl = selected[0]?.webpageUrl || selected[0]?.downloadUrl || '';
       if (!refUrl) throw new BizException(BizCode.BAD_REQUEST, '请填写公开视频页链接');
@@ -1177,10 +1318,7 @@ export class YtdlpImportService implements OnModuleInit {
       if (!probe.episodes.length) {
         throw new BizException(BizCode.BAD_REQUEST, '未解析到分集，无法转存');
       }
-      const limit =
-        opts.maxEpisodes && opts.maxEpisodes > 0
-          ? Math.min(opts.maxEpisodes, probe.episodes.length)
-          : probe.episodes.length;
+      const limit = this.capTransferEpisodes(opts.maxEpisodes, probe.episodes.length);
       selected = probe.episodes.slice(0, limit).map((ep) => ({
         index: ep.index,
         id: ep.id,
@@ -1248,7 +1386,14 @@ export class YtdlpImportService implements OnModuleInit {
         buyoutCredits: opts.buyoutCredits,
         status: 'DRAFT',
         sourceType,
-        sourceTags: ['ytdlp', 'transfer', target, extractor, `ytdlp:${probeId}`],
+        sourceTags: [
+          'ytdlp',
+          'transfer',
+          target,
+          extractor,
+          `ytdlp:${probeId}`,
+          ...(opts.sourceTags || []),
+        ],
         totalEpisodes: selected.length,
         externalRef,
       },
@@ -1263,7 +1408,7 @@ export class YtdlpImportService implements OnModuleInit {
       dramaId: drama.id,
       actorId: actorId != null ? String(actorId) : undefined,
       cookiesFile: opts.cookiesFile?.trim() || undefined,
-      authBearer: opts.authBearer?.trim() || undefined,
+      authBearerEnc: this.encryptBearer(opts.authBearer),
       watermarkEnabled: !!opts.watermarkEnabled,
       watermarkX: opts.watermarkX,
       watermarkY: opts.watermarkY,
@@ -1324,6 +1469,8 @@ export class YtdlpImportService implements OnModuleInit {
   ): TransferPayload['selected'] {
     if (!Array.isArray(episodes) || !episodes.length) return [];
     const out: TransferPayload['selected'] = [];
+    const seenIndexes = new Set<number>();
+    const seenUrls = new Set<string>();
     for (let i = 0; i < episodes.length; i++) {
       const ep = episodes[i];
       const sourceUrl = String(ep.sourceUrl || '').trim() || undefined;
@@ -1340,6 +1487,18 @@ export class YtdlpImportService implements OnModuleInit {
       }
       const n = Number(ep.episodeNumber);
       const index = Number.isFinite(n) && n > 0 ? n : i + 1;
+      if (seenIndexes.has(index)) {
+        throw new BizException(BizCode.BAD_REQUEST, `重复集号: ${index}`);
+      }
+      if (!/^https?:\/\//i.test(downloadUrl)) {
+        throw new BizException(BizCode.BAD_REQUEST, `第 ${index} 集仅支持 http/https 地址`);
+      }
+      const urlKey = downloadUrl.trim();
+      if (seenUrls.has(urlKey)) {
+        throw new BizException(BizCode.BAD_REQUEST, `重复下载地址: ${urlKey}`);
+      }
+      seenIndexes.add(index);
+      seenUrls.add(urlKey);
       out.push({
         index,
         id: `xfer-ep-${index}`,
@@ -1356,26 +1515,39 @@ export class YtdlpImportService implements OnModuleInit {
 
   private async recoverPendingTransferJobs() {
     try {
-      const pending = await this.prisma.ytdlpTransferJob.findMany({
-        where: {
-          status: { in: ['QUEUED', 'RUNNING'] },
-          // Telegram jobs are recovered by TelegramImportService.
-          NOT: { extractor: 'telegram' },
-        },
-        orderBy: { createdAt: 'asc' },
-        take: 20,
-      });
-      if (!pending.length) return;
-      for (const job of pending) {
+      let recovered = 0;
+      const pendingIds: string[] = [];
+      let skip = 0;
+      while (true) {
+        const pending = await this.prisma.ytdlpTransferJob.findMany({
+          where: {
+            status: { in: ['QUEUED', 'RUNNING'] },
+            // Telegram jobs are recovered by TelegramImportService.
+            NOT: { extractor: 'telegram' },
+          },
+          orderBy: { createdAt: 'asc' },
+          take: 20,
+          skip,
+          select: { id: true },
+        });
+        if (!pending.length) break;
+        pendingIds.push(...pending.map((job) => job.id));
+        skip += pending.length;
+        if (pending.length < 20) break;
+      }
+      for (const id of pendingIds) {
+        const job = await this.prisma.ytdlpTransferJob.findUnique({ where: { id } });
+        if (!job || (job.status !== 'QUEUED' && job.status !== 'RUNNING')) continue;
         if (job.status === 'RUNNING') {
-          await this.prisma.ytdlpTransferJob.update({
-            where: { id: job.id },
+          await this.prisma.ytdlpTransferJob.updateMany({
+            where: { id: job.id, status: 'RUNNING' },
             data: { status: 'QUEUED', currentEpisode: null },
           });
         }
         void this.runTransferJob(job.id);
+        recovered += 1;
       }
-      this.logger.log(`recovered ${pending.length} ytdlp transfer job(s)`);
+      if (recovered) this.logger.log(`recovered ${recovered} ytdlp transfer job(s)`);
     } catch (e: any) {
       this.logger.warn(`transfer job recover skipped: ${e?.message || e}`);
     }
@@ -1568,9 +1740,9 @@ export class YtdlpImportService implements OnModuleInit {
     try {
       const row = await this.prisma.ytdlpTransferJob.findUnique({ where: { id: jobId } });
       if (!row) return;
-      if (row.status === 'COMPLETED' || row.status === 'FAILED') return;
+      if (row.status === 'COMPLETED' || row.status === 'FAILED' || row.status === 'CANCELLED') return;
 
-      const payload = row.payload as TransferPayload;
+      let payload = row.payload as TransferPayload;
       if (!payload?.selected?.length) {
         await this.prisma.ytdlpTransferJob.update({
           where: { id: jobId },
@@ -1583,20 +1755,40 @@ export class YtdlpImportService implements OnModuleInit {
         return;
       }
 
-      await this.prisma.ytdlpTransferJob.update({
-        where: { id: jobId },
+      // Cross-instance claim: only one worker can transition QUEUED → RUNNING.
+      // The in-process Set remains useful as a cheap duplicate guard, but is
+      // not relied upon for correctness.
+      const claimed = await this.prisma.ytdlpTransferJob.updateMany({
+        where: { id: jobId, status: 'QUEUED' },
         data: {
           status: 'RUNNING',
           startedAt: row.startedAt ?? new Date(),
           attempts: { increment: 1 },
         },
       });
+      if (claimed.count !== 1) return;
+
+      // Migrate legacy plaintext payloads on first claim. New rows never
+      // persist the bearer token in clear text.
+      if (payload.authBearer && !payload.authBearerEnc) {
+        const migrated: TransferPayload = {
+          ...payload,
+          authBearerEnc: this.encryptBearer(payload.authBearer),
+        };
+        delete migrated.authBearer;
+        payload = migrated;
+        await this.prisma.ytdlpTransferJob.update({
+          where: { id: jobId },
+          data: { payload: migrated as any },
+        });
+      }
 
       const uploadDir = this.upload.getUploadDir();
       const extractor = row.extractor || 'unknown';
       const actorId = payload.actorId != null ? BigInt(payload.actorId) : undefined;
       let jobs = this.parseJobs(row.jobs);
       let failedEpisodes = this.parseFailures(row.failedEpisodes);
+      let totalDownloadedBytes = jobs.reduce((sum, item) => sum + Math.max(0, Number(item.size) || 0), 0);
       // Dedup by downloadUrl + sourceIndex only — never by webpageUrl alone.
       // Dramabox-style lists often share one episode page URL across many m3u8s.
       const done = this.transferDoneKeys(jobs);
@@ -1604,6 +1796,10 @@ export class YtdlpImportService implements OnModuleInit {
         payload.useSourceIndexAsEpisodeNumber !== false || !!payload.resumeOf;
 
       for (const ep of payload.selected) {
+        if (await this.isTransferCancelRequested(jobId)) {
+          await this.markTransferCancelled(jobId);
+          return;
+        }
         const downloadUrl =
           (ep as { downloadUrl?: string }).downloadUrl ||
           ep.sourceUrl ||
@@ -1625,22 +1821,72 @@ export class YtdlpImportService implements OnModuleInit {
                 episodeNumber,
               },
             },
-            select: { id: true },
+            select: { id: true, originalUrl: true, hlsUrl: true, transcodeStatus: true },
           });
           if (occupied) {
-            // Already present (e.g. after realign) — treat as done, skip download.
+            // Recovery compensation: an Episode may have been committed before
+            // the transfer JSON update. Reuse/repair its transcode job instead
+            // of silently skipping it forever.
+            const existingJob = await this.prisma.mediaTranscodeJob.findFirst({
+              where: { episodeId: occupied.id },
+              orderBy: { createdAt: 'desc' },
+              select: { id: true, status: true },
+            });
+            const inputRel = occupied.originalUrl || occupied.hlsUrl || '';
+            const inputAbs = inputRel ? this.upload.resolveAbs(inputRel) : '';
+            let mediaJobId = existingJob?.id;
+            if (
+              occupied.transcodeStatus !== 'COMPLETED' &&
+              inputAbs &&
+              fs.existsSync(inputAbs) &&
+              (!existingJob || existingJob.status === 'FAILED')
+            ) {
+              const repaired = await this.upload.enqueueTranscode(inputRel, String(occupied.id), {
+                preferR2: payload.preferR2,
+                watermarkEnabled: !!payload.watermarkEnabled,
+                watermarkX: payload.watermarkX,
+                watermarkY: payload.watermarkY,
+                watermarkScale: payload.watermarkScale,
+              });
+              mediaJobId = repaired.id;
+            }
+            const entry: YtdlpTransferJobEntry = {
+              episodeId: String(occupied.id),
+              episodeNumber,
+              jobId: mediaJobId || 'existing',
+              filename: inputAbs ? path.basename(inputAbs) : '',
+              size: inputAbs && fs.existsSync(inputAbs) ? fs.statSync(inputAbs).size : 0,
+              webpageUrl: ep.webpageUrl,
+              downloadUrl,
+              sourceIndex: ep.index,
+            };
+            jobs = [...jobs, entry];
             done.add(`idx:${ep.index}`);
             if (downloadUrl) done.add(`dl:${downloadUrl}`);
+            await this.prisma.ytdlpTransferJob.update({
+              where: { id: jobId },
+              data: { jobs: jobs as any, transferred: jobs.length },
+            });
             continue;
           }
 
+          this.assertTransferDiskHeadroom(uploadDir);
           const downloaded = await this.provider.downloadToFile(
             downloadUrl,
             uploadDir,
             payload.preference,
             ep.playlistIndex,
-            this.authFromOpts(payload),
+            this.payloadAuth(payload),
           );
+          if (downloaded.size > this.transferFileHardCap) {
+            try { fs.unlinkSync(downloaded.absPath); } catch { /* best effort */ }
+            throw new BizException(BizCode.BAD_REQUEST, '单集文件超过转存大小上限');
+          }
+          totalDownloadedBytes += downloaded.size;
+          if (totalDownloadedBytes > this.transferTotalHardCap) {
+            try { fs.unlinkSync(downloaded.absPath); } catch { /* best effort */ }
+            throw new BizException(BizCode.BAD_REQUEST, '任务总文件大小超过转存上限');
+          }
           const relativePath = `uploads/${path.basename(downloaded.absPath)}`;
           const absInUploads = this.upload.resolveAbs(relativePath);
           if (path.resolve(downloaded.absPath) !== path.resolve(absInUploads)) {
@@ -1691,6 +1937,10 @@ export class YtdlpImportService implements OnModuleInit {
             },
           });
 
+          if (await this.isTransferCancelRequested(jobId)) {
+            await this.markTransferCancelled(jobId);
+            return;
+          }
           const mediaJob = await this.upload.enqueueTranscode(relativePath, created.id, {
             preferR2: payload.preferR2,
             watermarkEnabled: !!payload.watermarkEnabled,
@@ -1789,6 +2039,11 @@ export class YtdlpImportService implements OnModuleInit {
         })
         .catch(() => undefined);
 
+      if (await this.isTransferCancelRequested(jobId)) {
+        await this.markTransferCancelled(jobId);
+        return;
+      }
+
       await this.prisma.ytdlpTransferJob.update({
         where: { id: jobId },
         data: {
@@ -1802,11 +2057,12 @@ export class YtdlpImportService implements OnModuleInit {
       });
     } catch (e: any) {
       this.logger.error(`transfer job ${jobId} crashed: ${e?.message || e}`);
+      const cancelRequested = await this.isTransferCancelRequested(jobId).catch(() => false);
       await this.prisma.ytdlpTransferJob
         .update({
           where: { id: jobId },
           data: {
-            status: 'FAILED',
+            status: cancelRequested ? 'CANCELLED' : 'FAILED',
             error: e?.message || 'transfer crashed',
             currentEpisode: null,
             finishedAt: new Date(),
@@ -1844,6 +2100,8 @@ export class YtdlpImportService implements OnModuleInit {
       RUNNING: 'running',
       COMPLETED: 'completed',
       FAILED: 'failed',
+      CANCEL_REQUESTED: 'cancel_requested',
+      CANCELLED: 'cancelled',
     } as const;
     return {
       id: row.id,

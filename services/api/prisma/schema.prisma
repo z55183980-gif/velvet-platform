@@ -382,6 +382,8 @@ enum YtdlpTransferJobStatus {
   RUNNING
   COMPLETED
   FAILED
+  CANCEL_REQUESTED
+  CANCELLED
 }
 
 /// yt-dlp 转存编排任务；API 重启后 QUEUED/RUNNING 会恢复下载（已成功集跳过）。

@@ -18,6 +18,7 @@ import {
   adminOnlineDrama,
   adminUpdateDrama,
   adminUploadImage,
+  adminYtdlpTransferCancel,
   adminYtdlpTransferJob,
 } from "@velvet/api-client";
 import { captureVideoFirstFrameWithMeta } from "@/lib/capture-video-frame";
@@ -582,6 +583,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
       transferRunningRef.current.add(jobId);
       try {
         patchJob(jobId, (j) => ({ ...j, status: "running", error: undefined }));
+        let pollFailures = 0;
         while (true) {
           if (cancelledRef.current.has(jobId)) {
             patchJob(jobId, (j) => ({
@@ -601,6 +603,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
 
           try {
             const remote = await adminYtdlpTransferJob(job.transferJobId);
+            pollFailures = 0;
             // Server writes consecutive drama episodeNumbers into jobs[]; sourceIndex
             // keeps the staged / selected index that matches our panel rows.
             const doneNums = new Set(
@@ -682,6 +685,16 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
                   error: remote.error || "Transfer failed",
                 };
               }
+              if (remote.status === "cancel_requested" || remote.status === "cancelled") {
+                finished = remote.status === "cancelled";
+                return {
+                  ...j,
+                  dramaId: remote.dramaId || j.dramaId,
+                  status: "cancelled" as const,
+                  episodes,
+                  error: remote.status === "cancel_requested" ? "取消请求已提交" : undefined,
+                };
+              }
               return {
                 ...j,
                 dramaId: remote.dramaId || j.dramaId,
@@ -698,11 +711,38 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
               }
               break;
             }
-          } catch {
-            // Transient poll errors — keep monitoring until cancel / terminal status.
+          } catch (e: unknown) {
+            const status = Number((e as { status?: unknown })?.status || 0);
+            pollFailures += 1;
+            if (status === 401 || status === 403) {
+              patchJob(jobId, (j) => ({
+                ...j,
+                status: "failed",
+                error: "管理员会话已过期，请重新登录",
+              }));
+              break;
+            }
+            if (status === 404) {
+              patchJob(jobId, (j) => ({
+                ...j,
+                status: "failed",
+                error: "服务端转存任务不存在或已清理，无法恢复跟踪",
+              }));
+              break;
+            }
+            if (pollFailures >= 5) {
+              patchJob(jobId, (j) => ({
+                ...j,
+                status: "failed",
+                error: "连续多次无法查询转存任务，请稍后重新连接",
+              }));
+              break;
+            }
           }
 
-          await sleep(TRANSFER_POLL_MS);
+          await sleep(
+            Math.min(30_000, TRANSFER_POLL_MS * 2 ** Math.max(0, pollFailures - 1)),
+          );
         }
       } finally {
         transferRunningRef.current.delete(jobId);
@@ -821,8 +861,11 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
   const cancelJob = useCallback((jobId: string) => {
     cancelledRef.current.add(jobId);
     const job = jobsRef.current.find((j) => j.id === jobId);
-    // Transfer jobs keep running on the server; cancel only stops panel tracking.
+    // Request cooperative cancellation on the server, then stop local tracking.
     if (job?.kind === "ytdlp-transfer") {
+      if (job.transferJobId) {
+        void adminYtdlpTransferCancel(job.transferJobId).catch(() => undefined);
+      }
       patchJob(jobId, (j) => ({
         ...j,
         status: "cancelled",

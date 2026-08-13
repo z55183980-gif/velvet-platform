@@ -1671,6 +1671,7 @@ export async function adminCreateOnlineDrama(body: {
   buyoutCredits?: number | null;
   status?: "DRAFT";
   externalRef?: string;
+  sourceTags?: string[];
   /** Align with yt-dlp import: accept CDN/signed URLs without media extension. */
   relaxedPlayUrl?: boolean;
   episodes: Array<{
@@ -2015,7 +2016,7 @@ export async function adminYtdlpUploadCookies(file: File, hostname: string) {
   const form = new FormData();
   form.append("file", file, file.name || `${hostname}.txt`);
   form.append("hostname", hostname);
-  return adminRequest<{ filename: string; absPath: string; bytes: number }>(
+  return adminRequest<{ filename: string; bytes: number }>(
     "/admin/ytdlp/cookies",
     { method: "POST", body: form },
   );
@@ -2025,7 +2026,13 @@ export type YtdlpTransferJob = {
   id: string;
   dramaId: string;
   slug: string;
-  status: "queued" | "running" | "completed" | "failed";
+  status:
+    | "queued"
+    | "running"
+    | "completed"
+    | "failed"
+    | "cancel_requested"
+    | "cancelled";
   target: "local" | "r2";
   preferR2: boolean;
   total: number;
@@ -2069,6 +2076,7 @@ export async function adminYtdlpTransfer(body: {
   freeEpisodeCount?: number;
   lockMode?: "FREE_FIRST_N" | "VIP_ALL" | "ALL_FREE" | "INHERIT" | null;
   buyoutCredits?: number | null;
+  sourceTags?: string[];
   watermarkEnabled?: boolean;
   watermarkX?: number;
   watermarkY?: number;
@@ -2087,7 +2095,13 @@ export async function adminYtdlpTransfer(body: {
     id: string;
     slug: string;
     status: string;
-    jobStatus: "queued" | "running" | "completed" | "failed";
+    jobStatus:
+      | "queued"
+      | "running"
+      | "completed"
+      | "failed"
+      | "cancel_requested"
+      | "cancelled";
     sourceType: string;
     target: "local" | "r2";
     preferR2: boolean;
@@ -2117,6 +2131,13 @@ export async function adminYtdlpTransfer(body: {
 export async function adminYtdlpTransferJob(jobId: string) {
   return adminRequest<YtdlpTransferJob>(
     `/admin/ytdlp/transfer/${encodeURIComponent(jobId)}`,
+  );
+}
+
+export async function adminYtdlpTransferCancel(jobId: string) {
+  return adminRequest<YtdlpTransferJob>(
+    `/admin/ytdlp/transfer/${encodeURIComponent(jobId)}/cancel`,
+    { method: "POST" },
   );
 }
 

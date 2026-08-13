@@ -1527,6 +1527,10 @@ export function DramaDetail({
   };
 
   const tags = displayTags.slice(0, 4);
+  // The desktop playback sidebar follows ReelShort's denser tag treatment.
+  // Keep the browse/detail surfaces at four tags, while allowing the player
+  // metadata block to show the first six labels (as in the reference UI).
+  const theaterTags = displayTags.slice(0, 6);
 
   /* ---- Watching: mobile vertical ---- */
   if (watching && isMobile) {
@@ -2368,12 +2372,12 @@ export function DramaDetail({
                 <p className="mb-4 line-clamp-4 text-[13px] leading-6 text-white/45">{desc}</p>
               ) : null}
 
-              {tags.length > 0 && (
+              {theaterTags.length > 0 && (
                 <div className="mb-5 flex flex-wrap gap-1.5">
-                  {tags.map((tag) => (
+                  {theaterTags.map((tag) => (
                     <span
                       key={tag.key}
-                      className="rounded-md bg-white/[0.08] px-2.5 py-1 text-[12px] text-white/65"
+                      className="rounded-full bg-white/[0.08] px-3 py-1.5 text-[12px] text-white/70"
                     >
                       {pickTagText(locale, tag)}
                     </span>

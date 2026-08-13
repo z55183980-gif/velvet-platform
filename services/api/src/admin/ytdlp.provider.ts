@@ -66,6 +66,8 @@ export type YtdlpProbeResult = {
   title: string;
   coverUrl?: string;
   description?: string;
+  /** Canonical/source tags when a host-specific extractor provides them. */
+  tags?: string[];
   webpageUrl: string;
   kind: 'single' | 'playlist';
   episodes: YtdlpProbeEpisode[];
@@ -378,6 +380,7 @@ export class YtdlpProvider implements OnModuleInit {
   async probe(url: string, auth?: YtdlpAuthOverride): Promise<YtdlpProbeResult> {
     const pageUrl = await this.requireHttpUrl(url);
     const raw = await this.runJson([
+      ...this.egressArgs(),
       ...this.authArgs(pageUrl, auth),
       '--dump-single-json',
       '--flat-playlist',
@@ -507,6 +510,7 @@ export class YtdlpProvider implements OnModuleInit {
 
     const format = this.formatSelector(preference);
     const args = [
+      ...this.egressArgs(),
       ...this.authArgs(pageUrl, auth),
       '-g',
       '-f',
@@ -531,10 +535,14 @@ export class YtdlpProvider implements OnModuleInit {
     }
 
     const hls = lines.find((l) => /\.m3u8(\?|$)/i.test(l) || /\/hls\//i.test(l));
-    if (preference === 'best_hls' && hls) return hls;
     const mp4 = lines.find((l) => /\.mp4(\?|$)/i.test(l));
-    if (preference === 'best_mp4' && mp4) return mp4;
-    return lines[0];
+    const selected =
+      (preference === 'best_hls' && hls) ||
+      (preference === 'best_mp4' && mp4) ||
+      lines[0];
+    // yt-dlp may return a URL discovered inside the page/manifest. Validate
+    // that URL before exposing it to callers or persisting it as episode media.
+    return (await this.requireHttpUrl(selected)).toString();
   }
 
   /**
@@ -573,6 +581,7 @@ export class YtdlpProvider implements OnModuleInit {
     const template = path.join(outputDir, `${stem}.%(ext)s`);
     const format = this.downloadFormatSelector(preference);
     const args = [
+      ...this.egressArgs(),
       ...this.authArgs(pageUrl, downloadAuth),
       '-f',
       format,
@@ -780,6 +789,16 @@ export class YtdlpProvider implements OnModuleInit {
       return 'best/bestvideo+bestaudio';
     }
     return 'best[protocol^=m3u8]/best[ext=m3u8]/best/bestvideo+bestaudio';
+  }
+
+  /** Optional filtering egress proxy for the yt-dlp worker/container. */
+  private egressArgs(): string[] {
+    const proxy = this.config.get<string>('YTDLP_EGRESS_PROXY')?.trim();
+    if (!proxy) return [];
+    if (!/^https?:\/\//i.test(proxy)) {
+      throw new BizException(BizCode.BAD_REQUEST, 'YTDLP_EGRESS_PROXY 必须是 http(s) URL');
+    }
+    return ['--proxy', proxy];
   }
 
   /** Format selector for disk download (merge to a single file ffmpeg can read). */
