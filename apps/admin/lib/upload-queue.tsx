@@ -140,6 +140,8 @@ export type EnqueueTransferJobInput = {
   dramaId: string;
   transferJobId: string;
   totalEpisodes: number;
+  /** Server publishes the drama only after the entire transfer succeeds. */
+  publishWhenReady?: boolean;
   /** Optional titles aligned by episodeNumber (1-based). */
   episodeTitles?: Array<{ episodeNumber: number; title?: string }>;
 };
@@ -341,6 +343,9 @@ function transferJobFromRemote(remote: YtdlpTransferJob): UploadJob {
     kind: "ytdlp-transfer",
     mode: "new",
     preferDirect: true,
+    publishWhenReady: remote.autoPublish,
+    publishStatus:
+      remote.autoPublish && remote.status === "completed" ? "published" : undefined,
     transferJobId: remote.id,
     transferPhase: remote.phase,
     transferProgress: {
@@ -882,6 +887,8 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
                 return {
                   ...j,
                   dramaId: remote.dramaId || j.dramaId,
+                  publishWhenReady: remote.autoPublish,
+                  publishStatus: remote.autoPublish ? "published" : undefined,
                   status: allOk
                     ? "completed"
                     : finalized.some((ep) => ep.status === "done")
@@ -901,6 +908,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
                 return {
                   ...j,
                   dramaId: remote.dramaId || j.dramaId,
+                  publishWhenReady: remote.autoPublish,
                   status: "failed" as const,
                   episodes,
                   transferPhase: remote.phase,
@@ -918,6 +926,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
                 return {
                   ...j,
                   dramaId: remote.dramaId || j.dramaId,
+                  publishWhenReady: remote.autoPublish,
                   status: "cancelled" as const,
                   episodes,
                   transferPhase: remote.phase,
@@ -929,6 +938,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
               return {
                 ...j,
                 dramaId: remote.dramaId || j.dramaId,
+                publishWhenReady: remote.autoPublish,
                 status: remote.status === "queued" ? ("queued" as const) : ("running" as const),
                 episodes,
                 transferPhase: remote.phase,
@@ -1098,6 +1108,7 @@ export function UploadQueueProvider({ children }: { children: ReactNode }) {
       kind: "ytdlp-transfer",
       mode: "new",
       preferDirect: true,
+      publishWhenReady: input.publishWhenReady !== false,
       transferJobId: input.transferJobId,
       transferPhase: "queued",
       transferProgress: {

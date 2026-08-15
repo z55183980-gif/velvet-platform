@@ -11,6 +11,10 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Readable } from 'stream';
 import { pipeline } from 'stream/promises';
+import {
+  forEachBounded,
+  normalizeR2HlsUploadConcurrency,
+} from './r2-upload.util';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
@@ -596,15 +600,32 @@ export class R2StorageService {
   async uploadHlsDirectory(localDir: string, keyPrefix: string): Promise<string> {
     const bucket = this.mediaBucket();
     const prefix = keyPrefix.replace(/^\/+|\/+$/g, '');
-    const entries = fs.readdirSync(localDir);
-    for (const name of entries) {
+    const entries = fs
+      .readdirSync(localDir)
+      .filter((name) => {
+        const abs = path.join(localDir, name);
+        return (
+          fs.statSync(abs).isFile() &&
+          name !== 'source.mp4' &&
+          name !== 'index.m3u8'
+        );
+      })
+      .sort();
+    const concurrency = normalizeR2HlsUploadConcurrency(
+      this.config.get<string>('R2_HLS_UPLOAD_CONCURRENCY') ||
+        process.env.R2_HLS_UPLOAD_CONCURRENCY,
+    );
+    await forEachBounded(entries, concurrency, async (name) => {
       const abs = path.join(localDir, name);
-      if (!fs.statSync(abs).isFile()) continue;
-      if (name === 'source.mp4') continue;
       const key = `${prefix}/${name}`;
       await this.putFile(bucket, key, abs);
       this.logger.log(`r2 put ${bucket}/${key}`);
-    }
+    });
+    // Publish the playlist only after every referenced segment is durable.
+    const playlist = path.join(localDir, 'index.m3u8');
+    if (!fs.existsSync(playlist)) throw new Error('HLS playlist missing');
+    await this.putFile(bucket, `${prefix}/index.m3u8`, playlist);
+    this.logger.log(`r2 put ${bucket}/${prefix}/index.m3u8`);
     return `${this.cdnBase()}/${prefix}/index.m3u8`;
   }
 

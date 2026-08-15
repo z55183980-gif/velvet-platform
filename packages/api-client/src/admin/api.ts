@@ -1901,6 +1901,8 @@ export async function adminYtdlpCatalog(
       description?: string;
       chapterCount?: number;
       completion?: "已完结" | "连载中";
+      transferring?: boolean;
+      transferProgress?: number;
       synced?: boolean;
       syncedDramaId?: string;
       syncedEpisodes?: number;
@@ -2094,6 +2096,7 @@ export type YtdlpTransferJob = {
     | "cancelled";
   target: "local" | "r2";
   preferR2: boolean;
+  autoPublish: boolean;
   total: number;
   transferred: number;
   currentEpisode: number | null;
@@ -2156,6 +2159,7 @@ export async function adminYtdlpTransfer(body: {
   lockMode?: "FREE_FIRST_N" | "VIP_ALL" | "ALL_FREE" | "INHERIT" | null;
   buyoutCredits?: number | null;
   sourceTags?: string[];
+  autoPublish?: boolean;
   watermarkEnabled?: boolean;
   watermarkX?: number;
   watermarkY?: number;
@@ -2184,6 +2188,7 @@ export async function adminYtdlpTransfer(body: {
     sourceType: string;
     target: "local" | "r2";
     preferR2: boolean;
+    autoPublish: boolean;
     storageBackend: string;
     r2Configured: boolean;
     ffmpegReady: boolean;

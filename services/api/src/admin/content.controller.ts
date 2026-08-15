@@ -483,6 +483,10 @@ class YtdlpTransferDto extends YtdlpAuthFields {
   lockMode?: 'FREE_FIRST_N' | 'VIP_ALL' | 'ALL_FREE' | 'INHERIT' | null;
   @IsOptional() buyoutCredits?: number | string | null;
   @IsOptional() @IsArray() @IsString({ each: true }) sourceTags?: string[];
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true' || value === 1)
+  @IsBoolean()
+  autoPublish?: boolean;
   /** Explicit episode list — skips playlist probe; honors AI/manual selection. */
   @IsOptional()
   @IsArray()
@@ -1194,6 +1198,8 @@ export class ContentController {
           freeEpisodeCount: dto.freeEpisodeCount,
           lockMode: dto.lockMode,
           buyoutCredits: dto.buyoutCredits,
+          sourceTags: dto.sourceTags,
+          autoPublish: dto.autoPublish,
           watermarkEnabled: wm?.watermarkEnabled,
           watermarkX: wm?.watermarkX,
           watermarkY: wm?.watermarkY,

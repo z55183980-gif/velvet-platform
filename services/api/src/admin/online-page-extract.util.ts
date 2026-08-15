@@ -18,6 +18,8 @@ export type ExtractedDramaCatalogItem = {
   chapterCount?: number;
   /** ReelShort catalog status: 1 = completed, other values = ongoing. */
   completion?: '已完结' | '连载中';
+  transferring?: boolean;
+  transferProgress?: number;
   synced?: boolean;
   syncedDramaId?: string;
   syncedEpisodes?: number;

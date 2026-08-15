@@ -60,7 +60,7 @@ export function WatermarkPositionEditor({
   frameUrl,
   frameWidth,
   frameHeight,
-  watermarkSrc = "/brand/velvet-watermark.png",
+  watermarkSrc = "/brand/velvet-watermark-subtle-v3.png",
   value,
   busy,
   onChange,

@@ -287,7 +287,7 @@ export function YtdlpImportPanel({
 } = {}) {
   const { t, locale } = useI18n();
   const qc = useQueryClient();
-  const { enqueueTransferJob } = useUploadQueue();
+  const { enqueueTransferJob, jobs: uploadJobs } = useUploadQueue();
   const [ingestTabUncontrolled, setIngestTabUncontrolled] = useState<IngestTab>("parse");
   const ingestTab = dedicatedCatalogMode
     ? "parse"
@@ -311,6 +311,7 @@ export function YtdlpImportPanel({
     CatalogResult["items"]
   >([]);
   const [catalogBatchBusy, setCatalogBatchBusy] = useState(false);
+  const [autoPublishAfterTransfer, setAutoPublishAfterTransfer] = useState(true);
   const catalogSelectedIds = transferCandidates.map((item) => item.id);
   const [epRangeStart, setEpRangeStart] = useState("");
   const [epRangeEnd, setEpRangeEnd] = useState("");
@@ -346,6 +347,51 @@ export function YtdlpImportPanel({
   const catalogCacheRestoredRef = useRef(false);
   const probeRef = useRef<ProbeResult | null>(null);
   probeRef.current = probe;
+
+  function activeTransferJobForCatalogItem(
+    item: CatalogResult["items"][number],
+  ) {
+    return uploadJobs.find((job) => {
+      if (
+        job.kind !== "ytdlp-transfer" ||
+        (job.status !== "queued" && job.status !== "running")
+      ) {
+        return false;
+      }
+      if (item.syncedDramaId) return job.dramaId === item.syncedDramaId;
+      return job.title.trim().toLowerCase() === item.title.trim().toLowerCase();
+    });
+  }
+
+  function isCatalogItemTransferring(
+    item: CatalogResult["items"][number],
+  ) {
+    return !!item.transferring || !!activeTransferJobForCatalogItem(item);
+  }
+
+  function catalogItemTransferProgress(
+    item: CatalogResult["items"][number],
+  ) {
+    const job = activeTransferJobForCatalogItem(item);
+    if (!job) return Math.max(0, Math.min(99, Number(item.transferProgress) || 0));
+    const total = Math.max(1, Number(job.transferProgress?.total) || 0);
+    const transferred = Math.min(
+      total,
+      Math.max(0, Number(job.transferProgress?.transferred) || 0),
+    );
+    const transcoded = Math.min(
+      total,
+      Math.max(0, Number(job.transcodeProgress?.completed) || 0),
+    );
+    return Math.min(99, Math.max(0, Math.round(((transferred + transcoded) / (total * 2)) * 100)));
+  }
+
+  useEffect(() => {
+    setTransferCandidates((prev) => {
+      const next = prev.filter((item) => !isCatalogItemTransferring(item));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [uploadJobs]);
 
   const statusQ = useQuery({
     queryKey: ["admin", "ytdlp", "status"],
@@ -882,6 +928,7 @@ export function YtdlpImportPanel({
   }
 
   function toggleCatalogDrama(item: CatalogResult["items"][number]) {
+    if (isCatalogItemTransferring(item)) return;
     setTransferCandidates((prev) =>
       prev.some((value) => value.id === item.id)
         ? prev.filter((value) => value.id !== item.id)
@@ -891,7 +938,10 @@ export function YtdlpImportPanel({
 
   function toggleCatalogPageSelection() {
     if (!catalog) return;
-    const pageIds = catalog.items.map((item) => item.id);
+    const selectableItems = catalog.items.filter(
+      (item) => !isCatalogItemTransferring(item),
+    );
+    const pageIds = selectableItems.map((item) => item.id);
     if (!pageIds.length) return;
     const allSelected = pageIds.every((id) => catalogSelectedIds.includes(id));
     setTransferCandidates((prev) => {
@@ -900,14 +950,17 @@ export function YtdlpImportPanel({
         return prev.filter((item) => !pageIdSet.has(item.id));
       }
       const byId = new Map(prev.map((item) => [item.id, item]));
-      for (const item of catalog.items) byId.set(item.id, item);
+      for (const item of selectableItems) byId.set(item.id, item);
       return [...byId.values()];
     });
   }
 
   async function queueCatalogCandidates() {
     if (busy || catalogBatchBusy || !transferCandidates.length) return;
-    const candidates = [...transferCandidates];
+    const candidates = transferCandidates.filter(
+      (item) => !isCatalogItemTransferring(item),
+    );
+    if (!candidates.length) return;
     setCatalogBatchBusy(true);
     setError(null);
     setCatalogSyncNotice(null);
@@ -946,8 +999,13 @@ export function YtdlpImportPanel({
           titleEn: item.title,
           coverUrl: item.coverUrl,
           descriptionEn: item.description,
-          sourceTags: composeDramaSourceTags([], "真人短剧", item.completion || "连载中"),
+          sourceTags: composeDramaSourceTags(
+            detail.tags || [],
+            "真人短剧",
+            detail.completion || item.completion || "连载中",
+          ),
           lockMode: null,
+          autoPublish: autoPublishAfterTransfer,
           formatPreference: formatPreference === "best_hls" ? "best" : formatPreference,
           cookiesFile: cookiesFile.trim() || undefined,
           authBearer: authBearer.trim() || undefined,
@@ -962,6 +1020,7 @@ export function YtdlpImportPanel({
           dramaId: data.id,
           transferJobId: data.jobId,
           totalEpisodes: data.totalEpisodes,
+          publishWhenReady: autoPublishAfterTransfer,
           episodeTitles: episodes.map((episode) => ({
             episodeNumber: episode.episodeNumber,
             title: episode.title,
@@ -1337,6 +1396,11 @@ export function YtdlpImportPanel({
     cookieUploadBusy ||
     catalogBatchBusy ||
     catalogUpdateMut.isPending;
+  const selectableCatalogItems =
+    catalog?.items.filter((item) => !isCatalogItemTransferring(item)) || [];
+  const allSelectableCatalogItemsSelected =
+    selectableCatalogItems.length > 0 &&
+    selectableCatalogItems.every((item) => catalogSelectedIds.includes(item.id));
   const showEmpty =
     !urlLooksTelegram && !catalog && !probe && !error && !aiExtractMut.isPending;
   const selectedCount = selectedIndexes.length;
@@ -1750,10 +1814,10 @@ export function YtdlpImportPanel({
                   <Button
                     size="sm"
                     variant="ghost"
-                    disabled={busy || !catalog.items.length}
+                    disabled={busy || !selectableCatalogItems.length}
                     onClick={toggleCatalogPageSelection}
                   >
-                    {catalog.items.every((item) => catalogSelectedIds.includes(item.id))
+                    {allSelectableCatalogItemsSelected
                       ? t("ytdlpCatalogClearPage")
                       : t("ytdlpCatalogSelectPage")}
                   </Button>
@@ -1810,19 +1874,25 @@ export function YtdlpImportPanel({
                     })}
                   </span>
                 </div>
+                <label className="inline-flex shrink-0 cursor-pointer items-center gap-2 text-caption text-ink">
+                  <input
+                    type="checkbox"
+                    checked={autoPublishAfterTransfer}
+                    disabled={busy || catalogBatchBusy}
+                    onChange={(event) => setAutoPublishAfterTransfer(event.target.checked)}
+                  />
+                  <span>{t("submitChoiceGoPublic")}</span>
+                </label>
               </div>
-              <p className="mb-2 text-caption text-ink-muted">
-                {t("ytdlpCatalogNextTransferHint")}
-              </p>
               <div className="flex flex-wrap gap-2">
                 {transferCandidates.map((item) => (
                   <div
                     key={item.id}
-                    className="inline-flex max-w-full items-center overflow-hidden rounded-lg border border-line/70 bg-white"
+                    className="inline-flex w-44 max-w-full items-center overflow-hidden rounded-lg border border-line/70 bg-white"
                   >
                     <button
                       type="button"
-                      className="max-w-64 truncate px-2.5 py-1.5 text-left text-caption font-medium text-ink hover:text-brand"
+                      className="min-w-0 flex-1 truncate px-2.5 py-1.5 text-left text-caption font-medium text-ink hover:text-brand"
                       title={item.title}
                       disabled={busy}
                       onClick={() => openCatalogDrama(item)}
@@ -1831,7 +1901,7 @@ export function YtdlpImportPanel({
                     </button>
                     <button
                       type="button"
-                      className="border-l border-line/70 px-2 py-1.5 text-caption text-ink-muted hover:bg-danger-soft hover:text-danger"
+                      className="shrink-0 border-l border-line/70 px-2 py-1.5 text-caption text-ink-muted hover:bg-danger-soft hover:text-danger"
                       aria-label={t("ytdlpCatalogRemoveCandidate", {
                         title: item.title,
                       })}
@@ -1858,6 +1928,8 @@ export function YtdlpImportPanel({
           <div className="grid gap-3 sm:grid-cols-2">
             {catalog.items.map((item) => {
               const selected = catalogSelectedIds.includes(item.id);
+              const transferring = isCatalogItemTransferring(item);
+              const transferProgress = catalogItemTransferProgress(item);
               const staged = transferCandidates.some(
                 (candidate) => candidate.id === item.id,
               );
@@ -1865,28 +1937,46 @@ export function YtdlpImportPanel({
               <article
                 key={item.id}
                 className={[
-                  "relative flex min-w-0 gap-3 rounded-xl border bg-surface-1 p-3 text-left transition hover:border-brand/40 hover:bg-surface-2",
-                  selected ? "border-brand ring-1 ring-brand/20" : "border-line/70",
+                  "relative flex min-w-0 gap-3 overflow-hidden rounded-xl border bg-surface-1 p-3 text-left transition",
+                  transferring
+                    ? "border-success/45 ring-1 ring-success/15"
+                    : selected
+                      ? "border-brand ring-1 ring-brand/20 hover:border-brand/50 hover:bg-surface-2"
+                      : "border-line/70 hover:border-brand/40 hover:bg-surface-2",
                 ].join(" ")}
               >
+                {transferring ? (
+                  <div
+                    className="pointer-events-none absolute inset-y-0 left-0 z-0 bg-success-soft/70 transition-[width] duration-700 ease-out"
+                    style={{ width: `${Math.max(2, transferProgress)}%` }}
+                    aria-hidden
+                  />
+                ) : null}
                 {enableCatalogMultiSelect ? (
                   <label
-                    className="absolute right-3 top-3 z-10 flex cursor-pointer items-center gap-1.5 rounded-md bg-white/95 px-2 py-1 text-caption text-ink-muted shadow-sm"
+                    className={[
+                      "absolute right-3 top-3 z-10 flex items-center gap-1.5 rounded-md bg-white/95 px-2 py-1 text-caption shadow-sm",
+                      transferring
+                        ? "cursor-not-allowed text-ink-subtle opacity-80"
+                        : "cursor-pointer text-ink-muted",
+                    ].join(" ")}
                   >
                     <input
                       type="checkbox"
                       checked={selected}
-                      disabled={busy}
+                      disabled={busy || transferring}
                       onChange={() => toggleCatalogDrama(item)}
                     />
-                    {staged
+                    {transferring
+                      ? t("ytdlpCatalogTransferring")
+                      : staged
                       ? t("ytdlpCatalogCandidateAdded")
                       : t("ytdlpCatalogSelect")}
                   </label>
                 ) : null}
                 <button
                   type="button"
-                  className="flex min-w-0 flex-1 gap-3 text-left disabled:opacity-60"
+                  className="relative z-[1] flex min-w-0 flex-1 gap-3 text-left disabled:opacity-60"
                   disabled={busy}
                   onClick={() => openCatalogDrama(item)}
                 >
@@ -1902,19 +1992,40 @@ export function YtdlpImportPanel({
                     <h5 className="line-clamp-2 text-body-sm font-semibold">
                       {item.title}
                     </h5>
-                    {item.synced ? (
+                    {item.completion || transferring || item.synced ? (
                       <div className="mt-1 flex flex-wrap items-center gap-1.5 text-caption">
-                        <span className="rounded-full bg-success-soft px-2 py-0.5 font-medium text-success">
-                          {t("ytdlpCatalogSynced")}
-                        </span>
-                        {item.syncedEpisodes ? (
+                        {item.completion ? (
+                          <span
+                            className={[
+                              "rounded-full px-2 py-0.5 font-medium",
+                              item.completion === "已完结"
+                                ? "border border-line bg-panel text-ink-muted"
+                                : "bg-brand-soft text-brand",
+                            ].join(" ")}
+                          >
+                            {item.completion === "已完结"
+                              ? t("completionFinished")
+                              : t("completionOngoing")}
+                          </span>
+                        ) : null}
+                        {transferring ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-success-soft px-2 py-0.5 font-medium text-success">
+                            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-success" />
+                            {t("ytdlpCatalogTransferring")} {transferProgress}%
+                          </span>
+                        ) : item.synced ? (
+                          <span className="rounded-full bg-success-soft px-2 py-0.5 font-medium text-success">
+                            {t("ytdlpCatalogSynced")}
+                          </span>
+                        ) : null}
+                        {!transferring && item.synced && item.syncedEpisodes ? (
                           <span className="text-ink-subtle">
                             {t("ytdlpCatalogSyncedEpisodes", {
                               n: String(item.syncedEpisodes),
                             })}
                           </span>
                         ) : null}
-                        {item.updateAvailable ? (
+                        {!transferring && item.synced && item.updateAvailable ? (
                           <span className="rounded-full bg-warning-soft px-2 py-0.5 font-medium text-warning">
                             {t("ytdlpCatalogUpdateAvailable")}
                           </span>
@@ -1938,7 +2049,7 @@ export function YtdlpImportPanel({
                     </span>
                   </div>
                 </button>
-                {item.synced && item.completion === "连载中" ? (
+                {!transferring && item.synced && item.completion === "连载中" ? (
                   <Button
                     type="button"
                     size="sm"

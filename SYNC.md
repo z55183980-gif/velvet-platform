@@ -212,7 +212,7 @@ git push --force origin main
 
 **[docs/11-生产部署手册.md](./docs/11-生产部署手册.md)**
 
-摘要：SSH `starnexus-s4` → `/www/wwwroot/velvet-platform` → `git reset --hard origin/main` → build → `pm2 restart velvet-api velvet-web velvet-admin`。
+摘要：将已审核提交的源码制品同步到 `velvet-prod:/www/wwwroot/velvet-platform`（保留 `.env` / `storage/`）→ build → 写入 `.deploy-commit` → `pm2 restart velvet-api velvet-web velvet-admin`。生产目录没有 `.git`，不要在服务器执行 `git reset/pull`。
 
 ---
 
@@ -222,5 +222,5 @@ git push --force origin main
 # 登录一次（只做一次）→ 之后随便推
 gh auth login -h github.com --web --scopes repo
 git add -A && git commit -m "msg" && git push origin main
-# 需要上线时再按 docs/11-生产部署手册.md 发布到 starnexus-s4
+# 需要上线时再按 docs/11-生产部署手册.md 发布到 velvet-prod
 ```

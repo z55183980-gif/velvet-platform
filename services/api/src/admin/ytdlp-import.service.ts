@@ -49,6 +49,13 @@ import {
   deriveTransferProgress,
   type TransferTranscodeStatus,
 } from './transfer-progress.util';
+import {
+  BoundedTransferPipeline,
+  normalizeTransferJobConcurrency,
+  normalizeTransferPipelineDepth,
+  shouldAutoPublishTransfer,
+} from './transfer-pipeline.util';
+import { reelshortExternalRefFor } from './reelshort-sync.util';
 
 export type YtdlpImportOptions = {
   url: string;
@@ -93,6 +100,8 @@ export type YtdlpTransferOptions = YtdlpImportOptions & {
   watermarkX?: number;
   watermarkY?: number;
   watermarkScale?: number;
+  /** Publish only after every selected episode has transferred and transcoded successfully. */
+  autoPublish?: boolean;
 };
 
 export type YtdlpEpisodeFailure = {
@@ -130,6 +139,7 @@ export type YtdlpTransferJobState = {
   phase: 'queued' | 'transferring' | 'transcoding' | 'completed' | 'failed' | 'cancelled';
   target: 'local' | 'r2';
   preferR2: boolean;
+  autoPublish: boolean;
   total: number;
   transferred: number;
   currentEpisode: number | null;
@@ -160,6 +170,7 @@ type TransferPayload = {
   preference: YtdlpFormatPreference;
   preferR2: boolean;
   dramaId: string;
+  autoPublish?: boolean;
   actorId?: string;
   cookiesFile?: string;
   /** Legacy plaintext field; new jobs use authBearerEnc. */
@@ -320,15 +331,16 @@ export class YtdlpImportService implements OnModuleInit {
   }
 
   private stableReelshortExternalRef(pageUrl: string) {
-    const probeId = `ai:${Buffer.from(pageUrl).toString('base64url').slice(0, 24)}`;
-    return this.provider.externalRefFor(pageUrl, 'html', probeId);
+    return reelshortExternalRefFor(pageUrl);
   }
 
   private async attachCatalogSyncState(
     items: ExtractedDramaCatalogItem[],
   ): Promise<ExtractedDramaCatalogItem[]> {
     if (!items.length) return items;
-    const refs = items.map((item) => this.stableReelshortExternalRef(item.webpageUrl));
+    const refs = items.map((item) =>
+      reelshortExternalRefFor(item.webpageUrl, item.id),
+    );
     const titles = [...new Set(items.map((item) => item.title).filter(Boolean))];
     const dramas = await this.prisma.drama.findMany({
       where: {
@@ -352,21 +364,62 @@ export class YtdlpImportService implements OnModuleInit {
         .map((drama) => [drama.externalRef!, drama] as const),
     );
     const byTitle = new Map(dramas.map((drama) => [drama.titleEn.trim(), drama] as const));
+    const transferRows = dramas.length
+      ? await this.prisma.ytdlpTransferJob.findMany({
+          where: {
+            dramaId: { in: dramas.map((drama) => drama.id) },
+          },
+          orderBy: { createdAt: 'desc' },
+        })
+      : [];
+    const latestTransferRows = new Map<string, DbTransferRow>();
+    for (const row of transferRows) {
+      const dramaId = row.dramaId.toString();
+      if (!latestTransferRows.has(dramaId)) {
+        latestTransferRows.set(dramaId, row as DbTransferRow);
+      }
+    }
+    const transferStates = await Promise.all(
+      [...latestTransferRows.values()].map((row) => this.toPublicState(row)),
+    );
+    const activeTransferByDrama = new Map(
+      transferStates
+        .filter((state) =>
+          ['queued', 'transferring', 'transcoding'].includes(state.phase),
+        )
+        .map((state) => [state.dramaId, state] as const),
+    );
     return items.map((item) => {
       const drama =
-        byRef.get(this.stableReelshortExternalRef(item.webpageUrl)) ||
+        byRef.get(reelshortExternalRefFor(item.webpageUrl, item.id)) ||
         byTitle.get(item.title.trim());
       if (!drama) return item;
-      const syncedEpisodes = Math.max(
-        Number(drama._count.episodes) || 0,
-        Number(drama.totalEpisodes) || 0,
-      );
+      const syncedEpisodes = Number(drama._count.episodes) || 0;
+      const activeTransfer = activeTransferByDrama.get(drama.id.toString());
+      const transferring = !!activeTransfer;
+      const transferProgress = activeTransfer
+        ? Math.min(
+            99,
+            Math.max(
+              0,
+              Math.round(
+                ((Math.min(activeTransfer.transferred, activeTransfer.total) +
+                  Math.min(activeTransfer.transcode.completed, activeTransfer.total)) /
+                  Math.max(1, activeTransfer.total * 2)) *
+                  100,
+              ),
+            ),
+          )
+        : undefined;
       return {
         ...item,
-        synced: true,
+        transferring,
+        transferProgress,
+        synced: !transferring && syncedEpisodes > 0,
         syncedDramaId: drama.id.toString(),
         syncedEpisodes,
         updateAvailable:
+          !transferring &&
           item.completion === '连载中' &&
           Number(item.chapterCount) > syncedEpisodes,
       };
@@ -1725,6 +1778,7 @@ export class YtdlpImportService implements OnModuleInit {
       preference,
       preferR2,
       dramaId: drama.id,
+      autoPublish: shouldAutoPublishTransfer(opts.autoPublish),
       actorId: actorId != null ? String(actorId) : undefined,
       cookiesFile: opts.cookiesFile?.trim() || undefined,
       authBearerEnc: this.encryptBearer(opts.authBearer),
@@ -1779,6 +1833,7 @@ export class YtdlpImportService implements OnModuleInit {
       sourceType: drama.sourceType,
       target,
       preferR2,
+      autoPublish: payload.autoPublish !== false,
       storageBackend: storage.storageBackend,
       r2Configured: storage.r2Configured,
       ffmpegReady: true,
@@ -2064,48 +2119,71 @@ export class YtdlpImportService implements OnModuleInit {
     }, delayMs);
   }
 
-  /** Atomically claim the single global serial slot across API instances. */
+  private transferJobConcurrency() {
+    return normalizeTransferJobConcurrency(
+      this.config.get<string>('TRANSFER_JOB_CONCURRENCY') ||
+        process.env.TRANSFER_JOB_CONCURRENCY,
+    );
+  }
+
+  /** Atomically claim one bounded global transfer slot across API instances. */
   private async claimNextTransferJob(): Promise<string | null> {
-    const rows = await this.prisma.$queryRaw<Array<{ id: string }>>`
-      UPDATE "ytdlp_transfer_jobs"
-      SET "status" = 'RUNNING',
-          "startedAt" = COALESCE("startedAt", NOW()),
-          "attempts" = "attempts" + 1
-      WHERE "id" = (
-        SELECT candidate."id"
-        FROM "ytdlp_transfer_jobs" candidate
-        WHERE candidate."status" = 'QUEUED'
-          AND (candidate."extractor" IS NULL OR candidate."extractor" <> 'telegram')
-          AND NOT EXISTS (
-            SELECT 1
+    const concurrency = this.transferJobConcurrency();
+    return this.prisma.$transaction(async (tx) => {
+      // The short transaction-level table lock makes count+claim atomic even
+      // if the API is later scaled to multiple processes or hosts.
+      await tx.$executeRawUnsafe(
+        'LOCK TABLE "ytdlp_transfer_jobs" IN SHARE ROW EXCLUSIVE MODE',
+      );
+      const rows = await tx.$queryRaw<Array<{ id: string }>>`
+        UPDATE "ytdlp_transfer_jobs"
+        SET "status" = 'RUNNING',
+            "startedAt" = COALESCE("startedAt", NOW()),
+            "attempts" = "attempts" + 1
+        WHERE "id" = (
+          SELECT candidate."id"
+          FROM "ytdlp_transfer_jobs" candidate
+          WHERE candidate."status" = 'QUEUED'
+            AND (candidate."extractor" IS NULL OR candidate."extractor" <> 'telegram')
+          ORDER BY candidate."createdAt" ASC, candidate."id" ASC
+          LIMIT 1
+          FOR UPDATE SKIP LOCKED
+        )
+          AND (
+            SELECT COUNT(*)
             FROM "ytdlp_transfer_jobs" running
             WHERE running."status" = 'RUNNING'
               AND (running."extractor" IS NULL OR running."extractor" <> 'telegram')
-          )
-        ORDER BY candidate."createdAt" ASC, candidate."id" ASC
-        LIMIT 1
-        FOR UPDATE SKIP LOCKED
-      )
-      RETURNING "id"
-    `;
-    return rows[0]?.id || null;
+          ) < ${concurrency}
+        RETURNING "id"
+      `;
+      return rows[0]?.id || null;
+    });
   }
 
-  /**
-   * Run exactly one ReelShort/yt-dlp transfer at a time. Rows stay QUEUED in
-   * Postgres until selected, so a closed admin page does not affect execution.
-   */
+  /** Run a small global worker pool; rows remain durable in Postgres. */
   private async pumpTransferQueue() {
     if (this.transferQueueRunning) return;
-      this.transferQueueRunning = true;
+    this.transferQueueRunning = true;
     try {
-      while (true) {
-        const nextId = await this.claimNextTransferJob();
-        if (!nextId) break;
-        await this.runTransferJob(nextId);
+      const workers = Array.from(
+        { length: this.transferJobConcurrency() },
+        async () => {
+          while (true) {
+            const nextId = await this.claimNextTransferJob();
+            if (!nextId) break;
+            await this.runTransferJob(nextId);
+          }
+        },
+      );
+      const results = await Promise.allSettled(workers);
+      for (const result of results) {
+        if (result.status === 'rejected') {
+          this.logger.error(
+            `transfer queue worker stopped: ${result.reason?.message || result.reason}`,
+          );
+        }
       }
-    } catch (e: any) {
-      this.logger.error(`serial transfer queue stopped: ${e?.message || e}`);
     } finally {
       this.transferQueueRunning = false;
       // Covers a submission racing with the final empty read and also retries
@@ -2119,7 +2197,7 @@ export class YtdlpImportService implements OnModuleInit {
     }
   }
 
-  /** Hold the serial slot until every transcode belonging to this drama settles. */
+  /** Hold this transfer slot until every transcode belonging to the drama settles. */
   private async waitForTransferTranscodes(jobId: string) {
     let progressSignature = '';
     let lastProgressAt = Date.now();
@@ -2179,7 +2257,7 @@ export class YtdlpImportService implements OnModuleInit {
     }
   }
 
-  /** Strict serial episode gate: do not start the next download until this transcode settles. */
+  /** Settle one transferred episode before releasing its bounded pipeline slot. */
   private async waitForTransferredEpisode(
     entry: YtdlpTransferJobEntry,
   ): Promise<YtdlpEpisodeFailure | null> {
@@ -2385,6 +2463,29 @@ export class YtdlpImportService implements OnModuleInit {
       const useSourceIndex =
         payload.useSourceIndexAsEpisodeNumber !== false || !!payload.resumeOf;
 
+      const recordTranscodeFailure = async (entry: YtdlpTransferJobEntry) => {
+        const failure = await this.waitForTransferredEpisode(entry);
+        if (!failure) return null;
+        failedEpisodes = [
+          ...failedEpisodes.filter(
+            (existing) => existing.episodeNumber !== failure.episodeNumber,
+          ),
+          failure,
+        ];
+        await this.prisma.ytdlpTransferJob.update({
+          where: { id: jobId },
+          data: { failedEpisodes: failedEpisodes as any },
+        });
+        return failure;
+      };
+      const pipeline = new BoundedTransferPipeline(
+        normalizeTransferPipelineDepth(
+          this.config.get<string>('TRANSFER_PIPELINE_DEPTH') ||
+            process.env.TRANSFER_PIPELINE_DEPTH,
+        ),
+        recordTranscodeFailure,
+      );
+
       episodeLoop: for (const ep of payload.selected) {
         if (await this.isTransferCancelRequested(jobId)) {
           break;
@@ -2395,28 +2496,16 @@ export class YtdlpImportService implements OnModuleInit {
           ep.webpageUrl;
         if (this.isTransferItemDone(done, ep.index, downloadUrl)) {
           // On API restart, the download may already be committed while its
-          // transcode is still queued/processing. Preserve the per-episode
-          // gate before advancing to the next source episode.
+          // transcode is still queued/processing. Rejoin the bounded pipeline
+          // before advancing to new source episodes.
           const recoveredEntry = jobs.find(
             (entry) =>
               Number(entry.sourceIndex || entry.episodeNumber) === ep.index ||
               (!!downloadUrl && entry.downloadUrl === downloadUrl),
           );
           if (recoveredEntry) {
-            const recoveredFailure =
-              await this.waitForTransferredEpisode(recoveredEntry);
+            const recoveredFailure = await pipeline.push(recoveredEntry);
             if (recoveredFailure) {
-              failedEpisodes = [
-                ...failedEpisodes.filter(
-                  (failure) =>
-                    failure.episodeNumber !== recoveredFailure.episodeNumber,
-                ),
-                recoveredFailure,
-              ];
-              await this.prisma.ytdlpTransferJob.update({
-                where: { id: jobId },
-                data: { failedEpisodes: failedEpisodes as any },
-              });
               break episodeLoop;
             }
           }
@@ -2487,19 +2576,8 @@ export class YtdlpImportService implements OnModuleInit {
               where: { id: jobId },
               data: { jobs: jobs as any, transferred: jobs.length },
             });
-            const occupiedFailure = await this.waitForTransferredEpisode(entry);
+            const occupiedFailure = await pipeline.push(entry);
             if (occupiedFailure) {
-              failedEpisodes = [
-                ...failedEpisodes.filter(
-                  (failure) =>
-                    failure.episodeNumber !== occupiedFailure.episodeNumber,
-                ),
-                occupiedFailure,
-              ];
-              await this.prisma.ytdlpTransferJob.update({
-                where: { id: jobId },
-                data: { failedEpisodes: failedEpisodes as any },
-              });
               break episodeLoop;
             }
             continue episodeLoop;
@@ -2615,19 +2693,8 @@ export class YtdlpImportService implements OnModuleInit {
           if (!row.previewUrl) {
             row.previewUrl = previewUrl;
           }
-          const transcodeFailure = await this.waitForTransferredEpisode(entry);
+          const transcodeFailure = await pipeline.push(entry);
           if (transcodeFailure) {
-            failedEpisodes = [
-              ...failedEpisodes.filter(
-                (failure) =>
-                  failure.episodeNumber !== transcodeFailure.episodeNumber,
-              ),
-              transcodeFailure,
-            ];
-            await this.prisma.ytdlpTransferJob.update({
-              where: { id: jobId },
-              data: { failedEpisodes: failedEpisodes as any },
-            });
             break episodeLoop;
           }
             break;
@@ -2674,6 +2741,10 @@ export class YtdlpImportService implements OnModuleInit {
           }
         }
       }
+
+      // Settle the final one-entry tail (and any entry already processing when
+      // an earlier pipeline slot fails or cancellation is requested).
+      await pipeline.drain();
 
       const cancelRequestedAfterDownloads = await this.isTransferCancelRequested(jobId);
       if (cancelRequestedAfterDownloads && !jobs.length) {
@@ -2749,6 +2820,23 @@ export class YtdlpImportService implements OnModuleInit {
       );
       const cancelRequested = await this.isTransferCancelRequested(jobId);
       const hasFinalFailures = failedEpisodes.length > 0;
+      if (
+        !cancelRequested &&
+        !hasFinalFailures &&
+        shouldAutoPublishTransfer(payload.autoPublish)
+      ) {
+        try {
+          await this.admin.onlineDrama(
+            payload.dramaId,
+            '转存完成自动上架',
+            payload.actorId != null ? BigInt(payload.actorId) : undefined,
+          );
+        } catch (error: any) {
+          throw new Error(
+            `转存已完成，但自动上架失败: ${error?.message || String(error)}`,
+          );
+        }
+      }
       await this.prisma.ytdlpTransferJob.update({
         where: { id: jobId },
         data: {
@@ -2910,6 +2998,7 @@ export class YtdlpImportService implements OnModuleInit {
       phase,
       target: row.target === 'r2' ? 'r2' : 'local',
       preferR2: row.preferR2,
+      autoPublish: shouldAutoPublishTransfer(payload?.autoPublish),
       total: row.total,
       transferred: row.transferred,
       currentEpisode: row.currentEpisode,

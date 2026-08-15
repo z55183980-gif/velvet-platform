@@ -3,10 +3,18 @@ import { ConfigService } from '@nestjs/config';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { BizException, BizCode } from '../common/biz.exception';
+import { OpenaiService } from '../common/openai.service';
 import { signMediaPath } from '../common/media-sign.util';
 import { requireSecret } from '../common/security-config';
 import { R2StorageService } from '../storage/r2.storage.service';
 import { VIDEO_EXT, VIDEO_MIME_BY_EXT } from '../admin/local-import.util';
+import {
+  buildReelShortReplacementFilter,
+  isReelShortSource,
+  normalizeReelShortVisionDetection,
+  type ReelShortWatermarkLayout,
+} from './watermark-filter.util';
+import { canCleanupUploadedSource } from './upload-cleanup.util';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
@@ -66,6 +74,7 @@ export class UploadService implements OnModuleInit {
     private readonly config: ConfigService,
     private readonly prisma: PrismaService,
     private readonly r2: R2StorageService,
+    private readonly openai?: OpenaiService,
   ) {}
 
   async onModuleInit() {
@@ -898,11 +907,29 @@ export class UploadService implements OnModuleInit {
     const outputRel = `hls/${jobId}/index.m3u8`;
 
     try {
+      const replaceReelShortWatermark = await this.shouldReplaceReelShortWatermark(
+        job.episodeId,
+      );
+      const inputDimensions = replaceReelShortWatermark
+        ? await this.probeMediaDimensions(ffmpeg, inputAbs)
+        : null;
+      const replacementLayout = replaceReelShortWatermark
+        ? await this.detectReelShortWatermarkLayout(
+            ffmpeg,
+            inputAbs,
+            inputDimensions?.mediaWidth,
+            inputDimensions?.mediaHeight,
+          )
+        : null;
       await this.execFfmpeg(ffmpeg, inputAbs, playlist, {
         watermarkEnabled: !!job.watermarkEnabled,
         watermarkX: job.watermarkX,
         watermarkY: job.watermarkY,
         watermarkScale: job.watermarkScale,
+        replaceReelShortWatermark,
+        replacementLayout,
+        frameWidth: inputDimensions?.mediaWidth,
+        frameHeight: inputDimensions?.mediaHeight,
       });
       job.status = 'completed';
       job.outputRel = outputRel;
@@ -1089,8 +1116,8 @@ export class UploadService implements OnModuleInit {
 
   /**
    * After HLS is on velvet-media, remove local staging copies.
-   * Never delete an uploads/ source unless basename is owned by ownerUserId
-   * (`{userId}-…`) — blocks cross-tenant deletion after bind-then-transcode.
+   * Delete tenant-owned files or server-generated yt-dlp/direct-R2 staging files.
+   * Arbitrary ownerless and cross-tenant paths remain protected.
    */
   private cleanupLocalAfterR2(opts: {
     inputRel?: string;
@@ -1111,7 +1138,7 @@ export class UploadService implements OnModuleInit {
     if (rel && (rel.startsWith('uploads/') || rel.startsWith('uploads\\'))) {
       const base = path.basename(rel);
       const owner = opts.ownerUserId != null ? opts.ownerUserId.toString() : '';
-      if (!owner || !base.startsWith(`${owner}-`)) {
+      if (!canCleanupUploadedSource(base, opts.ownerUserId)) {
         this.logger.warn(
           `skip cleanup of non-owned upload ${rel} (ownerUserId=${owner || 'none'})`,
         );
@@ -1224,6 +1251,8 @@ export class UploadService implements OnModuleInit {
     const configured = this.config.get<string>('WATERMARK_PATH')?.trim();
     const candidates = [
       configured,
+      path.join(process.cwd(), 'assets', 'velvet-watermark-subtle-v3.png'),
+      path.join(__dirname, '..', '..', 'assets', 'velvet-watermark-subtle-v3.png'),
       path.join(process.cwd(), 'assets', 'velvet-watermark.png'),
       path.join(__dirname, '..', '..', 'assets', 'velvet-watermark.png'),
     ].filter(Boolean) as string[];
@@ -1232,6 +1261,167 @@ export class UploadService implements OnModuleInit {
       if (fs.existsSync(abs) && fs.statSync(abs).isFile()) return abs;
     }
     return null;
+  }
+
+  private async shouldReplaceReelShortWatermark(episodeId?: string) {
+    const configured = String(
+      this.config.get<string>('REELSHORT_WATERMARK_REPLACEMENT_ENABLED') ?? 'true',
+    ).trim().toLowerCase();
+    if (configured === 'false' || configured === '0') return false;
+    if (!episodeId || !/^\d+$/.test(episodeId)) return false;
+    const episode = await this.prisma.episode.findUnique({
+      where: { id: BigInt(episodeId) },
+      select: { sourceProvider: true, sourcePageUrl: true },
+    });
+    return isReelShortSource(episode?.sourceProvider, episode?.sourcePageUrl);
+  }
+
+  private reelShortWatermarkVisionEnabled() {
+    const configured = String(
+      this.config.get<string>('REELSHORT_WATERMARK_VISION_ENABLED') ?? 'true',
+    )
+      .trim()
+      .toLowerCase();
+    return configured !== 'false' && configured !== '0';
+  }
+
+  /**
+   * Enlarge both alternating corner samples before one vision inference. A
+   * small target occupies far more model pixels this way, while server-side
+   * checks still reject implausible or low-confidence boxes independently.
+   */
+  private async detectReelShortWatermarkLayout(
+    ffmpeg: string,
+    input: string,
+    frameWidth?: number,
+    frameHeight?: number,
+  ): Promise<ReelShortWatermarkLayout | null> {
+    if (
+      !this.reelShortWatermarkVisionEnabled() ||
+      !this.openai?.isConfigured() ||
+      !frameWidth ||
+      !frameHeight ||
+      frameWidth < 64 ||
+      frameHeight < 64
+    ) {
+      return null;
+    }
+
+    const cropTargetRatio = 0.36;
+    const cropWidth = Math.max(
+      64,
+      Math.min(frameWidth, Math.floor((frameWidth * cropTargetRatio) / 2) * 2),
+    );
+    const cropHeight = Math.max(
+      64,
+      Math.min(frameHeight, Math.floor((frameHeight * cropTargetRatio) / 2) * 2),
+    );
+    const outDir = path.join(this.getStorageRoot(), 'tmp', 'watermark-vision');
+    fs.mkdirSync(outDir, { recursive: true });
+    const token = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}`;
+    const topLeftAbs = path.join(outDir, `${token}-top-left.jpg`);
+    const bottomRightAbs = path.join(outDir, `${token}-bottom-right.jpg`);
+    const extractCrop = async (
+      sampleSeconds: number,
+      cropX: number,
+      cropY: number,
+      output: string,
+    ) => {
+      await execFileAsync(
+        ffmpeg,
+        [
+          '-y',
+          '-ss',
+          String(sampleSeconds),
+          '-i',
+          input,
+          '-frames:v',
+          '1',
+          '-vf',
+          `crop=${cropWidth}:${cropHeight}:${cropX}:${cropY},scale=1024:-2:flags=lanczos`,
+          '-q:v',
+          '2',
+          output,
+        ],
+        { timeout: 90_000, maxBuffer: 2 * 1024 * 1024 },
+      );
+    };
+
+    try {
+      await extractCrop(0.4, 0, 0, topLeftAbs);
+      const durationSec = await this.probeDurationSec(ffmpeg, input);
+      let bottomRightImageBase64: string | undefined;
+      if (durationSec == null || durationSec >= 31) {
+        try {
+          await extractCrop(
+            30.4,
+            frameWidth - cropWidth,
+            frameHeight - cropHeight,
+            bottomRightAbs,
+          );
+          bottomRightImageBase64 = (
+            await fs.promises.readFile(bottomRightAbs)
+          ).toString('base64');
+        } catch (error: any) {
+          this.logger.warn(
+            `ReelShort bottom-right sample unavailable; that position will use fallback: ${error?.message || error}`,
+          );
+        }
+      }
+      const topLeftImage = await fs.promises.readFile(topLeftAbs);
+      const result = await this.openai.locateReelShortWatermarks({
+        topLeftImageBase64: topLeftImage.toString('base64'),
+        bottomRightImageBase64,
+        imageMime: 'image/jpeg',
+        cropWidth,
+        cropHeight,
+      });
+      const configuredConfidence = Number(
+        this.config.get<string>('REELSHORT_WATERMARK_VISION_CONFIDENCE') || '0.72',
+      );
+      const minimumConfidence = Number.isFinite(configuredConfidence)
+        ? configuredConfidence
+        : 0.72;
+      const topLeft = normalizeReelShortVisionDetection(result.topLeft, {
+        cropWidthRatio: cropWidth / frameWidth,
+        cropHeightRatio: cropHeight / frameHeight,
+        expectedCorner: 'top-left',
+        minimumConfidence,
+      });
+      const bottomRight = normalizeReelShortVisionDetection(
+        result.bottomRight,
+        {
+          cropWidthRatio: cropWidth / frameWidth,
+          cropHeightRatio: cropHeight / frameHeight,
+          cropXRatio: (frameWidth - cropWidth) / frameWidth,
+          cropYRatio: (frameHeight - cropHeight) / frameHeight,
+          expectedCorner: 'bottom-right',
+          minimumConfidence,
+        },
+      );
+      if (!topLeft && !bottomRight) {
+        this.logger.warn(
+          `ReelShort watermark vision rejected for both positions (model=${result.model}); using fallback`,
+        );
+        return null;
+      }
+      this.logger.log(
+        `ReelShort watermark layout located by ${result.model} ` +
+          `topLeft=${topLeft?.confidence.toFixed(2) || 'fallback'} ` +
+          `bottomRight=${bottomRight?.confidence.toFixed(2) || 'fallback'}`,
+      );
+      return { topLeft, bottomRight };
+    } catch (error: any) {
+      this.logger.warn(
+        `ReelShort watermark vision unavailable; using fallback: ${error?.message || error}`,
+      );
+      return null;
+    } finally {
+      await Promise.all([
+        fs.promises.unlink(topLeftAbs).catch(() => undefined),
+        fs.promises.unlink(bottomRightAbs).catch(() => undefined),
+      ]);
+    }
   }
 
   /**
@@ -1527,18 +1717,36 @@ export class UploadService implements OnModuleInit {
       watermarkX?: number;
       watermarkY?: number;
       watermarkScale?: number;
+      replaceReelShortWatermark?: boolean;
+      replacementLayout?: ReelShortWatermarkLayout | null;
+      frameWidth?: number;
+      frameHeight?: number;
     },
   ): Promise<void> {
     return new Promise((resolve, reject) => {
-      const wmPath = watermark?.watermarkEnabled ? this.watermarkAssetPath() : null;
+      const needsWatermark =
+        !!watermark?.watermarkEnabled || !!watermark?.replaceReelShortWatermark;
+      const wmPath = needsWatermark ? this.watermarkAssetPath() : null;
       const useWm = !!wmPath;
-      if (watermark?.watermarkEnabled && !wmPath) {
-        reject(new Error('watermark asset missing (WATERMARK_PATH / assets/velvet-watermark.png)'));
+      if (needsWatermark && !wmPath) {
+        reject(
+          new Error(
+            'watermark asset missing (WATERMARK_PATH / assets/velvet-watermark-subtle-v3.png)',
+          ),
+        );
         return;
       }
       const scale = watermark?.watermarkScale ?? 0.12;
       const wx = watermark?.watermarkX ?? 0.84;
       const wy = watermark?.watermarkY ?? 0.84;
+
+      const filter = watermark?.replaceReelShortWatermark
+        ? buildReelShortReplacementFilter({
+            frameWidth: watermark.frameWidth,
+            frameHeight: watermark.frameHeight,
+            layout: watermark.replacementLayout,
+          })
+        : `[1:v][0:v]scale2ref=w=iw*${scale}:h=ow/mdar[wm][base];[base][wm]overlay=x='main_w*${wx}':y='main_h*${wy}'`;
 
       // scale2ref: watermark width = video_width * scale; keep aspect.
       const args = useWm
@@ -1549,7 +1757,8 @@ export class UploadService implements OnModuleInit {
             '-i',
             wmPath!,
             '-filter_complex',
-            `[1:v][0:v]scale2ref=w=iw*${scale}:h=ow/mdar[wm][base];[base][wm]overlay=x='main_w*${wx}':y='main_h*${wy}'`,
+            filter,
+            ...(watermark?.replaceReelShortWatermark ? ['-map', '[vout]', '-map', '0:a?'] : []),
             '-c:v',
             'libx264',
             '-preset',

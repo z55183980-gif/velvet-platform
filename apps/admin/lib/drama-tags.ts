@@ -62,6 +62,7 @@ export function parseDramaTags(tags: string[] | undefined) {
     if (
       META_TAG_SKIP.has(tag.toLowerCase()) ||
       tag.toLowerCase().startsWith("ytdlp") ||
+      tag.toLowerCase().startsWith("source:") ||
       tag.toLowerCase().startsWith("tg:") ||
       tag.toLowerCase().startsWith("seg:")
     ) continue;

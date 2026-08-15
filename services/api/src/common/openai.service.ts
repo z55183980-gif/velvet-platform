@@ -138,6 +138,53 @@ const TITLE_TRANSLATE_SCHEMA = {
   required: ['titleZh', 'titleFr'],
 } as const;
 
+const WATERMARK_BOX_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    x: { type: 'number' },
+    y: { type: 'number' },
+    width: { type: 'number' },
+    height: { type: 'number' },
+  },
+  required: ['x', 'y', 'width', 'height'],
+} as const;
+
+const WATERMARK_LOCATE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    found: { type: 'boolean' },
+    confidence: { type: 'number' },
+    fullMark: WATERMARK_BOX_SCHEMA,
+    icon: WATERMARK_BOX_SCHEMA,
+  },
+  required: ['found', 'confidence', 'fullMark', 'icon'],
+} as const;
+
+const WATERMARK_LAYOUT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    topLeft: WATERMARK_LOCATE_SCHEMA,
+    bottomRight: WATERMARK_LOCATE_SCHEMA,
+  },
+  required: ['topLeft', 'bottomRight'],
+} as const;
+
+export type WatermarkVisionDetection = {
+  found: boolean;
+  confidence: number;
+  fullMark: { x: number; y: number; width: number; height: number };
+  icon: { x: number; y: number; width: number; height: number };
+};
+
+export type WatermarkVisionLayoutResult = {
+  topLeft: WatermarkVisionDetection;
+  bottomRight: WatermarkVisionDetection;
+  model: string;
+};
+
 /**
  * Thin OpenAI-compatible chat client for admin helpers
  * (title translation EN→ZH/FR + Path B page extract).
@@ -163,6 +210,16 @@ export class OpenaiService {
 
   private model(): string {
     return String(this.config.get('OPENAI_MODEL') || 'gpt-4o-mini').trim() || 'gpt-4o-mini';
+  }
+
+  private watermarkVisionModel(): string {
+    return (
+      String(
+        this.config.get('WATERMARK_VISION_MODEL') ||
+          this.config.get('OPENAI_VISION_MODEL') ||
+          this.model(),
+      ).trim() || this.model()
+    );
   }
 
   private chatCompletionsUrl(): string {
@@ -486,6 +543,114 @@ export class OpenaiService {
     };
   }
 
+  /**
+   * Locate ReelShort's complete legacy mark and its square icon in an enlarged
+   * top-left crop. Coordinates are normalized to that crop, not the full frame.
+   */
+  async locateReelShortWatermarks(opts: {
+    topLeftImageBase64: string;
+    bottomRightImageBase64?: string;
+    imageMime?: 'image/jpeg' | 'image/png';
+    cropWidth: number;
+    cropHeight: number;
+  }): Promise<WatermarkVisionLayoutResult> {
+    if (!this.isConfigured()) {
+      throw new BizException(
+        BizCode.BAD_REQUEST,
+        '未配置 OPENAI_API_KEY，无法视觉定位旧水印',
+      );
+    }
+    const topLeftImageBase64 = String(opts.topLeftImageBase64 || '').trim();
+    const bottomRightImageBase64 = String(
+      opts.bottomRightImageBase64 || '',
+    ).trim();
+    if (
+      !topLeftImageBase64 ||
+      topLeftImageBase64.length > 12_000_000 ||
+      bottomRightImageBase64.length > 12_000_000
+    ) {
+      throw new BizException(BizCode.BAD_REQUEST, '水印定位图片为空或过大');
+    }
+    const cropWidth = Math.max(1, Math.floor(Number(opts.cropWidth) || 0));
+    const cropHeight = Math.max(1, Math.floor(Number(opts.cropHeight) || 0));
+    const model = this.watermarkVisionModel();
+    const userContent: Array<Record<string, unknown>> = [
+      {
+        type: 'text',
+        text: `Image A is a ${cropWidth}x${cropHeight} enlarged top-left crop near 0.4 seconds. Locate its top-left ReelShort mark.`,
+      },
+      {
+        type: 'image_url',
+        image_url: {
+          url: `data:${opts.imageMime || 'image/jpeg'};base64,${topLeftImageBase64}`,
+          detail: 'high',
+        },
+      },
+    ];
+    if (bottomRightImageBase64) {
+      userContent.push(
+        {
+          type: 'text',
+          text: `Image B is a ${cropWidth}x${cropHeight} enlarged bottom-right crop near 30.4 seconds. Locate its bottom-right ReelShort mark.`,
+        },
+        {
+          type: 'image_url',
+          image_url: {
+            url: `data:${opts.imageMime || 'image/jpeg'};base64,${bottomRightImageBase64}`,
+            detail: 'high',
+          },
+        },
+      );
+    } else {
+      userContent.push({
+        type: 'text',
+        text: 'Image B is unavailable. Set bottomRight found=false, confidence=0, and all bottomRight box values to 0.',
+      });
+    }
+    const data = await this.chatRaw(
+      {
+        model,
+        temperature: 0,
+        messages: [
+          {
+            role: 'system',
+            content: [
+              'You precisely locate baked-in ReelShort watermarks in two video frame crops.',
+              'The target normally has a red rounded-square R icon and a small ReelShort wordmark below it.',
+              'Return two tight bounding boxes: fullMark includes every legacy watermark pixel including text; icon includes only the square icon.',
+              'Coordinates x, y, width, height are decimals from 0 to 1 relative to each supplied crop.',
+              'Do not include actors, subtitles, or any replacement/Velvet logo.',
+              'When absent, set found=false, confidence=0, and all box values to 0.',
+            ].join(' '),
+          },
+          {
+            role: 'user',
+            content: userContent,
+          },
+        ],
+        response_format: {
+          type: 'json_schema',
+          json_schema: {
+            name: 'reelshort_watermark_layout',
+            strict: true,
+            schema: WATERMARK_LAYOUT_SCHEMA,
+          },
+        },
+      },
+      { timeoutMs: 45_000 },
+    );
+    const content = String(data?.choices?.[0]?.message?.content || '').trim();
+    if (!content) {
+      throw new BizException(BizCode.BAD_REQUEST, '视觉模型未返回水印位置');
+    }
+    try {
+      const parsed = JSON.parse(content);
+      return { ...parsed, model } as WatermarkVisionLayoutResult;
+    } catch {
+      throw new BizException(BizCode.BAD_REQUEST, '视觉模型水印位置无法解析');
+    }
+  }
+
   private async chatJson(opts: {
     model: string;
     system: string;
@@ -527,8 +692,18 @@ export class OpenaiService {
     }
   }
 
-  private async chatRaw(body: Record<string, unknown>): Promise<any> {
+  private async chatRaw(
+    body: Record<string, unknown>,
+    opts?: { timeoutMs?: number },
+  ): Promise<any> {
     const endpoint = this.chatCompletionsUrl();
+    const controller = opts?.timeoutMs ? new AbortController() : null;
+    const timeoutMs = opts?.timeoutMs
+      ? Math.max(1_000, Math.min(120_000, opts.timeoutMs))
+      : null;
+    const timeout = controller
+      ? setTimeout(() => controller.abort(), timeoutMs!)
+      : null;
     let res: Response;
     try {
       res = await fetch(endpoint, {
@@ -538,10 +713,13 @@ export class OpenaiService {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(body),
+        ...(controller ? { signal: controller.signal } : {}),
       });
     } catch (e: unknown) {
       this.logger.warn(`OpenAI request failed: ${e instanceof Error ? e.message : e}`);
       throw new BizException(BizCode.BAD_REQUEST, 'AI 服务请求失败，请稍后重试');
+    } finally {
+      if (timeout) clearTimeout(timeout);
     }
 
     const rawText = await res.text();

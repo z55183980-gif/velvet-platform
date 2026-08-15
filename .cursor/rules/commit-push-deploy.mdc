@@ -11,7 +11,7 @@ When the user asks to **commit**, **push main**, and/or **deploy** (e.g.「工�
 
 1. **Commit** relevant workspace changes only (exclude secrets, `.env*`, and ad-hoc `scripts/_tmp_*` unless explicitly requested).
 2. **Push** to `origin/main` (current branch is normally `main`).
-3. **Deploy production** per `docs/11-生产部署手册.md`: SSH `starnexus-s4` → sync `origin/main` → build → PM2 restart → smoke `https://velvetmovie.space/`.
+3. **Deploy production** per `docs/11-生产部署手册.md`: sync the approved source artifact to `velvet-prod` (the production directory has no `.git`; preserve `.env` / `storage/`) → build → record `.deploy-commit` → PM2 restart → smoke `https://velvetmovie.space/`.
 4. If only one app changed, rebuild/restart that app is enough (e.g. web-only → `velvet-web`); otherwise follow the full handbook script.
 5. Report commit SHA, push result, deploy/smoke outcome — then stop unless something failed.
 
