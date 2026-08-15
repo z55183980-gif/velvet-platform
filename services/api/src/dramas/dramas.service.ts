@@ -34,10 +34,12 @@ export class DramasService {
     page?: number;
     pageSize?: number;
     sort?: 'latest' | 'hot';
+    secret?: boolean;
   }) {
     const page = opts.page || 1;
     const pageSize = opts.pageSize || 12;
     const where: any = { status: 'LIVE' };
+    if (opts.secret) where.isSecret = true;
     if (opts.category) {
       where.categorySlug = resolveCategorySlugAlias(opts.category);
     }

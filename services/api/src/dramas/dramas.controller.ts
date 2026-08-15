@@ -22,12 +22,13 @@ export class DramasController {
     @Query('q') q?: string,
     @Query('tag') tag?: string,
     @Query('sort') sort?: 'latest' | 'hot',
+    @Query('secret') secret?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
   ) {
     const p = Math.max(1, parseInt(page || '1', 10) || 1);
     const ps = Math.min(50, Math.max(1, parseInt(pageSize || '12', 10) || 12));
-    return ok(await this.dramas.listDramas({ category, q, tag, sort, page: p, pageSize: ps }));
+    return ok(await this.dramas.listDramas({ category, q, tag, sort, secret: secret === '1', page: p, pageSize: ps }));
   }
 
   @Get('dramas/featured')

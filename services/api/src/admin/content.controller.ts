@@ -218,6 +218,10 @@ class DramaUpdateDto {
   @IsOptional()
   @Transform(({ value }) => value === true || value === 'true' || value === 1)
   @IsBoolean()
+  isSecret?: boolean;
+  @IsOptional()
+  @Transform(({ value }) => value === true || value === 'true' || value === 1)
+  @IsBoolean()
   isOfficial?: boolean;
   /** Display tags + optional `type:` / `completion:` markers; provenance tags are preserved server-side. */
   @IsOptional() @IsArray() @IsString({ each: true }) sourceTags?: string[];

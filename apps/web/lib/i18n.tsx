@@ -60,6 +60,7 @@ const en = {
   tabs: {
     home: "Home",
     theater: "Theater",
+    secret: "Secret",
     me: "Me",
   },
   theater: {
@@ -688,6 +689,7 @@ const zh: typeof en = {
   tabs: {
     home: "首页",
     theater: "剧场",
+    secret: "秘密",
     me: "我的",
   },
   theater: {
@@ -1308,6 +1310,7 @@ const fr: typeof en = {
   tabs: {
     home: "Accueil",
     theater: "Théâtre",
+    secret: "Secret",
     me: "Moi",
   },
   theater: {

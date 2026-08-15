@@ -54,7 +54,10 @@ type TheaterSnapshot = {
   scrollY: number;
 };
 
-let theaterSnapshot: TheaterSnapshot | null = null;
+const theaterSnapshots: Record<"theater" | "secret", TheaterSnapshot | null> = {
+  theater: null,
+  secret: null,
+};
 
 function cacheKey(
   contentType: ContentTypeFilter,
@@ -87,9 +90,16 @@ function seedFromInitial(initial: TheaterInitial): TheaterListCache {
   };
 }
 
-export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
+export function TheaterClient({
+  initial,
+  secretOnly = false,
+}: {
+  initial: TheaterInitial | null;
+  secretOnly?: boolean;
+}) {
   const { t } = useLocale();
-  const initialSnapshotRef = useRef(theaterSnapshot);
+  const snapshotKey = secretOnly ? "secret" : "theater";
+  const initialSnapshotRef = useRef(theaterSnapshots[snapshotKey]);
   const snap = initialSnapshotRef.current;
 
   const seedKey = cacheKey(
@@ -228,13 +238,13 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
 
   useEffect(
     () => () => {
-      theaterSnapshot = {
+      theaterSnapshots[snapshotKey] = {
         ...latestSnapshotRef.current,
         cache: cacheRef.current,
         scrollY: window.scrollY,
       };
     },
-    [],
+    [snapshotKey],
   );
 
   useEffect(() => {
@@ -325,6 +335,7 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
 
     setLoadError(false);
     const load = loadHome(1, THEATER_PAGE_SIZE, {
+      secret: secretOnly,
       tag: tagFilter,
       q: q || undefined,
       sort: sort === "latest" ? "latest" : "hot",
@@ -366,7 +377,7 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
     return () => {
       ac.abort();
     };
-  }, [contentType, tag, sort, q, reloadKey, urlReady]);
+  }, [contentType, tag, sort, q, reloadKey, urlReady, secretOnly]);
 
   // Prefetch sibling sort modes so ranking / new switches feel instant.
   useEffect(() => {
@@ -378,6 +389,7 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
         if (cacheRef.current.has(key)) continue;
         const tagFilter = composeDramaTagFilter(contentType, tag);
         void loadHome(1, THEATER_PAGE_SIZE, {
+          secret: secretOnly,
           tag: tagFilter,
           q: q || undefined,
           sort: nextSort === "latest" ? "latest" : "hot",
@@ -400,7 +412,7 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
       if (ric != null) window.cancelIdleCallback?.(ric);
       if (timer) window.clearTimeout(timer);
     };
-  }, [urlReady, contentType, tag, q]);
+  }, [urlReady, contentType, tag, q, secretOnly]);
 
   const loadMore = useCallback(async () => {
     const cur = listRef.current;
@@ -416,6 +428,7 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
     const timer = window.setTimeout(() => ac.abort(), 15_000);
     try {
       const h = await loadHome(nextPage, THEATER_PAGE_SIZE, {
+        secret: secretOnly,
         tag: composeDramaTagFilter(cur.contentType, cur.tag),
         q: cur.q || undefined,
         sort: cur.sort === "latest" ? "latest" : "hot",
@@ -446,7 +459,7 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
       loadMoreLock.current = false;
       setLoadingMore(false);
     }
-  }, []);
+  }, [secretOnly]);
 
   useEffect(() => {
     const el = sentinelRef.current;
@@ -519,7 +532,7 @@ export function TheaterClient({ initial }: { initial: TheaterInitial | null }) {
 
   return (
     <div className="mx-auto w-full max-w-[1200px] overflow-x-clip px-4 py-6 md:px-6 md:py-10">
-      <h1 className="sr-only">{t("theater.title")}</h1>
+      <h1 className="sr-only">{secretOnly ? t("tabs.secret") : t("theater.title")}</h1>
 
       <div className="relative mb-5 md:mb-6">
         <Search

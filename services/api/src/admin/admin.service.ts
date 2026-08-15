@@ -1680,6 +1680,7 @@ export class AdminService {
       data.favoriteCount = BigInt(n);
     }
     if (dto.isFeatured != null) data.isFeatured = !!dto.isFeatured;
+    if (dto.isSecret != null) data.isSecret = !!dto.isSecret;
     if (dto.isOfficial != null) data.isOfficial = !!dto.isOfficial;
     if (dto.sourceTags !== undefined) {
       const existing = await this.prisma.drama.findUnique({

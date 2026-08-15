@@ -323,6 +323,7 @@ export async function loadHome(
     tag?: string;
     q?: string;
     sort?: "latest" | "hot";
+    secret?: boolean;
     signal?: AbortSignal;
   },
 ): Promise<{ rows: Drama[]; total: number }> {
@@ -331,6 +332,7 @@ export async function loadHome(
   if (opts?.tag) params.set("tag", opts.tag);
   if (opts?.q) params.set("q", opts.q);
   if (opts?.sort) params.set("sort", opts.sort);
+  if (opts?.secret) params.set("secret", "1");
   const cacheKey = `dramas?${params.toString()}`;
   return cachedGet(
     cacheKey,

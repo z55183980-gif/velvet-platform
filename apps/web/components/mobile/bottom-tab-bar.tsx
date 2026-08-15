@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { LockKeyhole } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
@@ -12,6 +13,12 @@ const tabs = [
     href: "/theater",
     key: "tabs.theater",
     match: (p: string) => p === "/theater" || p.startsWith("/theater/"),
+  },
+  {
+    href: "/secret",
+    key: "tabs.secret",
+    special: true,
+    match: (p: string) => p === "/secret" || p.startsWith("/secret/"),
   },
   {
     href: "/me",
@@ -82,10 +89,28 @@ export function BottomTabBar({
               }}
               className={cn(
                 "touch-manipulation flex flex-1 items-center justify-center text-[15px] transition-colors active:opacity-70",
-                active ? "font-semibold text-ink" : "font-normal text-ink-muted",
+                "special" in tab && tab.special
+                  ? "font-semibold text-rose-200"
+                  : active
+                    ? "font-semibold text-ink"
+                    : "font-normal text-ink-muted",
               )}
             >
-              {t(tab.key)}
+              {"special" in tab && tab.special ? (
+                <span
+                  className={cn(
+                    "relative flex items-center gap-1.5 rounded-full border px-3.5 py-1 transition-all",
+                    active
+                      ? "border-rose-300/50 bg-gradient-to-r from-rose-950 via-fuchsia-950 to-rose-950 text-rose-100 shadow-[0_0_18px_rgba(244,63,94,0.28)]"
+                      : "border-rose-400/20 bg-gradient-to-r from-rose-950/70 to-fuchsia-950/70 text-rose-200/90 shadow-[0_0_12px_rgba(244,63,94,0.12)]",
+                  )}
+                >
+                  <LockKeyhole className="h-3.5 w-3.5" aria-hidden />
+                  {t(tab.key)}
+                </span>
+              ) : (
+                t(tab.key)
+              )}
             </Link>
           );
         })}

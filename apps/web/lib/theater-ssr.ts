@@ -46,7 +46,7 @@ export async function loadTheaterInitial(searchParams: {
   cat?: string | string[];
   sort?: string | string[];
   q?: string | string[];
-}): Promise<TheaterInitial | null> {
+}, options?: { secret?: boolean }): Promise<TheaterInitial | null> {
   try {
     const contentType = resolveContentTypeSlug(one(searchParams.type));
     const tag = one(searchParams.tag);
@@ -61,6 +61,7 @@ export async function loadTheaterInitial(searchParams: {
     });
     if (tagFilter) params.set("tag", tagFilter);
     if (q) params.set("q", q);
+    if (options?.secret) params.set("secret", "1");
 
     const homeRaw = await serverApiGet<{ rows: any[]; total: number }>(
       `/dramas?${params.toString()}`,

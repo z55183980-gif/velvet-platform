@@ -119,6 +119,7 @@ type Drama = {
   descriptionZh?: string;
   descriptionEn?: string;
   isFeatured?: boolean;
+  isSecret?: boolean;
   isOfficial?: boolean;
   sortWeight?: number;
   freeEpisodeCount?: number;
@@ -969,6 +970,7 @@ export const ContentDetailPanel = forwardRef<ContentDetailPanelHandle, {
             <div className="content-section-heading"><div><h2>{t("distributionSettings")}</h2><p>{t("contentSummaryHint")}</p></div></div>
             <div className="grid gap-3 md:grid-cols-2">
               <Toggle checked={!!drama.isFeatured} onChange={() => act(() => adminUpdateDrama(id, { isFeatured: !drama.isFeatured }))} label={t("featured")} description={t("featuredSettingHint")} />
+              <Toggle checked={!!drama.isSecret} onChange={() => act(() => adminUpdateDrama(id, { isSecret: !drama.isSecret }))} label={t("secretFlag")} description={t("secretSettingHint")} />
               <Toggle checked={!!drama.isOfficial} onChange={() => act(() => adminUpdateDrama(id, { isOfficial: !drama.isOfficial }))} label={t("official")} description={t("officialSettingHint")} />
             </div>
             <div className="flex flex-wrap items-end gap-2 border-t border-line pt-4">
