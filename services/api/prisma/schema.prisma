@@ -216,6 +216,8 @@ model Drama {
   isFeatured      Boolean     @default(false)
   /// 移动端「秘密」页面内容池
   isSecret        Boolean     @default(false)
+  /// 「秘密剧集」运营排序（越小越靠前）
+  secretSortOrder Int         @default(0)
   /// 排序权重（越大越靠前；与 isFeatured/官方/上架时间配合决定展示顺序）
   sortWeight      Int         @default(0)
   /// 剧场「最热」运营位；独立于推荐位/算法热度
@@ -239,6 +241,7 @@ model Drama {
   @@index([isOfficial, isFeatured, status])
   @@index([isHottest, hottestSortOrder])
   @@index([isSecret, status, publishedAt(sort: Desc)])
+  @@index([isSecret, secretSortOrder])
   /// Preserved from gap_round3; keep in schema so migrate drift does not drop it.
   @@index([tags], type: Gin, map: "dramas_tags_gin_idx")
   @@map("dramas")

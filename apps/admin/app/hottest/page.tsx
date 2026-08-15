@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState, type DragEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ImageIcon, X } from "lucide-react";
@@ -9,6 +10,9 @@ import {
   adminListHottest,
   adminReorderHottest,
   adminSetHottest,
+  adminListSecret,
+  adminReorderSecret,
+  adminSetSecret,
   asRows,
 } from "@velvet/api-client";
 import { Button, DataTable, Input, fmtNum, type Column } from "@velvet/ui";
@@ -27,6 +31,7 @@ type Drama = {
   unlockCount?: number;
   isHottest?: boolean;
   hottestSortOrder?: number;
+  secretSortOrder?: number;
 };
 
 function dramaId(row: Drama) {
@@ -50,7 +55,18 @@ function moveItem<T>(list: T[], from: number, to: number): T[] {
 }
 
 export default function AdminHottestPage() {
-  const { t } = useI18n();
+  const pathname = usePathname();
+  const secretMode = pathname === "/secret-dramas";
+  const { t: baseT } = useI18n();
+  const secretCopy: Record<string, string> = {
+    hottest: "secretDramas",
+    heroHintHottest: "heroHintSecret",
+    hottestEmpty: "secretEmpty",
+    hottestEmptyHint: "secretEmptyHint",
+    hottestConfirmRemove: "secretConfirmRemove",
+  };
+  const t = ((key: string, vars?: Record<string, unknown>) =>
+    baseT((secretMode ? secretCopy[key] || key : key) as never, vars as never)) as typeof baseT;
   const qc = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
@@ -63,11 +79,14 @@ export default function AdminHottestPage() {
   const [dropId, setDropId] = useState<string | null>(null);
 
   const listQ = useQuery({
-    queryKey: ["admin", "hottest", "list"],
+    queryKey: ["admin", secretMode ? "secret" : "hottest", "list"],
     queryFn: async () => {
-      const data = await adminListHottest();
+      const data = secretMode ? await adminListSecret() : await adminListHottest();
       return asRows<Drama>(data).sort(
-        (a, b) => (a.hottestSortOrder ?? 0) - (b.hottestSortOrder ?? 0),
+        (a, b) =>
+          secretMode
+            ? (a.secretSortOrder ?? 0) - (b.secretSortOrder ?? 0)
+            : (a.hottestSortOrder ?? 0) - (b.hottestSortOrder ?? 0),
       );
     },
   });
@@ -84,7 +103,7 @@ export default function AdminHottestPage() {
   }, [listQ.data, ordered, syncedKey]);
 
   const searchQry = useQuery({
-    queryKey: ["admin", "hottest", "search", searchQ],
+    queryKey: ["admin", secretMode ? "secret" : "hottest", "search", searchQ],
     enabled: addOpen && searchQ.trim().length > 0,
     queryFn: async () => {
       const data = await adminListDramas({
@@ -102,18 +121,19 @@ export default function AdminHottestPage() {
     onSuccess: async () => {
       setError(null);
       setRemoveId(null);
-      await qc.invalidateQueries({ queryKey: ["admin", "hottest"] });
+      await qc.invalidateQueries({ queryKey: ["admin", secretMode ? "secret" : "hottest"] });
       await qc.invalidateQueries({ queryKey: ["admin", "dramas"] });
     },
     onError: (e: Error) => setError(e.message),
   });
 
   const saveSortMut = useMutation({
-    mutationFn: (ids: string[]) => adminReorderHottest(ids),
+    mutationFn: (ids: string[]) =>
+      secretMode ? adminReorderSecret(ids) : adminReorderHottest(ids),
     onSuccess: async () => {
       setError(null);
       setSyncedKey(idsKey(ordered));
-      await qc.invalidateQueries({ queryKey: ["admin", "hottest"] });
+      await qc.invalidateQueries({ queryKey: ["admin", secretMode ? "secret" : "hottest"] });
       await qc.invalidateQueries({ queryKey: ["admin", "dramas"] });
     },
     onError: (e: Error) => setError(e.message),
@@ -212,7 +232,13 @@ export default function AdminHottestPage() {
               size="sm"
               variant={added ? "secondary" : "primary"}
               disabled={actionMut.isPending || dirty || added}
-              onClick={() => actionMut.mutate(() => adminSetHottest(dramaId(row), true))}
+              onClick={() =>
+                actionMut.mutate(() =>
+                  secretMode
+                    ? adminSetSecret(dramaId(row), true)
+                    : adminSetHottest(dramaId(row), true),
+                )
+              }
             >
               {added ? t("alreadyAdded") : t("add")}
             </Button>
@@ -220,7 +246,7 @@ export default function AdminHottestPage() {
         },
       },
     ],
-    [t, actionMut, selectedIds, dirty],
+    [t, actionMut, selectedIds, dirty, secretMode],
   );
 
   const removeRow = removeId ? ordered.find((r) => dramaId(r) === removeId) : undefined;
@@ -403,7 +429,9 @@ export default function AdminHottestPage() {
         })}
         onConfirm={() => {
           if (!removeId) return;
-          actionMut.mutate(() => adminSetHottest(removeId, false));
+          actionMut.mutate(() =>
+            secretMode ? adminSetSecret(removeId, false) : adminSetHottest(removeId, false),
+          );
         }}
       />
     </AdminShell>

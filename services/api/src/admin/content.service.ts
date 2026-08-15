@@ -207,6 +207,62 @@ export class ContentService {
     });
   }
 
+  async listSecret() {
+    return this.prisma.drama.findMany({
+      where: { isSecret: true },
+      orderBy: [{ secretSortOrder: 'asc' }, { updatedAt: 'desc' }],
+      take: 200,
+      include: {
+        category: true,
+        creator: { select: { id: true, displayName: true } },
+        _count: { select: { episodes: true } },
+      },
+    });
+  }
+
+  async setSecret(id: string, value: boolean, actorId?: bigint) {
+    let secretSortOrder = 0;
+    if (value) {
+      const agg = await this.prisma.drama.aggregate({
+        where: { isSecret: true },
+        _max: { secretSortOrder: true },
+      });
+      secretSortOrder = (agg._max.secretSortOrder ?? -1) + 1;
+    }
+    const drama = await this.prisma.drama.update({
+      where: { id: BigInt(id) },
+      data: { isSecret: value, secretSortOrder: value ? secretSortOrder : 0 },
+    });
+    await this.audit.write({
+      actorId,
+      action: 'drama.setSecret',
+      targetType: 'drama',
+      targetId: id,
+      payload: { isSecret: value, secretSortOrder: drama.secretSortOrder },
+    });
+    return { id: drama.id.toString(), isSecret: drama.isSecret, secretSortOrder: drama.secretSortOrder };
+  }
+
+  async reorderSecret(ids: string[], actorId?: bigint) {
+    const unique = [...new Set(ids.map(String).filter((x) => /^\d+$/.test(x)))];
+    await this.prisma.$transaction(
+      unique.map((id, index) =>
+        this.prisma.drama.update({
+          where: { id: BigInt(id) },
+          data: { isSecret: true, secretSortOrder: index },
+        }),
+      ),
+    );
+    await this.audit.write({
+      actorId,
+      action: 'drama.reorderSecret',
+      targetType: 'drama',
+      targetId: 'secret',
+      payload: { ids: unique },
+    });
+    return { ok: true, count: unique.length };
+  }
+
   async setHottest(id: string, value: boolean, actorId?: bigint) {
     const dramaId = BigInt(id);
     let hottestSortOrder = 0;

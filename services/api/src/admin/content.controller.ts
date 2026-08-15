@@ -882,6 +882,11 @@ export class ContentController {
     return ok(await this.content.listHottest());
   }
 
+  @Get('dramas/secret')
+  async listSecret() {
+    return ok(await this.content.listSecret());
+  }
+
   @Post('dramas/online')
   @AdminRoles('SUPER_ADMIN', 'OPS')
   async createOnlineDrama(@Body() dto: CreateOnlineDramaDto, @Req() req: any) {
@@ -1381,6 +1386,13 @@ export class ContentController {
     return ok(await this.content.reorderHottest(ids, getActor(req)));
   }
 
+  @Post('dramas/secret/reorder')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async reorderSecret(@Body() dto: ReorderDto, @Req() req: any) {
+    const ids = Array.isArray(dto?.ids) ? dto.ids.map(String) : [];
+    return ok(await this.content.reorderSecret(ids, getActor(req)));
+  }
+
   @Patch('dramas/batch')
   @AdminRoles('SUPER_ADMIN')
   async batchDramas(@Body() dto: BatchDramasDto, @Req() req: any) {
@@ -1460,6 +1472,12 @@ export class ContentController {
   @AdminRoles('SUPER_ADMIN', 'OPS')
   async setHottest(@Param('id') id: string, @Body() body: { value: boolean }, @Req() req: any) {
     return ok(await this.content.setHottest(id, !!body?.value, getActor(req)));
+  }
+
+  @Post('dramas/:id/secret')
+  @AdminRoles('SUPER_ADMIN', 'OPS')
+  async setSecret(@Param('id') id: string, @Body() body: { value: boolean }, @Req() req: any) {
+    return ok(await this.content.setSecret(id, !!body?.value, getActor(req)));
   }
 
   @Post('dramas/:id/hottest-sort')

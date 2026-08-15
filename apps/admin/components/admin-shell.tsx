@@ -41,6 +41,7 @@ import {
   Wallet,
   X,
   Flame,
+  LockKeyhole,
   BarChart3,
 } from "lucide-react";
 import { useI18n, type LabelKey } from "@/lib/i18n";
@@ -80,6 +81,7 @@ const NAV_GROUPS: NavGroup[] = [
       { href: "/content", key: "content", icon: Clapperboard, end: true },
       { href: "/content?view=pending", key: "contentPending", icon: ShieldCheck, end: true },
       { href: "/hottest", key: "hottest", icon: Flame, end: true },
+      { href: "/secret-dramas", key: "secretDramas", icon: LockKeyhole, end: true },
       { href: "/tags", key: "dramaTagsPage", icon: FolderTree, end: true },
     ],
   },

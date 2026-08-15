@@ -234,6 +234,24 @@ export async function adminReorderHottest(ids: string[]) {
   });
 }
 
+export async function adminListSecret() {
+  return adminRequest(`/admin/dramas/secret`);
+}
+
+export async function adminSetSecret(id: string, value: boolean) {
+  return adminRequest(`/admin/dramas/${id}/secret`, {
+    method: "POST",
+    body: JSON.stringify({ value }),
+  });
+}
+
+export async function adminReorderSecret(ids: string[]) {
+  return adminRequest(`/admin/dramas/secret/reorder`, {
+    method: "POST",
+    body: JSON.stringify({ ids }),
+  });
+}
+
 export async function adminDramaEpisodes(id: string) {
   return adminRequest(`/admin/dramas/${id}/episodes`);
 }
