@@ -64,7 +64,7 @@ export class DramasService {
     }
 
     const orderBy =
-      opts.secret && opts.sort === 'hot'
+      opts.secret && !opts.sort
         ? [{ secretSortOrder: 'asc' as const }, { publishedAt: 'desc' as const }]
         : opts.sort === 'hot'
         ? [{ viewCount: 'desc' as const }, { unlockCount: 'desc' as const }]

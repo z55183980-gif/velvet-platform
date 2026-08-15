@@ -3,26 +3,29 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { LockKeyhole } from "lucide-react";
+import { Clapperboard, Home, LockKeyhole, UserRound, type LucideIcon } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 const tabs = [
-  { href: "/", key: "tabs.home", match: (p: string) => p === "/" },
+  { href: "/", key: "tabs.home", icon: Home, match: (p: string) => p === "/" },
   {
     href: "/theater",
     key: "tabs.theater",
+    icon: Clapperboard,
     match: (p: string) => p === "/theater" || p.startsWith("/theater/"),
   },
   {
     href: "/secret",
     key: "tabs.secret",
+    icon: LockKeyhole,
     special: true,
     match: (p: string) => p === "/secret" || p.startsWith("/secret/"),
   },
   {
     href: "/me",
     key: "tabs.me",
+    icon: UserRound,
     match: (p: string) => p === "/me" || p.startsWith("/me/"),
   },
 ] as const;
@@ -78,6 +81,7 @@ export function BottomTabBar({
       <div className="mx-auto flex h-12 max-w-lg items-stretch justify-around">
         {tabs.map((tab) => {
           const active = tab.match(visualPath);
+          const Icon = "icon" in tab ? (tab.icon as LucideIcon) : null;
           return (
             <Link
               key={tab.href}
@@ -90,26 +94,24 @@ export function BottomTabBar({
               className={cn(
                 "touch-manipulation flex flex-1 items-center justify-center text-[15px] transition-colors active:opacity-70",
                 "special" in tab && tab.special
-                  ? "font-semibold text-rose-200"
+                  ? active
+                    ? "font-semibold text-rose-300"
+                    : "font-medium text-rose-300/80"
                   : active
                     ? "font-semibold text-ink"
                     : "font-normal text-ink-muted",
               )}
             >
               {"special" in tab && tab.special ? (
-                <span
-                  className={cn(
-                    "relative flex items-center gap-1.5 rounded-full border px-3.5 py-1 transition-all",
-                    active
-                      ? "border-rose-300/50 bg-gradient-to-r from-rose-950 via-fuchsia-950 to-rose-950 text-rose-100 shadow-[0_0_18px_rgba(244,63,94,0.28)]"
-                      : "border-rose-400/20 bg-gradient-to-r from-rose-950/70 to-fuchsia-950/70 text-rose-200/90 shadow-[0_0_12px_rgba(244,63,94,0.12)]",
-                  )}
-                >
-                  <LockKeyhole className="h-3.5 w-3.5" aria-hidden />
+                <span className="flex items-center gap-1.5">
+                  {Icon ? <Icon className="h-4 w-4 stroke-[1.6]" aria-hidden /> : null}
                   {t(tab.key)}
                 </span>
               ) : (
-                t(tab.key)
+                <span className="flex items-center gap-1.5">
+                  {Icon ? <Icon className="h-4 w-4 stroke-[1.6]" aria-hidden /> : null}
+                  {t(tab.key)}
+                </span>
               )}
             </Link>
           );

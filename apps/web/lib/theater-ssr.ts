@@ -57,8 +57,9 @@ export async function loadTheaterInitial(searchParams: {
     const params = new URLSearchParams({
       page: "1",
       pageSize: String(THEATER_PAGE_SIZE),
-      sort: sort === "latest" ? "latest" : "hot",
     });
+    if (sort === "latest") params.set("sort", "latest");
+    else if (sort === "hottest" || !options?.secret) params.set("sort", "hot");
     if (tagFilter) params.set("tag", tagFilter);
     if (q) params.set("q", q);
     if (options?.secret) params.set("secret", "1");

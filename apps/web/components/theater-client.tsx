@@ -65,9 +65,13 @@ function cacheKey(
   sort: SortMode,
   q: string,
 ): CacheKey {
-  // hottest and hot share the same API sort — reuse one cache entry.
-  const sortKey = sort === "hottest" ? "hot" : sort;
-  return `${contentType || "__all__"}|${tag || "__notag__"}|${sortKey}|${q}`;
+  return `${contentType || "__all__"}|${tag || "__notag__"}|${sort}|${q}`;
+}
+
+function apiSort(sort: SortMode, secretOnly: boolean): "latest" | "hot" | undefined {
+  if (sort === "latest") return "latest";
+  if (sort === "hottest") return "hot";
+  return secretOnly ? undefined : "hot";
 }
 
 function computeHasMore(page: number, pageSize: number, loaded: number, total: number) {
@@ -338,7 +342,7 @@ export function TheaterClient({
       secret: secretOnly,
       tag: tagFilter,
       q: q || undefined,
-      sort: sort === "latest" ? "latest" : "hot",
+      sort: apiSort(sort, secretOnly),
       signal: ac.signal,
     }).then((r) => ({
       rows: r.rows,
@@ -392,7 +396,7 @@ export function TheaterClient({
           secret: secretOnly,
           tag: tagFilter,
           q: q || undefined,
-          sort: nextSort === "latest" ? "latest" : "hot",
+          sort: apiSort(nextSort, secretOnly),
         })
           .then((r) => {
             if (cacheRef.current.has(key)) return;
@@ -431,7 +435,7 @@ export function TheaterClient({
         secret: secretOnly,
         tag: composeDramaTagFilter(cur.contentType, cur.tag),
         q: cur.q || undefined,
-        sort: cur.sort === "latest" ? "latest" : "hot",
+        sort: apiSort(cur.sort, secretOnly),
         signal: ac.signal,
       });
       if (ac.signal.aborted || listGenerationRef.current !== generation) return;
@@ -573,41 +577,54 @@ export function TheaterClient({
               {contentTypeLabel(item.slug)}
             </Chip>
           ))}
+          {secretOnly ? (
+            <div className="w-28 shrink-0">
+              <ActionPill
+                active={sort === "hottest"}
+                label={t("theater.ranking")}
+                onClick={selectRanking}
+                iconBg="bg-[#FF7A1A]"
+                icon={<Flame className="h-3 w-3 text-white" strokeWidth={2.5} />}
+              />
+            </div>
+          ) : null}
         </div>
       </div>
 
-      <div className="-mx-4 mb-3 min-w-0 md:mx-0">
-        <div className="grid grid-cols-3 gap-2 px-4 md:max-w-2xl md:gap-3 md:px-0">
-          <ActionPill
-            active={!!tag || filterOpen}
-            label={tag || t("theater.filter")}
-            onClick={() => setFilterOpen((open) => !open)}
-            iconBg="bg-[#7C5CFF]"
-            icon={<Filter className="h-3 w-3 text-white" strokeWidth={2.5} />}
-            trailing={
-              filterOpen ? (
-                <ChevronUp className="h-3.5 w-3.5 shrink-0 text-ink-muted" strokeWidth={2.5} />
-              ) : (
-                <ChevronDown className="h-3.5 w-3.5 shrink-0 text-ink-muted" strokeWidth={2.5} />
-              )
-            }
-          />
-          <ActionPill
-            active={sort === "hottest"}
-            label={t("theater.ranking")}
-            onClick={selectRanking}
-            iconBg="bg-[#FF7A1A]"
-            icon={<Flame className="h-3 w-3 text-white" strokeWidth={2.5} />}
-          />
-          <ActionPill
-            active={sort === "latest"}
-            label={t("theater.newDramas")}
-            onClick={selectNew}
-            iconBg="bg-[#2EC8D8]"
-            icon={<Play className="h-3 w-3 fill-white text-white" strokeWidth={2.5} />}
-          />
+      {!secretOnly ? (
+        <div className="-mx-4 mb-3 min-w-0 md:mx-0">
+          <div className="grid grid-cols-3 gap-2 px-4 md:max-w-2xl md:gap-3 md:px-0">
+            <ActionPill
+              active={!!tag || filterOpen}
+              label={tag || t("theater.filter")}
+              onClick={() => setFilterOpen((open) => !open)}
+              iconBg="bg-[#7C5CFF]"
+              icon={<Filter className="h-3 w-3 text-white" strokeWidth={2.5} />}
+              trailing={
+                filterOpen ? (
+                  <ChevronUp className="h-3.5 w-3.5 shrink-0 text-ink-muted" strokeWidth={2.5} />
+                ) : (
+                  <ChevronDown className="h-3.5 w-3.5 shrink-0 text-ink-muted" strokeWidth={2.5} />
+                )
+              }
+            />
+            <ActionPill
+              active={sort === "hottest"}
+              label={t("theater.ranking")}
+              onClick={selectRanking}
+              iconBg="bg-[#FF7A1A]"
+              icon={<Flame className="h-3 w-3 text-white" strokeWidth={2.5} />}
+            />
+            <ActionPill
+              active={sort === "latest"}
+              label={t("theater.newDramas")}
+              onClick={selectNew}
+              iconBg="bg-[#2EC8D8]"
+              icon={<Play className="h-3 w-3 fill-white text-white" strokeWidth={2.5} />}
+            />
+          </div>
         </div>
-      </div>
+      ) : null}
 
       <TagFilterPanel
         open={filterOpen}
