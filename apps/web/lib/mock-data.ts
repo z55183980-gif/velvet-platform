@@ -27,6 +27,7 @@ export interface Episode {
   previewSeconds?: number;
   price: number;
   unlocked?: boolean;
+  thumbnail?: string;
   mediaWidth?: number;
   mediaHeight?: number;
   mediaOrientation?: "LANDSCAPE" | "PORTRAIT" | "SQUARE";

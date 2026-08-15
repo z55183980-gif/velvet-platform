@@ -658,9 +658,10 @@ export function DramaDetail({
   }, [mobileReady, loading, data, autoStartWatch, isMobile]);
 
   useEffect(() => {
-    if (!watching) return;
+    // Start downloading the HLS runtime during detail hydration so playback
+    // does not serialize script loading after the signed URL arrives.
     void preloadHlsJs();
-  }, [watching]);
+  }, []);
 
   useEffect(() => {
     if (!playerReady || !selected?.id) {
@@ -1246,7 +1247,8 @@ export function DramaDetail({
     let attachedMedia: HTMLVideoElement | null = null;
     (async () => {
       try {
-        const mod = await import("hls.js");
+        const mod = await preloadHlsJs();
+        if (!mod) return;
         const Hls = mod.default;
         if (cancelled || !Hls.isSupported()) {
           if (!cancelled) setPlayErr(tRef.current("player.hlsUnsupported"));
@@ -1256,10 +1258,35 @@ export function DramaDetail({
         // a late callback can never attach to a newer episode's element.
         const media = video;
         attachedMedia = media;
-        hls = new Hls({ capLevelToPlayerSize: true });
+        hls = new Hls({
+          enableWorker: true,
+          capLevelToPlayerSize: true,
+          startFragPrefetch: true,
+          maxBufferLength: 12,
+          maxMaxBufferLength: 24,
+          backBufferLength: 12,
+        });
         hlsRef.current = hls;
         hls.loadSource(playUrl);
         hls.attachMedia(media);
+        let networkRecoveries = 0;
+        let mediaRecoveries = 0;
+        hls.on(Hls.Events.ERROR, (_event: unknown, detail: { fatal?: boolean; type?: string }) => {
+          if (cancelled || !detail?.fatal) return;
+          if (detail.type === Hls.ErrorTypes.NETWORK_ERROR && networkRecoveries < 2) {
+            networkRecoveries += 1;
+            window.setTimeout(() => {
+              if (!cancelled) hls.startLoad(-1);
+            }, 250 * networkRecoveries);
+            return;
+          }
+          if (detail.type === Hls.ErrorTypes.MEDIA_ERROR && mediaRecoveries < 2) {
+            mediaRecoveries += 1;
+            hls.recoverMediaError();
+            return;
+          }
+          setPlayErr(tRef.current("player.hlsLoadFailed"));
+        });
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           if (cancelled) return;
           const levels = (hls.levels || []) as Array<{ height?: number }>;
@@ -1873,6 +1900,13 @@ export function DramaDetail({
                       onPlaybackRateChange={setRate}
                       attachMedia={false}
                       src={canPlay && playUrl ? playUrl : null}
+                      poster={
+                        ep.thumbnail
+                          ? (mediaUrl(ep.thumbnail) ?? undefined)
+                          : coverIsImg
+                            ? (drama.cover[0] ?? undefined)
+                            : undefined
+                      }
                       autoPlay
                       muted={muted}
                       onMutedChange={setMuted}

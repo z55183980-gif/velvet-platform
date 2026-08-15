@@ -217,6 +217,7 @@ function mapEpisode(e: any): Episode {
     // 平台原子定价为积分（priceCredits）；回退 priceVnd
     price: Number(e.priceCredits ?? e.priceVnd ?? 0),
     unlocked: e.unlocked != null ? !!e.unlocked : !!e.isFree,
+    thumbnail: e.thumbnailUrl ? String(e.thumbnailUrl) : undefined,
     mediaWidth: e.mediaWidth != null ? Number(e.mediaWidth) : undefined,
     mediaHeight: e.mediaHeight != null ? Number(e.mediaHeight) : undefined,
     mediaOrientation:

@@ -16,14 +16,25 @@ function b64url(buf: ArrayBuffer): string {
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
+let cachedSigningSecret: string | null = null;
+let cachedSigningKey: Promise<CryptoKey> | null = null;
+
+function signingKey(secret: string): Promise<CryptoKey> {
+  if (!cachedSigningKey || cachedSigningSecret !== secret) {
+    cachedSigningSecret = secret;
+    cachedSigningKey = crypto.subtle.importKey(
+      "raw",
+      new TextEncoder().encode(secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+  }
+  return cachedSigningKey;
+}
+
 async function signPath(pathKey: string, exp: number, secret: string): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
+  const key = await signingKey(secret);
   const sig = await crypto.subtle.sign(
     "HMAC",
     key,
@@ -76,26 +87,30 @@ async function signUri(
 async function rewritePlaylist(body: string, playlistKey: string, exp: number, secret: string) {
   const endsWithNl = /\r?\n$/.test(body);
   const lines = body.split(/\r?\n/);
-  const out: string[] = [];
-  for (const line of lines) {
+  // A media playlist can contain dozens of segments. Signing them serially made
+  // manifest TTFB grow linearly with episode length, so resolve independent
+  // entries concurrently while preserving their original order.
+  const out = await Promise.all(lines.map(async (line) => {
     const trimmed = line.trim();
     if (!trimmed) {
-      out.push(line);
-      continue;
+      return line;
     }
     if (trimmed.startsWith("#")) {
       let rewritten = line;
       const re = /URI="([^"]+)"/gi;
       const matches = [...line.matchAll(re)];
-      for (const m of matches) {
-        const signed = await signUri(playlistKey, m[1], exp, secret);
+      const signedUris = await Promise.all(
+        matches.map((m) => signUri(playlistKey, m[1], exp, secret)),
+      );
+      for (let i = 0; i < matches.length; i++) {
+        const m = matches[i];
+        const signed = signedUris[i];
         rewritten = rewritten.replace(`URI="${m[1]}"`, `URI="${signed}"`);
       }
-      out.push(rewritten);
-      continue;
+      return rewritten;
     }
-    out.push(await signUri(playlistKey, trimmed, exp, secret));
-  }
+    return signUri(playlistKey, trimmed, exp, secret);
+  }));
   const joined = out.join("\n");
   return endsWithNl ? `${joined}\n` : joined;
 }
