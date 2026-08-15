@@ -610,6 +610,7 @@ export class OpenaiService {
     const data = await this.chatRaw(
       {
         model,
+        reasoning_effort: 'low',
         temperature: 0,
         messages: [
           {

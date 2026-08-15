@@ -218,6 +218,9 @@ model Drama {
   isSecret        Boolean     @default(false)
   /// 「秘密剧集」运营排序（越小越靠前）
   secretSortOrder Int         @default(0)
+  /// ReelShort 水印定位按整部剧复用；null + resolvedAt 非空表示使用固定兜底
+  reelShortWatermarkLayout Json?
+  reelShortWatermarkResolvedAt DateTime? @db.Timestamptz
   /// 排序权重（越大越靠前；与 isFeatured/官方/上架时间配合决定展示顺序）
   sortWeight      Int         @default(0)
   /// 剧场「最热」运营位；独立于推荐位/算法热度

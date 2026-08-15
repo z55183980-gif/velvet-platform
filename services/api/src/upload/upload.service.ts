@@ -65,6 +65,11 @@ export class UploadService implements OnModuleInit {
   private readonly jobs = new Map<string, TranscodeJob>();
   private running = false;
   private readonly queue: string[] = [];
+  /** Coalesce concurrent first-episode detection for the same drama in this worker. */
+  private readonly reelShortLayoutPending = new Map<
+    string,
+    Promise<ReelShortWatermarkLayout | null>
+  >();
   /** When true, this process runs the legacy in-memory pump (no Redis). */
   private inlinePump = true;
   /** BullMQ (or other) enqueue hook; set by TranscodeQueueService. */
@@ -907,14 +912,16 @@ export class UploadService implements OnModuleInit {
     const outputRel = `hls/${jobId}/index.m3u8`;
 
     try {
-      const replaceReelShortWatermark = await this.shouldReplaceReelShortWatermark(
+      const reelShortDramaId = await this.reelShortWatermarkDramaId(
         job.episodeId,
       );
+      const replaceReelShortWatermark = reelShortDramaId != null;
       const inputDimensions = replaceReelShortWatermark
         ? await this.probeMediaDimensions(ffmpeg, inputAbs)
         : null;
-      const replacementLayout = replaceReelShortWatermark
-        ? await this.detectReelShortWatermarkLayout(
+      const replacementLayout = reelShortDramaId
+        ? await this.resolveReelShortWatermarkLayout(
+            reelShortDramaId,
             ffmpeg,
             inputAbs,
             inputDimensions?.mediaWidth,
@@ -1263,17 +1270,69 @@ export class UploadService implements OnModuleInit {
     return null;
   }
 
-  private async shouldReplaceReelShortWatermark(episodeId?: string) {
+  private async reelShortWatermarkDramaId(episodeId?: string): Promise<string | null> {
     const configured = String(
       this.config.get<string>('REELSHORT_WATERMARK_REPLACEMENT_ENABLED') ?? 'true',
     ).trim().toLowerCase();
-    if (configured === 'false' || configured === '0') return false;
-    if (!episodeId || !/^\d+$/.test(episodeId)) return false;
+    if (configured === 'false' || configured === '0') return null;
+    if (!episodeId || !/^\d+$/.test(episodeId)) return null;
     const episode = await this.prisma.episode.findUnique({
       where: { id: BigInt(episodeId) },
-      select: { sourceProvider: true, sourcePageUrl: true },
+      select: { dramaId: true, sourceProvider: true, sourcePageUrl: true },
     });
-    return isReelShortSource(episode?.sourceProvider, episode?.sourcePageUrl);
+    return episode && isReelShortSource(episode.sourceProvider, episode.sourcePageUrl)
+      ? episode.dramaId.toString()
+      : null;
+  }
+
+  /** Resolve once per drama, persist across worker restarts, and coalesce concurrent episodes. */
+  private async resolveReelShortWatermarkLayout(
+    dramaId: string,
+    ffmpeg: string,
+    input: string,
+    frameWidth?: number,
+    frameHeight?: number,
+  ): Promise<ReelShortWatermarkLayout | null> {
+    const cached = await this.prisma.drama.findUnique({
+      where: { id: BigInt(dramaId) },
+      select: { reelShortWatermarkLayout: true, reelShortWatermarkResolvedAt: true },
+    });
+    if (cached?.reelShortWatermarkResolvedAt) {
+      return cached.reelShortWatermarkLayout
+        ? (cached.reelShortWatermarkLayout as ReelShortWatermarkLayout)
+        : null;
+    }
+
+    const pending = this.reelShortLayoutPending.get(dramaId);
+    if (pending) return pending;
+
+    const detection = (async () => {
+      const layout = await this.detectReelShortWatermarkLayout(
+        ffmpeg,
+        input,
+        frameWidth,
+        frameHeight,
+      );
+      await this.prisma.drama.update({
+        where: { id: BigInt(dramaId) },
+        data: {
+          reelShortWatermarkLayout: layout ? (layout as any) : undefined,
+          reelShortWatermarkResolvedAt: new Date(),
+        },
+      });
+      this.logger.log(
+        `ReelShort watermark layout cached for drama=${dramaId} source=${layout ? 'vision' : 'fallback'}`,
+      );
+      return layout;
+    })();
+    this.reelShortLayoutPending.set(dramaId, detection);
+    try {
+      return await detection;
+    } finally {
+      if (this.reelShortLayoutPending.get(dramaId) === detection) {
+        this.reelShortLayoutPending.delete(dramaId);
+      }
+    }
   }
 
   private reelShortWatermarkVisionEnabled() {
