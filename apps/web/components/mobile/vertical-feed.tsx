@@ -29,7 +29,6 @@ import { useMobileFeedLock } from "@/components/mobile/mobile-feed-lock";
 import { getPlayUrl, loadDramaDetail, loadFeed, checkFavorite, addFavorite, removeFavorite, checkLike, addLike, removeLike, reportProgress, unlockDrama, type DramaDetailPayload } from "@/lib/api";
 import type { Drama, Episode } from "@/lib/mock-data";
 import { episodeIsLandscape } from "@/lib/mock-data";
-import { pickTagText, toPublicDramaTagObjects } from "@/lib/drama-tags";
 import { pickTitleText, type Locale } from "@/lib/languages";
 import { cn, formatCredits } from "@/lib/utils";
 import { useGuestWatchQuota } from "@/lib/use-guest-watch-quota";
@@ -57,12 +56,6 @@ function formatCount(n: number, locale: string) {
     return `${s}K`;
   }
   return String(value);
-}
-
-function formatRating(rating: number) {
-  if (!rating || rating <= 0) return null;
-  const score = rating <= 5 ? rating * 2 : rating;
-  return score.toFixed(1);
 }
 
 type FeedEntry = {
@@ -257,31 +250,10 @@ async function prefetchPlayUrlsAhead(
 function buildFeedMeta(
   drama: Drama,
   locale: Locale,
-  t: (key: string, vars?: Record<string, string | number>) => string,
 ) {
   const title = pickTitleText(locale, drama.titleEn, drama.titleZh, drama.titleFr);
-  const ratingLabel = formatRating(drama.rating);
-  const tags: { key: string; node: ReactNode }[] = [];
-  if (ratingLabel) {
-    tags.push({
-      key: "rating",
-      node: (
-        <span className="inline-flex items-center gap-0.5">
-          <Star className="h-3 w-3 fill-white/90 text-white/90" />
-          {t("feed.ratingScore", { n: ratingLabel })}
-        </span>
-      ),
-    });
-  }
-  tags.push({ key: "season", node: t("feed.season", { n: 1 }) });
-  for (const tag of toPublicDramaTagObjects(drama.tags).slice(0, 2)) {
-    tags.push({ key: `tag-${tag.key}`, node: pickTagText(locale, tag) });
-  }
-  const creator = drama.creator?.displayName?.trim();
-  if (creator) {
-    tags.push({ key: "cast", node: t("feed.actors", { names: creator }) });
-  }
-  return { title, tags: tags.slice(0, 4) };
+  const description = pickTitleText(locale, drama.descEn, drama.descZh).trim();
+  return { title, description };
 }
 
 const FEED_PAGE_SIZE = 20;
@@ -597,7 +569,7 @@ function FeedPage({
   const [userPaused, setUserPaused] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  const meta = useMemo(() => buildFeedMeta(drama, locale, t), [drama, locale, t]);
+  const meta = useMemo(() => buildFeedMeta(drama, locale), [drama, locale]);
 
   useEffect(() => {
     setLandscape(false);
@@ -1127,15 +1099,10 @@ function FeedPage({
               <ChevronRight className="h-5 w-5 shrink-0 opacity-90" strokeWidth={2.25} />
             </Link>
 
-            {meta.tags.length > 0 && (
-              <div className="mt-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] leading-4 text-white/90 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]">
-                {meta.tags.map((tag, i) => (
-                  <span key={tag.key} className="inline-flex max-w-full items-center">
-                    {i > 0 ? <span className="mr-1.5 text-white/35">·</span> : null}
-                    <span className="truncate">{tag.node}</span>
-                  </span>
-                ))}
-              </div>
+            {meta.description && (
+              <p className="mt-1.5 line-clamp-2 text-[12px] leading-4 text-white/90 drop-shadow-[0_1px_2px_rgba(0,0,0,0.55)]">
+                {meta.description}
+              </p>
             )}
           </div>
 
