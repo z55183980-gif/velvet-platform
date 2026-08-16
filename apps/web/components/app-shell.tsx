@@ -34,7 +34,11 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const onDrama = isDramaPath(pathname);
   const onStandaloneSafeTab =
-    pathname === "/" || pathname === "/theater" || pathname === "/me";
+    pathname === "/" ||
+    pathname === "/theater" ||
+    pathname === "/secret" ||
+    pathname === "/me" ||
+    pathname === "/help";
   const { locked: lockMobileHome } = useMobileFeedLock();
   const { mobile: isMobile, ready: mobileReady } = useIsMobile();
 
@@ -74,7 +78,7 @@ function AppShellInner({ children }: { children: React.ReactNode }) {
               isMobile &&
               !onDrama &&
               "pt-[env(safe-area-inset-top,0px)]",
-            // Theater/me: reserve fixed tab under scroll content.
+            // Non-immersive mobile pages reserve the fixed tab under scroll content.
             // Home feed: no main pb — video stays full-bleed; feed overlays clear the tab.
             !lockMobileHome &&
               !onDrama &&
