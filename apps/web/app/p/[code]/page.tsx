@@ -4,7 +4,8 @@ import { WEB_ORIGIN } from "@/lib/site";
 import { RedirectToPlayback } from "@/app/tg-preview/test/redirect-to-playback";
 
 const PREVIEW_IMAGE = "/covers/telegram-preview-test.png";
-const INVISIBLE_SEPARATOR = "\u2063";
+const PREVIEW_TITLE = "▶ 点击播放";
+const PREVIEW_DESCRIPTION = "打开剧集播放";
 
 type ShortLinkTarget = {
   drama: string;
@@ -34,14 +35,15 @@ export async function generateMetadata({
 
   return {
     metadataBase: new URL(WEB_ORIGIN),
-    title: { absolute: INVISIBLE_SEPARATOR },
-    description: INVISIBLE_SEPARATOR,
+    title: { absolute: PREVIEW_TITLE },
+    description: PREVIEW_DESCRIPTION,
     robots: { index: false, follow: false },
     openGraph: {
-      type: "website",
-      title: INVISIBLE_SEPARATOR,
-      description: INVISIBLE_SEPARATOR,
-      siteName: INVISIBLE_SEPARATOR,
+      type: "article",
+      url: `/p/${encodeURIComponent(code)}`,
+      title: PREVIEW_TITLE,
+      description: PREVIEW_DESCRIPTION,
+      siteName: "Velvet",
       images: [
         {
           url: PREVIEW_IMAGE,
@@ -53,8 +55,8 @@ export async function generateMetadata({
     },
     twitter: {
       card: "summary_large_image",
-      title: INVISIBLE_SEPARATOR,
-      description: INVISIBLE_SEPARATOR,
+      title: PREVIEW_TITLE,
+      description: PREVIEW_DESCRIPTION,
       images: [PREVIEW_IMAGE],
     },
   };
