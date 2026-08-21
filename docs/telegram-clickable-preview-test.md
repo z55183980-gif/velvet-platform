@@ -1,8 +1,9 @@
 # Telegram 可点击封面测试
 
-测试入口：`https://velvetmovie.space/tg-preview/test?drama=<剧集 slug>&ep=<集数>`。
+测试入口：`https://velvetmovie.space/p/a7K3`。
 
-不传参数时默认测试线上剧集 `betraying-my-billionaire-husband` 的第 1 集。
+短码 `a7K3` 映射到线上剧集 `betraying-my-billionaire-husband` 的第 1 集。
+原始调试入口仍是：`https://velvetmovie.space/tg-preview/test?drama=<剧集 slug>&ep=<集数>`。
 
 - Telegram 抓取入口页的 Open Graph 图片，显示大图网页预览。
 - 消息正文只包含不可见字符，不显示原始链接。
@@ -16,8 +17,7 @@
 $env:TELEGRAM_BOT_TOKEN = "BotFather 返回的 token"
 $env:TELEGRAM_CHAT_ID = "目标用户、群组或 @频道用户名"
 $env:TELEGRAM_PREVIEW_SITE_URL = "https://velvetmovie.space"
-$env:TELEGRAM_PREVIEW_DRAMA = "真实剧集 slug"
-$env:TELEGRAM_PREVIEW_EPISODE = "1"
+$env:TELEGRAM_PREVIEW_CODE = "a7K3"
 pnpm telegram:preview:test
 ```
 

@@ -1,8 +1,7 @@
 const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
 const chatId = process.env.TELEGRAM_CHAT_ID?.trim();
 const siteUrl = (process.env.TELEGRAM_PREVIEW_SITE_URL || "https://velvetmovie.space").trim();
-const drama = (process.env.TELEGRAM_PREVIEW_DRAMA || "betraying-my-billionaire-husband").trim();
-const episode = (process.env.TELEGRAM_PREVIEW_EPISODE || "1").trim();
+const shortCode = (process.env.TELEGRAM_PREVIEW_CODE || "a7K3").trim();
 
 if (!token || !chatId) {
   console.error(
@@ -13,7 +12,7 @@ if (!token || !chatId) {
 
 let previewUrl;
 try {
-  previewUrl = new URL("/tg-preview/test", siteUrl);
+  previewUrl = new URL(`/p/${encodeURIComponent(shortCode)}`, siteUrl);
 } catch {
   console.error("TELEGRAM_PREVIEW_SITE_URL must be a valid absolute URL.");
   process.exit(1);
@@ -24,18 +23,10 @@ if (previewUrl.protocol !== "https:" || ["localhost", "127.0.0.1"].includes(prev
   process.exit(1);
 }
 
-if (!/^[A-Za-z0-9_-]{1,100}$/.test(drama)) {
-  console.error("TELEGRAM_PREVIEW_DRAMA must contain only letters, digits, underscores, or hyphens.");
+if (!/^[A-Za-z0-9_-]{1,32}$/.test(shortCode)) {
+  console.error("TELEGRAM_PREVIEW_CODE must contain only letters, digits, underscores, or hyphens.");
   process.exit(1);
 }
-
-if (!/^\d+$/.test(episode) || Number(episode) < 1) {
-  console.error("TELEGRAM_PREVIEW_EPISODE must be a positive integer.");
-  process.exit(1);
-}
-
-previewUrl.searchParams.set("drama", drama);
-previewUrl.searchParams.set("ep", episode);
 
 const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
   method: "POST",
