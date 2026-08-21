@@ -2,6 +2,8 @@
 
 测试入口：`https://velvetmovie.space/tg-preview/test?drama=<剧集 slug>&ep=<集数>`。
 
+不传参数时默认测试线上剧集 `betraying-my-billionaire-husband` 的第 1 集。
+
 - Telegram 抓取入口页的 Open Graph 图片，显示大图网页预览。
 - 消息正文只包含不可见字符，不显示原始链接。
 - 用户点击预览卡片后，浏览器跳到 `/drama/<slug>/play?ep=<集数>`。

@@ -33,8 +33,9 @@ export const metadata: Metadata = {
 };
 
 function safeDramaSlug(value: string | undefined): string {
-  const slug = String(value || "d01").trim();
-  return /^[A-Za-z0-9_-]{1,100}$/.test(slug) ? slug : "d01";
+  const fallback = "betraying-my-billionaire-husband";
+  const slug = String(value || fallback).trim();
+  return /^[A-Za-z0-9_-]{1,100}$/.test(slug) ? slug : fallback;
 }
 
 function safeEpisode(value: string | undefined): number {

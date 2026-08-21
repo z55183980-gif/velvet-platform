@@ -1,7 +1,7 @@
 const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
 const chatId = process.env.TELEGRAM_CHAT_ID?.trim();
 const siteUrl = (process.env.TELEGRAM_PREVIEW_SITE_URL || "https://velvetmovie.space").trim();
-const drama = (process.env.TELEGRAM_PREVIEW_DRAMA || "d01").trim();
+const drama = (process.env.TELEGRAM_PREVIEW_DRAMA || "betraying-my-billionaire-husband").trim();
 const episode = (process.env.TELEGRAM_PREVIEW_EPISODE || "1").trim();
 
 if (!token || !chatId) {
