@@ -1,0 +1,62 @@
+const token = process.env.TELEGRAM_BOT_TOKEN?.trim();
+const chatId = process.env.TELEGRAM_CHAT_ID?.trim();
+const siteUrl = (process.env.TELEGRAM_PREVIEW_SITE_URL || "https://velvetmovie.space").trim();
+const drama = (process.env.TELEGRAM_PREVIEW_DRAMA || "d01").trim();
+const episode = (process.env.TELEGRAM_PREVIEW_EPISODE || "1").trim();
+
+if (!token || !chatId) {
+  console.error(
+    "Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID. Set them in the current shell before running this script.",
+  );
+  process.exit(1);
+}
+
+let previewUrl;
+try {
+  previewUrl = new URL("/tg-preview/test", siteUrl);
+} catch {
+  console.error("TELEGRAM_PREVIEW_SITE_URL must be a valid absolute URL.");
+  process.exit(1);
+}
+
+if (previewUrl.protocol !== "https:" || ["localhost", "127.0.0.1"].includes(previewUrl.hostname)) {
+  console.error("Telegram must be able to crawl a public HTTPS TELEGRAM_PREVIEW_SITE_URL.");
+  process.exit(1);
+}
+
+if (!/^[A-Za-z0-9_-]{1,100}$/.test(drama)) {
+  console.error("TELEGRAM_PREVIEW_DRAMA must contain only letters, digits, underscores, or hyphens.");
+  process.exit(1);
+}
+
+if (!/^\d+$/.test(episode) || Number(episode) < 1) {
+  console.error("TELEGRAM_PREVIEW_EPISODE must be a positive integer.");
+  process.exit(1);
+}
+
+previewUrl.searchParams.set("drama", drama);
+previewUrl.searchParams.set("ep", episode);
+
+const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    chat_id: chatId,
+    // Bot API requires at least one character. U+2063 keeps the message body visually empty.
+    text: "\u2063",
+    link_preview_options: {
+      url: previewUrl.toString(),
+      prefer_large_media: true,
+      show_above_text: true,
+    },
+  }),
+});
+
+const result = await response.json().catch(() => null);
+if (!response.ok || !result?.ok) {
+  console.error(`Telegram sendMessage failed (${response.status}): ${result?.description || "unknown error"}`);
+  process.exit(1);
+}
+
+console.log(`Telegram preview sent: chat=${chatId} message=${result.result.message_id}`);
+console.log(`Preview URL: ${previewUrl.toString()}`);

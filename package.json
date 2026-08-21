@@ -8,6 +8,7 @@
     "dev:admin": "turbo run dev --filter=velvet-admin",
     "dev:api": "turbo run start:dev --filter=velvet-api",
     "dev:telegram": "cd services/telegram-sidecar && .venv/Scripts/python.exe run.py",
+    "telegram:preview:test": "node scripts/send-telegram-preview-test.mjs",
     "build": "turbo run build",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
