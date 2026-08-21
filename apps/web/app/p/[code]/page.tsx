@@ -3,9 +3,9 @@ import { notFound } from "next/navigation";
 import { WEB_ORIGIN } from "@/lib/site";
 import { RedirectToPlayback } from "@/app/tg-preview/test/redirect-to-playback";
 
-const PREVIEW_IMAGE = "/covers/telegram-preview-test.png";
-const PREVIEW_TITLE = "▶ 点击播放";
-const PREVIEW_DESCRIPTION = "打开剧集播放";
+const PREVIEW_IMAGE = "/covers/telegram-preview-test.png?v=20260821-cambodia";
+const PREVIEW_TITLE = "柬埔寨各大园区监控视频首次曝光";
+const PREVIEW_DESCRIPTION = "▶ 点击播放";
 
 type ShortLinkTarget = {
   drama: string;
@@ -15,6 +15,11 @@ type ShortLinkTarget = {
 /** First-party short links. Add one entry per shareable drama/episode. */
 const SHORT_LINKS: Record<string, ShortLinkTarget> = {
   a7K3: {
+    drama: "betraying-my-billionaire-husband",
+    episode: 1,
+  },
+  // Fresh preview URL so Telegram does not reuse the previous card cache.
+  c4a6: {
     drama: "betraying-my-billionaire-husband",
     episode: 1,
   },
@@ -47,9 +52,9 @@ export async function generateMetadata({
       images: [
         {
           url: PREVIEW_IMAGE,
-          width: 568,
-          height: 516,
-          alt: "▶ 播放",
+          width: 1082,
+          height: 1280,
+          alt: PREVIEW_TITLE,
         },
       ],
     },
